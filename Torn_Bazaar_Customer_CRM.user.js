@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.5.0
+// @version      6.5.1-test
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
