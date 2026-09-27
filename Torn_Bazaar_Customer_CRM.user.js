@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.5.1-test
+// @version      6.5.1
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -23,8 +23,10 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.5.0';
+    const VERSION = '6.5.1';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
+    const FAVORITE_PLAYER_NAME = 'Manic-Mike';
+    const FAVORITE_CTA = '★ ADD ' + FAVORITE_PLAYER_NAME + ' TO YOUR FAVORITES ★  Keep MANIC\'S MAD HOUSE easy to find for future purchases and restocks.';
     const SHOP_BANNER_URL = 'https://i.postimg.cc/qvV31ggb/Chat-GPT-Image-Sep-20-2026-09-46-21-PM.png';
     const BANNER_URL = 'https://i.postimg.cc/qvV31ggb/Chat-GPT-Image-Sep-20-2026-09-46-21-PM.png';
     const BAZAAR_SELL_LOG_ID = 1226;
@@ -4397,6 +4399,9 @@
             `<td width="33%" align="center" style="width:33.333%;padding:10px;text-align:center;"><strong style="color:#f2c94c;">${safeRight}</strong></td>` +
             `</tr>` +
             `<tr>${cells}</tr>` +
+            `<tr><td colspan="3" bgcolor="#3a2a00" align="center" style="padding:12px 14px;text-align:center;border-top:2px solid #f2c94c;border-bottom:1px solid #6b5315;">` +
+            `<strong style="color:#ffd95a;font-size:16px;">${escapeMessageHtml(FAVORITE_CTA)}</strong>` +
+            `</td></tr>` +
             `<tr><td colspan="3" bgcolor="#181818" style="padding:11px 14px;border-top:1px solid #333333;">` +
             (footerTitle ? `<strong style="color:#9be564;font-size:14px;">${escapeMessageHtml(footerTitle)}</strong><br><br>` : '') +
             footer +
@@ -4412,7 +4417,7 @@
         const footer = footerTitle
             ? `\n\n${footerTitle}\n${(footerLines || []).map(line => `• ${line}`).join('\n')}`
             : '';
-        return `${top}\n\n${colText}${footer}`;
+        return `${top}\n\n${colText}\n\n★ ★ ★ ADD ME TO FAVORITES ★ ★ ★\n${FAVORITE_CTA}${footer}`;
     }
 
     function customerHasBeenContacted(customer) {
