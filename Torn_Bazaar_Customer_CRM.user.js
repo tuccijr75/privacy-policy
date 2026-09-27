@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.5.1
+// @version      6.5.2
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -23,9 +23,10 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.5.1';
+    const VERSION = '6.5.2';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
+    const OWNER_TORN_ID = '4325346';
     const FAVORITE_CTA = '★ ADD ' + FAVORITE_PLAYER_NAME + ' TO YOUR FAVORITES ★  Keep MANIC\'S MAD HOUSE easy to find for future purchases and restocks.';
     const SHOP_BANNER_URL = 'https://i.postimg.cc/qvV31ggb/Chat-GPT-Image-Sep-20-2026-09-46-21-PM.png';
     const BANNER_URL = 'https://i.postimg.cc/qvV31ggb/Chat-GPT-Image-Sep-20-2026-09-46-21-PM.png';
@@ -4356,7 +4357,8 @@
         rightText = '',
         columns = [],
         footerTitle = '',
-        footerLines = []
+        footerLines = [],
+        couponCode = ''
     }) {
         const safeName = escapeMessageHtml(customerName || 'Customer');
         const safeGreeting = escapeMessageHtml(greeting || '');
@@ -4380,6 +4382,16 @@
         const footer = (footerLines || []).map(line =>
             `<span style="color:#f3f3f3;">${escapeMessageHtml(line)}</span><br>`
         ).join('');
+        const safeCoupon = String(couponCode || '').trim();
+        const couponHref = safeCoupon
+            ? `https://www.torn.com/messages.php#/p=compose&XID=${encodeURIComponent(OWNER_TORN_ID)}&subject=${encodeURIComponent(`Coupon Code ${safeCoupon}`)}`
+            : '';
+        const couponActionRow = safeCoupon
+            ? `<tr><td colspan="3" bgcolor="#102614" align="center" style="padding:14px;text-align:center;border-top:2px solid #53d769;border-bottom:1px solid #2f6d39;">` +
+              `<a href="${couponHref}" style="display:inline-block;background:#53d769;color:#071b0b;font-weight:bold;font-size:16px;text-decoration:none;padding:11px 18px;border:1px solid #8bf09a;border-radius:4px;">SEND MY COUPON CODE — ${escapeMessageHtml(safeCoupon)}</a><br>` +
+              `<span style="display:inline-block;margin-top:7px;color:#d7f7dc;font-size:12px;">Opens a message to ${escapeMessageHtml(FAVORITE_PLAYER_NAME)} with your coupon code in the subject. Review it, then press Send.</span>` +
+              `</td></tr>`
+            : '';
 
         return `<table width="100%" cellpadding="0" cellspacing="0" border="0" ` +
             `style="width:100%;max-width:900px;border-collapse:collapse;background-color:#0d0d0d;color:#f2f2f2;font-family:Arial,Helvetica,sans-serif;">` +
@@ -4398,6 +4410,7 @@
             `<td width="33%" align="center" style="width:33.333%;padding:10px;text-align:center;"><strong style="color:#53c7ff;">${safeCenter}</strong></td>` +
             `<td width="33%" align="center" style="width:33.333%;padding:10px;text-align:center;"><strong style="color:#f2c94c;">${safeRight}</strong></td>` +
             `</tr>` +
+            couponActionRow +
             `<tr>${cells}</tr>` +
             `<tr><td colspan="3" bgcolor="#3a2a00" align="center" style="padding:12px 14px;text-align:center;border-top:2px solid #f2c94c;border-bottom:1px solid #6b5315;">` +
             `<strong style="color:#ffd95a;font-size:16px;">${escapeMessageHtml(FAVORITE_CTA)}</strong>` +
@@ -4409,7 +4422,7 @@
             `</table>`;
     }
 
-    function plainThreeColumnFallback({ customerName, greeting = '', centerText, rightText, columns, footerTitle, footerLines }) {
+    function plainThreeColumnFallback({ customerName, greeting = '', centerText, rightText, columns, footerTitle, footerLines, couponCode = '' }) {
         const top = `${greeting ? `${greeting}\n\n` : ''}${customerName} | ${centerText} | ${rightText}`;
         const colText = columns.map(col =>
             `${col.title}\n${(col.lines || []).map(line => `• ${line}`).join('\n')}`
@@ -4417,7 +4430,11 @@
         const footer = footerTitle
             ? `\n\n${footerTitle}\n${(footerLines || []).map(line => `• ${line}`).join('\n')}`
             : '';
-        return `${top}\n\n${colText}\n\n★ ★ ★ ADD ME TO FAVORITES ★ ★ ★\n${FAVORITE_CTA}${footer}`;
+        const safeCoupon = String(couponCode || '').trim();
+        const couponLine = safeCoupon
+            ? `\n\nSEND MY COUPON CODE — ${safeCoupon}\nhttps://www.torn.com/messages.php#/p=compose&XID=${OWNER_TORN_ID}&subject=${encodeURIComponent(`Coupon Code ${safeCoupon}`)}`
+            : '';
+        return `${top}\n\n${colText}${couponLine}\n\n★ ★ ★ ADD ME TO FAVORITES ★ ★ ★\n${FAVORITE_CTA}${footer}`;
     }
 
     function customerHasBeenContacted(customer) {
@@ -4478,7 +4495,8 @@
             rightText: `${remaining} redemption${remaining === 1 ? '' : 's'} remaining`,
             columns,
             footerTitle: 'RESTOCK ALERTS',
-            footerLines
+            footerLines,
+            couponCode: coupon.code
         });
 
         const body = plainThreeColumnFallback({
@@ -4488,7 +4506,8 @@
             rightText: `${remaining} redemption${remaining === 1 ? '' : 's'} remaining`,
             columns,
             footerTitle: 'RESTOCK ALERTS',
-            footerLines
+            footerLines,
+            couponCode: coupon.code
         });
 
         return { subject, body, bodyHtml, firstContact };
@@ -4522,8 +4541,8 @@
 
         return {
             subject: SHOP_NAME + ' — Cashback coupon reminder',
-            body: plainThreeColumnFallback({customerName: username, greeting: greeting, centerText: 'Coupon: ' + coupon.code, rightText: remaining + ' use' + (remaining === 1 ? '' : 's') + ' left', columns: columns, footerTitle: 'IMPORTANT', footerLines: footerLines}),
-            bodyHtml: brandedMessageHtml({customerName: username, greeting: greeting, centerText: 'Coupon: ' + coupon.code, rightText: remaining + ' use' + (remaining === 1 ? '' : 's') + ' left', columns: columns, footerTitle: 'IMPORTANT', footerLines: footerLines}),
+            body: plainThreeColumnFallback({customerName: username, greeting: greeting, centerText: 'Coupon: ' + coupon.code, rightText: remaining + ' use' + (remaining === 1 ? '' : 's') + ' left', columns: columns, footerTitle: 'IMPORTANT', footerLines: footerLines, couponCode: coupon.code}),
+            bodyHtml: brandedMessageHtml({customerName: username, greeting: greeting, centerText: 'Coupon: ' + coupon.code, rightText: remaining + ' use' + (remaining === 1 ? '' : 's') + ' left', columns: columns, footerTitle: 'IMPORTANT', footerLines: footerLines, couponCode: coupon.code}),
             qualified: q.qualified, cashback: q.cashback || 0
         };
     }
