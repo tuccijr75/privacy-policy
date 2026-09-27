@@ -4494,6 +4494,53 @@
         return { subject, body, bodyHtml, firstContact };
     }
 
+    function couponReminderMessage(customer) {
+        const db = dbLoad();
+        const id = asId(customer.id);
+        const coupon = ensureCoupon(db, customer);
+        const username = displayUsername(customer);
+        if (!username) throw new Error('No resolved Torn username for [' + id + '].');
+
+        const remaining = couponRemaining(coupon);
+        const q = couponQualification(db, coupon);
+        const recentLine = q.qualified
+            ? 'Your recent qualifying purchase currently qualifies for ' + money(q.cashback) + ' cashback.'
+            : 'Your coupon is still available for your next qualifying purchase.';
+
+        const columns = [
+            { title: 'YOUR COUPON', lines: ['Code: ' + coupon.code, remaining + ' redemption' + (remaining === 1 ? '' : 's') + ' remaining', recentLine] },
+            { title: 'HOW TO USE IT', lines: ['Buy normally from my Bazaar', 'Message me your coupon code after the purchase', 'I verify the purchase and send the refund manually'] },
+            { title: 'CASHBACK TIERS', lines: ['$50,000+ → $5,000 cashback', '$250,000+ → $10,000 cashback', '$1,000,000+ → $20,000 cashback'] }
+        ];
+
+        const greeting = 'WELCOME BACK, ' + username + ' — DON\'T FORGET YOUR COUPON!';
+        const footerLines = [
+            'Qualifying purchases must be made after the coupon was issued.',
+            'Eligible purchases remain available for 24 hours.',
+            'Each sale can only be used once.'
+        ];
+
+        return {
+            subject: SHOP_NAME + ' — Cashback coupon reminder',
+            body: plainThreeColumnFallback({customerName: username, greeting: greeting, centerText: 'Coupon: ' + coupon.code, rightText: remaining + ' use' + (remaining === 1 ? '' : 's') + ' left', columns: columns, footerTitle: 'IMPORTANT', footerLines: footerLines}),
+            bodyHtml: brandedMessageHtml({customerName: username, greeting: greeting, centerText: 'Coupon: ' + coupon.code, rightText: remaining + ' use' + (remaining === 1 ? '' : 's') + ' left', columns: columns, footerTitle: 'IMPORTANT', footerLines: footerLines}),
+            qualified: q.qualified, cashback: q.cashback || 0
+        };
+    }
+
+    function prepareCouponReminder(playerId) {
+        const id = asId(playerId);
+        const db = dbLoad();
+        const customer = db.customers[id];
+        if (!customer) return;
+        const coupon = ensureCoupon(db, customer);
+        if (!coupon?.issuedAt) { statusText = 'Coupon has not been issued yet.'; render(); return; }
+        if (couponRemaining(coupon) <= 0) { statusText = 'No cashback redemptions remain for this customer.'; render(); return; }
+        const msg = couponReminderMessage(customer);
+        composeMessage(id, msg.subject, msg.body, msg.bodyHtml);
+        statusText = 'Coupon reminder prepared for ' + (displayUsername(customer) || id) + '. Send remains manual.';
+        render();
+    }
     function composeMessage(playerId, subject, body, bodyHtml = '') {
         const id = asId(playerId);
         const payload = {
@@ -5599,7 +5646,7 @@
             const coupon = db.coupons[c.id];
             const q = couponQualification(db, coupon);
             const name = escapeHtml(displayUsername(c) || `[${c.id}]`);
-            return card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;"><div><b>${name}</b> <span style="color:#888">[${escapeHtml(c.id)}]</span><div style="font-size:12px;color:#bbb;margin-top:4px;">Purchases: ${c.purchases.toLocaleString()} · Units: ${c.units.toLocaleString()} · Spent: ${money(c.spent)}<br>Last purchase: ${escapeHtml(fmtDate(c.lastPurchase))}<br>Contacted: ${customerHasBeenContacted(c) ? `Yes (${c.messageCount})` : 'No'} · Coupon: ${escapeHtml(coupon?.code || '—')} · Uses left: ${couponRemaining(coupon)}<br>Cashback: ${q.qualified ? `${money(q.cashback)} on ${money(q.total)}` : escapeHtml(q.reason)}</div></div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><button data-action="compose" data-id="${c.id}" style="${btn(true)}">Compose</button><button data-action="contacted" data-id="${c.id}" style="${btn()}">Mark contacted</button><button data-action="subscribe" data-id="${c.id}" style="${btn()}">Restock+</button><button data-action="start-refund" data-id="${c.id}" style="${btn()}" ${q.qualified ? '' : 'disabled'}>Cashback</button><button data-action="profile" data-id="${c.id}" style="${btn()}">Profile</button><button data-action="remove" data-id="${c.id}" style="${btn()}">Remove</button></div></div>`);
+            return card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;"><div><b>${name}</b> <span style="color:#888">[${escapeHtml(c.id)}]</span><div style="font-size:12px;color:#bbb;margin-top:4px;">Purchases: ${c.purchases.toLocaleString()} · Units: ${c.units.toLocaleString()} · Spent: ${money(c.spent)}<br>Last purchase: ${escapeHtml(fmtDate(c.lastPurchase))}<br>Contacted: ${customerHasBeenContacted(c) ? `Yes (${c.messageCount})` : 'No'} · Coupon: ${escapeHtml(coupon?.code || '—')} · Uses left: ${couponRemaining(coupon)}<br>Cashback: ${q.qualified ? `${money(q.cashback)} on ${money(q.total)}` : escapeHtml(q.reason)}</div></div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><button data-action="compose" data-id="${c.id}" style="${btn(true)}">Compose</button>${coupon?.issuedAt && couponRemaining(coupon) > 0 ? `<button data-action="coupon-reminder" data-id="${c.id}" style="${btn(q.qualified)}">Coupon Reminder</button>` : ''}<button data-action="contacted" data-id="${c.id}" style="${btn()}">Mark contacted</button><button data-action="subscribe" data-id="${c.id}" style="${btn()}">Restock+</button><button data-action="start-refund" data-id="${c.id}" style="${btn()}" ${q.qualified ? '' : 'disabled'}>Cashback</button><button data-action="profile" data-id="${c.id}" style="${btn()}">Profile</button><button data-action="remove" data-id="${c.id}" style="${btn()}">Remove</button></div></div>`);
         }).join('');
     }
 
@@ -7086,6 +7133,7 @@
             const refundId = button.dataset.refund;
             const db = dbLoad();
             if (action === 'compose' && db.customers[id]) return composeCustomer(db.customers[id]);
+            if (action === 'coupon-reminder') return prepareCouponReminder(id);
             if (action === 'reorder-compose') return prepareReorderOutreach(id);
             if (action === 'contacted') return markCustomerContacted(id);
             if (action === 'subscribe' && db.customers[id]) return subscribeCustomer(db.customers[id]);
@@ -7237,6 +7285,8 @@
         pricingDirectorRows: () => pricingDirectorRows(dbLoad()),
         capitalRotationRows: () => capitalRotationRows(dbLoad()),
         customerReorderRows: () => customerReorderRows(dbLoad()),
+        prepareCouponReminder,
+        couponReminderMessage,
         customerAffinityRows: () => customerAffinityRows(dbLoad()),
         supplierPerformanceRows: () => supplierPerformanceRows(dbLoad()),
         opportunityAlertRows: () => opportunityAlertRows(dbLoad()),
