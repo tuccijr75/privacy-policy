@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.4.2
+// @version      6.5.0
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -23,7 +23,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.4.2';
+    const VERSION = '6.5.0';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const SHOP_BANNER_URL = 'https://i.postimg.cc/qvV31ggb/Chat-GPT-Image-Sep-20-2026-09-46-21-PM.png';
     const BANNER_URL = 'https://i.postimg.cc/qvV31ggb/Chat-GPT-Image-Sep-20-2026-09-46-21-PM.png';
@@ -2299,6 +2299,7 @@
             statusText =
                 `Procurement sync complete: ${Object.keys(db.procurement.bazaar).length} Bazaar SKUs, ` +
                 `${marketCount} market snapshots, ${db.procurement.acquisitions.length} acquisition lots.`;
+            try { evaluateOpportunityAlerts(db, true); dbSave(db); } catch {}
             try { notifyOperationalAlerts(db); } catch {}
         } catch (error) {
             statusText = `Procurement sync failed: ${error?.message || String(error)}`;
@@ -5589,7 +5590,7 @@
         const filters = customerFiltersHtml(allCustomers.length, customers.length);
         if (!allCustomers.length) return add + filters + card('No customers yet. API Bazaar sales will populate this automatically.');
         if (!customers.length) return add + filters + card('No customers match the selected filters.');
-        return add + filters + customers.map(c => {
+        return customerReorderHtml(db) + add + filters + customers.map(c => {
             const coupon = db.coupons[c.id];
             const q = couponQualification(db, coupon);
             const name = escapeHtml(displayUsername(c) || `[${c.id}]`);
@@ -5740,6 +5741,184 @@
         `;
     }
 
+
+    // ============================================================
+    // VALUE / ROI INTELLIGENCE v6.5
+    // ============================================================
+
+    function medianNumber(values){
+        const a=values.map(Number).filter(Number.isFinite).sort((x,y)=>x-y);
+        if(!a.length)return 0; const m=Math.floor(a.length/2);
+        return a.length%2?a[m]:(a[m-1]+a[m])/2;
+    }
+
+    function capitalRotationRows(db){
+        return procurementRows(db).filter(r=>r.bestBuyPrice>0&&r.realisticExit>r.bestBuyPrice&&r.bestDealProfit>0).map(r=>{
+            const qty=Math.max(1,Number(r.opportunityQtyCap||1));
+            const spend=qty*Number(r.bestBuyPrice||0), profit=qty*Number(r.bestDealProfit||0);
+            let days=Number(r.turnoverDays);
+            if(!Number.isFinite(days)||days<=0)days=r.liquidityScore>=80?1:r.liquidityScore>=60?2:r.liquidityScore>=40?4:7;
+            days=Math.max(.25,days);
+            const ppd=profit/days, eff=spend>0?ppd/spend*100:0;
+            const score=Math.max(0,Math.min(100,Number(r.acquisitionScore||0)*.4+Math.min(100,eff*18)*.4+Number(r.liquidityScore||0)*.2));
+            return Object.assign({},r,{rotationQty:qty,rotationSpend:spend,rotationExpectedProfit:profit,rotationSellDays:days,profitPerDay:ppd,capitalEfficiencyPctDay:eff,rotationScore:score});
+        }).sort((a,b)=>b.rotationScore-a.rotationScore||b.profitPerDay-a.profitPerDay);
+    }
+
+    function capitalCommandHtml(db){
+        const rows=capitalRotationRows(db).slice(0,12);
+        return card('<b>Capital Command Center - Profit Velocity</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Ranks capital by expected profit/day, capital efficiency, ROI and liquidity. Inventory shortage does not control this ranking.</div>'+
+            (rows.length?rows.map((r,i)=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>#'+(i+1)+' '+escapeHtml(r.name)+'</b> · Score <b>'+r.rotationScore.toFixed(0)+'</b><br>Deploy '+money(r.rotationSpend)+' · Expected '+money(r.rotationExpectedProfit)+' · <b>'+money(r.profitPerDay)+'/day</b> · '+r.capitalEfficiencyPctDay.toFixed(2)+'%/day · '+r.rotationSellDays.toFixed(1)+'d · ROI '+r.bestDealMarginPct.toFixed(1)+'%</div>').join(''):'<div style="font-size:11px;color:#888;">Sync procurement and market data to rank capital opportunities.</div>'));
+    }
+
+    function salesForCustomer(db,id){
+        id=asId(id); return Object.values(db.sales||{}).filter(x=>asId(x.playerId)===id).sort((a,b)=>Number(a.timestamp||0)-Number(b.timestamp||0));
+    }
+
+    function customerAffinityRows(db){
+        return Object.values(db.customers||{}).map(c=>{
+            const p={},cats={}; let total=0;
+            salesForCustomer(db,c.id).forEach(s=>(s.items||[]).forEach(i=>{
+                const id=asId(i.itemId??i.item_id??i.id??''), name=String(i.name??i.itemName??i.item_name??'Unknown item'), q=Math.max(0,Number(i.quantity||0));
+                if(!q)return; total+=q; const k=id||name;
+                if(!p[k])p[k]={id:id,name:name,units:0}; p[k].units+=q;
+                const type=String(db.procurement.catalog?.[id]?.type||'Other'); cats[type]=(cats[type]||0)+q;
+            }));
+            const products=Object.values(p).sort((a,b)=>b.units-a.units).slice(0,5).map(x=>Object.assign({},x,{share:total?x.units/total:0}));
+            const categories=Object.entries(cats).sort((a,b)=>b[1]-a[1]).slice(0,4).map(x=>({name:x[0],units:x[1],share:total?x[1]/total:0}));
+            return Object.assign({},c,{totalAffinityUnits:total,affinityProducts:products,affinityCategories:categories});
+        }).sort((a,b)=>b.totalAffinityUnits-a.totalAffinityUnits);
+    }
+
+    function customerReorderRows(db){
+        const affin=new Map(customerAffinityRows(db).map(x=>[asId(x.id),x])), now=Date.now(), out=[];
+        Object.values(db.customers||{}).forEach(c=>{
+            const sales=salesForCustomer(db,c.id); if(sales.length<2)return;
+            const t=sales.map(x=>Number(x.timestamp||0)).filter(x=>x>0).sort((a,b)=>a-b), ints=[];
+            for(let i=1;i<t.length;i++)ints.push((t[i]-t[i-1])/86400000);
+            const typical=Math.max(.25,medianNumber(ints)||7), last=t[t.length-1]||0, since=last?Math.max(0,(now-last)/86400000):999;
+            const top=affin.get(asId(c.id))?.affinityProducts?.[0]||null;
+            let stock=null;
+            if(top){
+                if(top.id&&Number(db.procurement.bazaar?.[top.id]?.quantity||0)>0)stock=db.procurement.bazaar[top.id];
+                else stock=Object.values(db.procurement.bazaar||{}).find(x=>String(x.name||'').toLowerCase()===String(top.name||'').toLowerCase()&&Number(x.quantity||0)>0)||null;
+            }
+            const score=Math.max(0,Math.min(100,Math.min(100,since/typical*65)+Math.min(20,sales.length*2)+(stock?15:0)));
+            out.push(Object.assign({},c,{typicalReorderDays:typical,daysSincePurchase:since,reorderScore:score,topAffinity:top,currentStockMatch:stock,predictedNextAt:last?new Date(last+typical*86400000).toISOString():null}));
+        });
+        return out.sort((a,b)=>b.reorderScore-a.reorderScore);
+    }
+
+    function prepareReorderOutreach(id){
+        const db=dbLoad(), r=customerReorderRows(db).find(x=>asId(x.id)===asId(id));
+        if(!r){statusText='Not enough purchase history to calculate a reorder signal.';render();return;}
+        const name=displayUsername(r)||r.id, top=r.topAffinity, stock=r.currentStockMatch;
+        const columns=[
+            {title:'YOUR FAVORITES',lines:[top?top.name+' - '+(top.share*100).toFixed(0)+'% of tracked units':'No dominant item yet','Typical reorder: '+r.typicalReorderDays.toFixed(1)+' days']},
+            {title:'CURRENT STOCK',lines:[stock?(stock.name||top?.name)+' - Qty '+Number(stock.quantity||0).toLocaleString():'Your top item is not currently listed',stock?money(stock.price)+' each':'I can notify you when it returns']},
+            {title:'QUICK INFO',lines:[r.daysSincePurchase.toFixed(1)+' days since your last purchase','Stock is first come, first served','Reply STOP to leave restock alerts']}
+        ];
+        const subject=SHOP_NAME+' - something you usually buy is available', greeting='Welcome back to '+SHOP_NAME+', '+name+'!';
+        const body=plainThreeColumnFallback({customerName:name,greeting:greeting,centerText:top?top.name:'Your usual items',rightText:'Reorder score '+r.reorderScore.toFixed(0)+'/100',columns:columns,footerTitle:'RESTOCK',footerLines:['Reply RESTOCK for inventory alerts.','Reply STOP at any time to leave the list.']});
+        const html=brandedMessageHtml({customerName:name,greeting:greeting,centerText:top?top.name:'Your usual items',rightText:'Reorder score '+r.reorderScore.toFixed(0)+'/100',columns:columns,footerTitle:'RESTOCK',footerLines:['Reply RESTOCK for inventory alerts.','Reply STOP at any time to leave the list.']});
+        composeMessage(r.id,subject,body,html); statusText='Reorder message prepared for '+name+'. Send remains manual.'; render();
+    }
+
+    function customerReorderHtml(db){
+        const rows=customerReorderRows(db).filter(x=>x.reorderScore>=65).slice(0,12);
+        return card('<b>Automated Customer Reorder Intelligence</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Predicts repeat-purchase timing from real order intervals and product affinity. Compose only - never sends automatically.</div>'+
+            (rows.length?rows.map(r=>'<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;"><div style="font-size:11px;"><b>'+escapeHtml(displayUsername(r)||r.id)+'</b> · Score <b>'+r.reorderScore.toFixed(0)+'</b> · Last '+r.daysSincePurchase.toFixed(1)+'d · Typical '+r.typicalReorderDays.toFixed(1)+'d<br>Favorite '+(r.topAffinity?escapeHtml(r.topAffinity.name)+' '+(r.topAffinity.share*100).toFixed(0)+'%':'—')+' · '+(r.currentStockMatch?'<span style="color:#9fe3a8;">In stock now</span>':'<span style="color:#aaa;">Not currently listed</span>')+'</div><button data-action="reorder-compose" data-id="'+r.id+'" style="'+btn(true)+'">Compose Reorder</button></div>').join(''):'<div style="font-size:11px;color:#888;">No customers are currently above the reorder threshold.</div>'));
+    }
+
+    function supplierPerformanceRows(db){
+        const g={}, proc=new Map(procurementRows(db).map(r=>[asId(r.id),r]));
+        (db.procurement.acquisitions||[]).forEach(a=>{
+            const sid=asId(a.sellerId??a.seller_id??a.playerId??''), sn=String(a.sellerName??a.seller_name??a.vendor??'').trim(); if(!sid&&!sn)return;
+            const k=sid||'name:'+sn.toLowerCase(); if(!g[k])g[k]={sellerId:sid,sellerName:sn||sid,purchases:0,spend:0,estimatedProfit:0,items:{},observed:0};
+            const x=g[k],q=Math.max(0,Number(a.quantity||0)),c=Math.max(0,Number(a.unitCost||0)),iid=asId(a.itemId||a.item_id||''),exit=Number(proc.get(iid)?.realisticExit||0);
+            x.purchases++;x.spend+=q*c;x.estimatedProfit+=Math.max(0,(exit-c)*q);x.items[iid||String(a.itemName||'Unknown')]=true;
+        });
+        Object.entries(db.marketIntel.suppliers||{}).forEach(([id,o])=>{if(!g[id])g[id]={sellerId:id,sellerName:o.sellerName||id,purchases:0,spend:0,estimatedProfit:0,items:{},observed:0};const x=g[id];x.observed=Number(o.seenCount||0);Object.keys(o.items||{}).forEach(i=>x.items[i]=true);});
+        return Object.values(g).map(x=>{const roi=x.spend?x.estimatedProfit/x.spend*100:0,c=Object.keys(x.items).filter(Boolean).length,score=Math.max(0,Math.min(100,Math.min(100,roi*4)*.4+Math.min(100,x.purchases*8)*.25+Math.min(100,x.observed*2)*.2+Math.min(100,c*10)*.15));return Object.assign({},x,{roiPct:roi,itemCount:c,score:score});}).sort((a,b)=>b.score-a.score);
+    }
+
+    function supplierPerformanceHtml(db){
+        const rows=supplierPerformanceRows(db).slice(0,15);
+        return card('<b>Supplier Performance & Deal Memory</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Combines acquisitions with repeated seller observations.</div>'+
+            (rows.length?rows.map(r=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>'+escapeHtml(r.sellerName||r.sellerId||'Unknown')+'</b> '+(r.sellerId?'['+escapeHtml(r.sellerId)+']':'')+' · Score <b>'+r.score.toFixed(0)+'</b> · Buys '+r.purchases+' · '+r.itemCount+' SKU(s) · Spend '+money(r.spend)+' · Est. profit '+money(r.estimatedProfit)+' · ROI '+r.roiPct.toFixed(1)+'% · Observed '+r.observed+'</div>').join(''):'<div style="font-size:11px;color:#888;">Supplier memory grows from acquisitions and enriched market scans.</div>'));
+    }
+
+    function opportunityAlertRows(db){
+        const map=new Map(procurementRows(db).map(r=>[asId(r.id),r])),out=[];
+        Object.entries(db.procurement.watchlist||{}).forEach(([id,w])=>{if(!w||typeof w!=='object')return;const r=map.get(asId(id));if(!r)return;
+            const max=Number(w.alertMaxBuyPrice??w.maxBuyPrice??0),roi=Number(w.alertMinRoiPct??w.minRoiPct??db.procurement.settings.minMarginPct??4),liq=Number(w.alertMinLiquidityScore??45);
+            const has=max>0||w.alertMinRoiPct!=null||w.alertMinLiquidityScore!=null,hit=has&&(!max||(r.bestBuyPrice>0&&r.bestBuyPrice<=max))&&r.bestDealMarginPct>=roi&&r.liquidityScore>=liq;
+            out.push(Object.assign({},r,{alertMaxBuyPrice:max,alertMinRoiPct:roi,alertMinLiquidityScore:liq,hasRule:has,alertTriggered:hit}));
+        });return out.sort((a,b)=>Number(b.alertTriggered)-Number(a.alertTriggered)||b.acquisitionScore-a.acquisitionScore);
+    }
+
+    function setOpportunityAlertRule(id){
+        id=asId(id);const db=dbLoad(),r=procurementRows(db).find(x=>x.id===id);if(!db.procurement.watchlist[id])db.procurement.watchlist[id]={itemId:id,createdAt:nowIso()};const w=db.procurement.watchlist[id];
+        const a=prompt('Maximum buy price for '+(r?.name||id)+' (0 = no ceiling):',String(w.alertMaxBuyPrice??w.maxBuyPrice??r?.buyTarget??0));if(a==null)return;
+        const b=prompt('Minimum ROI %:',String(w.alertMinRoiPct??db.procurement.settings.minMarginPct??4));if(b==null)return;
+        const c=prompt('Minimum liquidity score 0-100:',String(w.alertMinLiquidityScore??45));if(c==null)return;
+        w.alertMaxBuyPrice=Math.max(0,Number(a)||0);w.alertMinRoiPct=Math.max(0,Number(b)||0);w.alertMinLiquidityScore=Math.max(0,Math.min(100,Number(c)||0));dbSave(db);statusText='Buy alert saved for '+(r?.name||id)+'.';render();
+    }
+
+    function evaluateOpportunityAlerts(db,notify){
+        const rows=opportunityAlertRows(db);db.operations.notificationState=db.operations.notificationState||{};
+        rows.filter(x=>x.alertTriggered).forEach(r=>{const k='opportunity:'+r.id,last=Date.parse(db.operations.notificationState[k]?.at||'')||0,fp=r.bestBuyPrice+'|'+r.bestDealMarginPct.toFixed(2)+'|'+r.liquidityScore.toFixed(0);if(db.operations.notificationState[k]?.fingerprint===fp&&Date.now()-last<3600000)return;db.operations.notificationState[k]={at:nowIso(),fingerprint:fp};if(notify&&db.operations.settings.enableBrowserNotifications&&typeof Notification!=='undefined'&&Notification.permission==='granted'){try{new Notification(SHOP_NAME+': Buy opportunity',{body:r.name+': '+money(r.bestBuyPrice)+' · ROI '+r.bestDealMarginPct.toFixed(1)+'% · Liquidity '+r.liquidityScore.toFixed(0)+'/100'});}catch{}}});return rows;
+    }
+
+    function opportunityAlertsHtml(db){
+        const rows=evaluateOpportunityAlerts(db,false);
+        return card('<b>Opportunity Watchlist + Alerts</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Set buy-price, ROI and liquidity thresholds. Alerts never purchase anything.</div>'+
+            (rows.length?rows.slice(0,15).map(r=>'<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;"><div style="font-size:11px;"><b>'+escapeHtml(r.name)+'</b> · '+(r.alertTriggered?'<span style="color:#9fe3a8;font-weight:bold;">TRIGGERED</span>':'Watching')+'<br>Buy '+(r.bestBuyPrice?money(r.bestBuyPrice):'—')+' / max '+(r.alertMaxBuyPrice?money(r.alertMaxBuyPrice):'—')+' · ROI '+r.bestDealMarginPct.toFixed(1)+'% / min '+r.alertMinRoiPct.toFixed(1)+'% · Liquidity '+r.liquidityScore.toFixed(0)+' / min '+r.alertMinLiquidityScore.toFixed(0)+'</div><button data-proc-action="alert-rule" data-item="'+r.id+'" style="'+btn(r.alertTriggered)+'">Alert Rule</button></div>').join(''):'<div style="font-size:11px;color:#888;">Watch an item to create an opportunity alert.</div>'));
+    }
+
+    function deadCapitalRows(db){
+        const best=capitalRotationRows(db)[0]?.capitalEfficiencyPctDay||0,dd=Number(db.operations.settings.deadStockDays||DEAD_STOCK_DAYS);
+        return advancedInventoryRows(db).filter(r=>r.deadCapital>0||(r.maxAge>=dd&&r.stock>0)).map(r=>{const trapped=Math.max(Number(r.deadCapital||0),Number(r.avgCost||0)*Number(r.stock||0)),cost=trapped*best/100;let action='HOLD';if(r.maxAge>=dd*2||r.forecastDaily<.05)action='LIQUIDATE';else if(r.forecastDaily<.2)action='DISCOUNT 7%';else if(r.maxAge>=dd)action='DISCOUNT 3%';return Object.assign({},r,{trappedCapital:trapped,opportunityCostDay:cost,liquidationAction:action});}).sort((a,b)=>b.opportunityCostDay-a.opportunityCostDay);
+    }
+
+    function deadCapitalDirectorHtml(db){
+        const rows=deadCapitalRows(db).slice(0,15),total=rows.reduce((s,r)=>s+r.trappedCapital,0);
+        return card('<b>Dead Capital Liquidation Director</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Flagged capital: <b>'+money(total)+'</b>. Opportunity cost compares this inventory with the best current capital rotation.</div>'+
+            (rows.length?rows.map(r=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>'+escapeHtml(r.name)+'</b> · <span style="color:'+(r.liquidationAction==='LIQUIDATE'?'#ff8d8d':'#ffd18a')+'">'+escapeHtml(r.liquidationAction)+'</span> · Capital '+money(r.trappedCapital)+' · Age '+r.maxAge.toFixed(1)+'d · Forecast '+r.forecastDaily.toFixed(2)+'/d · Opportunity cost <b>'+money(r.opportunityCostDay)+'/day</b></div>').join(''):'<div style="font-size:11px;color:#888;">No meaningful dead-capital positions detected.</div>'));
+    }
+
+    function customerAffinityHtml(db){
+        const rows=customerAffinityRows(db).filter(r=>r.totalAffinityUnits>0).slice(0,20);
+        return card('<b>Customer Product Affinity</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Used by reorder targeting and subscriber relevance.</div>'+
+            (rows.length?rows.map(r=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>'+escapeHtml(displayUsername(r)||r.id)+'</b> · Products: '+(r.affinityProducts.slice(0,3).map(x=>escapeHtml(x.name)+' '+(x.share*100).toFixed(0)+'%').join(' · ')||'—')+'<br>Categories: '+(r.affinityCategories.slice(0,3).map(x=>escapeHtml(x.name)+' '+(x.share*100).toFixed(0)+'%').join(' · ')||'—')+'</div>').join(''):'<div style="font-size:11px;color:#888;">Affinity appears after tracked customer purchases.</div>'));
+    }
+
+    function saleRevenue(s){return (s.items||[]).reduce((n,i)=>n+Number(i.quantity||0)*Number(i.price||i.unitPrice||0),0)||Number(s.total||s.amount||0);}
+
+    function salesFunnelMetrics(db){
+        const sales=Object.values(db.sales||{}),map={};sales.forEach(s=>{const id=asId(s.playerId);(map[id]||(map[id]=[])).push(s);});
+        let ws=0,wc=0,wr=0;Object.values(db.customers||{}).forEach(c=>{const at=Date.parse(db.coupons?.[asId(c.id)]?.issuedAt||c.lastContacted||'')||0;if(!at)return;ws++;const a=(map[asId(c.id)]||[]).filter(s=>Number(s.timestamp||0)>at&&Number(s.timestamp||0)<=at+86400000);if(a.length){wc++;wr+=a.reduce((n,s)=>n+saleRevenue(s),0);}});
+        const notices=(db.notificationHistory||[]).filter(n=>n.sentAt);let rc=0,rr=0;notices.forEach(n=>{const at=Date.parse(n.sentAt)||0,a=(map[asId(n.playerId)]||[]).filter(s=>Number(s.timestamp||0)>at&&Number(s.timestamp||0)<=at+86400000);if(a.length){rc++;rr+=a.reduce((n,s)=>n+saleRevenue(s),0);}});
+        const coupons=Object.values(db.coupons||{}),ci=coupons.filter(c=>c.issuedAt).length,cr=coupons.filter(c=>(c.redemptions||[]).length>0).length,msg=Object.values(db.customers||{}).reduce((n,c)=>n+Number(c.messageCount||0),0)+notices.length,rev=wr+rr;
+        return {welcomeSent:ws,welcomeConverted:wc,welcomeRevenue:wr,welcomeConversionRate:ws?wc/ws:0,restockSent:notices.length,restockConverted:rc,restockRevenue:rr,restockConversionRate:notices.length?rc/notices.length:0,couponsIssued:ci,couponsRedeemed:cr,couponRedemptionRate:ci?cr/ci:0,outreachCount:msg,attributedRevenue:rev,revenuePerOutreach:msg?rev/msg:0};
+    }
+
+    function salesFunnelHtml(db){
+        const m=salesFunnelMetrics(db);
+        return card('<b>Sales Funnel / Conversion Analytics</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">24-hour attribution after tracked welcome/contact and restock sends.</div><div style="font-size:11px;line-height:1.6;">Welcome/contact: '+m.welcomeSent+' tracked · '+m.welcomeConverted+' converted · <b>'+(m.welcomeConversionRate*100).toFixed(1)+'%</b> · '+money(m.welcomeRevenue)+' revenue<br>Restock: '+m.restockSent+' sent · '+m.restockConverted+' converted · <b>'+(m.restockConversionRate*100).toFixed(1)+'%</b> · '+money(m.restockRevenue)+' revenue<br>Coupons: '+m.couponsIssued+' issued · '+m.couponsRedeemed+' redeemed · <b>'+(m.couponRedemptionRate*100).toFixed(1)+'%</b><br>Revenue / tracked outreach: <b>'+money(m.revenuePerOutreach)+'</b></div>');
+    }
+
+    function competitorIntelligenceRows(db){
+        const g={};Object.entries(db.marketIntel.details||{}).forEach(([iid,d])=>{const a=(d?.organicListings||[]).filter(x=>x.sellerId&&x.price>0);if(!a.length)return;const low=Math.min(...a.map(x=>Number(x.price||Infinity)));a.forEach(l=>{const id=asId(l.sellerId);if(!g[id])g[id]={sellerId:id,sellerName:l.sellerName||id,items:{},listings:0,totalQty:0,positionSum:0,lowMatches:0};const x=g[id];x.sellerName=l.sellerName||x.sellerName;x.items[iid]=true;x.listings++;x.totalQty+=Number(l.quantity||0);const p=low>0?(Number(l.price||0)-low)/low*100:0;x.positionSum+=p;if(p<=.1)x.lowMatches++;});});
+        return Object.values(g).map(x=>{const sk=Object.keys(x.items).length,p=x.listings?x.positionSum/x.listings:0,lr=x.listings?x.lowMatches/x.listings:0;let b='SPECIALIST';if(sk>=6)b='BROAD SELLER';if(lr>=.6)b='AGGRESSIVE LOW';else if(p>=5)b='PREMIUM';return Object.assign({},x,{skuCount:sk,avgPremiumPct:p,lowRate:lr,behavior:b,competitorScore:Math.max(0,Math.min(100,lr*50+Math.min(30,sk*5)+Math.min(20,x.listings*2)))});}).sort((a,b)=>b.competitorScore-a.competitorScore);
+    }
+
+    function competitorIntelHtml(db){
+        const rows=competitorIntelligenceRows(db).slice(0,20);
+        return card('<b>Competitive Bazaar Intelligence</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Profiles recurring organic sellers from enriched Bazaar listings. Sponsored listings are excluded.</div>'+
+            (rows.length?rows.map(r=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>'+escapeHtml(r.sellerName)+'</b> ['+escapeHtml(r.sellerId)+'] · '+escapeHtml(r.behavior)+' · Score <b>'+r.competitorScore.toFixed(0)+'</b> · '+r.skuCount+' SKU(s) · '+r.totalQty.toLocaleString()+' units · Lowest-price match '+(r.lowRate*100).toFixed(0)+'% · Avg premium '+r.avgPremiumPct.toFixed(1)+'%</div>').join(''):'<div style="font-size:11px;color:#888;">Enrich market items to build competitor profiles.</div>'));
+    }
+
     function procurementHtml(db) {
         const proc = db.procurement;
         const rows = procurementRows(db);
@@ -5871,7 +6050,7 @@
             ? card(`<b>Diagnostics</b><div style="font-size:11px;color:#aaa;margin-top:5px;">${proc.diagnostics.slice(0,12).map(d => `${escapeHtml(fmtDate(d.at))}: ${escapeHtml(d.text)}`).join('<br>')}</div>`)
             : '';
 
-        return settings + capitalHtml + scanner + acquisitionForm + travel + diagnostics;
+        return capitalCommandHtml(db) + opportunityAlertsHtml(db) + settings + capitalHtml + scanner + acquisitionForm + travel + diagnostics;
     }
 
 
@@ -6065,7 +6244,7 @@
             ? card(`<b>Market Intel Diagnostics</b><div style="font-size:10px;color:#aaa;margin-top:5px;">${intel.diagnostics.slice(0,15).map(d => `${escapeHtml(fmtDate(d.at))}: ${escapeHtml(d.text)}`).join('<br>')}</div>`)
             : '';
 
-        return controls + restockHtml + globalHtml + instantHtml + basketHtml + capitalHtml + dollarHtml + supplierHtml + rankedHtml + diagnostics;
+        return controls + competitorIntelHtml(db) + supplierPerformanceHtml(db) + restockHtml + globalHtml + instantHtml + basketHtml + capitalHtml + dollarHtml + supplierHtml + rankedHtml + diagnostics;
     }
 
 
@@ -6154,7 +6333,7 @@
 
         const couponHtml=card(`<b>Coupon ROI</b><div style="font-size:11px;">Coupon customers ${coupon.couponCustomers} · Repeat ${(coupon.couponRepeatRate*100).toFixed(1)}%<br>Non-coupon customers ${coupon.nonCouponCustomers} · Repeat ${(coupon.nonCouponRepeatRate*100).toFixed(1)}%<br>Cashback paid ${money(coupon.cashback)} · Estimated gross profit from coupon-customer revenue ${money(coupon.grossProfit)} · Estimated ROI ${(coupon.roi*100).toFixed(1)}%</div>`);
 
-        return pricingDirectorHtml(db)+profitHtml+deadHtml+forecastHtml+elasticityHtml+whatifHtml+customerHtml+couponHtml;
+        return capitalCommandHtml(db)+deadCapitalDirectorHtml(db)+salesFunnelHtml(db)+customerAffinityHtml(db)+pricingDirectorHtml(db)+profitHtml+deadHtml+forecastHtml+elasticityHtml+whatifHtml+customerHtml+couponHtml;
     }
 
 
@@ -6841,6 +7020,7 @@
             const id = button.dataset.item;
 
             if (action === 'watch') return toggleWatchItem(id);
+            if (action === 'alert-rule') return setOpportunityAlertRule(id);
 
             if (action === 'market') {
                 statusText = `Refreshing official markets for item ${id}…`;
@@ -6901,6 +7081,7 @@
             const refundId = button.dataset.refund;
             const db = dbLoad();
             if (action === 'compose' && db.customers[id]) return composeCustomer(db.customers[id]);
+            if (action === 'reorder-compose') return prepareReorderOutreach(id);
             if (action === 'contacted') return markCustomerContacted(id);
             if (action === 'subscribe' && db.customers[id]) return subscribeCustomer(db.customers[id]);
             if (action === 'unsubscribe') return unsubscribeCustomer(id);
@@ -7049,6 +7230,14 @@
         setSimpleMode: value => { simpleMode = Boolean(value); GM_setValue(UI_MODE_KEY, simpleMode ? 'simple' : 'advanced'); activeTab = simpleMode ? 'home' : 'ops'; render(); },
         procurementRows: () => procurementRows(dbLoad()),
         pricingDirectorRows: () => pricingDirectorRows(dbLoad()),
+        capitalRotationRows: () => capitalRotationRows(dbLoad()),
+        customerReorderRows: () => customerReorderRows(dbLoad()),
+        customerAffinityRows: () => customerAffinityRows(dbLoad()),
+        supplierPerformanceRows: () => supplierPerformanceRows(dbLoad()),
+        opportunityAlertRows: () => opportunityAlertRows(dbLoad()),
+        deadCapitalRows: () => deadCapitalRows(dbLoad()),
+        salesFunnelMetrics: () => salesFunnelMetrics(dbLoad()),
+        competitorIntelligenceRows: () => competitorIntelligenceRows(dbLoad()),
         buildRepricingPlan: () => {
             const db=dbLoad(); const plan=buildRepricingPlan(db); dbSave(db); return plan;
         },
