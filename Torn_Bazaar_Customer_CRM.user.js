@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.8.5
+// @version      6.8.6
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -16,6 +16,7 @@
 // @connect      api.torn.com
 // @connect      weav3r.dev
 // @connect      api.github.com
+// @connect      raw.githubusercontent.com
 // ==/UserScript==
 
 (() => {
@@ -25,7 +26,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.8.5';
+    const VERSION = '6.8.6';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -82,6 +83,8 @@
     const TRAVEL_FEED_KEY = 'mm_bazaar_crm_travel_feed_v1';
     const TRAVEL_RETURN_KEY = 'mm_bazaar_crm_travel_return_v1';
     const TRAVEL_CAPTURE_STATUS_KEY = 'mm_bazaar_crm_travel_capture_status_v1';
+    const CRM_UPDATE_URL = 'https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js';
+    const CRM_UPDATE_STATUS_KEY = 'mm_bazaar_crm_update_status_v1';
 
     const CASHBACK_TIERS = [
         { minimum: 1_000_000, cashback: 20_000 },
@@ -7568,6 +7571,97 @@
         return card(`<b>More</b><div style="font-size:11px;color:#999;margin:4px 0 8px;">Advanced reports and configuration remain fully available. Current strategy: <b>${escapeHtml(preset)}</b>.</div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;"><button data-open-advanced="analytics" style="${btn()}">Analytics & Reports</button><button data-open-advanced="sales" style="${btn()}">Sales Ledger</button><button data-open-advanced="inventory" style="${btn()}">Full Inventory</button><button data-open-advanced="procurement" style="${btn()}">Full Procurement</button><button data-open-advanced="intel" style="${btn()}">Full Market Intel</button><button data-open-advanced="subscribers" style="${btn()}">Restock Subscribers</button><button data-open-advanced="coupons" style="${btn()}">Coupons</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button><button data-open-advanced="ops" style="${btn()}">Operations Detail</button><button data-open-advanced="settings" style="${btn(true)}">Settings & Diagnostics</button></div><div style="border-top:1px solid #333;margin-top:9px;padding-top:7px;font-size:11px;color:#aaa;">Revenue ${money(brief.revenue)} · Gross profit ${money(brief.grossProfit)} · Dead capital ${money(brief.deadCapital)} · Lost profit ${money(brief.lostProfit)}</div>`);
     }
 
+
+    function compareVersions(a,b) {
+        const pa=String(a||'0').split('.').map(x=>Number(x)||0);
+        const pb=String(b||'0').split('.').map(x=>Number(x)||0);
+        const n=Math.max(pa.length,pb.length);
+        for(let i=0;i<n;i++){
+            const av=pa[i]||0,bv=pb[i]||0;
+            if(av>bv)return 1;
+            if(av<bv)return -1;
+        }
+        return 0;
+    }
+
+    function crmUpdateStatus() {
+        const value=GM_getValue(CRM_UPDATE_STATUS_KEY,null);
+        return value && typeof value==='object' ? value : {};
+    }
+
+    function setCrmUpdateStatus(patch) {
+        const next={...crmUpdateStatus(),...patch,updatedAt:Date.now()};
+        GM_setValue(CRM_UPDATE_STATUS_KEY,next);
+        return next;
+    }
+
+    function fetchLatestCrmSource() {
+        return new Promise((resolve,reject)=>{
+            GM_xmlhttpRequest({
+                method:'GET',
+                url:CRM_UPDATE_URL+'?t='+Date.now(),
+                timeout:15000,
+                headers:{Accept:'text/plain'},
+                onload:r=>{
+                    if(r.status<200||r.status>=300)return reject(new Error('CRM update HTTP '+r.status));
+                    resolve(String(r.responseText||''));
+                },
+                ontimeout:()=>reject(new Error('CRM update check timed out.')),
+                onerror:()=>reject(new Error('CRM update network error.'))
+            });
+        });
+    }
+
+    function sourceVersion(source) {
+        const match=String(source||'').match(/^\s*\/\/\s*@version\s+([^\s]+)/m);
+        return match?String(match[1]).trim():'';
+    }
+
+    async function checkCrmUpdate({silent=false}={}) {
+        try{
+            const source=await fetchLatestCrmSource();
+            const latest=sourceVersion(source);
+            if(!latest)throw new Error('Could not read the published CRM version.');
+            const available=compareVersions(latest,VERSION)>0;
+            setCrmUpdateStatus({checkedAt:Date.now(),latestVersion:latest,available,error:''});
+            if(!silent){
+                statusText=available?'CRM update available: v'+latest+'.':'CRM is current at v'+VERSION+'.';
+                render();
+            }
+            return {latestVersion:latest,available};
+        }catch(error){
+            setCrmUpdateStatus({checkedAt:Date.now(),error:error?.message||String(error)});
+            if(!silent){statusText='CRM update check failed: '+(error?.message||String(error));render();}
+            throw error;
+        }
+    }
+
+    function openCrmUpdateInstaller() {
+        setCrmUpdateStatus({lastActionAt:Date.now(),lastAction:'open-installer'});
+        statusText='Opening the CRM update installer in this tab…';
+        try{render();}catch{}
+        navigateFromCRM(CRM_UPDATE_URL+'?t='+Date.now());
+    }
+
+    function updateCenterHtml() {
+        const us=crmUpdateStatus();
+        const available=Boolean(us.latestVersion&&compareVersions(us.latestVersion,VERSION)>0);
+        return '<div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;">'+
+            '<b>CRM Update Center</b>'+
+            '<div style="font-size:11px;color:#aaa;margin:4px 0 7px;">Installed: <b>v'+escapeHtml(VERSION)+'</b>'+
+            (us.latestVersion?' · Published: <b>v'+escapeHtml(us.latestVersion)+'</b>':'')+
+            (available?' · <span style="color:#9fe3a8;font-weight:bold;">UPDATE AVAILABLE</span>':'')+
+            '</div>'+
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;">'+
+                '<button id="mm-update-check" style="'+btn()+'">Check for Updates</button>'+
+                '<button id="mm-update-open" style="'+btn(available)+'">Update CRM</button>'+
+            '</div>'+
+            '<div style="font-size:10px;color:#888;margin-top:6px;">Update is initiated from CRM and opens the signed userscript installer in the same tab. Existing IndexedDB, customer history, travel history, settings, and GM storage are preserved.'+
+            (us.error?'<br><span style="color:#ff9b9b;">Last error: '+escapeHtml(us.error)+'</span>':'')+
+            '</div>'+
+        '</div>';
+    }
+
     function settingsHtml() {
         const hasKey = Boolean(getApiKey());
         const db = dbLoad();
@@ -7651,6 +7745,7 @@
                     Local backend: IndexedDB · Last local save: ${escapeHtml(fmtDate(db.meta?.storage?.lastSavedAt))}
                 </div>
             </div>
+            ${updateCenterHtml()}
             <div style="font-size:12px;color:#888;margin-top:8px;">
                 CRM v${VERSION}. Simple mode is task-first; Advanced mode exposes every detailed page. Torn data and TornW3B public market intelligence are normalized locally; scoring, ROI, liquidity, supplier, allocation, customer, demand, and realized-profit calculations run in this userscript.
                 Messages, purchases, Bazaar submissions, trades, and money transfers are never auto-submitted.
@@ -7888,6 +7983,8 @@
             statusText = `Username repair complete: ${count} repaired.`; render();
         });
         root.querySelector('#mm-repair-sales-integrity')?.addEventListener('click', repairSalesIntegrityNow);
+        root.querySelector('#mm-update-check')?.addEventListener('click', () => checkCrmUpdate({silent:false}).catch(()=>{}));
+        root.querySelector('#mm-update-open')?.addEventListener('click', openCrmUpdateInstaller);
 
         root.querySelector('#mm-intel-global-sync')?.addEventListener('click', () => syncMarketIntelligence(false));
         root.querySelector('#mm-intel-full-sync')?.addEventListener('click', () => syncMarketIntelligence(true));
@@ -8431,6 +8528,8 @@
             if (getApiKey()) sync({ silent: true });
         }, POLL_MS);
 
+        setTimeout(() => checkCrmUpdate({silent:true}).catch(()=>{}), 12_000);
+
         setTimeout(() => syncTravelStock({ silent:true, force:true }).then(rows => {
             if (rows?.length && !getUI().minimized) {
                 statusText = `Travel Stock ready: ${rows.length} live item routes loaded.`;
@@ -8507,7 +8606,9 @@
         currentBazaarInventory: () => currentBazaarInventoryRows(dbLoad()),
         prepareBazaarInventoryNotification,
         repairRecentSalesCoverage,
-        recalculateCustomerSalesTotals
+        recalculateCustomerSalesTotals,
+        checkCrmUpdate,
+        openCrmUpdateInstaller
     });
 
     if (location.hostname === 'weav3r.dev' || location.hostname === 'www.weav3r.dev') {
