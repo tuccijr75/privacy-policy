@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.7.2
+// @version      6.8.0
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -25,7 +25,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.7.2';
+    const VERSION = '6.8.0';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -34,6 +34,7 @@
     const BANNER_URL = 'https://i.postimg.cc/qvV31ggb/Chat-GPT-Image-Sep-20-2026-09-46-21-PM.png';
     const BAZAAR_SELL_LOG_ID = 1226;
     const PENDING_COMPOSE_KEY = 'mm_bazaar_crm_pending_compose_v1';
+    const PENDING_FIRST_SEND_KEY = 'mm_bazaar_crm_pending_first_send_v1';
     const POLL_MS = 15_000;
     const FIRST_SYNC_LOOKBACK_MS = 24 * 60 * 60 * 1000;
     const CUSTOMER_REFRESH_LOOKBACK_MS = 72 * 60 * 60 * 1000;
@@ -80,6 +81,7 @@
     const TRAVEL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
     const TRAVEL_FEED_KEY = 'mm_bazaar_crm_travel_feed_v1';
     const TRAVEL_RETURN_KEY = 'mm_bazaar_crm_travel_return_v1';
+    const TRAVEL_CAPTURE_STATUS_KEY = 'mm_bazaar_crm_travel_capture_status_v1';
 
     const CASHBACK_TIERS = [
         { minimum: 1_000_000, cashback: 20_000 },
@@ -2772,41 +2774,133 @@
     function captureWeav3rTravelStockPage() {
         try {
             const rows = parseWeav3rTravelStockHtml(document.documentElement.outerHTML);
-            const payload = { capturedAt: Date.now(), rows };
-            GM_setValue(TRAVEL_FEED_KEY, payload);
-            return rows.length;
+            const payload = writeTravelFeed({ capturedAt: Date.now(), rows });
+            return payload.rows.length;
         } catch {
             return 0;
         }
     }
 
     function installWeav3rTravelCollector() {
-        if (location.hostname !== 'weav3r.dev' || !location.pathname.startsWith('/travel-stock')) return;
+        if ((location.hostname !== 'weav3r.dev' && location.hostname !== 'www.weav3r.dev') || !location.pathname.startsWith('/travel-stock')) return;
+
         let attempts = 0;
         let returned = false;
+        let lastCount = 0;
+        let stableCaptures = 0;
+        let observer = null;
+
+        const maybeReturn = count => {
+            if (!count || returned) return false;
+            const verify = readTravelFeed();
+            if (!verify?.rows?.length || Number(verify.capturedAt || 0) <= 0) return false;
+
+            if (count === lastCount) stableCaptures++;
+            else stableCaptures = 1;
+            lastCount = count;
+
+            // Require two successful captures so a partially-rendered table is not persisted.
+            if (stableCaptures < 2) return false;
+
+            const ret = GM_getValue(TRAVEL_RETURN_KEY, null);
+            const requestedAt = Number(ret?.at || 0);
+            const returnUrl = String(ret?.url || '');
+            if (returnUrl.startsWith('https://www.torn.com/') && Date.now() - requestedAt < 5 * 60 * 1000) {
+                returned = true;
+                GM_deleteValue(TRAVEL_RETURN_KEY);
+                if (observer) observer.disconnect();
+                setTimeout(() => { location.href = returnUrl; }, 850);
+                return true;
+            }
+            return false;
+        };
+
         const capture = () => {
+            if (returned) return;
             attempts++;
             const count = captureWeav3rTravelStockPage();
-            if (count > 0 && !returned) {
-                const ret = GM_getValue(TRAVEL_RETURN_KEY, null);
-                const requestedAt = Number(ret?.at || 0);
-                const returnUrl = String(ret?.url || '');
-                if (returnUrl.startsWith('https://www.torn.com/') && Date.now() - requestedAt < 5 * 60 * 1000) {
-                    returned = true;
-                    GM_deleteValue(TRAVEL_RETURN_KEY);
-                    setTimeout(() => { location.href = returnUrl; }, 900);
-                    return;
-                }
-            }
-            if (!count && attempts < 20) setTimeout(capture, 1000);
+            if (count > 0) maybeReturn(count);
+            if (!returned && attempts < 90) setTimeout(capture, 1000);
         };
-        setTimeout(capture, 700);
-        setInterval(capture, 60_000);
+
+        observer = new MutationObserver(() => {
+            if (returned) return;
+            const table = [...document.querySelectorAll('table')].find(t => {
+                const x=String(t.textContent||'').toLowerCase();
+                return x.includes('country')&&x.includes('item')&&x.includes('stock')&&x.includes('profit');
+            });
+            if (table) {
+                const count=captureWeav3rTravelStockPage();
+                if (count>0) maybeReturn(count);
+            }
+        });
+        observer.observe(document.documentElement,{childList:true,subtree:true});
+
+        setTimeout(capture,700);
+        setInterval(() => { if (!returned) captureWeav3rTravelStockPage(); },60_000);
+    }
+
+
+    function readTravelFeed() {
+        const raw = GM_getValue(TRAVEL_FEED_KEY, null);
+        if (!raw) return null;
+        if (typeof raw === 'string') {
+            try { return JSON.parse(raw); } catch { return null; }
+        }
+        return raw && typeof raw === 'object' ? raw : null;
+    }
+
+    function writeTravelFeed(payload) {
+        const safe = {
+            capturedAt: Number(payload?.capturedAt || Date.now()),
+            rows: Array.isArray(payload?.rows) ? payload.rows : []
+        };
+        // JSON string is intentionally used for maximum cross-origin userscript-storage compatibility.
+        GM_setValue(TRAVEL_FEED_KEY, JSON.stringify(safe));
+        GM_setValue(TRAVEL_CAPTURE_STATUS_KEY, { capturedAt:safe.capturedAt, rows:safe.rows.length, at:Date.now() });
+        return safe;
+    }
+
+    function fetchWeav3rTravelPage() {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method:'GET',
+                url:'https://weav3r.dev/travel-stock',
+                timeout:20000,
+                headers:{ Accept:'text/html,application/xhtml+xml' },
+                onload:r => {
+                    if (r.status < 200 || r.status >= 300) return reject(new Error('TornW3B HTTP '+r.status));
+                    const body=String(r.responseText||'');
+                    if (/just a moment|challenge-platform|cf-chl/i.test(body)) return reject(new Error('TornW3B Cloudflare challenge blocked direct refresh'));
+                    resolve(body);
+                },
+                ontimeout:()=>reject(new Error('TornW3B direct refresh timed out')),
+                onerror:()=>reject(new Error('TornW3B direct refresh network error'))
+            });
+        });
+    }
+
+    async function updateTravelData() {
+        statusText='Refreshing TornW3B Travel Stock directly…';
+        render();
+        try {
+            const html=await fetchWeav3rTravelPage();
+            const rows=parseWeav3rTravelStockHtml(html);
+            writeTravelFeed({capturedAt:Date.now(),rows});
+            await syncTravelStock({silent:false,force:true});
+            return rows;
+        } catch (error) {
+            console.warn('[MM CRM] Direct travel refresh unavailable; using same-tab browser capture.', error);
+            statusText='Direct TornW3B refresh blocked. Opening live page for same-tab capture…';
+            render();
+            setTimeout(beginTravelCapture,250);
+            return [];
+        }
     }
 
     async function syncTravelStock({silent=false,force=false}={}){
         const db=dbLoad(),last=Date.parse(db.travelIntel.lastSyncAt||'')||0;
-        const feed=GM_getValue(TRAVEL_FEED_KEY,null);
+        const feed=readTravelFeed();
         const capturedAt=Number(feed?.capturedAt||0);
         const rows=Array.isArray(feed?.rows)?feed.rows:[];
         const feedAge=capturedAt?Date.now()-capturedAt:Infinity;
@@ -5002,7 +5096,7 @@
         statusText = 'Coupon reminder prepared for ' + (displayUsername(customer) || id) + '. Send remains manual.';
         render();
     }
-    function composeMessage(playerId, subject, body, bodyHtml = '') {
+    function composeMessage(playerId, subject, body, bodyHtml = '', options = {}) {
         const id = asId(playerId);
         const payload = {
             playerId: id,
@@ -5018,6 +5112,18 @@
             so the destination tab must not depend only on URL parameters.
         */
         GM_setValue(PENDING_COMPOSE_KEY, payload);
+
+        if (options?.autoDetectFirstSend) {
+            GM_setValue(PENDING_FIRST_SEND_KEY, {
+                playerId: id,
+                subject: payload.subject,
+                createdAt: Date.now(),
+                composeOpenedAt: Date.now(),
+                state: 'awaiting-send'
+            });
+        } else {
+            GM_deleteValue(PENDING_FIRST_SEND_KEY);
+        }
 
         const url = 'https://www.torn.com/messages.php#/p=compose' +
             '&XID=' + encodeURIComponent(id) +
@@ -5038,7 +5144,7 @@
             const fresh = db.customers[id];
             if (!hasRealUsername(fresh)) throw new Error(`Could not resolve Torn username for [${id}].`);
             const message = customerMessage(fresh);
-            composeMessage(id, message.subject, message.body, message.bodyHtml);
+            composeMessage(id, message.subject, message.body, message.bodyHtml, { autoDetectFirstSend: Boolean(message.firstContact) });
             statusText = `Message prepared for ${displayUsername(fresh)}. Send remains manual.`;
         } catch (error) {
             statusText = `Message not opened: ${error?.message || String(error)}`;
@@ -5064,6 +5170,37 @@
         dbSave(db);
         statusText = `${displayUsername(customer) || id} marked contacted.`;
         render();
+    }
+
+
+    function completeFirstMessageSend(playerId, source = 'auto-detect') {
+        const id = asId(playerId);
+        const db = dbLoad();
+        const customer = db.customers[id];
+        if (!customer) return false;
+
+        // Idempotent: this automation is ONLY for the customer's first welcome message.
+        if (customerHasBeenContacted(customer)) {
+            GM_deleteValue(PENDING_FIRST_SEND_KEY);
+            return false;
+        }
+
+        customer.contacted = true;
+        customer.firstMessageSent = true;
+        customer.messageCount = Math.max(1, Number(customer.messageCount || 0) + 1);
+        customer.lastContacted = nowIso();
+
+        const coupon = ensureCoupon(db, customer);
+        if (!coupon.issuedAt) coupon.issuedAt = customer.lastContacted;
+
+        rememberContactState(customer);
+        dbSave(db);
+        GM_deleteValue(PENDING_FIRST_SEND_KEY);
+
+        statusText = `${displayUsername(customer) || id} first message detected as sent. Customer marked contacted; coupon activated.`;
+        try { render(); } catch {}
+        console.info('[MM CRM] First-message send completed', { playerId:id, source });
+        return true;
     }
 
     // ============================================================
@@ -7286,7 +7423,7 @@
             }
         }));
 
-        root.querySelector('#mm-travel-capture')?.addEventListener('click', beginTravelCapture);
+        root.querySelector('#mm-travel-capture')?.addEventListener('click', () => updateTravelData().catch(error => { statusText=`Travel refresh failed: ${error?.message||String(error)}`; render(); }));
         root.querySelector('#mm-travel-sync')?.addEventListener('click', () => syncTravelStock({ silent:false, force:true }).catch(()=>{}));
         root.querySelector('#mm-travel-save')?.addEventListener('click', () => saveTravelSettings(root));
         root.querySelector('#mm-opportunity-sync')?.addEventListener('click', () => syncProcurement());
@@ -7665,8 +7802,144 @@
     // ROUTING / INITIALIZATION
     // ============================================================
 
+
+    function visibleSendButton() {
+        const candidates = [...document.querySelectorAll('button, input[type="submit"], [role="button"]')].filter(visible);
+        return candidates.find(el => {
+            const text = String(el.innerText || el.value || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || '').trim().toLowerCase();
+            if (!/(^|\s)send(\s|$)|send message/.test(text)) return false;
+            const meta = elementMeta(el);
+            return !/search|friend|money|cash|trade|gift/.test(meta);
+        }) || null;
+    }
+
+    function composeStillVisible(expectedSubject = '') {
+        const subject = findComposeSubjectInput();
+        if (!subject || !visible(subject)) return false;
+        if (!expectedSubject) return true;
+        const value = String(subject.value || '').trim();
+        return !value || value === String(expectedSubject || '').trim();
+    }
+
+    function messageSentConfirmationVisible() {
+        const nodes = [...document.querySelectorAll('[role="alert"], [class*="success" i], [class*="message" i], [class*="notification" i], [class*="toast" i]')]
+            .filter(visible)
+            .slice(-80);
+        return nodes.some(el => {
+            const t = String(el.innerText || el.textContent || '').trim().toLowerCase();
+            return /message\s+(has\s+been\s+)?sent|sent\s+successfully|successfully\s+sent/.test(t);
+        });
+    }
+
+    function installFirstMessageSendDetector() {
+        if (!location.pathname.includes('messages.php')) return;
+
+        const pending = GM_getValue(PENDING_FIRST_SEND_KEY, null);
+        const id = asId(pending?.playerId);
+        const createdAt = Number(pending?.createdAt || 0);
+        if (!id || !createdAt || Date.now() - createdAt > 15 * 60 * 1000) {
+            if (pending) GM_deleteValue(PENDING_FIRST_SEND_KEY);
+            return;
+        }
+
+        let armed = true;
+        let clickedAt = 0;
+        let verifyTimer = null;
+        let scanTimer = null;
+        let observer = null;
+
+        const cleanup = keepPending => {
+            armed = false;
+            if (verifyTimer) clearInterval(verifyTimer);
+            if (scanTimer) clearInterval(scanTimer);
+            if (observer) observer.disconnect();
+            document.removeEventListener('click', clickHandler, true);
+            document.removeEventListener('submit', submitHandler, true);
+            if (!keepPending) GM_deleteValue(PENDING_FIRST_SEND_KEY);
+        };
+
+        const verifyAfterSend = () => {
+            if (!armed || !clickedAt) return;
+            const elapsed = Date.now() - clickedAt;
+
+            // Confirmation hierarchy:
+            // 1) explicit Torn "message sent" UI
+            // 2) compose form/subject disappears or route exits compose after the human Send click.
+            const confirmed =
+                messageSentConfirmationVisible() ||
+                !location.hash.includes('compose') ||
+                !composeStillVisible(pending.subject);
+
+            if (confirmed) {
+                cleanup(true);
+                completeFirstMessageSend(id, 'messages-page-send-confirmed');
+                return;
+            }
+
+            // Do not mark on a failed/blocked send. Re-arm for another click.
+            if (elapsed >= 5000) {
+                clickedAt = 0;
+                if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = null; }
+                GM_setValue(PENDING_FIRST_SEND_KEY, { ...pending, state:'awaiting-send', lastFailedVerifyAt:Date.now() });
+                console.warn('[MM CRM] Send click was not confirmed within 5s; first-message state left pending.');
+            }
+        };
+
+        const armVerification = () => {
+            if (!armed || clickedAt) return;
+            clickedAt = Date.now();
+            GM_setValue(PENDING_FIRST_SEND_KEY, { ...pending, state:'send-clicked', sendClickedAt:clickedAt });
+            verifyTimer = setInterval(verifyAfterSend, 250);
+            // Immediate and delayed scans cover fast Torn SPA transitions.
+            setTimeout(verifyAfterSend, 350);
+            setTimeout(verifyAfterSend, 1200);
+            setTimeout(verifyAfterSend, 3000);
+            setTimeout(verifyAfterSend, 4800);
+        };
+
+        const clickHandler = event => {
+            if (!armed) return;
+            const el = event.target?.closest?.('button, input[type="submit"], [role="button"]');
+            if (!el || !visible(el)) return;
+            const text = String(el.innerText || el.value || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || '').trim().toLowerCase();
+            if (/(^|\s)send(\s|$)|send message/.test(text) && !/search|money|cash|trade|gift/.test(elementMeta(el))) {
+                armVerification();
+            }
+        };
+
+        const submitHandler = event => {
+            if (!armed) return;
+            const form = event.target;
+            if (!(form instanceof HTMLFormElement)) return;
+            const send = visibleSendButton();
+            if (send && (form.contains(send) || composeStillVisible(pending.subject))) armVerification();
+        };
+
+        document.addEventListener('click', clickHandler, true);
+        document.addEventListener('submit', submitHandler, true);
+
+        // 3–5 second scanning window begins after Compose opens, as requested.
+        const started = Date.now();
+        scanTimer = setInterval(() => {
+            if (!armed) return;
+            if (Date.now() - started > 5 * 60 * 1000) {
+                cleanup(true);
+                return;
+            }
+            // Ensure the Send control is present and the compose page is still alive.
+            visibleSendButton();
+            if (clickedAt) verifyAfterSend();
+        }, 400);
+
+        observer = new MutationObserver(() => {
+            if (armed && clickedAt) verifyAfterSend();
+        });
+        observer.observe(document.documentElement, { childList:true, subtree:true, attributes:true, attributeFilter:['class','style','disabled'] });
+    }
+
     function runPageHelpers() {
         fillMessageComposer();
+        installFirstMessageSendDetector();
         fillRefundForm();
         setTimeout(installBazaarListingAssistant, 450);
     }
@@ -7803,6 +8076,7 @@
         salesFunnelMetrics: () => salesFunnelMetrics(dbLoad()),
         competitorIntelligenceRows: () => competitorIntelligenceRows(dbLoad()),
         syncTravelStock,
+        updateTravelData,
         travelOpportunityRows: () => travelOpportunityRows(dbLoad()),
         travelBasketRows: () => travelBasketRows(dbLoad()),
         buildRepricingPlan: () => {
