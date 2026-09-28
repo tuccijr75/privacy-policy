@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.1.0
+// @version      7.1.1
 // @description  Bazaar operations CRM with in-CRM update checking, TornW3B travel intelligence, customer automation, procurement, analytics, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.1.0';
+    const VERSION = '7.1.1';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -629,8 +629,59 @@
             // match the append-only sales ledger or the integrity audit will fail.
         }
 
-        merged.coupons = { ...(latest.coupons || {}), ...(merged.coupons || {}) };
-        merged.refunds = { ...(latest.refunds || {}), ...(merged.refunds || {}) };
+        // Cashback/refund state is monotonic. A stale Torn tab must never undo a
+        // completed refund or remove a recorded redemption.
+        const latestRefunds = latest.refunds || {};
+        const incomingRefunds = merged.refunds || {};
+        const refundIds = new Set([...Object.keys(latestRefunds), ...Object.keys(incomingRefunds)]);
+        merged.refunds = {};
+        const refundRank = status => status === 'completed' ? 3 : status === 'cancelled' ? 2 : status === 'pending' ? 1 : 0;
+        for (const id of refundIds) {
+            const oldR = latestRefunds[id];
+            const newR = incomingRefunds[id];
+            if (!oldR) { merged.refunds[id] = deepClone(newR); continue; }
+            if (!newR) { merged.refunds[id] = deepClone(oldR); continue; }
+            const oldRank = refundRank(oldR.status);
+            const newRank = refundRank(newR.status);
+            let chosen = newRank >= oldRank ? deepClone(newR) : deepClone(oldR);
+            if (oldRank === newRank) {
+                const oldChanged = Date.parse(oldR.completedAt || oldR.cancelledAt || oldR.createdAt || '') || 0;
+                const newChanged = Date.parse(newR.completedAt || newR.cancelledAt || newR.createdAt || '') || 0;
+                chosen = newChanged >= oldChanged ? deepClone(newR) : deepClone(oldR);
+            }
+            merged.refunds[id] = chosen;
+        }
+
+        const latestCoupons = latest.coupons || {};
+        const incomingCoupons = merged.coupons || {};
+        const couponIds = new Set([...Object.keys(latestCoupons), ...Object.keys(incomingCoupons)]);
+        merged.coupons = {};
+        for (const id of couponIds) {
+            const oldC = latestCoupons[id];
+            const newC = incomingCoupons[id];
+            if (!oldC) { merged.coupons[id] = deepClone(newC); continue; }
+            if (!newC) { merged.coupons[id] = deepClone(oldC); continue; }
+
+            const coupon = { ...deepClone(oldC), ...deepClone(newC) };
+            const redemptionMap = new Map();
+            for (const r of [...(oldC.redemptions || []), ...(newC.redemptions || [])]) {
+                const key = String(r?.refundId || '') || JSON.stringify(r);
+                const prior = redemptionMap.get(key);
+                if (!prior || (Date.parse(r?.completedAt || '') || 0) >= (Date.parse(prior?.completedAt || '') || 0)) {
+                    redemptionMap.set(key, deepClone(r));
+                }
+            }
+            coupon.redemptions = [...redemptionMap.values()];
+            coupon.uses = Math.max(
+                Number(oldC.uses || 0),
+                Number(newC.uses || 0),
+                coupon.redemptions.length
+            );
+
+            const pendingCandidates = [newC.pendingRefundId, oldC.pendingRefundId].map(asId).filter(Boolean);
+            coupon.pendingRefundId = pendingCandidates.find(refundId => merged.refunds[refundId]?.status === 'pending') || null;
+            merged.coupons[id] = coupon;
+        }
         merged.subscribers = { ...(latest.subscribers || {}), ...(merged.subscribers || {}) };
         merged.removedCustomers = { ...(latest.removedCustomers || {}), ...(merged.removedCustomers || {}) };
 
@@ -6089,29 +6140,74 @@
         render();
     }
 
-    function completeRefund(refundId) {
+    async function completeRefund(refundId) {
+        const id = asId(refundId);
         const db = dbLoad();
-        const refund = db.refunds[refundId];
-        if (!refund || refund.status !== 'pending') return;
-        const coupon = db.coupons[refund.playerId];
-        if (!coupon || coupon.pendingRefundId !== refundId) {
-            alert('Refund/coupon state mismatch. No data changed.');
-            return;
+        const refund = db.refunds[id];
+        if (!refund) {
+            statusText = 'Cashback record was not found.';
+            render();
+            return false;
         }
+        if (refund.status === 'completed') {
+            statusText = `Cashback ${money(refund.amount)} was already marked paid.`;
+            render();
+            return true;
+        }
+        if (refund.status !== 'pending') {
+            statusText = `Cashback cannot be completed because its status is ${refund.status || 'unknown'}.`;
+            render();
+            return false;
+        }
+
+        const coupon = db.coupons[refund.playerId];
+        if (!coupon) {
+            statusText = 'Cashback coupon record is missing; no data changed.';
+            render();
+            return false;
+        }
+
+        // Repair stale pending linkage rather than refusing a valid pending refund.
+        const conflictingPending = asId(coupon.pendingRefundId);
+        if (conflictingPending && conflictingPending !== id && db.refunds[conflictingPending]?.status === 'pending') {
+            statusText = 'Another cashback refund is still pending for this customer.';
+            render();
+            return false;
+        }
+
         refund.status = 'completed';
         refund.completedAt = nowIso();
-        coupon.uses = Number(coupon.uses || 0) + 1;
-        coupon.redemptions.push({
-            refundId,
-            amount: refund.amount,
-            purchaseTotal: refund.purchaseTotal,
-            saleIds: [...refund.saleIds],
-            completedAt: refund.completedAt
-        });
+
+        coupon.redemptions = Array.isArray(coupon.redemptions) ? coupon.redemptions : [];
+        const alreadyRecorded = coupon.redemptions.some(r => asId(r.refundId) === id);
+        if (!alreadyRecorded) {
+            coupon.redemptions.push({
+                refundId: id,
+                amount: refund.amount,
+                purchaseTotal: refund.purchaseTotal,
+                saleIds: [...(refund.saleIds || [])],
+                completedAt: refund.completedAt
+            });
+        }
+        coupon.uses = Math.max(Number(coupon.uses || 0), coupon.redemptions.length);
         coupon.pendingRefundId = null;
+
         dbSave(db);
-        statusText = `Refund ${money(refund.amount)} marked paid.`;
+        await flushDbWrites();
+
+        const persisted = dbLoad();
+        const savedRefund = persisted.refunds[id];
+        const savedCoupon = persisted.coupons[refund.playerId];
+        const savedRedemption = savedCoupon?.redemptions?.some(r => asId(r.refundId) === id);
+        if (savedRefund?.status !== 'completed' || !savedRedemption) {
+            statusText = 'Cashback update could not be verified in storage. Try Mark paid again.';
+            render();
+            return false;
+        }
+
+        statusText = `Cashback ${money(refund.amount)} marked paid and saved. Uses remaining: ${couponRemaining(savedCoupon)}.`;
         render();
+        return true;
     }
 
     function cancelRefund(refundId) {
@@ -6822,8 +6918,15 @@
         return customerReorderHtml(db) + add + filters + customers.map(c => {
             const coupon = db.coupons[c.id];
             const q = couponQualification(db, coupon);
+            const pendingRefund = coupon?.pendingRefundId ? db.refunds[coupon.pendingRefundId] : null;
             const name = escapeHtml(displayUsername(c) || 'Customer');
-            return card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;"><div><b>${name}</b> <span style="color:#888">[${escapeHtml(c.id)}]</span><div style="font-size:12px;color:#bbb;margin-top:4px;">Purchases: ${c.purchases.toLocaleString()} · Units: ${c.units.toLocaleString()} · Spent: ${money(c.spent)}<br>Last purchase: ${escapeHtml(fmtDate(c.lastPurchase))}<br>Contacted: ${customerHasBeenContacted(c) ? `Yes (${c.messageCount})` : 'No'} · Coupon: ${escapeHtml(coupon?.code || '—')} · Uses left: ${couponRemaining(coupon)}<br>Cashback: ${q.qualified ? `${money(q.cashback)} on ${money(q.total)}` : escapeHtml(q.reason)}</div></div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><button data-action="compose" data-id="${c.id}" style="${btn(true)}">Compose</button>${coupon?.issuedAt && couponRemaining(coupon) > 0 ? `<button data-action="coupon-reminder" data-id="${c.id}" style="${btn(q.qualified)}">Coupon Reminder</button>` : ''}<button data-action="contacted" data-id="${c.id}" style="${btn()}">Mark contacted</button><button data-action="subscribe" data-id="${c.id}" style="${btn()}">Restock+</button><button data-action="start-refund" data-id="${c.id}" style="${btn()}" ${q.qualified ? '' : 'disabled'}>Cashback</button><button data-action="profile" data-id="${c.id}" style="${btn()}">Profile</button><button data-action="remove" data-id="${c.id}" style="${btn()}">Remove</button></div></div>`);
+            const cashbackText = pendingRefund?.status === 'pending'
+                ? `Pending ${money(pendingRefund.amount)} — send in Torn, then mark paid`
+                : q.qualified ? `${money(q.cashback)} on ${money(q.total)}` : q.reason;
+            const cashbackButton = pendingRefund?.status === 'pending'
+                ? `<button data-action="complete-refund" data-refund="${escapeHtml(pendingRefund.id)}" data-id="${c.id}" style="${btn(true)}">Mark Cashback Paid</button>`
+                : `<button data-action="start-refund" data-id="${c.id}" style="${btn()}" ${q.qualified ? '' : 'disabled'}>Cashback</button>`;
+            return card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;"><div><b>${name}</b> <span style="color:#888">[${escapeHtml(c.id)}]</span><div style="font-size:12px;color:#bbb;margin-top:4px;">Purchases: ${c.purchases.toLocaleString()} · Units: ${c.units.toLocaleString()} · Spent: ${money(c.spent)}<br>Last purchase: ${escapeHtml(fmtDate(c.lastPurchase))}<br>Contacted: ${customerHasBeenContacted(c) ? `Yes (${c.messageCount})` : 'No'} · Coupon: ${escapeHtml(coupon?.code || '—')} · Uses left: ${couponRemaining(coupon)}<br>Cashback: ${escapeHtml(cashbackText)}</div></div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><button data-action="compose" data-id="${c.id}" style="${btn(true)}">Compose</button>${coupon?.issuedAt && couponRemaining(coupon) > 0 ? `<button data-action="coupon-reminder" data-id="${c.id}" style="${btn(q.qualified)}">Coupon Reminder</button>` : ''}<button data-action="contacted" data-id="${c.id}" style="${btn()}">Mark contacted</button><button data-action="subscribe" data-id="${c.id}" style="${btn()}">Restock+</button>${cashbackButton}<button data-action="profile" data-id="${c.id}" style="${btn()}">Profile</button><button data-action="remove" data-id="${c.id}" style="${btn()}">Remove</button></div></div>`);
         }).join('');
     }
 
@@ -8461,7 +8564,12 @@
             if (action === 'open-refund' && db.refunds[refundId]) return openRefundProfile(db.refunds[refundId]);
             if (action === 'complete-refund' && db.refunds[refundId]) {
                 const r = db.refunds[refundId];
-                if (confirm(`Confirm Torn successfully sent ${money(r.amount)} to ${r.playerName || r.playerId}?\n\nOnly continue after Torn confirms the transfer.`)) completeRefund(refundId);
+                if (confirm(`Confirm Torn successfully sent ${money(r.amount)} to ${r.playerName || r.playerId}?\n\nOnly continue after Torn confirms the transfer.`)) {
+                    completeRefund(refundId).catch(error => {
+                        statusText = `Cashback update failed: ${error?.message || String(error)}`;
+                        render();
+                    });
+                }
                 return;
             }
             if (action === 'cancel-refund') return cancelRefund(refundId);
