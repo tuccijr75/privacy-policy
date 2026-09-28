@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.7.1
+// @version      6.7.2
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -25,7 +25,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.7.1';
+    const VERSION = '6.7.2';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -79,6 +79,7 @@
     const DB_CHANNEL_NAME = 'mm_bazaar_crm_cross_tab_v1';
     const TRAVEL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
     const TRAVEL_FEED_KEY = 'mm_bazaar_crm_travel_feed_v1';
+    const TRAVEL_RETURN_KEY = 'mm_bazaar_crm_travel_return_v1';
 
     const CASHBACK_TIERS = [
         { minimum: 1_000_000, cashback: 20_000 },
@@ -142,6 +143,14 @@
         statusText = 'Opening…';
         // Same-tab navigation keeps Torn workflows predictable and prevents popup/tab sprawl.
         setTimeout(() => { location.href = target; }, 20);
+    }
+
+    function beginTravelCapture() {
+        try {
+            GM_setValue(TRAVEL_RETURN_KEY, { url: location.href, at: Date.now() });
+        } catch {}
+        statusText = 'Opening TornW3B Travel Stock for live capture…';
+        navigateFromCRM('https://weav3r.dev/travel-stock');
     }
 
     function readJson(key, fallback) {
@@ -629,9 +638,9 @@
             }
         }
 
-        // Rebuild sale-derived customer totals only when another Torn tab
-        // contributed sale records absent from this snapshot. Normal saves stay fast.
-        if (latestOnlySaleFound) recalculateCustomerSalesTotals(merged);
+        // Sale-derived totals are not authoritative state. Audit every persisted merge
+        // and rebuild only if drift is detected (including stale cross-tab snapshots).
+        reconcileSalesIntegrity(merged);
 
         mergeDurableContactState(merged);
         return normalizeDb(merged);
@@ -1466,6 +1475,9 @@
         }
 
         for (const [id, a] of byCustomer) {
+            // Removed customers remain in the immutable sales ledger by design.
+            // They are intentionally excluded from active-customer totals/audits.
+            if (db.removedCustomers?.[id]) continue;
             const c = db.customers[id];
             if (!c) {
                 if (db.removedCustomers[id]) continue;
@@ -1500,15 +1512,27 @@
 
     async function repairSalesIntegrityNow() {
         const db = dbLoad();
-        recalculateCustomerSalesTotals(db);
-        const audit = auditSalesData(db);
-        db.meta.lastSalesAudit = { at: nowIso(), ...audit };
+        const initial = reconcileSalesIntegrity(db);
+        db.meta.lastSalesAudit = { at: nowIso(), ...initial };
         db.meta.lastSalesSelfRepairAt = nowIso();
-        db.meta.lastSalesSelfRepairOk = audit.ok;
+        db.meta.lastSalesSelfRepairOk = initial.ok;
         dbSave(db);
         await flushDbWrites();
+
+        // Verify what actually survived the IndexedDB/cross-tab merge, not just the
+        // pre-save snapshot.
+        const persisted = dbLoad();
+        const audit = reconcileSalesIntegrity(persisted);
+        persisted.meta.lastSalesAudit = { at: nowIso(), ...audit };
+        persisted.meta.lastSalesSelfRepairAt = nowIso();
+        persisted.meta.lastSalesSelfRepairOk = audit.ok;
+        if (audit.repaired) {
+            dbSave(persisted);
+            await flushDbWrites();
+        }
+
         statusText = audit.ok
-            ? `Sales integrity repaired: ${audit.sales} sales across ${audit.customersWithSales} customers. PASS.`
+            ? `Sales integrity repaired: ${audit.sales} sales across ${audit.customersWithSales} active customers. PASS.`
             : `Sales integrity repair still found ${audit.problems.length} problem(s): ${audit.problems.slice(0,3).join('; ')}`;
         render();
         return audit;
@@ -2759,12 +2783,24 @@
     function installWeav3rTravelCollector() {
         if (location.hostname !== 'weav3r.dev' || !location.pathname.startsWith('/travel-stock')) return;
         let attempts = 0;
+        let returned = false;
         const capture = () => {
             attempts++;
             const count = captureWeav3rTravelStockPage();
-            if (!count && attempts < 12) setTimeout(capture, 1000);
+            if (count > 0 && !returned) {
+                const ret = GM_getValue(TRAVEL_RETURN_KEY, null);
+                const requestedAt = Number(ret?.at || 0);
+                const returnUrl = String(ret?.url || '');
+                if (returnUrl.startsWith('https://www.torn.com/') && Date.now() - requestedAt < 5 * 60 * 1000) {
+                    returned = true;
+                    GM_deleteValue(TRAVEL_RETURN_KEY);
+                    setTimeout(() => { location.href = returnUrl; }, 900);
+                    return;
+                }
+            }
+            if (!count && attempts < 20) setTimeout(capture, 1000);
         };
-        setTimeout(capture, 500);
+        setTimeout(capture, 700);
         setInterval(capture, 60_000);
     }
 
@@ -2887,11 +2923,11 @@
 
     function travelCommandHtml(db){
         const st=db.travelIntel.settings,rows=travelOpportunityRows(db),baskets=travelBasketRows(db).slice(0,5),fresh=freshnessInfo(db.travelIntel.lastSyncAt,600),top=rows.filter(r=>r.profit>0).slice(0,18);
-        const controls=card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">Travel Command Center</b><div style="font-size:10px;color:#888;">TornW3B live signal + CRM local history</div></div><div style="display:flex;gap:5px;"><button id="mm-travel-sync" style="${btn(true)}">Refresh Travel Stock</button><button id="mm-travel-open" style="${btn()}">Open TornW3B</button></div></div>
+        const controls=card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">Travel Command Center</b><div style="font-size:10px;color:#888;">TornW3B live signal + CRM local history</div></div><div style="display:flex;gap:5px;"><button id="mm-travel-capture" style="${btn(true)}">Update Live Travel Data</button><button id="mm-travel-sync" style="${btn()}">Import Last Capture</button></div></div>
         <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:7px;"><label style="font-size:10px;color:#aaa;">Flight method<select id="mm-travel-method" style="${inputCss()}width:100%;"><option value="standard" ${st.method==='standard'?'selected':''}>Standard</option><option value="airstrip" ${st.method==='airstrip'?'selected':''}>Airstrip</option><option value="wlt" ${st.method==='wlt'?'selected':''}>WLT</option><option value="business" ${st.method==='business'?'selected':''}>Business</option></select></label><label style="font-size:10px;color:#aaa;">Carry capacity<input id="mm-travel-carry" type="number" min="1" value="${Number(st.carry||21)}" style="${inputCss()}width:100%;"></label><label style="font-size:10px;color:#aaa;">Travel cash (0 = unlimited)<input id="mm-travel-cash" type="number" min="0" value="${Number(st.cash||0)}" style="${inputCss()}width:100%;"></label></div>
-        <div style="margin-top:6px;"><button id="mm-travel-save" style="${btn()}">Save Travel Settings</button></div><div style="font-size:10px;color:#888;margin-top:6px;">Source ${escapeHtml(fresh.label)}${Number.isFinite(fresh.ageSeconds)?' · '+Math.round(fresh.ageSeconds)+'s old':''}. TornW3B says quantities are snapshots, not guarantees. Until enough local stock changes are observed, the CRM shows live sufficiency rather than a fabricated forecast.</div>`);
-        const basketsHtml=card(`<b>Trip Basket Optimizer</b>${baskets.length?baskets.map((b,i)=>`<div style="border-top:${i?'1px solid #303030':'0'};padding:6px 0;font-size:11px;"><b>#${i+1} ${escapeHtml(b.country)}</b> · ${b.units}/${Number(st.carry||21)} slots · Risk-adjusted ${money(b.riskAdjustedProfit)} · <b>${money(b.riskAdjustedProfitPerHour)}/hr</b> · Arrival signal ${(b.avgChance*100).toFixed(0)}%<br>${b.basket.map(x=>`${escapeHtml(x.itemName)} × ${x.qty}`).join(' · ')}${st.cash>0&&!b.cost?'<br><span style="color:#d7ad4b;">Shop cost was not exposed in the parsed source; cash limit is partial.</span>':''}</div>`).join(''):'<div style="font-size:11px;color:#888;">Refresh Travel Stock to build country baskets.</div>'}`);
-        const opp=card(`<b>Fly / Wait / Avoid</b>${top.length?top.map(r=>`<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>${escapeHtml(r.country)} · ${escapeHtml(r.itemName)}</b> ${travelRecommendationBadge(r.recommendation)}<br>Live stock ${Number(r.stock||0).toLocaleString()} · Profit/item ${money(r.profit)} · TornW3B $/hr ${money(r.sourceProfitPerHour)} · One-way ${r.arrivalMinutes||'—'}m<br>${r.prediction.predictedStock==null?`Arrival estimate: <b>not enough local history</b> · Live sufficiency ${(r.arrivalChance*100).toFixed(0)}%`:`Predicted arrival stock <b>${Number(r.prediction.predictedStock).toLocaleString()}</b> · Availability estimate ${(r.arrivalChance*100).toFixed(0)}% · Confidence ${r.prediction.confidence}%`} · Risk-adjusted $/hr <b>${money(r.riskAdjustedProfitPerHour)}</b></div>`).join(''):'<div style="font-size:11px;color:#888;">No positive-profit travel rows loaded yet.</div>'}`);
+        <div style="margin-top:6px;"><button id="mm-travel-save" style="${btn()}">Save Travel Settings</button></div><div style="font-size:10px;color:#888;margin-top:6px;">Source ${escapeHtml(fresh.label)}${Number.isFinite(fresh.ageSeconds)?' · '+Math.round(fresh.ageSeconds)+'s old':''}. Use <b>Update Live Travel Data</b>: the CRM opens TornW3B in this tab, captures the rendered live table, and returns to Torn automatically. TornW3B says quantities are snapshots, not guarantees. Until enough local stock changes are observed, the CRM shows live sufficiency rather than a fabricated forecast.</div>`);
+        const basketsHtml=card(`<b>Trip Basket Optimizer</b>${baskets.length?baskets.map((b,i)=>`<div style="border-top:${i?'1px solid #303030':'0'};padding:6px 0;font-size:11px;"><b>#${i+1} ${escapeHtml(b.country)}</b> · ${b.units}/${Number(st.carry||21)} slots · Risk-adjusted ${money(b.riskAdjustedProfit)} · <b>${money(b.riskAdjustedProfitPerHour)}/hr</b> · Arrival signal ${(b.avgChance*100).toFixed(0)}%<br>${b.basket.map(x=>`${escapeHtml(x.itemName)} × ${x.qty}`).join(' · ')}${st.cash>0&&!b.cost?'<br><span style="color:#d7ad4b;">Shop cost was not exposed in the parsed source; cash limit is partial.</span>':''}</div>`).join(''):'<div style="font-size:11px;color:#888;">Use Update Live Travel Data above to load current TornW3B stock and build country baskets.</div>'}`);
+        const opp=card(`<b>Fly / Wait / Avoid</b>${top.length?top.map(r=>`<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>${escapeHtml(r.country)} · ${escapeHtml(r.itemName)}</b> ${travelRecommendationBadge(r.recommendation)}<br>Live stock ${Number(r.stock||0).toLocaleString()} · Profit/item ${money(r.profit)} · TornW3B $/hr ${money(r.sourceProfitPerHour)} · One-way ${r.arrivalMinutes||'—'}m<br>${r.prediction.predictedStock==null?`Arrival estimate: <b>not enough local history</b> · Live sufficiency ${(r.arrivalChance*100).toFixed(0)}%`:`Predicted arrival stock <b>${Number(r.prediction.predictedStock).toLocaleString()}</b> · Availability estimate ${(r.arrivalChance*100).toFixed(0)}% · Confidence ${r.prediction.confidence}%`} · Risk-adjusted $/hr <b>${money(r.riskAdjustedProfitPerHour)}</b></div>`).join(''):'<div style="font-size:11px;color:#888;">No live travel rows loaded yet. Use Update Live Travel Data above; the CRM will return here automatically after capture.</div>'}`);
         return controls+basketsHtml+opp;
     }
 
@@ -6352,8 +6388,23 @@
 
     function opportunityAlertsHtml(db){
         const rows=evaluateOpportunityAlerts(db,false);
+        const suggested=procurementRows(db)
+            .filter(r=>!db.procurement.watchlist?.[r.id] && r.bestBuyPrice>0 && r.realisticExit>r.bestBuyPrice)
+            .sort((a,b)=>b.acquisitionScore-a.acquisitionScore||b.bestDealMarginPct-a.bestDealMarginPct)
+            .slice(0,8);
+
+        const watchedHtml = rows.length
+            ? rows.slice(0,15).map(r=>'<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;"><div style="font-size:11px;"><b>'+escapeHtml(r.name)+'</b> · '+(r.alertTriggered?'<span style="color:#9fe3a8;font-weight:bold;">TRIGGERED</span>':'Watching')+'<br>Buy '+(r.bestBuyPrice?money(r.bestBuyPrice):'—')+' / max '+(r.alertMaxBuyPrice?money(r.alertMaxBuyPrice):'—')+' · ROI '+r.bestDealMarginPct.toFixed(1)+'% / min '+r.alertMinRoiPct.toFixed(1)+'% · Liquidity '+r.liquidityScore.toFixed(0)+' / min '+r.alertMinLiquidityScore.toFixed(0)+'</div><button data-proc-action="alert-rule" data-item="'+r.id+'" style="'+btn(r.alertTriggered)+'">Alert Rule</button></div>').join('')
+            : '<div style="font-size:11px;color:#888;">No watched items yet.</div>';
+
+        const suggestedHtml = suggested.length
+            ? '<div style="margin-top:8px;border-top:2px solid #444;padding-top:6px;font-size:11px;"><b>Suggested live opportunities</b></div>'+
+              suggested.map(r=>'<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;"><div style="font-size:11px;"><b>'+escapeHtml(r.name)+'</b> · '+escapeHtml(r.action)+' · Score '+r.acquisitionScore.toFixed(0)+'<br>Buy '+money(r.bestBuyPrice)+' → Exit '+money(r.realisticExit)+' · ROI '+r.bestDealMarginPct.toFixed(1)+'% · Liquidity '+r.liquidityScore.toFixed(0)+'</div><div style="display:flex;gap:4px;"><button data-proc-action="watch" data-item="'+r.id+'" style="'+btn()+'">Watch</button><button data-proc-action="alert-rule" data-item="'+r.id+'" style="'+btn(true)+'">Set Alert</button></div></div>').join('')
+            : '<div style="font-size:11px;color:#888;margin-top:8px;">No current priced opportunities. Sync procurement/market data below.</div>';
+
         return card('<b>Opportunity Watchlist + Alerts</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Set buy-price, ROI and liquidity thresholds. Alerts never purchase anything.</div>'+
-            (rows.length?rows.slice(0,15).map(r=>'<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;"><div style="font-size:11px;"><b>'+escapeHtml(r.name)+'</b> · '+(r.alertTriggered?'<span style="color:#9fe3a8;font-weight:bold;">TRIGGERED</span>':'Watching')+'<br>Buy '+(r.bestBuyPrice?money(r.bestBuyPrice):'—')+' / max '+(r.alertMaxBuyPrice?money(r.alertMaxBuyPrice):'—')+' · ROI '+r.bestDealMarginPct.toFixed(1)+'% / min '+r.alertMinRoiPct.toFixed(1)+'% · Liquidity '+r.liquidityScore.toFixed(0)+' / min '+r.alertMinLiquidityScore.toFixed(0)+'</div><button data-proc-action="alert-rule" data-item="'+r.id+'" style="'+btn(r.alertTriggered)+'">Alert Rule</button></div>').join(''):'<div style="font-size:11px;color:#888;">Watch an item to create an opportunity alert.</div>'));
+            '<div style="display:flex;gap:5px;margin-bottom:6px;"><button id="mm-opportunity-sync" style="'+btn(true)+'">Sync Procurement</button><button id="mm-opportunity-market" style="'+btn()+'">Refresh Market Intel</button></div>'+
+            watchedHtml+suggestedHtml);
     }
 
     function deadCapitalRows(db){
@@ -7235,9 +7286,11 @@
             }
         }));
 
+        root.querySelector('#mm-travel-capture')?.addEventListener('click', beginTravelCapture);
         root.querySelector('#mm-travel-sync')?.addEventListener('click', () => syncTravelStock({ silent:false, force:true }).catch(()=>{}));
         root.querySelector('#mm-travel-save')?.addEventListener('click', () => saveTravelSettings(root));
-        root.querySelector('#mm-travel-open')?.addEventListener('click', () => navigateFromCRM('https://weav3r.dev/travel-stock'));
+        root.querySelector('#mm-opportunity-sync')?.addEventListener('click', () => syncProcurement());
+        root.querySelector('#mm-opportunity-market')?.addEventListener('click', () => syncMarketIntelligence(false));
 
         root.querySelector('#mm-add-customer')?.addEventListener('click', () => addManualCustomer(root.querySelector('#mm-add-id')?.value));
         root.querySelector('#mm-refresh-customers')?.addEventListener('click', async () => {
@@ -7696,7 +7749,12 @@
             if (getApiKey()) sync({ silent: true });
         }, POLL_MS);
 
-        setTimeout(() => syncTravelStock({ silent:true }).catch(error => console.warn('[MM CRM] Travel Stock startup sync failed', error)), 3500);
+        setTimeout(() => syncTravelStock({ silent:true, force:true }).then(rows => {
+            if (rows?.length && !getUI().minimized) {
+                statusText = `Travel Stock ready: ${rows.length} live item routes loaded.`;
+                render();
+            }
+        }).catch(error => console.warn('[MM CRM] Travel Stock startup sync failed', error)), 1800);
         setInterval(() => {
             syncTravelStock({ silent:true }).catch(error => console.warn('[MM CRM] Travel Stock background sync failed', error));
         }, TRAVEL_SYNC_INTERVAL_MS);
