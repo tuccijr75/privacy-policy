@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.0.1
+// @version      7.1.0
 // @description  Bazaar operations CRM with in-CRM update checking, TornW3B travel intelligence, customer automation, procurement, analytics, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -15,6 +15,7 @@
 // @grant        GM_deleteValue
 // @connect      api.torn.com
 // @connect      weav3r.dev
+// @connect      yata.yt
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
 // ==/UserScript==
@@ -26,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.0.1';
+    const VERSION = '7.1.0';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -80,6 +81,13 @@
     const CONTACT_LEDGER_KEY = 'mm_bazaar_crm_contact_ledger_v1';
     const DB_CHANNEL_NAME = 'mm_bazaar_crm_cross_tab_v1';
     const TRAVEL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+    const YATA_TRAVEL_URL = 'https://yata.yt/api/v1/travel/export/';
+    const YATA_SAMPLE_INTERVAL_MS = 60 * 1000;
+    const TRAVEL_HISTORY_WINDOW_HOURS = 24;
+    const YATA_COUNTRIES = Object.freeze({
+        mex:'Mexico', cay:'Cayman Islands', can:'Canada', haw:'Hawaii', uni:'United Kingdom',
+        arg:'Argentina', swi:'Switzerland', jap:'Japan', chi:'China', uae:'UAE', sou:'South Africa'
+    });
     const TRAVEL_FEED_KEY = 'mm_bazaar_crm_travel_feed_v1';
     const TRAVEL_RETURN_KEY = 'mm_bazaar_crm_travel_return_v1';
     const TRAVEL_CAPTURE_STATUS_KEY = 'mm_bazaar_crm_travel_capture_status_v1';
@@ -258,7 +266,10 @@
                 rows: [],
                 history: {},
                 lastSyncAt: null,
-                source: 'TornW3B Travel Stock',
+                lastYataSyncAt: null,
+                lastYataObservationAt: null,
+                yataCountryUpdates: {},
+                source: 'TornW3B Travel Stock + YATA shared stock history',
                 settings: { method: 'standard', carry: 21, cash: 0, historyDays: 7 },
                 diagnostics: []
             },
@@ -397,7 +408,10 @@
         db.travelIntel.rows = Array.isArray(db.travelIntel.rows) ? db.travelIntel.rows : [];
         db.travelIntel.history = db.travelIntel.history && typeof db.travelIntel.history === 'object' ? db.travelIntel.history : {};
         db.travelIntel.lastSyncAt = db.travelIntel.lastSyncAt || null;
-        db.travelIntel.source = String(db.travelIntel.source || 'TornW3B Travel Stock');
+        db.travelIntel.lastYataSyncAt = db.travelIntel.lastYataSyncAt || null;
+        db.travelIntel.lastYataObservationAt = db.travelIntel.lastYataObservationAt || null;
+        db.travelIntel.yataCountryUpdates = db.travelIntel.yataCountryUpdates && typeof db.travelIntel.yataCountryUpdates === 'object' ? db.travelIntel.yataCountryUpdates : {};
+        db.travelIntel.source = String(db.travelIntel.source || 'TornW3B Travel Stock + YATA shared stock history');
         db.travelIntel.settings = db.travelIntel.settings && typeof db.travelIntel.settings === 'object' ? db.travelIntel.settings : {};
         db.travelIntel.settings.method = ['standard','airstrip','wlt','business'].includes(String(db.travelIntel.settings.method || '').toLowerCase()) ? String(db.travelIntel.settings.method).toLowerCase() : 'standard';
         db.travelIntel.settings.carry = Math.max(1, Number(db.travelIntel.settings.carry || 21));
@@ -2769,13 +2783,48 @@
 
     function travelHistoryKey(r){return String(r.country||'')+'|'+(asId(r.itemId)||normalizeItemName(r.itemName));}
 
-    function recordTravelSnapshots(db,rows,observedAt=Date.now()){
-        const at=Number(observedAt)||Date.now(),cutoff=at-Number(db.travelIntel.settings.historyDays||7)*86400000;
+    function recordTravelSnapshots(db,rows,observedAt=Date.now(),source='TornW3B'){
+        const fallbackAt=Number(observedAt)||Date.now();
+        const retentionMs=Number(db.travelIntel.settings.historyDays||7)*86400000;
+        let inserted=0;
+
         for(const r of rows){
-            const k=travelHistoryKey(r),list=Array.isArray(db.travelIntel.history[k])?db.travelIntel.history[k]:[],last=list[list.length-1];
-            if(!last||Number(last.stock)!==Number(r.stock)||at-Number(last.at||0)>=300000)list.push({at,stock:Number(r.stock||0),profit:Number(r.profit||0),sourceProfitPerHour:Number(r.sourceProfitPerHour||0),shopCost:Number(r.shopCost||0),homeMarket:Number(r.homeMarket||0)});
-            db.travelIntel.history[k]=list.filter(x=>Number(x.at||0)>=cutoff).slice(-800);
+            const at=Number(r.observedAt||fallbackAt)||fallbackAt;
+            const cutoff=Date.now()-retentionMs;
+            const k=travelHistoryKey(r);
+            const list=Array.isArray(db.travelIntel.history[k])?db.travelIntel.history[k].slice():[];
+            list.sort((a,b)=>Number(a.at||0)-Number(b.at||0));
+
+            const last=list[list.length-1];
+            const exact=list.find(x=>Number(x.at||0)===at&&String(x.source||'')===String(r.source||source));
+            const stock=Number(r.stock||0);
+            const shouldAdd=!exact&&(!last||Number(last.stock)!==stock||at-Number(last.at||0)>=300000||at<Number(last.at||0));
+
+            if(shouldAdd){
+                list.push({
+                    at,
+                    stock,
+                    profit:Number(r.profit||0),
+                    sourceProfitPerHour:Number(r.sourceProfitPerHour||0),
+                    shopCost:Number(r.shopCost||0),
+                    homeMarket:Number(r.homeMarket||0),
+                    source:String(r.source||source)
+                });
+                inserted++;
+            }
+
+            const deduped=[];
+            const seen=new Set();
+            for(const point of list.sort((x,y)=>Number(x.at||0)-Number(y.at||0))){
+                if(Number(point.at||0)<cutoff)continue;
+                const sig=Number(point.at||0)+'|'+Number(point.stock||0)+'|'+String(point.source||'');
+                if(seen.has(sig))continue;
+                seen.add(sig);
+                deduped.push(point);
+            }
+            db.travelIntel.history[k]=deduped.slice(-800);
         }
+        return inserted;
     }
 
     function captureWeav3rTravelStockPage() {
@@ -2885,6 +2934,112 @@
                 onerror:()=>reject(new Error('TornW3B direct refresh network error'))
             });
         });
+    }
+
+    function fetchYataTravelExport() {
+        return new Promise((resolve,reject)=>{
+            GM_xmlhttpRequest({
+                method:'GET',
+                url:YATA_TRAVEL_URL+'?t='+Date.now(),
+                timeout:15000,
+                headers:{Accept:'application/json'},
+                onload:r=>{
+                    if(r.status<200||r.status>=300)return reject(new Error('YATA travel HTTP '+r.status));
+                    try{
+                        const data=JSON.parse(String(r.responseText||''));
+                        if(!data?.stocks||typeof data.stocks!=='object')throw new Error('YATA travel payload is invalid.');
+                        resolve(data);
+                    }catch(error){reject(error);}
+                },
+                ontimeout:()=>reject(new Error('YATA travel request timed out.')),
+                onerror:()=>reject(new Error('YATA travel network error.'))
+            });
+        });
+    }
+
+    function parseYataTravelExport(payload) {
+        const rows=[];
+        for(const [code,group] of Object.entries(payload?.stocks||{})){
+            const country=YATA_COUNTRIES[String(code).toLowerCase()];
+            if(!country||!Array.isArray(group?.stocks))continue;
+            const observedAt=Number(group.update||0)>0?Number(group.update)*1000:Date.now();
+            for(const item of group.stocks){
+                const itemId=asId(item?.id);
+                const itemName=String(item?.name||'').trim();
+                if(!itemId||!itemName)continue;
+                rows.push({
+                    country,
+                    countryCode:String(code).toLowerCase(),
+                    itemId,
+                    itemName,
+                    stock:Math.max(0,Math.round(Number(item.quantity||0))),
+                    shopCost:Math.max(0,Number(item.cost||0)),
+                    observedAt,
+                    source:'YATA shared abroad stock'
+                });
+            }
+        }
+        return rows;
+    }
+
+    async function syncYataTravelHistory({silent=true}={}) {
+        const payload=await fetchYataTravelExport();
+        const rows=parseYataTravelExport(payload);
+        if(!rows.length)throw new Error('YATA travel export contained no readable rows.');
+
+        const db=dbLoad();
+        const groups=new Map();
+        for(const row of rows){
+            const code=String(row.countryCode||'');
+            const at=Number(row.observedAt||0);
+            if(!groups.has(code))groups.set(code,{at,rows:[]});
+            groups.get(code).rows.push(row);
+        }
+
+        let inserted=0;
+        let newestObservation=Number(Date.parse(db.travelIntel.lastYataObservationAt||''))||0;
+        const liveByKey=new Map((db.travelIntel.rows||[]).map(r=>[travelHistoryKey(r),r]));
+
+        for(const [code,group] of groups.entries()){
+            const previous=Number(db.travelIntel.yataCountryUpdates?.[code]||0);
+            const observedAt=Number(group.at||0);
+            newestObservation=Math.max(newestObservation,observedAt);
+
+            if(observedAt>previous){
+                inserted+=recordTravelSnapshots(db,group.rows,observedAt,'YATA shared abroad stock');
+                db.travelIntel.yataCountryUpdates[code]=observedAt;
+            }
+
+            for(const yataRow of group.rows){
+                const current=liveByKey.get(travelHistoryKey(yataRow));
+                if(!current)continue;
+                const currentAt=Number(current.stockObservedAt||Date.parse(db.travelIntel.lastSyncAt||'')||0);
+                if(observedAt>=currentAt){
+                    current.stock=Number(yataRow.stock||0);
+                    current.stockObservedAt=observedAt;
+                    current.stockSource='YATA';
+                    if(!Number(current.shopCost||0)&&Number(yataRow.shopCost||0)>0)current.shopCost=Number(yataRow.shopCost);
+                }
+            }
+        }
+
+        db.travelIntel.lastYataSyncAt=nowIso();
+        if(newestObservation>0)db.travelIntel.lastYataObservationAt=new Date(newestObservation).toISOString();
+        db.travelIntel.source='TornW3B pricing + YATA shared overseas stock history';
+        if(inserted>0){
+            db.travelIntel.diagnostics.unshift({
+                at:nowIso(),
+                text:'YATA shared history: '+inserted+' new stock observation'+(inserted===1?'':'s')+' across '+groups.size+' countries.'
+            });
+            db.travelIntel.diagnostics=db.travelIntel.diagnostics.slice(0,30);
+        }
+        dbSave(db);
+
+        if(!silent){
+            statusText='Shared overseas history refreshed: '+rows.length+' item rows, '+inserted+' new historical observation'+(inserted===1?'':'s')+'.';
+            render();
+        }
+        return {rows:rows.length,inserted,countries:groups.size,newestObservation};
     }
 
     async function backgroundTravelSample() {
@@ -3011,62 +3166,69 @@
         return showLocal ? tct+' / '+formatTravelLocalClock(ms) : tct;
     }
 
-    function travelHistory12h(db,row) {
-        const cutoff=Date.now()-12*60*60*1000;
+    function travelHistoryWindow(db,row,hours=TRAVEL_HISTORY_WINDOW_HOURS) {
+        const cutoff=Date.now()-Math.max(1,Number(hours)||TRAVEL_HISTORY_WINDOW_HOURS)*60*60*1000;
         return (db.travelIntel.history?.[travelHistoryKey(row)]||[])
             .filter(x=>Number(x.at||0)>=cutoff)
             .slice()
             .sort((a,b)=>Number(a.at||0)-Number(b.at||0));
     }
 
-    function travelRestockProfile12h(db,row) {
-        const h=travelHistory12h(db,row);
+    function travelHistory12h(db,row) {
+        return travelHistoryWindow(db,row,TRAVEL_HISTORY_WINDOW_HOURS);
+    }
+
+    function travelRestockProfile24h(db,row) {
+        const h=travelHistoryWindow(db,row,TRAVEL_HISTORY_WINDOW_HOURS);
         const depletion=[],restocks=[],restockTimes=[],outageDurations=[];
+        const sourceCounts={};
         let availableSamples=0;
         let outageStartedAt=null;
+        let lastEmptyAt=null;
 
-        for(const point of h)if(Number(point.stock||0)>0)availableSamples++;
+        for(const point of h){
+            if(Number(point.stock||0)>0)availableSamples++;
+            const src=String(point.source||'CRM');
+            sourceCounts[src]=(sourceCounts[src]||0)+1;
+        }
 
         for(let i=1;i<h.length;i++){
             const prev=h[i-1],cur=h[i];
             const prevStock=Number(prev.stock||0),curStock=Number(cur.stock||0);
             const mins=(Number(cur.at||0)-Number(prev.at||0))/60000;
             if(!(mins>0))continue;
-
             const delta=curStock-prevStock;
             if(delta<0)depletion.push((-delta)/mins);
 
-            // Track stockout windows so we can estimate restocks even before we have
-            // two full restock-to-restock cycles.
-            if(prevStock>0 && curStock<=0 && outageStartedAt==null){
+            if(prevStock>0 && curStock<=0){
                 outageStartedAt=Number(cur.at||0);
+                lastEmptyAt=Number(cur.at||0);
             }
             if(prevStock<=0 && curStock>0){
                 if(outageStartedAt!=null){
                     const outage=(Number(cur.at||0)-outageStartedAt)/60000;
                     if(outage>0)outageDurations.push(outage);
-                    outageStartedAt=null;
                 }
+                outageStartedAt=null;
             }
-
             if((prevStock<=0&&curStock>0)||delta>Math.max(5,prevStock*.20)){
                 restocks.push(Math.max(curStock,delta,0));
                 restockTimes.push(Number(cur.at||0));
             }
         }
 
-        // If history currently ends at zero, preserve the active outage start.
-        if(h.length){
-            const last=Number(h[h.length-1].stock||0);
-            if(last<=0 && outageStartedAt==null){
+        if(h.length && Number(h[h.length-1].stock||0)<=0){
+            if(outageStartedAt==null){
                 for(let i=h.length-1;i>0;i--){
                     const cur=Number(h[i].stock||0),prev=Number(h[i-1].stock||0);
-                    if(cur<=0 && prev>0){
+                    if(cur<=0&&prev>0){
                         outageStartedAt=Number(h[i].at||0);
+                        lastEmptyAt=outageStartedAt;
                         break;
                     }
                 }
             }
+            if(lastEmptyAt==null)lastEmptyAt=Number(h[h.length-1].at||0);
         }
 
         const intervals=[];
@@ -3080,28 +3242,31 @@
         const medianRestock=medianNumber(restocks);
         const depletionRate=medianNumber(depletion);
 
+        let cadenceReliability=0;
+        if(intervals.length>=2&&medianInterval>0){
+            const band=medianInterval*.20;
+            const inside=intervals.filter(v=>Math.abs(v-medianInterval)<=band).length;
+            cadenceReliability=Math.round(inside/intervals.length*100);
+        }
+
         let nextRestockAt=null;
         let nextRestockBasis='insufficient-history';
 
-        if(restockTimes.length>=2 && medianInterval>0){
+        if(outageStartedAt&&medianOutage>0){
+            nextRestockAt=outageStartedAt+medianOutage*60000;
+            const cadence=medianInterval>0?medianInterval:Math.max(30,medianOutage*2);
+            while(nextRestockAt<=Date.now())nextRestockAt+=cadence*60000;
+            nextRestockBasis='shared-stockout-history';
+        }else if(restockTimes.length>=2&&medianInterval>0){
             nextRestockAt=restockTimes[restockTimes.length-1]+medianInterval*60000;
             while(nextRestockAt<=Date.now())nextRestockAt+=medianInterval*60000;
-            nextRestockBasis='restock-cadence';
-        }else if(outageStartedAt && medianOutage>0){
-            nextRestockAt=outageStartedAt+medianOutage*60000;
-            if(nextRestockAt<=Date.now())nextRestockAt=Date.now()+Math.max(5,medianOutage*.5)*60000;
-            nextRestockBasis='stockout-duration';
-        }else if(restockTimes.length===1 && medianOutage>0){
-            // One observed restock + a known typical outage still gives a bounded
-            // estimate for the next restock cycle.
-            const latest=restockTimes[0];
+            nextRestockBasis='shared-restock-cadence';
+        }else if(restockTimes.length===1&&medianOutage>0){
             const cycleGuess=Math.max(medianOutage*2,60);
-            nextRestockAt=latest+cycleGuess*60000;
+            nextRestockAt=restockTimes[0]+cycleGuess*60000;
             while(nextRestockAt<=Date.now())nextRestockAt+=cycleGuess*60000;
             nextRestockBasis='single-cycle-fallback';
         }else if(h.length>=4){
-            // Final fallback: infer a coarse cycle from the spacing of meaningful
-            // stock changes within the 12h observation window.
             const changeTimes=[];
             for(let i=1;i<h.length;i++){
                 if(Number(h[i].stock||0)!==Number(h[i-1].stock||0))changeTimes.push(Number(h[i].at||0));
@@ -3109,33 +3274,41 @@
             const changeGaps=[];
             for(let i=1;i<changeTimes.length;i++){
                 const gap=(changeTimes[i]-changeTimes[i-1])/60000;
-                if(gap>=5)changeGaps.push(gap);
+                if(gap>=1)changeGaps.push(gap);
             }
             const medianChange=medianNumber(changeGaps);
             if(medianChange>0){
                 nextRestockAt=Date.now()+Math.max(15,medianChange*2)*60000;
-                nextRestockBasis='change-cadence-fallback';
+                nextRestockBasis='stock-change-cadence';
             }
         }
 
         return {
             history:h,
             samples:h.length,
+            sourceCounts,
             availableRate:h.length?availableSamples/h.length:0,
             depletionRate,
             medianRestock,
             medianInterval,
             medianOutage,
             restockTimes,
+            restockCount:restockTimes.length,
             outageDurations,
             activeOutageStartedAt:outageStartedAt,
+            lastEmptyAt,
+            cadenceReliability,
             nextRestockAt,
             nextRestockBasis
         };
     }
 
+    function travelRestockProfile12h(db,row) {
+        return travelRestockProfile24h(db,row);
+    }
+
     function travelPrediction(db,row,arrivalMinutes,carry,targetAt=null){
-        const profile=travelRestockProfile12h(db,row);
+        const profile=travelRestockProfile24h(db,row);
         const current=Math.max(0,Number(row.stock||0));
         const fresh=freshnessInfo(db.travelIntel.lastSyncAt,600);
         const targetMs=Number(targetAt||0)>Date.now()?Number(targetAt):Date.now()+Math.max(0,Number(arrivalMinutes||0))*60000;
@@ -3154,8 +3327,11 @@
             medianOutageMinutes:profile.medianOutage,
             nextExpectedRestockAt:profile.nextRestockAt,
             nextExpectedRestockBasis:profile.nextRestockBasis,
-            historyWindowHours:12,
+            historyWindowHours:TRAVEL_HISTORY_WINDOW_HOURS,
             availabilityRate12h:profile.availableRate,
+            historySources:profile.sourceCounts,
+            restockCount:profile.restockCount,
+            cadenceReliability:profile.cadenceReliability,
             expectedRestocksBeforeTarget:0
         };
 
@@ -3182,16 +3358,19 @@
         }
         predicted=Math.max(0,predicted);
 
-        const sampleConfidence=Math.min(1,profile.samples/24);
-        const eventConfidence=Math.min(1,profile.restockTimes.length/3);
+        const sampleConfidence=Math.min(1,profile.samples/48);
+        const eventConfidence=Math.min(1,profile.restockTimes.length/4);
+        const cadenceConfidence=Math.max(0,Math.min(1,profile.cadenceReliability/100));
+        const sharedSamples=Object.entries(profile.sourceCounts||{}).filter(([k])=>/YATA/i.test(k)).reduce((n,[,v])=>n+Number(v||0),0);
+        const sharedConfidence=Math.min(1,sharedSamples/24);
         const freshConfidence=Math.max(0,Math.min(1,fresh.score/100));
         const stockRatio=Math.min(1.5,predicted/Math.max(1,carry));
         const chance=Math.max(.02,Math.min(.99,stockRatio*.48+profile.availableRate*.27+sampleConfidence*.15+freshConfidence*.10));
 
-        result.model='12h availability/restock model';
+        result.model='24h shared overseas stock history model';
         result.predictedStock=Math.round(predicted);
         result.arrivalChance=chance;
-        result.confidence=Math.round((sampleConfidence*.45+eventConfidence*.30+freshConfidence*.25)*100);
+        result.confidence=Math.round((sampleConfidence*.25+eventConfidence*.25+cadenceConfidence*.20+sharedConfidence*.15+freshConfidence*.15)*100);
         result.expectedRestocksBeforeTarget=restocksBefore;
         return result;
     }
@@ -3275,7 +3454,7 @@
         db.travelIntel.settings.showLocalTime=Boolean(root.querySelector('#mm-travel-show-local')?.checked);
         dbSave(db);
         statusText=target
-            ? 'Travel target saved: '+target+' TCT (UTC). Forecast uses the last 12 hours of availability history.'
+            ? 'Travel target saved: '+target+' TCT (UTC). Forecast uses the last 24 hours of shared overseas stock history.'
             : 'Travel settings saved; target time cleared.';
         render();
     }
@@ -3342,13 +3521,13 @@
 
         const showLocal=st.showLocalTime !== false;
         const targetSummary=targetAt
-            ? 'Forecast target: <b>'+escapeHtml(formatTravelClock(targetAt,showLocal))+'</b>. Predictor uses only the previous <b>12 hours</b> of captured availability, depletion and restock events.'
+            ? 'Forecast target: <b>'+escapeHtml(formatTravelClock(targetAt,showLocal))+'</b>. Predictor uses the previous <b>24 hours</b> of shared overseas stock observations, depletion and restock events.'
             : 'Enter a target arrival time in <b>Torn Time (TCT / UTC)</b> to predict which items should be in stock and the next expected restock time.';
 
         const controls=card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
-                '<div><b style="font-size:15px;">Travel Command Center</b><div style="font-size:10px;color:#888;">TornW3B live signal + CRM 12-hour availability history</div></div>'+
-                '<div style="display:flex;gap:5px;"><button id="mm-travel-capture" style="'+btn(true)+'">Update Live Travel Data</button><button id="mm-travel-sync" style="'+btn()+'">Import Last Capture</button></div>'+
+                '<div><b style="font-size:15px;">Travel Command Center</b><div style="font-size:10px;color:#888;">TornW3B pricing + YATA shared overseas stock history + CRM prediction</div></div>'+
+                '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-travel-capture" style="'+btn(true)+'">Update Live Travel Data</button><button id="mm-travel-history" style="'+btn()+'">Refresh Shared History</button><button id="mm-travel-sync" style="'+btn()+'">Import Last Capture</button></div>'+
             '</div>'+
             '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:7px;">'+
                 '<label style="font-size:10px;color:#aaa;">Flight method<select id="mm-travel-method" style="'+inputCss()+'width:100%;"><option value="standard" '+(st.method==='standard'?'selected':'')+'>Standard</option><option value="airstrip" '+(st.method==='airstrip'?'selected':'')+'>Airstrip</option><option value="wlt" '+(st.method==='wlt'?'selected':'')+'>WLT</option><option value="business" '+(st.method==='business'?'selected':'')+'>Business</option></select></label>'+
@@ -3361,7 +3540,7 @@
                 '<label style="font-size:10px;color:#aaa;">Item<select id="mm-travel-item" style="'+inputCss()+'width:100%;">'+itemOptions+'</select></label>'+
             '</div>'+
             '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;"><button id="mm-travel-save" style="'+btn(true)+'">Save / Run Forecast</button><label style="font-size:10px;color:#aaa;"><input id="mm-travel-show-local" type="checkbox" '+(showLocal?'checked':'')+'> Show local time beside TCT</label></div>'+
-            '<div style="font-size:10px;color:#888;margin-top:6px;">'+targetSummary+' Source '+escapeHtml(fresh.label)+(Number.isFinite(fresh.ageSeconds)?' · '+Math.round(fresh.ageSeconds)+'s old':'')+'.</div>'
+            '<div style="font-size:10px;color:#888;margin-top:6px;">'+targetSummary+' TornW3B source '+escapeHtml(fresh.label)+(Number.isFinite(fresh.ageSeconds)?' · '+Math.round(fresh.ageSeconds)+'s old':'')+'.<br>Shared history: <b>YATA</b> · last observation '+escapeHtml(formatTravelClock(Date.parse(db.travelIntel.lastYataObservationAt||''),showLocal))+' · last fetch '+escapeHtml(fmtDate(db.travelIntel.lastYataSyncAt))+'.</div>'
         );
 
         let selectedBody='';
@@ -3386,7 +3565,8 @@
                     'Predicted stock at target: <b>'+Number(r.predictedStock||0).toLocaleString()+'</b><br>'+
                     'Availability probability: <b>'+(Number(r.arrivalChance||0)*100).toFixed(0)+'%</b> · Confidence '+Number(r.prediction.confidence||0).toFixed(0)+'%<br>'+
                     'Next predicted restock: <b>'+escapeHtml(formatTravelClock(nextAt,showLocal))+'</b>'+(nextDelta!=null?' · about '+Math.round(nextDelta)+' min from now':'')+'<br>'+
-                    'Prediction basis: '+escapeHtml(basis)+' · 12h samples '+Number(r.prediction.samples||0)+' · Median restock interval '+interval+' · Median stockout '+outage+' · Depletion '+dep+
+                    'Prediction basis: '+escapeHtml(basis)+' · 24h samples '+Number(r.prediction.samples||0)+' · Restock cycles '+Number(r.prediction.restockCount||0)+' · Cadence reliability '+Number(r.prediction.cadenceReliability||0)+'%<br>'+
+                    'History: '+escapeHtml(Object.entries(r.prediction.historySources||{}).map(([k,v])=>k+' '+v).join(' · ')||'local only')+' · Median restock interval '+interval+' · Median stockout '+outage+' · Depletion '+dep+
                 '</div>';
         }
 
@@ -3412,7 +3592,7 @@
                 }).join('')
                 : '<div style="font-size:11px;color:#888;margin-top:5px;">No matching travel forecast rows loaded.</div>';
 
-        const forecast=card('<b>12-Hour Stock Forecast'+(targetAt?' — '+escapeHtml(formatTravelClock(targetAt,showLocal)):'')+'</b>'+forecastBody);
+        const forecast=card('<b>24-Hour Shared Stock Forecast'+(targetAt?' — '+escapeHtml(formatTravelClock(targetAt,showLocal)):'')+'</b>'+forecastBody);
 
         const countryBaskets=selector.country?baskets.filter(b=>b.country===selector.country):baskets;
         const basketsHtml=card('<b>Trip Basket Optimizer</b>'+
@@ -7915,6 +8095,7 @@
         }));
 
         root.querySelector('#mm-travel-capture')?.addEventListener('click', () => updateTravelData().catch(error => { statusText=`Travel refresh failed: ${error?.message||String(error)}`; render(); }));
+        root.querySelector('#mm-travel-history')?.addEventListener('click', () => syncYataTravelHistory({silent:false}).catch(error => { statusText='Shared history refresh failed: '+(error?.message||String(error)); render(); }));
         root.querySelector('#mm-travel-sync')?.addEventListener('click', () => syncTravelStock({ silent:false, force:true }).catch(()=>{}));
         root.querySelector('#mm-travel-country')?.addEventListener('change', e => {
             const db=dbLoad();
@@ -8530,6 +8711,9 @@
 
         setTimeout(() => checkCrmUpdate({silent:true}).catch(()=>{}), 12_000);
 
+        setTimeout(() => syncYataTravelHistory({silent:true}).catch(error => console.warn('[MM CRM] YATA shared history startup sync failed', error)), 2400);
+        setInterval(() => syncYataTravelHistory({silent:true}).catch(error => console.warn('[MM CRM] YATA shared history sync failed', error)), YATA_SAMPLE_INTERVAL_MS);
+
         setTimeout(() => syncTravelStock({ silent:true, force:true }).then(rows => {
             if (rows?.length && !getUI().minimized) {
                 statusText = `Travel Stock ready: ${rows.length} live item routes loaded.`;
@@ -8588,6 +8772,12 @@
         syncTravelStock,
         updateTravelData,
         backgroundTravelSample,
+        syncYataTravelHistory,
+        travelHistoryProfile: (country,itemId) => {
+            const db=dbLoad();
+            const row=(db.travelIntel.rows||[]).find(r=>String(r.country||'')===String(country||'')&&asId(r.itemId)===asId(itemId));
+            return row?travelRestockProfile24h(db,row):null;
+        },
         travelOpportunityRows: () => travelOpportunityRows(dbLoad()),
         travelTimedForecastRows: () => travelTimedForecastRows(dbLoad()),
         selectedTravelForecast: () => selectedTravelForecast(dbLoad()),
