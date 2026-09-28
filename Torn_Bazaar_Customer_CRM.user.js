@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.8.4
+// @version      6.8.5
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -25,7 +25,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.8.4';
+    const VERSION = '6.8.5';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -2884,6 +2884,20 @@
         });
     }
 
+    async function backgroundTravelSample() {
+        try {
+            const html=await fetchWeav3rTravelPage();
+            const rows=parseWeav3rTravelStockHtml(html);
+            writeTravelFeed({capturedAt:Date.now(),rows});
+            await syncTravelStock({silent:true,force:true});
+            return rows.length;
+        } catch {
+            // Never navigate away during background sampling. Browser-capture fallback
+            // remains a manual Update Live Travel Data action.
+            return 0;
+        }
+    }
+
     async function updateTravelData() {
         statusText='Refreshing TornW3B Travel Stock directly…';
         render();
@@ -3004,34 +3018,101 @@
 
     function travelRestockProfile12h(db,row) {
         const h=travelHistory12h(db,row);
-        const depletion=[],restocks=[],restockTimes=[];
+        const depletion=[],restocks=[],restockTimes=[],outageDurations=[];
         let availableSamples=0;
+        let outageStartedAt=null;
 
         for(const point of h)if(Number(point.stock||0)>0)availableSamples++;
 
         for(let i=1;i<h.length;i++){
             const prev=h[i-1],cur=h[i];
+            const prevStock=Number(prev.stock||0),curStock=Number(cur.stock||0);
             const mins=(Number(cur.at||0)-Number(prev.at||0))/60000;
             if(!(mins>0))continue;
-            const delta=Number(cur.stock||0)-Number(prev.stock||0);
+
+            const delta=curStock-prevStock;
             if(delta<0)depletion.push((-delta)/mins);
-            if((Number(prev.stock||0)<=0&&Number(cur.stock||0)>0)||delta>Math.max(5,Number(prev.stock||0)*.20)){
-                restocks.push(Math.max(0,delta));
+
+            // Track stockout windows so we can estimate restocks even before we have
+            // two full restock-to-restock cycles.
+            if(prevStock>0 && curStock<=0 && outageStartedAt==null){
+                outageStartedAt=Number(cur.at||0);
+            }
+            if(prevStock<=0 && curStock>0){
+                if(outageStartedAt!=null){
+                    const outage=(Number(cur.at||0)-outageStartedAt)/60000;
+                    if(outage>0)outageDurations.push(outage);
+                    outageStartedAt=null;
+                }
+            }
+
+            if((prevStock<=0&&curStock>0)||delta>Math.max(5,prevStock*.20)){
+                restocks.push(Math.max(curStock,delta,0));
                 restockTimes.push(Number(cur.at||0));
             }
         }
 
+        // If history currently ends at zero, preserve the active outage start.
+        if(h.length){
+            const last=Number(h[h.length-1].stock||0);
+            if(last<=0 && outageStartedAt==null){
+                for(let i=h.length-1;i>0;i--){
+                    const cur=Number(h[i].stock||0),prev=Number(h[i-1].stock||0);
+                    if(cur<=0 && prev>0){
+                        outageStartedAt=Number(h[i].at||0);
+                        break;
+                    }
+                }
+            }
+        }
+
         const intervals=[];
-        for(let i=1;i<restockTimes.length;i++)intervals.push((restockTimes[i]-restockTimes[i-1])/60000);
+        for(let i=1;i<restockTimes.length;i++){
+            const gap=(restockTimes[i]-restockTimes[i-1])/60000;
+            if(gap>0)intervals.push(gap);
+        }
 
         const medianInterval=medianNumber(intervals);
+        const medianOutage=medianNumber(outageDurations);
         const medianRestock=medianNumber(restocks);
         const depletionRate=medianNumber(depletion);
 
         let nextRestockAt=null;
-        if(restockTimes.length&&medianInterval>0){
+        let nextRestockBasis='insufficient-history';
+
+        if(restockTimes.length>=2 && medianInterval>0){
             nextRestockAt=restockTimes[restockTimes.length-1]+medianInterval*60000;
             while(nextRestockAt<=Date.now())nextRestockAt+=medianInterval*60000;
+            nextRestockBasis='restock-cadence';
+        }else if(outageStartedAt && medianOutage>0){
+            nextRestockAt=outageStartedAt+medianOutage*60000;
+            if(nextRestockAt<=Date.now())nextRestockAt=Date.now()+Math.max(5,medianOutage*.5)*60000;
+            nextRestockBasis='stockout-duration';
+        }else if(restockTimes.length===1 && medianOutage>0){
+            // One observed restock + a known typical outage still gives a bounded
+            // estimate for the next restock cycle.
+            const latest=restockTimes[0];
+            const cycleGuess=Math.max(medianOutage*2,60);
+            nextRestockAt=latest+cycleGuess*60000;
+            while(nextRestockAt<=Date.now())nextRestockAt+=cycleGuess*60000;
+            nextRestockBasis='single-cycle-fallback';
+        }else if(h.length>=4){
+            // Final fallback: infer a coarse cycle from the spacing of meaningful
+            // stock changes within the 12h observation window.
+            const changeTimes=[];
+            for(let i=1;i<h.length;i++){
+                if(Number(h[i].stock||0)!==Number(h[i-1].stock||0))changeTimes.push(Number(h[i].at||0));
+            }
+            const changeGaps=[];
+            for(let i=1;i<changeTimes.length;i++){
+                const gap=(changeTimes[i]-changeTimes[i-1])/60000;
+                if(gap>=5)changeGaps.push(gap);
+            }
+            const medianChange=medianNumber(changeGaps);
+            if(medianChange>0){
+                nextRestockAt=Date.now()+Math.max(15,medianChange*2)*60000;
+                nextRestockBasis='change-cadence-fallback';
+            }
         }
 
         return {
@@ -3041,8 +3122,12 @@
             depletionRate,
             medianRestock,
             medianInterval,
+            medianOutage,
             restockTimes,
-            nextRestockAt
+            outageDurations,
+            activeOutageStartedAt:outageStartedAt,
+            nextRestockAt,
+            nextRestockBasis
         };
     }
 
@@ -3063,7 +3148,9 @@
             depletionPerMinute:profile.depletionRate,
             medianRestockSize:profile.medianRestock,
             medianRestockMinutes:profile.medianInterval,
+            medianOutageMinutes:profile.medianOutage,
             nextExpectedRestockAt:profile.nextRestockAt,
+            nextExpectedRestockBasis:profile.nextRestockBasis,
             historyWindowHours:12,
             availabilityRate12h:profile.availableRate,
             expectedRestocksBeforeTarget:0
@@ -3076,12 +3163,18 @@
 
         let predicted=current-profile.depletionRate*horizonMinutes;
         let restocksBefore=0;
-        if(profile.nextRestockAt&&profile.medianInterval>0&&profile.medianRestock>0){
+        if(profile.nextRestockAt&&profile.medianRestock>0){
+            const cycleMinutes=profile.medianInterval>0
+                ? profile.medianInterval
+                : profile.medianOutage>0
+                    ? Math.max(profile.medianOutage*2,60)
+                    : 0;
             let at=profile.nextRestockAt;
             while(at<=targetMs&&restocksBefore<12){
                 predicted+=profile.medianRestock;
                 restocksBefore++;
-                at+=profile.medianInterval*60000;
+                if(!(cycleMinutes>0))break;
+                at+=cycleMinutes*60000;
             }
         }
         predicted=Math.max(0,predicted);
@@ -3279,6 +3372,8 @@
             const nextAt=r.nextExpectedRestockAt;
             const nextDelta=nextAt?Math.max(0,(Number(nextAt)-Date.now())/60000):null;
             const interval=r.prediction.medianRestockMinutes?Number(r.prediction.medianRestockMinutes).toFixed(0)+'m':'—';
+            const outage=r.prediction.medianOutageMinutes?Number(r.prediction.medianOutageMinutes).toFixed(0)+'m':'—';
+            const basis=String(r.prediction.nextExpectedRestockBasis||'insufficient-history').replaceAll('-',' ');
             const dep=r.prediction.depletionPerMinute?Number(r.prediction.depletionPerMinute).toFixed(2)+'/min':'—';
             selectedBody=
                 '<div style="font-size:12px;line-height:1.6;margin-top:5px;">'+
@@ -3288,7 +3383,7 @@
                     'Predicted stock at target: <b>'+Number(r.predictedStock||0).toLocaleString()+'</b><br>'+
                     'Availability probability: <b>'+(Number(r.arrivalChance||0)*100).toFixed(0)+'%</b> · Confidence '+Number(r.prediction.confidence||0).toFixed(0)+'%<br>'+
                     'Next predicted restock: <b>'+escapeHtml(formatTravelClock(nextAt,showLocal))+'</b>'+(nextDelta!=null?' · about '+Math.round(nextDelta)+' min from now':'')+'<br>'+
-                    '12h samples: '+Number(r.prediction.samples||0)+' · Median restock interval '+interval+' · Depletion '+dep+
+                    'Prediction basis: '+escapeHtml(basis)+' · 12h samples '+Number(r.prediction.samples||0)+' · Median restock interval '+interval+' · Median stockout '+outage+' · Depletion '+dep+
                 '</div>';
         }
 
@@ -3304,10 +3399,12 @@
                 ? forecastRows.slice(0,30).map(r=>{
                     const color=r.predictedState==='IN STOCK'?'#9fe3a8':r.predictedState==='LOW'?'#ffd18a':r.predictedState==='RESTOCK LIKELY'?'#9fd3ff':'#ff9b9b';
                     const interval=r.prediction.medianRestockMinutes?Number(r.prediction.medianRestockMinutes).toFixed(0)+'m':'—';
+                    const outage=r.prediction.medianOutageMinutes?Number(r.prediction.medianOutageMinutes).toFixed(0)+'m':'—';
+                    const basis=String(r.prediction.nextExpectedRestockBasis||'insufficient-history').replaceAll('-',' ');
                     return '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;">'+
                         '<b>'+escapeHtml(r.country)+' · '+escapeHtml(r.itemName)+'</b> · <span style="color:'+color+';font-weight:bold;">'+escapeHtml(r.predictedState)+'</span><br>'+
                         'Predicted stock at '+escapeHtml(formatTravelClock(r.targetAt,showLocal))+': <b>'+Number(r.predictedStock||0).toLocaleString()+'</b> · Availability '+(Number(r.arrivalChance||0)*100).toFixed(0)+'% · Confidence '+Number(r.prediction.confidence||0).toFixed(0)+'%<br>'+
-                        'Next predicted restock: <b>'+escapeHtml(formatTravelClock(r.nextExpectedRestockAt,showLocal))+'</b> · Median interval '+interval+
+                        'Next predicted restock: <b>'+escapeHtml(formatTravelClock(r.nextExpectedRestockAt,showLocal))+'</b> · '+escapeHtml(basis)+' · Median interval '+interval+' · Median stockout '+outage+
                     '</div>';
                 }).join('')
                 : '<div style="font-size:11px;color:#888;margin-top:5px;">No matching travel forecast rows loaded.</div>';
@@ -8341,7 +8438,9 @@
             }
         }).catch(error => console.warn('[MM CRM] Travel Stock startup sync failed', error)), 1800);
         setInterval(() => {
-            syncTravelStock({ silent:true }).catch(error => console.warn('[MM CRM] Travel Stock background sync failed', error));
+            backgroundTravelSample().then(count => {
+                if(!count) syncTravelStock({ silent:true }).catch(error => console.warn('[MM CRM] Travel Stock background sync failed', error));
+            }).catch(() => {});
         }, TRAVEL_SYNC_INTERVAL_MS);
     }
 
@@ -8389,6 +8488,7 @@
         competitorIntelligenceRows: () => competitorIntelligenceRows(dbLoad()),
         syncTravelStock,
         updateTravelData,
+        backgroundTravelSample,
         travelOpportunityRows: () => travelOpportunityRows(dbLoad()),
         travelTimedForecastRows: () => travelTimedForecastRows(dbLoad()),
         selectedTravelForecast: () => selectedTravelForecast(dbLoad()),
