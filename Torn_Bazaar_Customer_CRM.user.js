@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.8.1
+// @version      6.8.2
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -25,7 +25,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.8.1';
+    const VERSION = '6.8.2';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -399,7 +399,7 @@
         db.travelIntel.settings.method = ['standard','airstrip','wlt','business'].includes(String(db.travelIntel.settings.method || '').toLowerCase()) ? String(db.travelIntel.settings.method).toLowerCase() : 'standard';
         db.travelIntel.settings.carry = Math.max(1, Number(db.travelIntel.settings.carry || 21));
         db.travelIntel.settings.cash = Math.max(0, Number(db.travelIntel.settings.cash || 0));
-        db.travelIntel.settings.targetTime = /^([01]\\d|2[0-3]):[0-5]\\d$/.test(String(db.travelIntel.settings.targetTime || '')) ? String(db.travelIntel.settings.targetTime) : '';
+        db.travelIntel.settings.targetTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(db.travelIntel.settings.targetTime || '')) ? String(db.travelIntel.settings.targetTime) : '';
         db.travelIntel.settings.historyDays = Math.max(1, Math.min(30, Number(db.travelIntel.settings.historyDays || 7)));
         db.travelIntel.diagnostics = Array.isArray(db.travelIntel.diagnostics) ? db.travelIntel.diagnostics : [];
         db.meta = db.meta && typeof db.meta === 'object' ? db.meta : {};
@@ -3133,9 +3133,16 @@
         db.travelIntel.settings.carry=Math.max(1,Number(root.querySelector('#mm-travel-carry')?.value||21));
         db.travelIntel.settings.cash=Math.max(0,Number(root.querySelector('#mm-travel-cash')?.value||0));
         const target=String(root.querySelector('#mm-travel-target-time')?.value||'').trim();
-        db.travelIntel.settings.targetTime=/^([01]\\d|2[0-3]):[0-5]\\d$/.test(target)?target:'';
+        if(target && !/^([01]\d|2[0-3]):[0-5]\d$/.test(target)){
+            statusText='Travel target time was not saved because the time value was invalid.';
+            render();
+            return;
+        }
+        db.travelIntel.settings.targetTime=target;
         dbSave(db);
-        statusText=db.travelIntel.settings.targetTime?'Travel target saved: '+db.travelIntel.settings.targetTime+'. Forecast uses the last 12 hours of availability history.':'Travel settings saved; target time cleared.';
+        statusText=target
+            ? 'Travel target saved: '+target+'. Forecast uses the last 12 hours of availability history.'
+            : 'Travel settings saved; target time cleared.';
         render();
     }
 
