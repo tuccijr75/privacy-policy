@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.0.0
-// @description  Permanent loader for the Torn Bazaar Customer CRM runtime with verified in-CRM updates and rollback.
+// @version      7.0.1
+// @description  Bazaar operations CRM with in-CRM update checking, TornW3B travel intelligence, customer automation, procurement, analytics, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @match        https://www.torn.com/*
@@ -19,209 +19,8605 @@
 // @connect      raw.githubusercontent.com
 // ==/UserScript==
 
-(async () => {
+(() => {
     'use strict';
 
-    const LOADER_VERSION='7.0.0';
-    const MANIFEST_URL='https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/crm-manifest.json';
-    const CURRENT_SOURCE_KEY='mm_bazaar_crm_runtime_current_v1';
-    const CURRENT_META_KEY='mm_bazaar_crm_runtime_current_meta_v1';
-    const PREVIOUS_SOURCE_KEY='mm_bazaar_crm_runtime_previous_v1';
-    const PREVIOUS_META_KEY='mm_bazaar_crm_runtime_previous_meta_v1';
-    const LOADER_STATE_KEY='mm_bazaar_crm_loader_state_v1';
+    // ============================================================
+    // CONFIGURATION
+    // ============================================================
 
-    const textFetch=(url,accept='text/plain')=>new Promise((resolve,reject)=>{
-        GM_xmlhttpRequest({
-            method:'GET',
-            url:url+(url.includes('?')?'&':'?')+'t='+Date.now(),
-            timeout:20000,
-            headers:{Accept:accept},
-            onload:r=>{
-                if(r.status<200||r.status>=300)return reject(new Error('HTTP '+r.status+' for '+url));
-                resolve(String(r.responseText||''));
-            },
-            ontimeout:()=>reject(new Error('Request timed out: '+url)),
-            onerror:()=>reject(new Error('Network error: '+url))
-        });
+    const VERSION = '7.0.1';
+    const SHOP_NAME = "MANIC'S MAD HOUSE";
+    const FAVORITE_PLAYER_NAME = 'Manic-Mike';
+    const OWNER_TORN_ID = '4325346';
+    const FAVORITE_CTA = '★ ADD ' + FAVORITE_PLAYER_NAME + ' TO YOUR FAVORITES ★  Keep MANIC\'S MAD HOUSE easy to find for future purchases and restocks.';
+    const SHOP_BANNER_URL = 'https://i.postimg.cc/qvV31ggb/Chat-GPT-Image-Sep-20-2026-09-46-21-PM.png';
+    const BANNER_URL = 'https://i.postimg.cc/qvV31ggb/Chat-GPT-Image-Sep-20-2026-09-46-21-PM.png';
+    const BAZAAR_SELL_LOG_ID = 1226;
+    const PENDING_COMPOSE_KEY = 'mm_bazaar_crm_pending_compose_v1';
+    const PENDING_FIRST_SEND_KEY = 'mm_bazaar_crm_pending_first_send_v1';
+    const POLL_MS = 15_000;
+    const FIRST_SYNC_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+    const CUSTOMER_REFRESH_LOOKBACK_MS = 72 * 60 * 60 * 1000;
+    const NORMAL_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+    const DEEP_SALES_RECONCILE_MS = 5 * 60 * 1000;
+    const COUPON_WINDOW_MS = 24 * 60 * 60 * 1000;
+    const COUPON_MAX_USES = 2;
+    const MAX_CASHBACK_PERCENT = 0.10;
+    const MAX_PROCESSED = 25_000;
+    const MAX_LOG_PAGES = 250;
+    const API_BASE = 'https://api.torn.com/v2';
+    const PROCUREMENT_MARKET_REFRESH_LIMIT = 10;
+    const PROCUREMENT_CATALOG_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+    const ACQUISITION_LOG_IDS = Object.freeze({
+        1112: 'Item Market',
+        1225: 'Bazaar'
     });
+    const ITEM_MARKET_FEE_RATE = 0.05;
+    const MARKET_HISTORY_MAX_PER_ITEM = 240;
+    const PROCUREMENT_FIRST_ACQUISITION_LOOKBACK_DAYS = 90;
+    const WEAV3R_BASE = 'https://weav3r.dev/api';
+    const WEAV3R_GLOBAL_TTL_MS = 60_000;
+    const WEAV3R_DETAIL_TTL_MS = 60_000;
+    const WEAV3R_MAX_ENRICH = 15;
+    const WEAV3R_PUBLIC_RATE_LIMIT_PER_MIN = 100;
+    const MARKET_INTEL_HISTORY_MAX = 120;
+    const OPS_SNAPSHOT_MAX = 2500;
+    const PRICE_HISTORY_MAX_PER_ITEM = 500;
+    const RESTOCK_SESSION_MAX = 100;
+    const STOCKOUT_LOOKBACK_DAYS = 30;
+    const ANALYTICS_LOOKBACK_DAYS = 30;
+    const DEFAULT_LISTING_HOURS = 12;
+    const DEAD_STOCK_DAYS = 30;
+    const IDB_NAME = 'mm_bazaar_crm_idb';
+    const IDB_VERSION = 1;
+    const IDB_STATE_STORE = 'state';
+    const IDB_MAIN_KEY = 'main';
+    const GITHUB_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+    const GITHUB_SETTINGS_KEY = 'mm_bazaar_crm_github_settings_v1';
+    const GITHUB_TOKEN_KEY = 'mm_bazaar_crm_github_token_v1';
+    const GITHUB_BACKUP_PASSPHRASE_KEY = 'mm_bazaar_crm_github_backup_passphrase_v1';
+    const CONTACT_LEDGER_KEY = 'mm_bazaar_crm_contact_ledger_v1';
+    const DB_CHANNEL_NAME = 'mm_bazaar_crm_cross_tab_v1';
+    const TRAVEL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+    const TRAVEL_FEED_KEY = 'mm_bazaar_crm_travel_feed_v1';
+    const TRAVEL_RETURN_KEY = 'mm_bazaar_crm_travel_return_v1';
+    const TRAVEL_CAPTURE_STATUS_KEY = 'mm_bazaar_crm_travel_capture_status_v1';
+    const CRM_UPDATE_URL = 'https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js';
+    const CRM_UPDATE_STATUS_KEY = 'mm_bazaar_crm_update_status_v1';
 
-    async function sha256(text){
-        const bytes=new TextEncoder().encode(String(text||''));
-        const digest=await crypto.subtle.digest('SHA-256',bytes);
-        return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    const CASHBACK_TIERS = [
+        { minimum: 1_000_000, cashback: 20_000 },
+        { minimum: 250_000, cashback: 10_000 },
+        { minimum: 50_000, cashback: 5_000 }
+    ];
+
+    const DB_KEY = 'mm_bazaar_crm_v1';
+    const OLD_API_KEY = 'mm_bazaar_crm_api_v1';
+    const API_KEY = 'mm_bazaar_crm_api_v3';
+    const SYNC_KEY = 'mm_bazaar_crm_logstate_v1';
+    const PROCESSED_KEY = 'mm_bazaar_crm_processed_v1';
+    const UI_KEY = 'mm_bazaar_crm_ui_v1';
+    const UI_MODE_KEY = 'mm_bazaar_crm_ui_mode_v1';
+    const ROOT_ID = 'mm-bazaar-crm';
+    const LAUNCHER_ID = 'mm-bazaar-crm-launcher';
+
+    let simpleMode = GM_getValue(UI_MODE_KEY, 'simple') !== 'advanced';
+    let activeTab = simpleMode ? 'home' : 'ops';
+    const customerFilters = { message: 'all', contacted: 'all', restock: 'all', cashback: 'all' };
+    let statusText = 'Ready.';
+    let syncRunning = false;
+    let procurementRunning = false;
+    let fatal = false;
+    let lastHref = location.href;
+    let routeTimer = null;
+    let dbCache = null;
+    let idbHandle = null;
+    let dbWriteChain = Promise.resolve();
+    let githubSyncRunning = false;
+    let githubSyncTimer = null;
+    const tabInstanceId = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    let dbChannel = null;
+    let dbChannelRefreshTimer = null;
+
+    // ============================================================
+    // BASIC HELPERS
+    // ============================================================
+
+    const nowIso = () => new Date().toISOString();
+    const asId = value => String(value ?? '').trim();
+    const money = value => '$' + Math.max(0, Number(value) || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    const fmtDate = value => {
+        if (!value) return '—';
+        const d = new Date(value);
+        return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString();
+    };
+    const escapeHtml = value => String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#039;');
+    const makeId = prefix => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const makeCouponCode = playerId => `SAVE-${asId(playerId)}`;
+
+    function navigateFromCRM(url) {
+        const target = String(url || '').trim();
+        if (!target) return;
+        try { minimizeCRM(); } catch {}
+        statusText = 'Opening…';
+        // Same-tab navigation keeps Torn workflows predictable and prevents popup/tab sprawl.
+        setTimeout(() => { location.href = target; }, 20);
     }
 
-    async function fetchManifest(){
-        const raw=await textFetch(MANIFEST_URL,'application/json');
-        const data=JSON.parse(raw);
-        if(!data?.version||!data?.bundle?.url||!/^[a-f0-9]{64}$/i.test(String(data.bundle.sha256||''))){
-            throw new Error('CRM release manifest is invalid.');
+    function beginTravelCapture() {
+        try {
+            GM_setValue(TRAVEL_RETURN_KEY, { url: location.href, at: Date.now() });
+        } catch {}
+        statusText = 'Opening TornW3B Travel Stock for live capture…';
+        navigateFromCRM('https://weav3r.dev/travel-stock');
+    }
+
+    function readJson(key, fallback) {
+        try {
+            const raw = localStorage.getItem(key);
+            return raw ? JSON.parse(raw) : fallback;
+        } catch {
+            return fallback;
         }
-        return data;
     }
 
-    function runtimeVersion(source){
-        const m=String(source||'').match(/const\s+VERSION\s*=\s*['"]([^'"]+)['"]/);
-        return m?String(m[1]):'';
+    function writeJson(key, value) {
+        localStorage.setItem(key, JSON.stringify(value));
     }
 
-    function compileRuntime(source){
-        return new Function(
-            'GM_xmlhttpRequest','GM_getValue','GM_setValue','GM_deleteValue',
-            String(source||'')+'\n//# sourceURL=mm-bazaar-crm-runtime.js'
+    function defaultDb() {
+        return {
+            schema: 8,
+            customers: {},
+            sales: {},
+            coupons: {},
+            refunds: {},
+            subscribers: {},
+            removedCustomers: {},
+            notificationHistory: [],
+            procurement: {
+                catalog: {},
+                bazaar: {},
+                itemMarket: {},
+                inventory: {},
+                marketSnapshots: {},
+                marketHistory: {},
+                acquisitions: [],
+                acquisitionProcessed: {},
+                watchlist: {},
+                travelLedger: [],
+                settings: {
+                    targetDays: 5,
+                    safetyDays: 2,
+                    minMarginPct: 4,
+                    marketRefreshLimit: PROCUREMENT_MARKET_REFRESH_LIMIT,
+                    procurementBudget: 0,
+                    acquisitionLookbackDays: PROCUREMENT_FIRST_ACQUISITION_LOOKBACK_DAYS
+                },
+                lastSyncAt: null,
+                lastCatalogAt: null,
+                lastBazaarAt: null,
+                lastItemMarketAt: null,
+                lastInventoryAt: null,
+                lastAcquisitionSyncAt: null,
+                lastAcquisitionRebuildAt: null,
+                diagnostics: []
+            },
+            operations: {
+                inventorySnapshots: [],
+                bazaarPriceHistory: {},
+                restockSessions: [],
+                activeRestockSessionId: null,
+                listingPlans: {},
+                events: [],
+                notificationState: {},
+                settings: {
+                    listingHours: DEFAULT_LISTING_HOURS,
+                    defaultLeadHours: 6,
+                    deadStockDays: DEAD_STOCK_DAYS,
+                    overstockMultiplier: 1.5,
+                    stockoutPenaltyWeight: 1,
+                    enableBrowserNotifications: false
+                },
+                lastSnapshotAt: null,
+                diagnostics: []
+            },
+            marketIntel: {
+                marketplace: {},
+                marketplaceGeneratedAt: null,
+                details: {},
+                traders: {},
+                dollarItems: [],
+                dollarBazaars: [],
+                ranked: [],
+                auctions: [],
+                suppliers: {},
+                history: {},
+                settings: {
+                    minRoiPct: 3,
+                    minAbsoluteProfit: 5000,
+                    minMarketPrice: 1000,
+                    maxCandidatePrice: 1000000000,
+                    minBazaarSellers: 2,
+                    maxEnrich: WEAV3R_MAX_ENRICH,
+                    freshnessWarnSeconds: 180,
+                    bazaarExitHaircutPct: 1
+                },
+                lastGlobalSyncAt: null,
+                lastDollarSyncAt: null,
+                lastRankedSyncAt: null,
+                diagnostics: []
+            },
+            travelIntel: {
+                rows: [],
+                history: {},
+                lastSyncAt: null,
+                source: 'TornW3B Travel Stock',
+                settings: { method: 'standard', carry: 21, cash: 0, historyDays: 7 },
+                diagnostics: []
+            },
+            meta: { createdAt: nowIso(), migratedAt: null }
+        };
+    }
+
+
+    function getContactLedger() {
+        const raw = GM_getValue(CONTACT_LEDGER_KEY, {});
+        return raw && typeof raw === 'object' ? raw : {};
+    }
+
+    function saveContactLedger(ledger) {
+        GM_setValue(CONTACT_LEDGER_KEY, ledger && typeof ledger === 'object' ? ledger : {});
+    }
+
+    function rememberContactState(customer) {
+        if (!customer?.id || !customerHasBeenContacted(customer)) return;
+        const id = asId(customer.id);
+        const ledger = getContactLedger();
+        const previous = ledger[id] || {};
+        ledger[id] = {
+            contacted: true,
+            firstMessageSent: true,
+            messageCount: Math.max(1, Number(previous.messageCount || 0), Number(customer.messageCount || 0)),
+            lastContacted: customer.lastContacted || previous.lastContacted || null
+        };
+        saveContactLedger(ledger);
+    }
+
+    function mergeDurableContactState(db) {
+        const ledger = getContactLedger();
+
+        for (const [id, customer] of Object.entries(db.customers || {})) {
+            const coupon = db.coupons?.[id];
+            const durable = ledger[id];
+
+            const wasHistoricallyContacted =
+                Boolean(durable?.contacted) ||
+                Boolean(customer.contacted) ||
+                Boolean(customer.firstMessageSent) ||
+                Number(customer.messageCount || 0) > 0 ||
+                Boolean(coupon?.issuedAt);
+
+            if (!wasHistoricallyContacted) continue;
+
+            customer.contacted = true;
+            customer.firstMessageSent = true;
+            customer.messageCount = Math.max(1, Number(customer.messageCount || 0), Number(durable?.messageCount || 0));
+            customer.lastContacted =
+                customer.lastContacted ||
+                durable?.lastContacted ||
+                coupon?.issuedAt ||
+                null;
+
+            const lastA = Date.parse(customer.lastContacted || '') || 0;
+            const lastB = Date.parse(durable?.lastContacted || '') || 0;
+            if (lastB > lastA) customer.lastContacted = durable.lastContacted;
+
+            rememberContactState(customer);
+        }
+
+        return db;
+    }
+
+    function normalizeDb(input) {
+        const db = input && typeof input === 'object' ? input : defaultDb();
+        db.schema = 8;
+        db.customers = db.customers && typeof db.customers === 'object' ? db.customers : {};
+        db.sales = db.sales && typeof db.sales === 'object' ? db.sales : {};
+        db.coupons = db.coupons && typeof db.coupons === 'object' ? db.coupons : {};
+        db.refunds = db.refunds && typeof db.refunds === 'object' ? db.refunds : {};
+        db.subscribers = db.subscribers && typeof db.subscribers === 'object' ? db.subscribers : {};
+        db.removedCustomers = db.removedCustomers && typeof db.removedCustomers === 'object' ? db.removedCustomers : {};
+        db.notificationHistory = Array.isArray(db.notificationHistory) ? db.notificationHistory : [];
+        db.procurement = db.procurement && typeof db.procurement === 'object' ? db.procurement : {};
+        db.procurement.catalog = db.procurement.catalog && typeof db.procurement.catalog === 'object' ? db.procurement.catalog : {};
+        db.procurement.bazaar = db.procurement.bazaar && typeof db.procurement.bazaar === 'object' ? db.procurement.bazaar : {};
+        db.procurement.itemMarket = db.procurement.itemMarket && typeof db.procurement.itemMarket === 'object' ? db.procurement.itemMarket : {};
+        db.procurement.inventory = db.procurement.inventory && typeof db.procurement.inventory === 'object' ? db.procurement.inventory : {};
+        db.procurement.marketSnapshots = db.procurement.marketSnapshots && typeof db.procurement.marketSnapshots === 'object' ? db.procurement.marketSnapshots : {};
+        db.procurement.marketHistory = db.procurement.marketHistory && typeof db.procurement.marketHistory === 'object' ? db.procurement.marketHistory : {};
+        db.procurement.acquisitions = Array.isArray(db.procurement.acquisitions) ? db.procurement.acquisitions : [];
+        db.procurement.acquisitionProcessed = db.procurement.acquisitionProcessed && typeof db.procurement.acquisitionProcessed === 'object' ? db.procurement.acquisitionProcessed : {};
+        db.procurement.watchlist = db.procurement.watchlist && typeof db.procurement.watchlist === 'object' ? db.procurement.watchlist : {};
+        db.procurement.travelLedger = Array.isArray(db.procurement.travelLedger) ? db.procurement.travelLedger : [];
+        db.procurement.settings = db.procurement.settings && typeof db.procurement.settings === 'object' ? db.procurement.settings : {};
+        db.procurement.settings.targetDays = Number(db.procurement.settings.targetDays || 5);
+        db.procurement.settings.safetyDays = Number(db.procurement.settings.safetyDays || 2);
+        db.procurement.settings.minMarginPct = Number(db.procurement.settings.minMarginPct || 4);
+        db.procurement.settings.marketRefreshLimit = Number(db.procurement.settings.marketRefreshLimit || PROCUREMENT_MARKET_REFRESH_LIMIT);
+        db.procurement.settings.procurementBudget = Number(db.procurement.settings.procurementBudget || 0);
+        db.procurement.settings.acquisitionLookbackDays = Number(db.procurement.settings.acquisitionLookbackDays || PROCUREMENT_FIRST_ACQUISITION_LOOKBACK_DAYS);
+        db.procurement.diagnostics = Array.isArray(db.procurement.diagnostics) ? db.procurement.diagnostics : [];
+        db.operations = db.operations && typeof db.operations === 'object' ? db.operations : {};
+        db.operations.inventorySnapshots = Array.isArray(db.operations.inventorySnapshots) ? db.operations.inventorySnapshots : [];
+        db.operations.bazaarPriceHistory = db.operations.bazaarPriceHistory && typeof db.operations.bazaarPriceHistory === 'object' ? db.operations.bazaarPriceHistory : {};
+        db.operations.restockSessions = Array.isArray(db.operations.restockSessions) ? db.operations.restockSessions : [];
+        db.operations.activeRestockSessionId = db.operations.activeRestockSessionId || null;
+        db.operations.listingPlans = db.operations.listingPlans && typeof db.operations.listingPlans === 'object' ? db.operations.listingPlans : {};
+        db.operations.events = Array.isArray(db.operations.events) ? db.operations.events : [];
+        db.operations.notificationState = db.operations.notificationState && typeof db.operations.notificationState === 'object' ? db.operations.notificationState : {};
+        db.operations.settings = db.operations.settings && typeof db.operations.settings === 'object' ? db.operations.settings : {};
+        db.operations.settings.listingHours = Number(db.operations.settings.listingHours ?? DEFAULT_LISTING_HOURS);
+        db.operations.settings.defaultLeadHours = Number(db.operations.settings.defaultLeadHours ?? 6);
+        db.operations.settings.deadStockDays = Number(db.operations.settings.deadStockDays ?? DEAD_STOCK_DAYS);
+        db.operations.settings.overstockMultiplier = Number(db.operations.settings.overstockMultiplier ?? 1.5);
+        db.operations.settings.stockoutPenaltyWeight = Number(db.operations.settings.stockoutPenaltyWeight ?? 1);
+        db.operations.settings.enableBrowserNotifications = Boolean(db.operations.settings.enableBrowserNotifications);
+        db.operations.settings.strategyPreset = String(db.operations.settings.strategyPreset || 'BALANCED');
+        db.operations.lastSnapshotAt = db.operations.lastSnapshotAt || null;
+        db.operations.diagnostics = Array.isArray(db.operations.diagnostics) ? db.operations.diagnostics : [];
+        db.marketIntel = db.marketIntel && typeof db.marketIntel === 'object' ? db.marketIntel : {};
+        db.marketIntel.marketplace = db.marketIntel.marketplace && typeof db.marketIntel.marketplace === 'object' ? db.marketIntel.marketplace : {};
+        db.marketIntel.marketplaceGeneratedAt = db.marketIntel.marketplaceGeneratedAt || null;
+        db.marketIntel.details = db.marketIntel.details && typeof db.marketIntel.details === 'object' ? db.marketIntel.details : {};
+        db.marketIntel.traders = db.marketIntel.traders && typeof db.marketIntel.traders === 'object' ? db.marketIntel.traders : {};
+        db.marketIntel.dollarItems = Array.isArray(db.marketIntel.dollarItems) ? db.marketIntel.dollarItems : [];
+        db.marketIntel.dollarBazaars = Array.isArray(db.marketIntel.dollarBazaars) ? db.marketIntel.dollarBazaars : [];
+        db.marketIntel.ranked = Array.isArray(db.marketIntel.ranked) ? db.marketIntel.ranked : [];
+        db.marketIntel.auctions = Array.isArray(db.marketIntel.auctions) ? db.marketIntel.auctions : [];
+        db.marketIntel.suppliers = db.marketIntel.suppliers && typeof db.marketIntel.suppliers === 'object' ? db.marketIntel.suppliers : {};
+        db.marketIntel.history = db.marketIntel.history && typeof db.marketIntel.history === 'object' ? db.marketIntel.history : {};
+        db.marketIntel.settings = db.marketIntel.settings && typeof db.marketIntel.settings === 'object' ? db.marketIntel.settings : {};
+        db.marketIntel.settings.minRoiPct = Number(db.marketIntel.settings.minRoiPct ?? 3);
+        db.marketIntel.settings.minAbsoluteProfit = Number(db.marketIntel.settings.minAbsoluteProfit ?? 5000);
+        db.marketIntel.settings.minMarketPrice = Number(db.marketIntel.settings.minMarketPrice ?? 1000);
+        db.marketIntel.settings.maxCandidatePrice = Number(db.marketIntel.settings.maxCandidatePrice ?? 1000000000);
+        db.marketIntel.settings.minBazaarSellers = Number(db.marketIntel.settings.minBazaarSellers ?? 2);
+        db.marketIntel.settings.maxEnrich = Number(db.marketIntel.settings.maxEnrich ?? WEAV3R_MAX_ENRICH);
+        db.marketIntel.settings.freshnessWarnSeconds = Number(db.marketIntel.settings.freshnessWarnSeconds ?? 180);
+        db.marketIntel.settings.bazaarExitHaircutPct = Number(db.marketIntel.settings.bazaarExitHaircutPct ?? 1);
+        db.marketIntel.diagnostics = Array.isArray(db.marketIntel.diagnostics) ? db.marketIntel.diagnostics : [];
+        db.travelIntel = db.travelIntel && typeof db.travelIntel === 'object' ? db.travelIntel : {};
+        db.travelIntel.rows = Array.isArray(db.travelIntel.rows) ? db.travelIntel.rows : [];
+        db.travelIntel.history = db.travelIntel.history && typeof db.travelIntel.history === 'object' ? db.travelIntel.history : {};
+        db.travelIntel.lastSyncAt = db.travelIntel.lastSyncAt || null;
+        db.travelIntel.source = String(db.travelIntel.source || 'TornW3B Travel Stock');
+        db.travelIntel.settings = db.travelIntel.settings && typeof db.travelIntel.settings === 'object' ? db.travelIntel.settings : {};
+        db.travelIntel.settings.method = ['standard','airstrip','wlt','business'].includes(String(db.travelIntel.settings.method || '').toLowerCase()) ? String(db.travelIntel.settings.method).toLowerCase() : 'standard';
+        db.travelIntel.settings.carry = Math.max(1, Number(db.travelIntel.settings.carry || 21));
+        db.travelIntel.settings.cash = Math.max(0, Number(db.travelIntel.settings.cash || 0));
+        db.travelIntel.settings.targetTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(db.travelIntel.settings.targetTime || '')) ? String(db.travelIntel.settings.targetTime) : '';
+        db.travelIntel.settings.selectedCountry = String(db.travelIntel.settings.selectedCountry || '');
+        db.travelIntel.settings.selectedItemKey = String(db.travelIntel.settings.selectedItemKey || '');
+        db.travelIntel.settings.showLocalTime = db.travelIntel.settings.showLocalTime !== false;
+        db.travelIntel.settings.historyDays = Math.max(1, Math.min(30, Number(db.travelIntel.settings.historyDays || 7)));
+        db.travelIntel.diagnostics = Array.isArray(db.travelIntel.diagnostics) ? db.travelIntel.diagnostics : [];
+        db.meta = db.meta && typeof db.meta === 'object' ? db.meta : {};
+        db.meta.salesRebuiltAt = db.meta.salesRebuiltAt || null;
+        db.meta.lastSalesAudit = db.meta.lastSalesAudit || null;
+
+        for (const [id, sub] of Object.entries(db.subscribers)) {
+            sub.id = asId(sub.id || id);
+            sub.name = String(sub.name || db.customers[sub.id]?.name || sub.id);
+            sub.interests = Array.isArray(sub.interests) ? sub.interests.map(String).filter(Boolean) : [];
+        }
+
+        for (const [id, customer] of Object.entries(db.customers)) {
+            customer.id = asId(customer.id || id);
+            customer.name = String(customer.name || customer.id);
+            customer.purchases = Number(customer.purchases || 0);
+            customer.units = Number(customer.units || 0);
+            customer.spent = Number(customer.spent || customer.totalSpent || 0);
+            customer.firstPurchase = customer.firstPurchase || customer.firstPurchaseAt || null;
+            customer.lastPurchase = customer.lastPurchase || customer.lastPurchaseAt || null;
+            customer.contacted = Boolean(customer.contacted || customer.firstMessageSent || Number(customer.messageCount || 0) > 0);
+            customer.firstMessageSent = Boolean(customer.firstMessageSent || customer.contacted);
+            customer.messageCount = Number(customer.messageCount || 0);
+            customer.lastContacted = customer.lastContacted || null;
+            customer.createdAt = customer.createdAt || nowIso();
+            customer.manual = Boolean(customer.manual);
+        }
+
+        for (const [id, coupon] of Object.entries(db.coupons)) {
+            coupon.playerId = asId(coupon.playerId || id);
+            coupon.playerName = String(coupon.playerName || db.customers[id]?.name || id);
+            coupon.code = String(coupon.code || makeCouponCode(id));
+            coupon.maxUses = Number(coupon.maxUses || COUPON_MAX_USES);
+            coupon.uses = Number(coupon.uses || coupon.used || 0);
+            coupon.redemptions = Array.isArray(coupon.redemptions) ? coupon.redemptions : [];
+            coupon.pendingRefundId = coupon.pendingRefundId || null;
+            coupon.createdAt = coupon.createdAt || nowIso();
+            // Legacy coupons become active only after a welcome/contact exists. This prevents old sales from silently becoming "next purchase" sales.
+            coupon.issuedAt = coupon.issuedAt || (db.customers[id]?.firstMessageSent ? db.customers[id]?.lastContacted || coupon.createdAt : null);
+        }
+
+        mergeDurableContactState(db);
+
+        db.meta = db.meta && typeof db.meta === 'object' ? db.meta : {};
+        db.meta.storage = db.meta.storage && typeof db.meta.storage === 'object' ? db.meta.storage : {};
+        db.meta.github = db.meta.github && typeof db.meta.github === 'object' ? db.meta.github : {};
+        return db;
+    }
+
+    function deepClone(value) {
+        if (typeof structuredClone === 'function') return structuredClone(value);
+        return JSON.parse(JSON.stringify(value));
+    }
+
+    function openIndexedDb() {
+        if (idbHandle) return Promise.resolve(idbHandle);
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(IDB_NAME, IDB_VERSION);
+            request.onupgradeneeded = () => {
+                const db = request.result;
+                if (!db.objectStoreNames.contains(IDB_STATE_STORE)) db.createObjectStore(IDB_STATE_STORE);
+            };
+            request.onsuccess = () => {
+                idbHandle = request.result;
+                idbHandle.onversionchange = () => {
+                    try { idbHandle.close(); } catch {}
+                    idbHandle = null;
+                };
+                resolve(idbHandle);
+            };
+            request.onerror = () => reject(request.error || new Error('IndexedDB open failed.'));
+        });
+    }
+
+    async function idbGet(key) {
+        const db = await openIndexedDb();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_STATE_STORE, 'readonly');
+            const req = tx.objectStore(IDB_STATE_STORE).get(key);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error || new Error('IndexedDB read failed.'));
+        });
+    }
+
+    async function idbPut(key, value) {
+        const db = await openIndexedDb();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(IDB_STATE_STORE, 'readwrite');
+            tx.objectStore(IDB_STATE_STORE).put(value, key);
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => reject(tx.error || new Error('IndexedDB write failed.'));
+            tx.onabort = () => reject(tx.error || new Error('IndexedDB transaction aborted.'));
+        });
+    }
+
+    function installDbCrossTabSync() {
+        if (dbChannel || typeof BroadcastChannel === 'undefined') return;
+        try {
+            dbChannel = new BroadcastChannel(DB_CHANNEL_NAME);
+            dbChannel.addEventListener('message', event => {
+                if (!event?.data || event.data.source === tabInstanceId) return;
+                if (dbChannelRefreshTimer) clearTimeout(dbChannelRefreshTimer);
+                dbChannelRefreshTimer = setTimeout(async () => {
+                    try {
+                        const latest = await idbGet(IDB_MAIN_KEY);
+                        if (latest && typeof latest === 'object') {
+                            dbCache = normalizeDb(latest);
+                            // Do not tear down/rebuild a minimized panel in background tabs.
+                            // It will render from fresh dbCache when reopened.
+                            if (!getUI().minimized) render();
+                        }
+                    } catch (error) {
+                        console.warn('[MM CRM] Cross-tab refresh failed', error);
+                    }
+                }, 120);
+            });
+        } catch (error) {
+            console.warn('[MM CRM] BroadcastChannel unavailable', error);
+        }
+    }
+
+    async function initializeStorage() {
+        let stored = null;
+        try { stored = await idbGet(IDB_MAIN_KEY); }
+        catch (error) { console.error('[MM CRM] IndexedDB read failed', error); }
+
+        if (stored && typeof stored === 'object') {
+            dbCache = normalizeDb(stored);
+            return { source: 'indexeddb', migrated: false };
+        }
+
+        const legacy = readJson(DB_KEY, null);
+        if (legacy && typeof legacy === 'object') {
+            dbCache = normalizeDb(legacy);
+            dbCache.meta.storage = {
+                backend: 'IndexedDB',
+                migratedAt: nowIso(),
+                migratedFrom: 'localStorage',
+                lastSavedAt: nowIso()
+            };
+            await idbPut(IDB_MAIN_KEY, dbCache);
+            try { localStorage.removeItem(DB_KEY); } catch {}
+            return { source: 'localStorage', migrated: true };
+        }
+
+        dbCache = normalizeDb(defaultDb());
+        dbCache.meta.storage = {
+            backend: 'IndexedDB',
+            migratedAt: nowIso(),
+            migratedFrom: null,
+            lastSavedAt: nowIso()
+        };
+        await idbPut(IDB_MAIN_KEY, dbCache);
+        return { source: 'new', migrated: false };
+    }
+
+    function dbLoad() {
+        return normalizeDb(deepClone(dbCache || defaultDb()));
+    }
+
+
+    function mergeCriticalPersistenceState(latest, incoming) {
+        if (!latest || typeof latest !== 'object') return normalizeDb(incoming);
+        const merged = normalizeDb(deepClone(incoming));
+
+        const incomingSaleIds = new Set(Object.keys(merged.sales || {}));
+        const latestSales = latest.sales || {};
+        let latestOnlySaleFound = false;
+        for (const id of Object.keys(latestSales)) {
+            if (!incomingSaleIds.has(id)) {
+                latestOnlySaleFound = true;
+                break;
+            }
+        }
+
+        // Sales are append-only. Preserve records committed by another Torn tab,
+        // but keep the incoming customer's sale-derived totals authoritative.
+        merged.sales = {
+            ...latestSales,
+            ...(merged.sales || {})
+        };
+
+        const latestCustomers = latest.customers || {};
+        merged.customers = merged.customers || {};
+        for (const [id, oldCustomer] of Object.entries(latestCustomers)) {
+            const current = merged.customers[id];
+            if (!current) {
+                merged.customers[id] = deepClone(oldCustomer);
+                continue;
+            }
+
+            // Relationship/contact state is monotonic and safe to merge.
+            const oldLast = Date.parse(oldCustomer.lastContacted || '') || 0;
+            const newLast = Date.parse(current.lastContacted || '') || 0;
+            current.contacted = Boolean(current.contacted || oldCustomer.contacted);
+            current.firstMessageSent = Boolean(current.firstMessageSent || oldCustomer.firstMessageSent);
+            current.messageCount = Math.max(Number(current.messageCount || 0), Number(oldCustomer.messageCount || 0));
+            if (oldLast > newLast) current.lastContacted = oldCustomer.lastContacted;
+
+            // Preserve a resolved username from either tab.
+            if ((!current.name || /^\d+$/.test(String(current.name))) &&
+                oldCustomer.name && !/^\d+$/.test(String(oldCustomer.name))) {
+                current.name = oldCustomer.name;
+            }
+
+            // Do NOT max purchases/units/spend here. Those values must exactly
+            // match the append-only sales ledger or the integrity audit will fail.
+        }
+
+        merged.coupons = { ...(latest.coupons || {}), ...(merged.coupons || {}) };
+        merged.refunds = { ...(latest.refunds || {}), ...(merged.refunds || {}) };
+        merged.subscribers = { ...(latest.subscribers || {}), ...(merged.subscribers || {}) };
+        merged.removedCustomers = { ...(latest.removedCustomers || {}), ...(merged.removedCustomers || {}) };
+
+        // Preserve fresher Travel Command data/history committed by another Torn tab.
+        const latestTravel = latest.travelIntel;
+        if (latestTravel && typeof latestTravel === 'object') {
+            const oldTravelAt = Date.parse(latestTravel.lastSyncAt || '') || 0;
+            const newTravelAt = Date.parse(merged.travelIntel?.lastSyncAt || '') || 0;
+            if (oldTravelAt > newTravelAt) {
+                merged.travelIntel.rows = deepClone(latestTravel.rows || []);
+                merged.travelIntel.lastSyncAt = latestTravel.lastSyncAt;
+                merged.travelIntel.source = latestTravel.source || merged.travelIntel.source;
+            }
+            for (const [key, oldList] of Object.entries(latestTravel.history || {})) {
+                if (!Array.isArray(oldList) || !oldList.length) continue;
+                const currentList = Array.isArray(merged.travelIntel.history[key]) ? merged.travelIntel.history[key] : [];
+                const oldLastAt = Number(oldList[oldList.length - 1]?.at || 0);
+                const newLastAt = Number(currentList[currentList.length - 1]?.at || 0);
+                if (!currentList.length) {
+                    merged.travelIntel.history[key] = deepClone(oldList);
+                } else if (oldLastAt > newLastAt) {
+                    const byAt = new Map();
+                    for (const point of [...currentList, ...oldList]) byAt.set(Number(point.at || 0), point);
+                    merged.travelIntel.history[key] = [...byAt.values()]
+                        .sort((a,b) => Number(a.at||0) - Number(b.at||0))
+                        .slice(-800);
+                }
+            }
+        }
+
+        // Sale-derived totals are not authoritative state. Audit every persisted merge
+        // and rebuild only if drift is detected (including stale cross-tab snapshots).
+        reconcileSalesIntegrity(merged);
+
+        mergeDurableContactState(merged);
+        return normalizeDb(merged);
+    }
+
+    function dbSave(db) {
+        const normalized = normalizeDb(db);
+        mergeDurableContactState(normalized);
+        normalized.meta.storage = normalized.meta.storage || {};
+        normalized.meta.storage.backend = 'IndexedDB';
+        normalized.meta.storage.lastSavedAt = nowIso();
+        dbCache = deepClone(normalized);
+
+        const snapshot = deepClone(dbCache);
+        dbWriteChain = dbWriteChain
+            .then(async () => {
+                let latest = null;
+                try { latest = await idbGet(IDB_MAIN_KEY); } catch {}
+                const merged = mergeCriticalPersistenceState(latest, snapshot);
+                dbCache = deepClone(merged);
+                await idbPut(IDB_MAIN_KEY, merged);
+                try { dbChannel?.postMessage({ source: tabInstanceId, at: Date.now() }); } catch {}
+            })
+            .catch(error => {
+                console.error('[MM CRM] IndexedDB save failed', error);
+                statusText = `Local database save failed: ${error?.message || String(error)}`;
+                try { render(); } catch {}
+            });
+    }
+
+    async function flushDbWrites() {
+        await dbWriteChain;
+    }
+
+    function getUI() {
+        const ui = readJson(UI_KEY, {});
+        return {
+            minimized: ui.minimized !== false,
+            left: Number.isFinite(Number(ui.left)) ? Number(ui.left) : null,
+            top: Number.isFinite(Number(ui.top)) ? Number(ui.top) : 82
+        };
+    }
+
+    function saveUI(patch) {
+        writeJson(UI_KEY, { ...getUI(), ...patch });
+    }
+
+    // ============================================================
+    // API KEY STORAGE / MIGRATION
+    // ============================================================
+
+    function migrateApiKey() {
+        let key = String(GM_getValue(API_KEY, '') || '').trim();
+        if (key) return key;
+        const legacy = String(localStorage.getItem(OLD_API_KEY) || '').trim();
+        if (legacy) {
+            GM_setValue(API_KEY, legacy);
+            localStorage.removeItem(OLD_API_KEY);
+            key = legacy;
+        }
+        return key;
+    }
+
+    function getApiKey() {
+        return String(GM_getValue(API_KEY, '') || '').trim();
+    }
+
+    function setApiKey(value) {
+        const key = String(value || '').trim();
+        if (key) GM_setValue(API_KEY, key);
+        else GM_deleteValue(API_KEY);
+        fatal = false;
+    }
+
+    // ============================================================
+    // TORN API
+    // ============================================================
+
+    function apiRequest(pathOrUrl) {
+        return new Promise((resolve, reject) => {
+            const key = getApiKey();
+            if (!key) {
+                reject(new Error('No Torn API key saved.'));
+                return;
+            }
+
+            const url = new URL(pathOrUrl.startsWith('http') ? pathOrUrl : API_BASE + pathOrUrl);
+            url.searchParams.set('key', key);
+            url.searchParams.set('comment', 'Torn Bazaar Customer CRM');
+
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: url.toString(),
+                timeout: 20_000,
+                headers: { Accept: 'application/json' },
+                onload: response => {
+                    if (response.status < 200 || response.status >= 300) {
+                        reject(new Error(`HTTP ${response.status} from Torn API.`));
+                        return;
+                    }
+                    let data;
+                    try {
+                        data = JSON.parse(response.responseText);
+                    } catch {
+                        reject(new Error('Torn API returned invalid JSON.'));
+                        return;
+                    }
+                    if (data?.error) {
+                        const code = Number(data.error.code || 0);
+                        const message = data.error.error || data.error.message || 'Unknown Torn API error';
+                        const error = new Error(`Torn API ${code}: ${message}`);
+                        error.code = code;
+                        reject(error);
+                        return;
+                    }
+                    resolve(data);
+                },
+                ontimeout: () => reject(new Error('Torn API request timed out.')),
+                onerror: () => reject(new Error('Torn API network request failed.'))
+            });
+        });
+    }
+
+    function extractUsernameFromApiPayload(data, playerId) {
+        const id = asId(playerId);
+        const candidates = [
+            data?.profile?.name,
+            data?.user?.name,
+            data?.name,
+            data?.player_name,
+            data?.username
+        ];
+        for (const candidate of candidates) {
+            const name = String(candidate || '').trim();
+            if (name && name !== id && !/^\d+$/.test(name)) return name;
+        }
+        return '';
+    }
+
+    function publicApiRequestV1(playerId) {
+        return new Promise((resolve, reject) => {
+            const key = getApiKey();
+            const id = asId(playerId);
+            if (!key) return reject(new Error('No Torn API key saved.'));
+
+            const url = new URL(`https://api.torn.com/user/${encodeURIComponent(id)}`);
+            url.searchParams.set('selections', 'basic');
+            url.searchParams.set('key', key);
+            url.searchParams.set('comment', 'Torn Bazaar Customer CRM');
+
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: url.toString(),
+                timeout: 20_000,
+                headers: { Accept: 'application/json' },
+                onload: response => {
+                    if (response.status < 200 || response.status >= 300) {
+                        return reject(new Error(`HTTP ${response.status} from Torn API v1.`));
+                    }
+                    let data;
+                    try { data = JSON.parse(response.responseText); }
+                    catch { return reject(new Error('Torn API v1 returned invalid JSON.')); }
+
+                    if (data?.error) {
+                        const code = Number(data.error.code || 0);
+                        const message = data.error.error || data.error.message || 'Unknown Torn API error';
+                        const error = new Error(`Torn API ${code}: ${message}`);
+                        error.code = code;
+                        return reject(error);
+                    }
+                    resolve(data);
+                },
+                ontimeout: () => reject(new Error('Torn API v1 request timed out.')),
+                onerror: () => reject(new Error('Torn API v1 network request failed.'))
+            });
+        });
+    }
+
+
+    function apiRequestV1UserSelection(selection) {
+        return new Promise((resolve, reject) => {
+            const key = getApiKey();
+            if (!key) return reject(new Error('No Torn API key saved.'));
+            const url = new URL('https://api.torn.com/user/');
+            url.searchParams.set('selections', selection);
+            url.searchParams.set('key', key);
+            url.searchParams.set('comment', 'Torn Bazaar Customer CRM');
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: url.toString(),
+                timeout: 20_000,
+                headers: { Accept: 'application/json' },
+                onload: response => {
+                    if (response.status < 200 || response.status >= 300) return reject(new Error(`HTTP ${response.status} from Torn API v1.`));
+                    let data;
+                    try { data = JSON.parse(response.responseText); }
+                    catch { return reject(new Error('Torn API v1 returned invalid JSON.')); }
+                    if (data?.error) {
+                        const error = new Error(`Torn API ${Number(data.error.code || 0)}: ${data.error.error || data.error.message || 'Unknown error'}`);
+                        error.code = Number(data.error.code || 0);
+                        return reject(error);
+                    }
+                    resolve(data);
+                },
+                ontimeout: () => reject(new Error('Torn API v1 request timed out.')),
+                onerror: () => reject(new Error('Torn API v1 network request failed.'))
+            });
+        });
+    }
+
+    async function fetchTornUsername(playerId) {
+        const id = asId(playerId);
+        if (!/^\d+$/.test(id)) throw new Error(`Invalid Torn player ID: ${id}`);
+
+        let v2Error = null;
+        try {
+            const data = await apiRequest(`/user/${encodeURIComponent(id)}/basic`);
+            const name = extractUsernameFromApiPayload(data, id);
+            if (name) return name;
+        } catch (error) {
+            v2Error = error;
+        }
+
+        try {
+            const data = await publicApiRequestV1(id);
+            const name = extractUsernameFromApiPayload(data, id);
+            if (name) return name;
+        } catch (v1Error) {
+            throw new Error(
+                `Username lookup failed for [${id}]. ${v2Error?.message || 'v2 basic returned no usable username'}; ` +
+                `v1 basic fallback: ${v1Error?.message || String(v1Error)}. ` +
+                `The CRM key must include User → Basic. Automatic Bazaar sync also requires User → Log.`
+            );
+        }
+
+        throw new Error(`Torn returned no usable username for [${id}]. The CRM key must include User → Basic.`);
+    }
+
+    function hasRealUsername(record) {
+        if (!record) return false;
+        const name = String(record.name || record.playerName || '').trim();
+        const id = asId(record.id || record.playerId);
+        return Boolean(name && name !== id && !/^\d+$/.test(name));
+    }
+
+    function displayUsername(record) {
+        return hasRealUsername(record) ? String(record.name || record.playerName).trim() : '';
+    }
+
+    function applyUsername(db, playerId, name) {
+        const id = asId(playerId);
+        if (db.customers[id]) db.customers[id].name = name;
+        if (db.coupons[id]) db.coupons[id].playerName = name;
+        if (db.subscribers[id]) db.subscribers[id].name = name;
+        for (const sale of Object.values(db.sales)) {
+            if (asId(sale.playerId) === id) sale.playerName = name;
+        }
+        for (const refund of Object.values(db.refunds)) {
+            if (asId(refund.playerId) === id) refund.playerName = name;
+        }
+    }
+
+    async function refreshCustomerUsername(playerId, force = false) {
+        const id = asId(playerId);
+        const db = dbLoad();
+        const customer = db.customers[id];
+        if (!customer) throw new Error(`Customer [${id}] does not exist in the CRM.`);
+        if (!force && hasRealUsername(customer)) return customer.name;
+        const name = await fetchTornUsername(id);
+        applyUsername(db, id, name);
+        dbSave(db);
+        return name;
+    }
+
+    async function repairUsernames(limit = 8) {
+        const db = dbLoad();
+        const ids = Object.values(db.customers).filter(c => !hasRealUsername(c)).map(c => c.id).slice(0, limit);
+        let repaired = 0;
+        for (const id of ids) {
+            try {
+                await refreshCustomerUsername(id, true);
+                repaired++;
+            } catch {
+                // A failed lookup remains unresolved and can be retried later.
+            }
+        }
+        return repaired;
+    }
+
+    // ============================================================
+    // CUSTOMER / COUPON MODEL
+    // ============================================================
+
+    function ensureCustomer(db, playerId, playerName = '') {
+        const id = asId(playerId);
+        if (!db.customers[id]) {
+            db.customers[id] = {
+                id,
+                name: playerName || id,
+                purchases: 0,
+                units: 0,
+                spent: 0,
+                firstPurchase: null,
+                lastPurchase: null,
+                contacted: false,
+                firstMessageSent: false,
+                messageCount: 0,
+                lastContacted: null,
+                createdAt: nowIso(),
+                manual: false
+            };
+        } else if (playerName && !/^\d+$/.test(playerName)) {
+            db.customers[id].name = playerName;
+        }
+        return db.customers[id];
+    }
+
+    function ensureCoupon(db, customer) {
+        const id = asId(customer.id);
+        if (!db.coupons[id]) {
+            db.coupons[id] = {
+                playerId: id,
+                playerName: customer.name || id,
+                code: makeCouponCode(id),
+                maxUses: COUPON_MAX_USES,
+                uses: 0,
+                redemptions: [],
+                pendingRefundId: null,
+                createdAt: nowIso(),
+                issuedAt: null
+            };
+        }
+        return db.coupons[id];
+    }
+
+    function couponRemaining(coupon) {
+        return Math.max(0, Number(coupon?.maxUses || COUPON_MAX_USES) - Number(coupon?.uses || 0));
+    }
+
+    function usedSaleIds(coupon) {
+        const ids = new Set();
+        for (const redemption of coupon?.redemptions || []) {
+            for (const id of redemption.saleIds || []) ids.add(String(id));
+        }
+        return ids;
+    }
+
+    function eligibleCouponSales(db, coupon) {
+        if (!coupon?.issuedAt) return [];
+        const issued = new Date(coupon.issuedAt).getTime();
+        const cutoff = Math.max(issued, Date.now() - COUPON_WINDOW_MS);
+        const used = usedSaleIds(coupon);
+        return Object.values(db.sales)
+            .filter(sale => asId(sale.playerId) === asId(coupon.playerId))
+            .filter(sale => Number(sale.timestamp || 0) >= cutoff)
+            .filter(sale => !used.has(String(sale.id)))
+            .sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+    }
+
+    function cashbackForAmount(total) {
+        const amount = Math.max(0, Number(total) || 0);
+        const tier = CASHBACK_TIERS.find(t => amount >= t.minimum);
+        if (!tier) return { qualified: false, cashback: 0, tier: null };
+        const cap = Math.floor(amount * MAX_CASHBACK_PERCENT);
+        return { qualified: true, cashback: Math.min(tier.cashback, cap), tier };
+    }
+
+    function couponQualification(db, coupon) {
+        if (!coupon) return { qualified: false, reason: 'Coupon not found.', total: 0, cashback: 0, sales: [] };
+        if (!coupon.issuedAt) return { qualified: false, reason: 'Coupon has not been issued yet.', total: 0, cashback: 0, sales: [] };
+        if (couponRemaining(coupon) <= 0) return { qualified: false, reason: 'Coupon is fully redeemed.', total: 0, cashback: 0, sales: [] };
+        if (coupon.pendingRefundId) return { qualified: false, reason: 'A cashback refund is already pending.', total: 0, cashback: 0, sales: [] };
+        const sales = eligibleCouponSales(db, coupon);
+        const total = sales.reduce((sum, sale) => sum + Number(sale.total || 0), 0);
+        const calc = cashbackForAmount(total);
+        if (!calc.qualified) {
+            const needed = Math.max(0, 50_000 - total);
+            return {
+                qualified: false,
+                reason: total ? `${money(needed)} more needed for $5,000 cashback.` : 'No qualifying post-coupon purchase found in the last 24 hours.',
+                total,
+                cashback: 0,
+                sales
+            };
+        }
+        return { qualified: true, reason: 'Qualified.', total, cashback: calc.cashback, tier: calc.tier, sales };
+    }
+
+    // ============================================================
+    // BAZAAR SALE INGESTION
+    // ============================================================
+
+    function numeric(value, fallback = 0) {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : fallback;
+    }
+
+    function normalizeItems(rawItems, saleData = {}) {
+        if (!rawItems) return [];
+
+        let list = [];
+        if (Array.isArray(rawItems)) {
+            list = rawItems;
+        } else if (typeof rawItems === 'object') {
+            const looksLikeSingle = ['id', 'item_id', 'item', 'name', 'quantity', 'qty', 'price', 'cost', 'total'].some(k => k in rawItems);
+            list = looksLikeSingle
+                ? [rawItems]
+                : Object.entries(rawItems).map(([id, value]) =>
+                    value && typeof value === 'object' ? { id, ...value } : { id, qty: value }
+                );
+        } else {
+            list = [{ id: rawItems }];
+        }
+
+        const saleCostEach = Math.max(0, numeric(saleData.cost_each ?? saleData.price_each ?? saleData.unit_price, 0));
+        const saleCostTotal = Math.max(0, numeric(saleData.cost_total ?? saleData.total ?? saleData.price_total, 0));
+
+        const normalized = list.map(item => {
+            const id = asId(item.id ?? item.item_id ?? item.item ?? '');
+            const quantity = Math.max(1, numeric(item.quantity ?? item.qty, 1));
+            const explicitPrice = Math.max(0, numeric(item.price ?? item.cost_each ?? item.cost ?? item.unit_price, 0));
+            const explicitTotal = Math.max(0, numeric(item.total ?? item.cost_total ?? item.price_total, 0));
+            const price = explicitPrice || saleCostEach || (explicitTotal && quantity ? explicitTotal / quantity : 0);
+            const total = explicitTotal || (price * quantity);
+
+            return {
+                id,
+                uid: item.uid ?? item.UID ?? null,
+                name: String(item.name ?? item.item_name ?? (id ? `Item ${id}` : 'Item')),
+                quantity,
+                price: Math.round(price),
+                total: Math.round(total)
+            };
+        });
+
+        // A 1226 log can put cost_total only at sale level. If there is one item,
+        // make the item total exactly match the authoritative sale total.
+        if (normalized.length === 1 && saleCostTotal > 0) {
+            normalized[0].total = Math.round(saleCostTotal);
+            normalized[0].price = normalized[0].quantity
+                ? Math.round(saleCostTotal / normalized[0].quantity)
+                : normalized[0].price;
+        }
+
+        return normalized;
+    }
+
+    function extractLogTypeId(entry) {
+        return numeric(
+            entry?.details?.id ??
+            entry?.details?.log_id ??
+            entry?.log_id ??
+            entry?.type_id ??
+            entry?.type ??
+            0,
+            0
         );
     }
 
-    async function downloadVerified(manifest){
-        const source=await textFetch(manifest.bundle.url,'text/javascript,text/plain');
-        const actual=await sha256(source);
-        const expected=String(manifest.bundle.sha256||'').toLowerCase();
-        if(actual!==expected)throw new Error('CRM runtime SHA-256 verification failed.');
-        const version=runtimeVersion(source);
-        if(version!==String(manifest.version))throw new Error('CRM runtime version does not match release manifest.');
-        compileRuntime(source);
-        return {source,meta:{version,sha256:actual,url:manifest.bundle.url,verifiedAt:Date.now()}};
+    function logActorIdentity(value, fallbackName = '') {
+        if (value && typeof value === 'object') {
+            const id = asId(
+                value.id ??
+                value.user_id ??
+                value.player_id ??
+                value.torn_id ??
+                value.ID ??
+                ''
+            );
+            const name = String(
+                value.name ??
+                value.username ??
+                value.player_name ??
+                value.user_name ??
+                fallbackName ??
+                id
+            ).trim();
+            return { id, name };
+        }
+
+        const id = asId(value);
+        return { id, name: String(fallbackName || id).trim() };
     }
 
-    function context(){
-        const current=GM_getValue(CURRENT_META_KEY,{})||{};
-        const previous=GM_getValue(PREVIOUS_META_KEY,{})||{};
-        const state=GM_getValue(LOADER_STATE_KEY,{})||{};
+    function extractBazaarSale(entry) {
+        if (!entry) return null;
+
+        const typeId = extractLogTypeId(entry);
+        if (typeId && typeId !== BAZAAR_SELL_LOG_ID) return null;
+
+        const data = entry.data && typeof entry.data === 'object' ? entry.data : {};
+        const buyerRaw =
+            data.buyer ??
+            data.buyer_id ??
+            data.user ??
+            data.user_id ??
+            data.player ??
+            data.player_id ??
+            data.customer ??
+            null;
+
+        const buyer = logActorIdentity(
+            buyerRaw,
+            data.buyer_name ?? data.user_name ?? data.player_name ?? data.customer_name ?? ''
+        );
+        const saleId = String(entry.id ?? entry.log_id ?? entry.uuid ?? '').trim();
+
+        if (!saleId || !buyer.id || buyer.id === '[object Object]') return null;
+
+        let rawItems = data.items ?? null;
+        if (!rawItems && data.item && typeof data.item === 'object') rawItems = data.item;
+        if (!rawItems && (data.item_id != null || (data.item != null && typeof data.item !== 'object'))) {
+            rawItems = [{
+                id: data.item_id ?? data.item,
+                name: data.item_name,
+                quantity: data.quantity ?? data.qty ?? 1,
+                price: data.price ?? data.cost_each ?? data.unit_price ?? 0,
+                total: data.cost_total ?? data.total ?? data.cost ?? 0
+            }];
+        }
+
+        const items = normalizeItems(rawItems, data);
+        const unitsFromItems = items.reduce((sum, item) => sum + Math.max(0, numeric(item.quantity, 0)), 0);
+        const units = unitsFromItems || Math.max(1, numeric(data.quantity ?? data.qty, 1));
+
+        // cost_total is authoritative for Torn Bazaar sell logs. cost_each × units
+        // is the next fallback. Item totals are used only when neither is present.
+        const costTotal = Math.max(0, numeric(data.cost_total ?? data.total ?? data.price_total, 0));
+        const costEach = Math.max(0, numeric(data.cost_each ?? data.price_each ?? data.unit_price ?? data.price, 0));
+        const itemTotal = items.reduce((sum, item) => sum + Math.max(0, numeric(item.total, 0)), 0);
+        const total = Math.round(costTotal || (costEach * units) || itemTotal);
+
+        let timestamp = numeric(entry.timestamp ?? entry.time ?? entry.created_at, 0);
+        if (timestamp > 0 && timestamp < 100_000_000_000) timestamp *= 1000;
+        if (!timestamp) return null;
+
         return {
-            loaderVersion:LOADER_VERSION,
-            activeVersion:String(current.version||''),
-            previousVersion:String(previous.version||''),
-            latestVersion:String(state.latestVersion||''),
-            lastHealthyVersion:String(state.lastHealthyVersion||'')
+            id: saleId,
+            playerId: buyer.id,
+            playerName: buyer.name || buyer.id,
+            timestamp,
+            total,
+            units,
+            items,
+            sourceLogType: BAZAAR_SELL_LOG_ID
         };
     }
 
-    function publishContext(){
-        globalThis.__MM_CRM_LOADER_CONTEXT__=context();
+    function applySaleToCustomer(db, sale, resolvedName = '') {
+        const name = String(resolvedName || sale.playerName || sale.playerId).trim();
+        const customer = ensureCustomer(db, sale.playerId, name);
+        const coupon = ensureCoupon(db, customer);
+
+        customer.purchases = numeric(customer.purchases, 0) + 1;
+        customer.units = numeric(customer.units, 0) + numeric(sale.units, 0);
+        customer.spent = numeric(customer.spent, 0) + numeric(sale.total, 0);
+
+        const iso = new Date(sale.timestamp).toISOString();
+        const firstMs = customer.firstPurchase ? new Date(customer.firstPurchase).getTime() : 0;
+        const lastMs = customer.lastPurchase ? new Date(customer.lastPurchase).getTime() : 0;
+        if (!firstMs || sale.timestamp < firstMs) customer.firstPurchase = iso;
+        if (!lastMs || sale.timestamp > lastMs) customer.lastPurchase = iso;
+
+        coupon.playerName = name || coupon.playerName;
+        if (name && !/^\d+$/.test(name)) applyUsername(db, sale.playerId, name);
+        return customer;
     }
 
-    async function checkForUpdate(){
-        const manifest=await fetchManifest();
-        const current=GM_getValue(CURRENT_META_KEY,{})||{};
-        const state=GM_getValue(LOADER_STATE_KEY,{})||{};
-        state.latestVersion=String(manifest.version);
-        state.lastCheckAt=Date.now();
-        GM_setValue(LOADER_STATE_KEY,state);
-        publishContext();
+
+    function maybeReactivateCustomerForSale(db, sale) {
+        const id = asId(sale?.playerId);
+        const removed = db.removedCustomers?.[id];
+        if (!removed) return false;
+
+        const removedAt = Date.parse(removed.removedAt || '') || 0;
+        const saleAt = Number(sale?.timestamp || 0);
+
+        if (saleAt > removedAt) {
+            delete db.removedCustomers[id];
+            ensureCustomer(db, id, sale.playerName || removed.playerName || id);
+            return true;
+        }
+        return false;
+    }
+
+    function recalculateCustomerSalesTotals(db) {
+        for (const customer of Object.values(db.customers || {})) {
+            customer.purchases = 0;
+            customer.units = 0;
+            customer.spent = 0;
+            customer.firstPurchase = null;
+            customer.lastPurchase = null;
+        }
+
+        const sales = Object.values(db.sales || {})
+            .slice()
+            .sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+
+        for (const sale of sales) {
+            if (!sale?.playerId) continue;
+            maybeReactivateCustomerForSale(db, sale);
+            if (db.removedCustomers?.[asId(sale.playerId)]) continue;
+            applySaleToCustomer(db, sale, sale.playerName || '');
+        }
+        return db;
+    }
+
+    function importBazaarSaleIntoDb(db, sale) {
+        const saleId = String(sale?.id || '').trim();
+        if (!saleId || db.sales[saleId]) return false;
+
+        let name = String(sale.playerName || sale.playerId || '').trim();
+        if (!name) name = String(sale.playerId || '');
+
+        sale.playerName = name;
+        db.sales[saleId] = sale;
+        maybeReactivateCustomerForSale(db, sale);
+        if (!db.removedCustomers?.[asId(sale.playerId)]) {
+            applySaleToCustomer(db, sale, name);
+        }
+        return true;
+    }
+
+    async function repairRecentSalesCoverage({ lookbackMs = CUSTOMER_REFRESH_LOOKBACK_MS, silent = false } = {}) {
+        if (!getApiKey()) {
+            if (!silent) {
+                statusText = 'Torn API key missing. Open More → Settings, paste your Torn API key, and Save. Customer refresh cannot run without User → Log access.';
+                render();
+            }
+            return { imported: 0, checked: 0, repaired: false, rejected: 0, missingApiKey: true };
+        }
+
+        if (!silent) {
+            statusText = 'Refreshing customer sales from the last 72 hours…';
+            render();
+        }
+
+        const fromMs = Math.max(
+            0,
+            Date.now() - Math.max(NORMAL_LOOKBACK_MS, Number(lookbackMs || CUSTOMER_REFRESH_LOOKBACK_MS))
+        );
+        const rows = await fetchBazaarLogs(fromMs / 1000, 25);
+        const db = dbLoad();
+        const processed = new Set(getProcessed());
+        let imported = 0;
+        let checked = 0;
+        let rejected = 0;
+
+        rows.sort((a, b) => numeric(a.timestamp, 0) - numeric(b.timestamp, 0));
+
+        for (const entry of rows) {
+            const id = String(entry?.id ?? entry?.log_id ?? '');
+            if (!id) {
+                rejected++;
+                continue;
+            }
+            checked++;
+
+            if (db.sales[id]) {
+                processed.add(id);
+                continue;
+            }
+
+            const sale = extractBazaarSale(entry);
+            if (!sale) {
+                rejected++;
+                console.warn('[MM CRM] Customer refresh rejected Bazaar row', entry);
+                continue;
+            }
+
+            if (importBazaarSaleIntoDb(db, sale)) {
+                processed.add(id);
+                imported++;
+            }
+        }
+
+        // One deterministic rebuild and one persistence write for the entire refresh.
+        // This is dramatically faster than resolving usernames and saving per sale.
+        recalculateCustomerSalesTotals(db);
+
+        const audit = reconcileSalesIntegrity(db);
+        db.meta.lastSalesAudit = { at: nowIso(), ...audit };
+        db.meta.lastRecentSalesRepairAt = nowIso();
+        dbSave(db);
+        saveProcessed([...processed]);
+
+        if (!silent) {
+            statusText = imported
+                ? `Customers refreshed: ${imported} missing sale${imported === 1 ? '' : 's'} imported from ${checked} checked${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`
+                : `Customers refreshed: ${checked} recent Bazaar sale log${checked === 1 ? '' : 's'} checked${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`;
+            render();
+        }
+
+        await flushDbWrites();
+
+        if (!audit.ok) {
+            throw new Error(`Sales repair audit failed: ${audit.problems.slice(0, 3).join('; ')}`);
+        }
+
+        // Refresh unresolved usernames even when the sales were already present.
+        // This repairs customers that were imported during a prior failed audit.
+        setTimeout(() => repairUsernames(25).then(count => {
+            if (count > 0) statusText = `Customer names repaired: ${count}.`;
+            render();
+        }).catch(() => {}), 50);
+
+        return { imported, checked, repaired: imported > 0, rejected };
+    }
+
+    async function storeBazaarSale(sale) {
+        const db = dbLoad();
+        if (!importBazaarSaleIntoDb(db, sale)) return false;
+        recalculateCustomerSalesTotals(db);
+        dbSave(db);
+        await flushDbWrites();
+        setTimeout(() => repairUsernames(5).then(() => render()).catch(() => {}), 50);
+        return true;
+    }
+
+    function getProcessed() {
+        const list = readJson(PROCESSED_KEY, []);
+        return Array.isArray(list) ? list.map(String) : [];
+    }
+
+    function saveProcessed(ids) {
+        const unique = [...new Set((ids || []).map(String).filter(Boolean))];
+        if (unique.length > MAX_PROCESSED) unique.splice(0, unique.length - MAX_PROCESSED);
+        writeJson(PROCESSED_KEY, unique);
+    }
+
+    function markProcessed(id) {
+        const list = getProcessed();
+        const value = String(id);
+        if (!list.includes(value)) list.push(value);
+        saveProcessed(list);
+    }
+
+    function getSyncState() {
+        const state = readJson(SYNC_KEY, {});
+        return { lastSuccess: numeric(state.lastSuccess, 0) };
+    }
+
+    function saveSyncState(state) {
+        writeJson(SYNC_KEY, state);
+    }
+
+    function nextUrlFromMetadata(data) {
+        const next =
+            data?._metadata?.links?.next ??
+            data?.metadata?.links?.next ??
+            data?._metadata?.next ??
+            data?.pagination?.next ??
+            null;
+
+        if (typeof next !== 'string' || !next.trim()) return null;
+        try {
+            return new URL(next, API_BASE + '/').toString();
+        } catch {
+            return null;
+        }
+    }
+
+    function logRowsFromResponse(data) {
+        const candidate =
+            data?.log ??
+            data?.logs ??
+            data?.data?.log ??
+            data?.data?.logs ??
+            null;
+
+        if (Array.isArray(candidate)) return candidate;
+        if (candidate && typeof candidate === 'object') {
+            return Object.entries(candidate).map(([id, row]) => ({
+                id: row?.id ?? row?.log_id ?? id,
+                ...(row && typeof row === 'object' ? row : {})
+            }));
+        }
+        return [];
+    }
+
+    async function fetchBazaarLogs(fromSeconds = 0, maxPages = MAX_LOG_PAGES) {
+        const collected = [];
+        let url = new URL(API_BASE + '/user/log');
+        url.searchParams.set('log', String(BAZAAR_SELL_LOG_ID));
+        if (fromSeconds > 0) url.searchParams.set('from', String(Math.max(0, Math.floor(fromSeconds))));
+        url.searchParams.set('limit', '100');
+
+        let pages = 0;
+        const seenUrls = new Set();
+
+        while (url && pages < maxPages) {
+            const clean = url.toString();
+            if (seenUrls.has(clean)) throw new Error('Torn log pagination loop detected.');
+            seenUrls.add(clean);
+
+            const data = await apiRequest(clean);
+            const rows = logRowsFromResponse(data);
+            collected.push(...rows);
+            pages++;
+
+            const next = nextUrlFromMetadata(data);
+            url = next ? new URL(next) : null;
+        }
+
+        if (url && pages >= maxPages) {
+            throw new Error(`Bazaar history exceeded the ${maxPages}-page safety limit. No partial rebuild was committed.`);
+        }
+
+        return collected;
+    }
+
+    function auditSalesData(db) {
+        const problems = [];
+        const sales = Object.values(db.sales || {});
+        const byCustomer = new Map();
+
+        for (const sale of sales) {
+            if (!sale.id) problems.push('Sale without ID');
+            if (!sale.playerId) problems.push(`Sale ${sale.id || '?'} without buyer`);
+            if (!Number.isFinite(Number(sale.timestamp)) || Number(sale.timestamp) <= 0) problems.push(`Sale ${sale.id || '?'} invalid timestamp`);
+            if (!Number.isFinite(Number(sale.total)) || Number(sale.total) < 0) problems.push(`Sale ${sale.id || '?'} invalid total`);
+            if (!Number.isFinite(Number(sale.units)) || Number(sale.units) <= 0) problems.push(`Sale ${sale.id || '?'} invalid units`);
+
+            const id = asId(sale.playerId);
+            if (!byCustomer.has(id)) byCustomer.set(id, { purchases: 0, units: 0, spent: 0, first: Infinity, last: 0 });
+            const a = byCustomer.get(id);
+            a.purchases++;
+            a.units += numeric(sale.units, 0);
+            a.spent += numeric(sale.total, 0);
+            a.first = Math.min(a.first, numeric(sale.timestamp, Infinity));
+            a.last = Math.max(a.last, numeric(sale.timestamp, 0));
+        }
+
+        for (const [id, a] of byCustomer) {
+            // Removed customers remain in the immutable sales ledger by design.
+            // They are intentionally excluded from active-customer totals/audits.
+            if (db.removedCustomers?.[id]) continue;
+            const c = db.customers[id];
+            if (!c) {
+                if (db.removedCustomers[id]) continue;
+                problems.push(`Missing customer ${id} for imported sales`);
+                continue;
+            }
+            if (numeric(c.purchases) !== a.purchases) problems.push(`Customer ${id} purchase count mismatch`);
+            if (numeric(c.units) !== a.units) problems.push(`Customer ${id} unit count mismatch`);
+            if (numeric(c.spent) !== a.spent) problems.push(`Customer ${id} spend mismatch`);
+        }
+
         return {
-            currentVersion:String(current.version||''),
-            latestVersion:String(manifest.version),
-            available:String(manifest.version)!==String(current.version||'')
+            ok: problems.length === 0,
+            sales: sales.length,
+            customersWithSales: byCustomer.size,
+            problems
         };
     }
 
-    async function updateNow(){
-        const manifest=await fetchManifest();
-        const currentMeta=GM_getValue(CURRENT_META_KEY,{})||{};
-        if(String(currentMeta.version||'')===String(manifest.version)){
-            const state=GM_getValue(LOADER_STATE_KEY,{})||{};
-            state.latestVersion=String(manifest.version);
-            state.lastCheckAt=Date.now();
-            GM_setValue(LOADER_STATE_KEY,state);
-            publishContext();
-            return {changed:false,message:'CRM runtime v'+manifest.version+' is already active.'};
+    function reconcileSalesIntegrity(db) {
+        let audit = auditSalesData(db);
+        let repaired = false;
+        if (!audit.ok) {
+            recalculateCustomerSalesTotals(db);
+            audit = auditSalesData(db);
+            repaired = true;
+            db.meta.lastSalesSelfRepairAt = nowIso();
+            db.meta.lastSalesSelfRepairOk = audit.ok;
         }
-
-        const next=await downloadVerified(manifest);
-        const currentSource=GM_getValue(CURRENT_SOURCE_KEY,'');
-        if(currentSource){
-            GM_setValue(PREVIOUS_SOURCE_KEY,currentSource);
-            GM_setValue(PREVIOUS_META_KEY,currentMeta);
-        }
-        GM_setValue(CURRENT_SOURCE_KEY,next.source);
-        GM_setValue(CURRENT_META_KEY,next.meta);
-
-        const state=GM_getValue(LOADER_STATE_KEY,{})||{};
-        state.latestVersion=String(manifest.version);
-        state.lastUpdateAt=Date.now();
-        GM_setValue(LOADER_STATE_KEY,state);
-        publishContext();
-        return {changed:true,message:'CRM runtime v'+manifest.version+' verified and staged.'};
+        return { ...audit, repaired };
     }
 
-    async function rollback(){
-        const previousSource=GM_getValue(PREVIOUS_SOURCE_KEY,'');
-        const previousMeta=GM_getValue(PREVIOUS_META_KEY,{})||{};
-        if(!previousSource||!previousMeta.version)throw new Error('No previous CRM runtime is cached.');
+    async function repairSalesIntegrityNow() {
+        const db = dbLoad();
+        const initial = reconcileSalesIntegrity(db);
+        db.meta.lastSalesAudit = { at: nowIso(), ...initial };
+        db.meta.lastSalesSelfRepairAt = nowIso();
+        db.meta.lastSalesSelfRepairOk = initial.ok;
+        dbSave(db);
+        await flushDbWrites();
 
-        compileRuntime(previousSource);
-        const currentSource=GM_getValue(CURRENT_SOURCE_KEY,'');
-        const currentMeta=GM_getValue(CURRENT_META_KEY,{})||{};
-
-        GM_setValue(CURRENT_SOURCE_KEY,previousSource);
-        GM_setValue(CURRENT_META_KEY,previousMeta);
-        GM_setValue(PREVIOUS_SOURCE_KEY,currentSource);
-        GM_setValue(PREVIOUS_META_KEY,currentMeta);
-
-        const state=GM_getValue(LOADER_STATE_KEY,{})||{};
-        state.lastRollbackAt=Date.now();
-        GM_setValue(LOADER_STATE_KEY,state);
-        publishContext();
-        return {changed:true,message:'CRM runtime v'+previousMeta.version+' restored.'};
-    }
-
-    function markHealthy(version){
-        const state=GM_getValue(LOADER_STATE_KEY,{})||{};
-        state.lastHealthyVersion=String(version||'');
-        state.lastHealthyAt=Date.now();
-        GM_setValue(LOADER_STATE_KEY,state);
-        publishContext();
-    }
-
-    globalThis.__MM_CRM_LOADER_API__=Object.freeze({
-        checkForUpdate,
-        updateNow,
-        rollback,
-        markHealthy,
-        context
-    });
-
-    async function bootstrap(){
-        let source=GM_getValue(CURRENT_SOURCE_KEY,'');
-        let meta=GM_getValue(CURRENT_META_KEY,{})||{};
-
-        if(!source){
-            const manifest=await fetchManifest();
-            const initial=await downloadVerified(manifest);
-            source=initial.source;
-            meta=initial.meta;
-            GM_setValue(CURRENT_SOURCE_KEY,source);
-            GM_setValue(CURRENT_META_KEY,meta);
-            const state=GM_getValue(LOADER_STATE_KEY,{})||{};
-            state.latestVersion=String(manifest.version);
-            state.firstInstallAt=state.firstInstallAt||Date.now();
-            GM_setValue(LOADER_STATE_KEY,state);
+        // Verify what actually survived the IndexedDB/cross-tab merge, not just the
+        // pre-save snapshot.
+        const persisted = dbLoad();
+        const audit = reconcileSalesIntegrity(persisted);
+        persisted.meta.lastSalesAudit = { at: nowIso(), ...audit };
+        persisted.meta.lastSalesSelfRepairAt = nowIso();
+        persisted.meta.lastSalesSelfRepairOk = audit.ok;
+        if (audit.repaired) {
+            dbSave(persisted);
+            await flushDbWrites();
         }
 
-        publishContext();
+        statusText = audit.ok
+            ? `Sales integrity repaired: ${audit.sales} sales across ${audit.customersWithSales} active customers. PASS.`
+            : `Sales integrity repair still found ${audit.problems.length} problem(s): ${audit.problems.slice(0,3).join('; ')}`;
+        render();
+        return audit;
+    }
 
-        try{
-            const fn=compileRuntime(source);
-            fn(GM_xmlhttpRequest,GM_getValue,GM_setValue,GM_deleteValue);
-        }catch(error){
-            console.error('[MM CRM Loader] Active runtime failed',error);
-            const previousSource=GM_getValue(PREVIOUS_SOURCE_KEY,'');
-            const previousMeta=GM_getValue(PREVIOUS_META_KEY,{})||{};
-            if(previousSource&&previousMeta.version){
-                try{
-                    GM_setValue(CURRENT_SOURCE_KEY,previousSource);
-                    GM_setValue(CURRENT_META_KEY,previousMeta);
-                    const fn=compileRuntime(previousSource);
-                    publishContext();
-                    fn(GM_xmlhttpRequest,GM_getValue,GM_setValue,GM_deleteValue);
-                    return;
-                }catch(previousError){
-                    console.error('[MM CRM Loader] Rollback runtime also failed',previousError);
+    async function rebuildSalesHistory() {
+        if (syncRunning || !getApiKey()) return;
+        if (!confirm(
+            'Rebuild Bazaar sales history from Torn log 1226?\n\n' +
+            'This preserves customer contact/message state, coupons, redemptions, refunds, and restock subscribers. ' +
+            'Only imported sales and sale-derived totals/dates are rebuilt. Customers you removed remain filtered and will NOT be re-added.'
+        )) return;
+
+        syncRunning = true;
+        fatal = false;
+        statusText = 'Downloading complete available Bazaar sale history…';
+        render();
+
+        try {
+            // Fetch and validate everything before touching the live CRM database.
+            const rows = await fetchBazaarLogs(0, MAX_LOG_PAGES);
+            const parsed = [];
+            const rejected = [];
+
+            for (const entry of rows) {
+                const sale = extractBazaarSale(entry);
+                if (sale) parsed.push(sale);
+                else rejected.push(String(entry?.id ?? entry?.log_id ?? '?'));
+            }
+
+            if (rows.length && rejected.length) {
+                throw new Error(
+                    `${rejected.length} of ${rows.length} Bazaar log 1226 records could not be parsed. ` +
+                    `No rebuild was committed. First rejected log: ${rejected[0]}.`
+                );
+            }
+
+            parsed.sort((a, b) => Number(a.timestamp) - Number(b.timestamp));
+
+            const db = dbLoad();
+
+            // Preserve CRM relationship state, but reset only fields derived from sales.
+            for (const customer of Object.values(db.customers)) {
+                customer.purchases = 0;
+                customer.units = 0;
+                customer.spent = 0;
+                customer.firstPurchase = null;
+                customer.lastPurchase = null;
+            }
+            db.sales = {};
+
+            const nameCache = new Map();
+            for (const sale of parsed) {
+                let name = String(sale.playerName || sale.playerId).trim();
+                if (!name || name === sale.playerId || /^\d+$/.test(name)) {
+                    if (nameCache.has(sale.playerId)) {
+                        name = nameCache.get(sale.playerId);
+                    } else {
+                        try { name = await fetchTornUsername(sale.playerId); }
+                        catch { name = sale.playerId; }
+                        nameCache.set(sale.playerId, name);
+                    }
+                }
+
+                sale.playerName = name;
+                db.sales[String(sale.id)] = sale;
+                // Rebuild the ledger, but never resurrect an intentionally removed customer.
+                if (!db.removedCustomers[sale.playerId]) {
+                    applySaleToCustomer(db, sale, name);
                 }
             }
-            alert('Torn Bazaar Customer CRM loader could not start the CRM runtime. Open Tampermonkey and reinstall the CRM userscript.');
+
+            const audit = reconcileSalesIntegrity(db);
+            if (!audit.ok) {
+                throw new Error(`Internal rebuild audit failed: ${audit.problems.slice(0, 3).join('; ')}`);
+            }
+
+            db.meta.salesRebuiltAt = nowIso();
+            db.meta.lastSalesAudit = { at: nowIso(), ...audit };
+            dbSave(db);
+
+            saveProcessed(parsed.map(s => s.id));
+            saveSyncState({ lastSuccess: Date.now() });
+
+            statusText = `Sales rebuild complete: ${audit.sales} Bazaar sales across ${audit.customersWithSales} customers. Audit PASS.`;
+        } catch (error) {
+            statusText = `Sales rebuild failed safely: ${error?.message || String(error)}`;
+        } finally {
+            syncRunning = false;
+            render();
         }
     }
 
-    await bootstrap();
+    async function sync({ silent = false } = {}) {
+        if (syncRunning) return;
+        if (!getApiKey()) {
+            if (!silent) {
+                statusText = 'Torn API key missing. Sales sync is paused. Open More → Settings, paste your Torn API key, and Save.';
+                render();
+            }
+            return;
+        }
+        syncRunning = true;
+        if (!silent) {
+            statusText = 'Syncing Bazaar sales…';
+            render();
+        }
+
+        try {
+            const state = getSyncState();
+            const lookback = state.lastSuccess ? NORMAL_LOOKBACK_MS : FIRST_SYNC_LOOKBACK_MS;
+            const fromMs = Math.max(0, (state.lastSuccess || Date.now()) - lookback);
+            const rows = await fetchBazaarLogs(fromMs / 1000, 25);
+            const processed = new Set(getProcessed());
+            const db = dbLoad();
+            const knownSales = new Set(Object.keys(db.sales || {}));
+            let imported = 0;
+            let alreadyKnown = 0;
+            let repairedProcessedGap = 0;
+            let rejected = 0;
+            let processedChanged = false;
+            let deepReconcileRan = false;
+
+            rows.sort((a, b) => numeric(a.timestamp, 0) - numeric(b.timestamp, 0));
+
+            for (const entry of rows) {
+                const id = String(entry?.id ?? entry?.log_id ?? '');
+                if (!id) {
+                    rejected++;
+                    continue;
+                }
+                if (knownSales.has(id)) {
+                    if (!processed.has(id)) {
+                        processed.add(id);
+                        processedChanged = true;
+                    }
+                    alreadyKnown++;
+                    continue;
+                }
+
+                const wasProcessedWithoutSale = processed.has(id);
+                const sale = extractBazaarSale(entry);
+                if (!sale) {
+                    // Never mark an unparseable sale as processed.
+                    rejected++;
+                    console.warn('[MM CRM] Rejected Bazaar sale log row', entry);
+                    continue;
+                }
+
+                if (importBazaarSaleIntoDb(db, sale)) {
+                    processed.add(id);
+                    processedChanged = true;
+                    knownSales.add(id);
+                    imported++;
+                    if (wasProcessedWithoutSale) repairedProcessedGap++;
+                }
+            }
+
+            // Rejected rows remain unprocessed and will be retried on the next overlapping sync.
+            // Do not block valid new customers because one Torn log row is malformed.
+
+            const lastDeep = Date.parse(db.meta?.lastDeepSalesReconcileAt || '') || 0;
+            if (Date.now() - lastDeep >= DEEP_SALES_RECONCILE_MS) {
+                deepReconcileRan = true;
+                const deepRows = await fetchBazaarLogs((Date.now() - FIRST_SYNC_LOOKBACK_MS) / 1000, 25);
+                let deepImported = 0;
+
+                deepRows.sort((a, b) => numeric(a.timestamp, 0) - numeric(b.timestamp, 0));
+                for (const entry of deepRows) {
+                    const id = String(entry?.id ?? entry?.log_id ?? '');
+                    if (!id || db.sales[id]) continue;
+
+                    const sale = extractBazaarSale(entry);
+                    if (!sale) {
+                        console.warn('[MM CRM] Deep reconcile rejected Bazaar log row', entry);
+                        continue;
+                    }
+
+                    if (importBazaarSaleIntoDb(db, sale)) {
+                        processed.add(id);
+                        processedChanged = true;
+                        knownSales.add(id);
+                        deepImported++;
+                    }
+                }
+
+                if (deepImported > 0) imported += deepImported;
+                db.meta.lastDeepSalesReconcileAt = nowIso();
+            }
+
+            if (imported > 0) recalculateCustomerSalesTotals(db);
+
+            const audit = reconcileSalesIntegrity(db);
+            const databaseChanged = imported > 0 || deepReconcileRan || audit.repaired;
+            if (databaseChanged) {
+                db.meta.lastSalesAudit = { at: nowIso(), ...audit };
+                dbSave(db);
+            }
+            if (processedChanged) saveProcessed([...processed]);
+            saveSyncState({ lastSuccess: Date.now() });
+
+            fatal = false;
+            if (!silent || imported > 0 || rejected > 0) {
+                statusText = imported
+                    ? `Sync complete: ${imported} Bazaar sale${imported === 1 ? '' : 's'} imported${repairedProcessedGap ? ` (${repairedProcessedGap} missing ledger record${repairedProcessedGap === 1 ? '' : 's'} repaired)` : ''}${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`
+                    : `Sync complete: no new Bazaar sales${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`;
+                render();
+            }
+
+            if (databaseChanged) await flushDbWrites();
+
+            if (!audit.ok) {
+                throw new Error(`Sales integrity audit failed: ${audit.problems.slice(0, 3).join('; ')}`);
+            }
+
+            if (imported > 0) {
+                setTimeout(() => repairUsernames(25).then(count => {
+                    if (count > 0) statusText = `Sync complete. Customer names repaired: ${count}.`;
+                    render();
+                }).catch(() => {}), 50);
+            }
+        } catch (error) {
+            const code = Number(error?.code || 0);
+            // Authentication/permission errors are surfaced, but never permanently
+            // disable future syncs. A corrected key can recover immediately.
+            fatal = [2, 16].includes(code);
+            statusText = `Sync failed: ${error?.message || String(error)}`;
+            render();
+        } finally {
+            syncRunning = false;
+            if (!silent) render();
+        }
+    }
+
+
+    // ============================================================
+    // INVENTORY / PROCUREMENT DIRECTOR — NATIVE v4
+    // ============================================================
+
+    const normalizeItemName = value => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+    function procurementState(db = dbLoad()) {
+        return db.procurement;
+    }
+
+    function addProcurementDiagnostic(proc, value) {
+        proc.diagnostics.unshift({ at: nowIso(), text: String(value) });
+        proc.diagnostics = proc.diagnostics.slice(0, 40);
+    }
+
+    function catalogRows(data) {
+        const raw = data?.items ?? data?.torn?.items ?? [];
+        if (Array.isArray(raw)) return raw;
+        if (raw && typeof raw === 'object') return Object.entries(raw).map(([id, item]) => ({ id, ...(item || {}) }));
+        return [];
+    }
+
+    async function refreshProcurementCatalog(force = false) {
+        const db = dbLoad();
+        const proc = procurementState(db);
+        if (
+            !force &&
+            proc.lastCatalogAt &&
+            Date.now() - new Date(proc.lastCatalogAt).getTime() < PROCUREMENT_CATALOG_MAX_AGE_MS &&
+            Object.keys(proc.catalog).length
+        ) return proc.catalog;
+
+        const data = await apiRequest('/torn/items');
+        const next = {};
+        for (const row of catalogRows(data)) {
+            const id = asId(row.id ?? row.ID ?? row.item_id);
+            if (!id) continue;
+            const value = row.value || {};
+            next[id] = {
+                id,
+                name: String(row.name || row.item_name || `Item ${id}`),
+                type: String(row.type || row.category || ''),
+                marketValue: Number(value.market_price ?? value.market_value ?? row.market_value ?? row.market_price ?? 0) || 0,
+                vendorBuy: Number(value.buy_price ?? row.buy_price ?? 0) || 0,
+                vendorSell: Number(value.sell_price ?? row.sell_price ?? 0) || 0,
+                shops: Array.isArray(value.shops) ? value.shops : []
+            };
+        }
+        if (Object.keys(next).length) proc.catalog = next;
+        proc.lastCatalogAt = nowIso();
+        dbSave(db);
+        return proc.catalog;
+    }
+
+    function parseStackableRows(raw, catalog = {}) {
+        if (!raw) return {};
+        let rows = raw;
+        if (!Array.isArray(rows) && typeof rows === 'object') {
+            rows = Object.entries(rows).map(([id, row]) =>
+                typeof row === 'object' ? ({ id, ...row }) : ({ id, quantity: row })
+            );
+        }
+        if (!Array.isArray(rows)) return {};
+
+        const out = {};
+        for (const row of rows) {
+            const itemObj = row.item && typeof row.item === 'object' ? row.item : {};
+            const id = asId(row.id ?? row.ID ?? row.item_id ?? itemObj.id ?? itemObj.ID);
+            if (!id) continue;
+            const quantity = Number(row.quantity ?? row.qty ?? row.amount ?? row.available ?? row.count ?? 0) || 0;
+            const price = Number(row.price ?? row.cost ?? row.listing_price ?? 0) || 0;
+            const name = String(row.name ?? row.item_name ?? itemObj.name ?? catalog[id]?.name ?? `Item ${id}`);
+            if (!out[id]) out[id] = { id, name, quantity: 0, price: 0, listings: 0 };
+            out[id].quantity += Math.max(0, quantity);
+            if (price && (!out[id].price || price < out[id].price)) out[id].price = price;
+            out[id].listings++;
+        }
+        return out;
+    }
+
+    async function syncOwnBazaar(proc, catalog) {
+        const data = await apiRequestV1UserSelection('bazaar');
+        proc.bazaar = parseStackableRows(data?.bazaar, catalog);
+        proc.lastBazaarAt = nowIso();
+
+        const db = dbLoad();
+        const at = nowIso();
+        for (const [id, row] of Object.entries(proc.bazaar)) {
+            if (!Array.isArray(db.operations.bazaarPriceHistory[id])) db.operations.bazaarPriceHistory[id] = [];
+            const history = db.operations.bazaarPriceHistory[id];
+            const last = history[history.length - 1];
+            if (!last || Number(last.price) !== Number(row.price) || Number(last.quantity) !== Number(row.quantity)) {
+                history.push({ at, price: Number(row.price || 0), quantity: Number(row.quantity || 0) });
+                db.operations.bazaarPriceHistory[id] = history.slice(-PRICE_HISTORY_MAX_PER_ITEM);
+            }
+        }
+        dbSave(db);
+    }
+
+    async function syncOwnItemMarket(proc, catalog) {
+        const data = await apiRequest('/user/itemmarket');
+        const raw = data?.itemmarket?.listings ?? data?.itemmarket ?? data?.listings ?? [];
+        proc.itemMarket = parseStackableRows(raw, catalog);
+        proc.lastItemMarketAt = nowIso();
+    }
+
+    function watchedInventoryCategories(proc) {
+        const cats = new Set();
+        for (const id of Object.keys(proc.watchlist)) {
+            const cat = String(proc.catalog[id]?.type || '').trim();
+            if (cat) cats.add(cat);
+        }
+        for (const id of Object.keys(proc.bazaar)) {
+            const cat = String(proc.catalog[id]?.type || '').trim();
+            if (cat) cats.add(cat);
+        }
+        return [...cats].slice(0, 10);
+    }
+
+    function parseInventoryPayload(data, catalog) {
+        const raw = data?.inventory ?? data?.items ?? [];
+        return parseStackableRows(raw, catalog);
+    }
+
+    async function syncWatchedInventory(proc, catalog) {
+        const categories = watchedInventoryCategories(proc);
+        if (!categories.length) return;
+        const combined = {};
+        let any = false;
+        for (const category of categories) {
+            try {
+                const data = await apiRequest(`/user/inventory?cat=${encodeURIComponent(category)}`);
+                const rows = parseInventoryPayload(data, catalog);
+                for (const [id, row] of Object.entries(rows)) {
+                    if (!combined[id]) combined[id] = { ...row };
+                    else combined[id].quantity += row.quantity;
+                }
+                any = true;
+            } catch (error) {
+                addProcurementDiagnostic(proc, `Inventory ${category}: ${error?.message || String(error)}`);
+            }
+        }
+        if (any) {
+            proc.inventory = combined;
+            proc.lastInventoryAt = nowIso();
+        }
+    }
+
+    function genericMarketListings(data, marketName) {
+        const market = marketName === 'bazaar'
+            ? (data?.bazaar?.listings ?? data?.bazaar ?? data?.listings ?? data?.bazaars ?? [])
+            : (data?.itemmarket?.listings ?? data?.itemmarket ?? data?.listings ?? []);
+
+        let rows = market;
+        if (!Array.isArray(rows) && rows && typeof rows === 'object') {
+            rows = Object.values(rows);
+        }
+        if (!Array.isArray(rows)) return [];
+
+        return rows.map(row => {
+            const item = row?.item && typeof row.item === 'object' ? row.item : {};
+            const price = Number(row.price ?? row.cost ?? row.listing_price ?? item.price ?? 0) || 0;
+            const quantity = Number(row.quantity ?? row.amount ?? row.qty ?? item.quantity ?? 1) || 1;
+            return { price, quantity: Math.max(1, quantity) };
+        }).filter(row => row.price > 0).sort((a, b) => a.price - b.price);
+    }
+
+    function marketMetrics(rows) {
+        if (!rows.length) return {
+            lowest: 0, third: 0, median: 0, totalQty: 0, listings: 0,
+            depth1Pct: 0, depth3Pct: 0, depth5Pct: 0
+        };
+        const prices = rows.map(r => r.price);
+        const lowest = prices[0];
+        const quantityWithin = pct => rows
+            .filter(r => r.price <= lowest * (1 + pct / 100))
+            .reduce((sum, r) => sum + r.quantity, 0);
+        return {
+            lowest,
+            third: prices[Math.min(2, prices.length - 1)],
+            median: prices[Math.floor(prices.length / 2)] || lowest,
+            totalQty: rows.reduce((sum, r) => sum + r.quantity, 0),
+            listings: rows.length,
+            depth1Pct: quantityWithin(1),
+            depth3Pct: quantityWithin(3),
+            depth5Pct: quantityWithin(5)
+        };
+    }
+
+    function pushMarketHistory(proc, itemId, snapshot) {
+        const id = asId(itemId);
+        if (!Array.isArray(proc.marketHistory[id])) proc.marketHistory[id] = [];
+        proc.marketHistory[id].push({
+            at: snapshot.fetchedAt,
+            itemMarketLowest: snapshot.itemMarket.lowest,
+            itemMarketThird: snapshot.itemMarket.third,
+            bazaarLowest: snapshot.bazaar.lowest,
+            bazaarThird: snapshot.bazaar.third,
+            realisticExit: snapshot.realisticExit,
+            depth3Pct: snapshot.totalDepth3Pct
+        });
+        proc.marketHistory[id] = proc.marketHistory[id].slice(-MARKET_HISTORY_MAX_PER_ITEM);
+    }
+
+    async function refreshMarketSnapshot(itemId) {
+        const id = asId(itemId);
+        if (!/^\d+$/.test(id)) throw new Error(`Invalid item ID: ${id}`);
+
+        let itemMarketRows = [];
+        let bazaarRows = [];
+        let imError = null;
+        let bazaarError = null;
+
+        try {
+            const data = await apiRequest(`/market/${encodeURIComponent(id)}/itemmarket?limit=25`);
+            itemMarketRows = genericMarketListings(data, 'itemmarket');
+        } catch (error) {
+            imError = error;
+        }
+
+        try {
+            const data = await apiRequest(`/market/${encodeURIComponent(id)}/bazaar?limit=25`);
+            bazaarRows = genericMarketListings(data, 'bazaar');
+        } catch (error) {
+            bazaarError = error;
+        }
+
+        if (!itemMarketRows.length && !bazaarRows.length) {
+            throw new Error(
+                `No official market listings returned. Item Market: ${imError?.message || 'empty'}; ` +
+                `Bazaar: ${bazaarError?.message || 'empty'}`
+            );
+        }
+
+        const itemMarket = marketMetrics(itemMarketRows);
+        const bazaar = marketMetrics(bazaarRows);
+
+        // Prefer Bazaar exit because it avoids the Item Market tax. If official Bazaar
+        // listing data is unavailable, use the third Item Market price net of 5%.
+        const realisticExit = bazaar.third || bazaar.lowest ||
+            Math.floor((itemMarket.third || itemMarket.lowest || 0) * (1 - ITEM_MARKET_FEE_RATE));
+
+        const snapshot = {
+            itemId: id,
+            itemMarket,
+            bazaar,
+            realisticExit,
+            totalDepth3Pct: Number(itemMarket.depth3Pct || 0) + Number(bazaar.depth3Pct || 0),
+            fetchedAt: nowIso()
+        };
+
+        const db = dbLoad();
+        db.procurement.marketSnapshots[id] = snapshot;
+        pushMarketHistory(db.procurement, id, snapshot);
+        if (imError) addProcurementDiagnostic(db.procurement, `Item Market ${id}: ${imError.message}`);
+        if (bazaarError) addProcurementDiagnostic(db.procurement, `Bazaar market ${id}: ${bazaarError.message}`);
+        dbSave(db);
+        return snapshot;
+    }
+
+    function salesItemMetrics(db) {
+        const now = Date.now();
+        const out = {};
+        for (const sale of Object.values(db.sales)) {
+            const ts = Number(sale.timestamp || 0);
+            const dayKey = new Date(ts).toISOString().slice(0, 10);
+            for (const item of sale.items || []) {
+                const id = asId(item.id);
+                const key = id || `name:${normalizeItemName(item.name)}`;
+                if (!key) continue;
+                if (!out[key]) out[key] = {
+                    itemId: id,
+                    name: item.name || db.procurement.catalog[id]?.name || key,
+                    sold24h: 0, sold7d: 0, sold30d: 0, revenue30d: 0,
+                    saleDays30d: new Set(), lastSaleAt: 0
+                };
+                const qty = Number(item.quantity || 0) || 0;
+                const total = Number(item.total || 0) || 0;
+                if (now - ts <= 24 * 60 * 60 * 1000) out[key].sold24h += qty;
+                if (now - ts <= 7 * 24 * 60 * 60 * 1000) out[key].sold7d += qty;
+                if (now - ts <= 30 * 24 * 60 * 60 * 1000) {
+                    out[key].sold30d += qty;
+                    out[key].revenue30d += total;
+                    out[key].saleDays30d.add(dayKey);
+                }
+                out[key].lastSaleAt = Math.max(out[key].lastSaleAt, ts);
+            }
+        }
+        for (const row of Object.values(out)) row.saleDays30d = row.saleDays30d.size;
+        return out;
+    }
+
+    function parseAcquisitionLog(entry, source, catalog) {
+        const data = entry?.data || {};
+        const rawItems = Array.isArray(data.items) ? data.items : [];
+        if (!rawItems.length) return [];
+        const costEach = Number(data.cost_each ?? data.price_each ?? 0) || 0;
+        const costTotal = Number(data.cost_total ?? data.total ?? 0) || 0;
+        const totalQty = rawItems.reduce((sum, item) => sum + Math.max(1, Number(item.qty ?? item.quantity ?? 1) || 1), 0);
+        let timestamp = Number(entry.timestamp || 0);
+        if (timestamp && timestamp < 100_000_000_000) timestamp *= 1000;
+        if (!timestamp) timestamp = Date.now();
+
+        return rawItems.map((item, index) => {
+            const id = asId(item.id ?? item.item_id);
+            const quantity = Math.max(1, Number(item.qty ?? item.quantity ?? 1) || 1);
+            const allocatedUnitCost = costEach || (costTotal && totalQty ? costTotal / totalQty : 0);
+            return {
+                id: `logbuy:${entry.id}:${id}:${index}`,
+                externalId: `logbuy:${entry.id}:${id}:${index}`,
+                itemId: id,
+                itemName: catalog[id]?.name || `Item ${id}`,
+                source,
+                quantity,
+                unitCost: allocatedUnitCost,
+                notes: `Auto-imported from Torn log ${entry.id}`,
+                sellerId: asId(data.seller ?? data.seller_id ?? data.user ?? data.user_id ?? data.player ?? data.player_id ?? ''),
+                sellerName: String(data.seller_name ?? data.user_name ?? data.player_name ?? ''),
+                acquiredAt: new Date(timestamp).toISOString(),
+                logId: String(entry.id)
+            };
+        }).filter(row => row.itemId && row.quantity > 0);
+    }
+
+    async function fetchLogsById(logId, fromSeconds = 0, maxPages = 100) {
+        const collected = [];
+        let url = new URL(API_BASE + '/user/log');
+        url.searchParams.set('log', String(logId));
+        if (fromSeconds > 0) url.searchParams.set('from', String(Math.max(0, Math.floor(fromSeconds))));
+        url.searchParams.set('limit', '100');
+
+        let pages = 0;
+        const seen = new Set();
+        while (url && pages < maxPages) {
+            const clean = url.toString();
+            if (seen.has(clean)) throw new Error(`Log ${logId} pagination loop detected.`);
+            seen.add(clean);
+            const data = await apiRequest(clean);
+            collected.push(...logRowsFromResponse(data));
+            const next = nextUrlFromMetadata(data);
+            url = next ? new URL(next) : null;
+            pages++;
+        }
+        return collected;
+    }
+
+    async function syncAcquisitionLogs(forceFromZero = false) {
+        const db = dbLoad();
+        const proc = db.procurement;
+        const lookbackDays = Math.max(1, Number(proc.settings.acquisitionLookbackDays || PROCUREMENT_FIRST_ACQUISITION_LOOKBACK_DAYS));
+        const fromMs = forceFromZero
+            ? 0
+            : proc.lastAcquisitionSyncAt
+                ? Math.max(0, new Date(proc.lastAcquisitionSyncAt).getTime() - NORMAL_LOOKBACK_MS)
+                : Date.now() - lookbackDays * 24 * 60 * 60 * 1000;
+        let added = 0;
+
+        for (const [logIdText, source] of Object.entries(ACQUISITION_LOG_IDS)) {
+            const logId = Number(logIdText);
+            const rows = await fetchLogsById(logId, fromMs ? fromMs / 1000 : 0, forceFromZero ? MAX_LOG_PAGES : 100);
+            for (const entry of rows) {
+                for (const lot of parseAcquisitionLog(entry, source, proc.catalog)) {
+                    if (proc.acquisitionProcessed[lot.externalId]) continue;
+                    proc.acquisitions.push(lot);
+                    proc.acquisitionProcessed[lot.externalId] = true;
+                    added++;
+                }
+            }
+        }
+
+        proc.acquisitions = proc.acquisitions
+            .sort((a, b) => new Date(a.acquiredAt).getTime() - new Date(b.acquiredAt).getTime())
+            .slice(-10_000);
+        proc.lastAcquisitionSyncAt = nowIso();
+        dbSave(db);
+        return added;
+    }
+
+    async function rebuildAcquisitionHistory() {
+        if (!getApiKey() || procurementRunning) return;
+        if (!confirm(
+            'Rebuild native acquisition history from Torn Item Market Buy and Bazaar Buy logs?\n\n' +
+            'Manual, Travel, and Direct Trade acquisition entries are preserved. Auto-imported purchase-log lots are rebuilt.'
+        )) return;
+
+        procurementRunning = true;
+        statusText = 'Rebuilding acquisition cost basis from Torn purchase logs…';
+        render();
+
+        try {
+            await refreshProcurementCatalog(false);
+            let db = dbLoad();
+            const preserved = db.procurement.acquisitions.filter(a => !String(a.externalId || '').startsWith('logbuy:'));
+            db.procurement.acquisitions = preserved;
+            db.procurement.acquisitionProcessed = {};
+            db.procurement.lastAcquisitionSyncAt = null;
+            dbSave(db);
+
+            const added = await syncAcquisitionLogs(true);
+            db = dbLoad();
+            db.procurement.lastAcquisitionRebuildAt = nowIso();
+            dbSave(db);
+            statusText = `Acquisition rebuild complete: ${added.toLocaleString()} purchase lot${added === 1 ? '' : 's'} imported.`;
+        } catch (error) {
+            statusText = `Acquisition rebuild failed: ${error?.message || String(error)}`;
+        } finally {
+            procurementRunning = false;
+            render();
+        }
+    }
+
+    function itemSalesChronological(db, itemId) {
+        const id = asId(itemId);
+        const rows = [];
+        for (const sale of Object.values(db.sales)) {
+            let qty = 0;
+            for (const item of sale.items || []) {
+                if (asId(item.id) === id) qty += Number(item.quantity || 0) || 0;
+            }
+            if (qty > 0) rows.push({ timestamp: Number(sale.timestamp || 0), quantity: qty });
+        }
+        return rows.sort((a, b) => a.timestamp - b.timestamp);
+    }
+
+    function fifoCostBasis(db, itemId, itemName = '') {
+        const id = asId(itemId);
+        const norm = normalizeItemName(itemName || db.procurement.catalog[id]?.name);
+        const lots = db.procurement.acquisitions
+            .filter(a => id ? asId(a.itemId) === id : normalizeItemName(a.itemName) === norm)
+            .map(a => ({
+                quantity: Number(a.quantity || 0),
+                remaining: Number(a.quantity || 0),
+                unitCost: Number(a.unitCost || 0),
+                acquiredAt: new Date(a.acquiredAt || 0).getTime()
+            }))
+            .filter(a => a.quantity > 0 && a.unitCost >= 0)
+            .sort((a, b) => a.acquiredAt - b.acquiredAt);
+
+        let cursor = 0;
+        for (const sale of itemSalesChronological(db, id)) {
+            let need = sale.quantity;
+            while (need > 0 && cursor < lots.length) {
+                const lot = lots[cursor];
+                const take = Math.min(need, lot.remaining);
+                lot.remaining -= take;
+                need -= take;
+                if (lot.remaining <= 0) cursor++;
+            }
+        }
+
+        const remainingLots = lots.filter(l => l.remaining > 0);
+        const remainingQty = remainingLots.reduce((sum, l) => sum + l.remaining, 0);
+        const remainingCost = remainingLots.reduce((sum, l) => sum + l.remaining * l.unitCost, 0);
+        const allQty = lots.reduce((sum, l) => sum + l.quantity, 0);
+        const allCost = lots.reduce((sum, l) => sum + l.quantity * l.unitCost, 0);
+        return {
+            remainingQty,
+            remainingCost,
+            avgCost: remainingQty ? remainingCost / remainingQty : (allQty ? allCost / allQty : 0),
+            trackedPurchasedQty: allQty
+        };
+    }
+
+    function historyStats(proc, itemId) {
+        const history = Array.isArray(proc.marketHistory[itemId]) ? proc.marketHistory[itemId] : [];
+        const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        const values = history
+            .filter(h => new Date(h.at).getTime() >= weekAgo)
+            .map(h => Number(h.realisticExit || 0))
+            .filter(v => v > 0)
+            .sort((a, b) => a - b);
+        if (!values.length) return { median7d: 0, volatilityPct: 0, samples: 0 };
+        const median7d = values[Math.floor(values.length / 2)];
+        const mean = values.reduce((s, v) => s + v, 0) / values.length;
+        const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / values.length;
+        const volatilityPct = mean ? Math.sqrt(variance) / mean * 100 : 0;
+        return { median7d, volatilityPct, samples: values.length };
+    }
+
+    function liquidityForRow(metrics, snapshot) {
+        const daily = metrics.sold7d > 0 ? metrics.sold7d / 7 : metrics.sold30d / 30;
+        const saleDays = Number(metrics.saleDays30d || 0);
+        const depth = Number(snapshot?.totalDepth3Pct || 0);
+        const score = Math.max(0, Math.min(100,
+            Math.min(45, daily * 8) +
+            Math.min(30, saleDays * 3) +
+            Math.min(25, Math.log10(depth + 1) * 12)
+        ));
+        const grade = score >= 80 ? 'A' : score >= 60 ? 'B' : score >= 40 ? 'C' : score >= 20 ? 'D' : 'E';
+        return { score, grade };
+    }
+
+    function procurementRows(db) {
+        const proc = db.procurement;
+        const metrics = salesItemMetrics(db);
+        const keys = new Set([
+            ...Object.keys(proc.bazaar),
+            ...Object.keys(proc.itemMarket),
+            ...Object.keys(proc.inventory),
+            ...Object.keys(proc.watchlist),
+            ...Object.keys(metrics).filter(k => /^\d+$/.test(k))
+        ]);
+
+        const rows = [];
+        for (const id of keys) {
+            const m = metrics[id] || { sold24h: 0, sold7d: 0, sold30d: 0, revenue30d: 0, saleDays30d: 0, lastSaleAt: 0 };
+            const catalog = proc.catalog[id] || {};
+            const bazaar = proc.bazaar[id] || {};
+            const ownIM = proc.itemMarket[id] || {};
+            const inv = proc.inventory[id] || {};
+            const snap = proc.marketSnapshots[id] || {};
+            const watch = proc.watchlist[id] || {};
+
+            const daily = m.sold7d > 0 ? m.sold7d / 7 : m.sold30d / 30;
+            const listed = Number(bazaar.quantity || 0) + Number(ownIM.quantity || 0);
+            const onHand = Number(inv.quantity || 0);
+            const stock = listed + onHand;
+
+            const targetDays = Number(watch.targetDays ?? proc.settings.targetDays ?? 5);
+            const safetyDays = Number(watch.safetyDays ?? proc.settings.safetyDays ?? 2);
+            const targetStock = Number.isFinite(Number(watch.targetStock)) && Number(watch.targetStock) > 0
+                ? Number(watch.targetStock)
+                : Math.ceil(daily * targetDays);
+            const reorderPoint = Number.isFinite(Number(watch.reorderPoint)) && Number(watch.reorderPoint) >= 0
+                ? Number(watch.reorderPoint)
+                : Math.ceil(daily * safetyDays);
+            const shortage = Math.max(0, targetStock - stock);
+            const daysStock = daily > 0 ? stock / daily : Infinity;
+
+            const realisticExit = Number(snap.realisticExit || bazaar.price || catalog.marketValue || 0);
+            const bestBuyPrice = [snap?.bazaar?.lowest, snap?.itemMarket?.lowest].map(Number).filter(v => v > 0).sort((a,b) => a-b)[0] || 0;
+            const minMarginPct = Number(watch.minMarginPct ?? proc.settings.minMarginPct ?? 4);
+            const calculatedBuyTarget = realisticExit ? Math.floor(realisticExit / (1 + minMarginPct / 100)) : 0;
+            const buyTarget = Number(watch.maxBuyPrice || calculatedBuyTarget || 0);
+
+            const basis = fifoCostBasis(db, id, catalog.name || bazaar.name || ownIM.name || inv.name);
+            const avgCost = basis.avgCost;
+            const profitPerUnit = realisticExit && avgCost ? realisticExit - avgCost : 0;
+            const marginPct = avgCost > 0 ? profitPerUnit / avgCost * 100 : 0;
+            const bestDealProfit = realisticExit && bestBuyPrice ? realisticExit - bestBuyPrice : 0;
+            const bestDealMarginPct = bestBuyPrice > 0 ? bestDealProfit / bestBuyPrice * 100 : 0;
+
+            const liquidity = liquidityForRow(m, snap);
+            const history = historyStats(proc, id);
+
+            const velocityScore = Math.min(100,
+                Math.log10(1 + Math.max(0, daily) * 10) * 42 +
+                Math.min(30, Number(m.sold24h || 0) * 6)
+            );
+            const roiScore = Math.min(100, Math.max(0, bestDealMarginPct) * 5);
+            const absoluteProfitScore = bestDealProfit > 0
+                ? Math.min(100, Math.log10(1 + bestDealProfit) * 14)
+                : 0;
+            const volatilityPenalty = Math.min(25, Math.max(0, history.volatilityPct) * 0.8);
+
+            // Acquisition ranking is intentionally ROI/turnover-first rather than
+            // shortage-first. Inventory need remains visible, but does not control rank.
+            const acquisitionScore = Math.max(0, Math.min(100,
+                roiScore * 0.50 +
+                liquidity.score * 0.25 +
+                velocityScore * 0.20 +
+                absoluteProfitScore * 0.05 -
+                volatilityPenalty
+            ));
+
+            let priority = 'LOW', rank = 4;
+            if (acquisitionScore >= 80) { priority = 'ELITE'; rank = 0; }
+            else if (acquisitionScore >= 65) { priority = 'HIGH ROI'; rank = 1; }
+            else if (acquisitionScore >= 50) { priority = 'FAST'; rank = 2; }
+            else if (acquisitionScore >= 35) { priority = 'WATCH'; rank = 3; }
+
+            const marginQualified =
+                bestBuyPrice > 0 &&
+                realisticExit > bestBuyPrice &&
+                bestDealMarginPct >= minMarginPct;
+
+            const quickSaleQualified =
+                liquidity.score >= 45 ||
+                daily >= 0.25 ||
+                Number(m.sold24h || 0) > 0;
+
+            const action = marginQualified && quickSaleQualified
+                ? 'BUY'
+                : bestBuyPrice > 0 && realisticExit > bestBuyPrice
+                    ? 'WATCH'
+                    : 'SKIP';
+
+            const turnoverDays = daily > 0 ? Math.max(0.25, 1 / daily) : Infinity;
+            const opportunityQtyCap = daily > 0
+                ? Math.max(1, Math.ceil(daily * Math.min(5, targetDays)))
+                : (liquidity.score >= 70 && marginQualified ? 1 : 0);
+
+            rows.push({
+                id,
+                name: catalog.name || bazaar.name || ownIM.name || inv.name || `Item ${id}`,
+                type: catalog.type || '',
+                bazaarQty: Number(bazaar.quantity || 0),
+                bazaarPrice: Number(bazaar.price || 0),
+                itemMarketQty: Number(ownIM.quantity || 0),
+                onHand,
+                stock,
+                sold24h: Number(m.sold24h || 0),
+                sold7d: Number(m.sold7d || 0),
+                sold30d: Number(m.sold30d || 0),
+                daily,
+                daysStock,
+                targetStock,
+                reorderPoint,
+                shortage,
+                realisticExit,
+                buyTarget,
+                bestBuyPrice,
+                avgCost,
+                trackedPurchasedQty: basis.trackedPurchasedQty,
+                profitPerUnit,
+                marginPct,
+                bestDealProfit,
+                bestDealMarginPct,
+                priority,
+                rank,
+                watched: Boolean(proc.watchlist[id]),
+                liquidityScore: liquidity.score,
+                liquidityGrade: liquidity.grade,
+                median7d: history.median7d,
+                volatilityPct: history.volatilityPct,
+                historySamples: history.samples,
+                depth3Pct: Number(snap.totalDepth3Pct || 0),
+                marketFetchedAt: snap.fetchedAt || null,
+                velocityScore,
+                acquisitionScore,
+                turnoverDays,
+                opportunityQtyCap,
+                action
+            });
+        }
+
+        return rows.sort((a, b) =>
+            (b.action === 'BUY') - (a.action === 'BUY') ||
+            b.acquisitionScore - a.acquisitionScore ||
+            b.bestDealMarginPct - a.bestDealMarginPct ||
+            b.liquidityScore - a.liquidityScore ||
+            b.daily - a.daily ||
+            a.name.localeCompare(b.name)
+        );
+    }
+
+    function capitalAllocationPlan(db) {
+        const budget = Math.max(0, Number(db.procurement.settings.procurementBudget || 0));
+        let remaining = budget;
+
+        const rows = procurementRows(db)
+            .filter(r => r.action === 'BUY' && r.bestBuyPrice > 0 && r.opportunityQtyCap > 0)
+            .sort((a, b) =>
+                b.acquisitionScore - a.acquisitionScore ||
+                b.bestDealMarginPct - a.bestDealMarginPct ||
+                b.liquidityScore - a.liquidityScore ||
+                b.daily - a.daily
+            );
+
+        const plan = [];
+        for (const row of rows) {
+            const unitPrice = row.bestBuyPrice;
+            if (!(unitPrice > 0) || remaining < unitPrice) continue;
+
+            // Allocate for turnover, not target-inventory shortage.
+            const quantity = Math.min(
+                row.opportunityQtyCap,
+                Math.max(1, Math.floor(remaining / unitPrice))
+            );
+            if (quantity <= 0) continue;
+
+            const spend = quantity * unitPrice;
+            plan.push({
+                ...row,
+                allocatedQty: quantity,
+                allocatedSpend: spend,
+                expectedProfit: quantity * Math.max(0, row.bestDealProfit),
+                expectedTurnoverDays: row.turnoverDays
+            });
+            remaining -= spend;
+        }
+
+        return { budget, remaining, plan };
+    }
+
+    async function syncProcurement() {
+        if (procurementRunning || !getApiKey()) return;
+        procurementRunning = true;
+        statusText = 'Syncing native procurement data…';
+        render();
+
+        try {
+            await refreshProcurementCatalog(false);
+            let db = dbLoad();
+            let proc = db.procurement;
+            proc.diagnostics = [];
+
+            try { await syncOwnBazaar(proc, proc.catalog); }
+            catch (error) { addProcurementDiagnostic(proc, `Own Bazaar: ${error?.message || String(error)}`); }
+
+            try { await syncOwnItemMarket(proc, proc.catalog); }
+            catch (error) { addProcurementDiagnostic(proc, `Own Item Market: ${error?.message || String(error)}`); }
+
+            try { await syncWatchedInventory(proc, proc.catalog); }
+            catch (error) { addProcurementDiagnostic(proc, `Inventory: ${error?.message || String(error)}`); }
+
+            proc.lastSyncAt = nowIso();
+            db = recordOperationalSnapshot(db);
+            dbSave(db);
+
+            try {
+                const added = await syncAcquisitionLogs(false);
+                if (added) {
+                    db = dbLoad();
+                    addProcurementDiagnostic(db.procurement, `Cost basis: ${added} new purchase lot${added === 1 ? '' : 's'} imported.`);
+                    dbSave(db);
+                }
+            } catch (error) {
+                db = dbLoad();
+                addProcurementDiagnostic(db.procurement, `Cost basis logs: ${error?.message || String(error)}`);
+                dbSave(db);
+            }
+
+            db = dbLoad();
+            const candidates = procurementRows(db)
+                .filter(r => /^\d+$/.test(r.id) && (r.watched || r.daily > 0 || r.shortage > 0))
+                .slice(0, Math.max(1, Math.min(30, Number(db.procurement.settings.marketRefreshLimit || PROCUREMENT_MARKET_REFRESH_LIMIT))));
+
+            let marketCount = 0;
+            for (const row of candidates) {
+                try {
+                    await refreshMarketSnapshot(row.id);
+                    marketCount++;
+                } catch (error) {
+                    const next = dbLoad();
+                    addProcurementDiagnostic(next.procurement, `Market ${row.name}: ${error?.message || String(error)}`);
+                    dbSave(next);
+                }
+            }
+
+            db = dbLoad();
+            statusText =
+                `Procurement sync complete: ${Object.keys(db.procurement.bazaar).length} Bazaar SKUs, ` +
+                `${marketCount} market snapshots, ${db.procurement.acquisitions.length} acquisition lots.`;
+            try { evaluateOpportunityAlerts(db, true); dbSave(db); } catch {}
+            try { notifyOperationalAlerts(db); } catch {}
+        } catch (error) {
+            statusText = `Procurement sync failed: ${error?.message || String(error)}`;
+        } finally {
+            procurementRunning = false;
+            render();
+        }
+    }
+
+    function toggleWatchItem(itemId) {
+        const id = asId(itemId);
+        const db = dbLoad();
+        if (db.procurement.watchlist[id]) delete db.procurement.watchlist[id];
+        else db.procurement.watchlist[id] = { itemId: id, createdAt: nowIso() };
+        dbSave(db);
+        render();
+    }
+
+    function saveProcurementSettings(values) {
+        const db = dbLoad();
+        for (const [key, raw] of Object.entries(values)) {
+            const value = Number(raw);
+            if (Number.isFinite(value) && value >= 0) db.procurement.settings[key] = value;
+        }
+        dbSave(db);
+        render();
+    }
+
+    function addAcquisition({ itemId, itemName, source, quantity, unitCost, notes, externalId, acquiredAt, sellerId, sellerName, sessionId }) {
+        const db = dbLoad();
+        const proc = db.procurement;
+        const id = asId(itemId);
+        const name = String(itemName || proc.catalog[id]?.name || '').trim();
+        const qty = Number(quantity || 0);
+        const cost = Number(unitCost || 0);
+        if (!name || !(qty > 0) || cost < 0) throw new Error('Item, quantity, and unit cost are required.');
+        if (externalId && proc.acquisitions.some(a => a.externalId === externalId)) return false;
+
+        proc.acquisitions.push({
+            id: makeId('buy'),
+            itemId: id,
+            itemName: name,
+            source: String(source || 'Manual'),
+            quantity: qty,
+            unitCost: cost,
+            notes: String(notes || ''),
+            sellerId: asId(sellerId || ''),
+            sellerName: String(sellerName || ''),
+            sessionId: sessionId || null,
+            externalId: externalId || null,
+            acquiredAt: acquiredAt || nowIso()
+        });
+        proc.acquisitions = proc.acquisitions.slice(-10_000);
+        dbSave(db);
+        return true;
+    }
+
+    function addTravelEntry(values) {
+        const db = dbLoad();
+        const id = asId(values.itemId);
+        const name = String(values.itemName || db.procurement.catalog[id]?.name || '').trim();
+        const qty = Number(values.quantity || 0);
+        const unitCost = Number(values.unitCost || 0);
+        if (!values.destination || !name || !(qty > 0) || unitCost < 0) {
+            throw new Error('Destination, item, quantity, and unit cost are required.');
+        }
+        const row = {
+            id: makeId('travel'),
+            destination: String(values.destination),
+            itemId: id,
+            itemName: name,
+            quantity: qty,
+            unitCost,
+            observedStock: Number(values.observedStock || 0),
+            notes: String(values.notes || ''),
+            at: nowIso()
+        };
+        db.procurement.travelLedger.unshift(row);
+        db.procurement.travelLedger = db.procurement.travelLedger.slice(0, 1000);
+        dbSave(db);
+
+        addAcquisition({
+            itemId: id,
+            itemName: name,
+            source: `Travel: ${row.destination}`,
+            quantity: qty,
+            unitCost,
+            notes: row.notes,
+            externalId: `travel:${row.id}`,
+            acquiredAt: row.at
+        });
+        return row;
+    }
+
+    function removeAcquisition(acquisitionId) {
+        const db = dbLoad();
+        db.procurement.acquisitions = db.procurement.acquisitions.filter(a => a.id !== acquisitionId);
+        dbSave(db);
+        render();
+    }
+
+    function removeTravelEntry(travelId) {
+        const db = dbLoad();
+        db.procurement.travelLedger = db.procurement.travelLedger.filter(t => t.id !== travelId);
+        dbSave(db);
+        render();
+    }
+
+    function travelAnalytics(db) {
+        const groups = {};
+        for (const row of db.procurement.travelLedger) {
+            const key = `${row.destination}|${row.itemId || normalizeItemName(row.itemName)}`;
+            if (!groups[key]) groups[key] = {
+                destination: row.destination,
+                itemId: row.itemId,
+                itemName: row.itemName,
+                trips: 0,
+                quantity: 0,
+                totalCost: 0,
+                stockObserved: []
+            };
+            const g = groups[key];
+            g.trips++;
+            g.quantity += Number(row.quantity || 0);
+            g.totalCost += Number(row.quantity || 0) * Number(row.unitCost || 0);
+            if (Number(row.observedStock || 0) > 0) g.stockObserved.push(Number(row.observedStock));
+        }
+        return Object.values(groups).map(g => ({
+            ...g,
+            avgUnitCost: g.quantity ? g.totalCost / g.quantity : 0,
+            avgObservedStock: g.stockObserved.length
+                ? g.stockObserved.reduce((s, v) => s + v, 0) / g.stockObserved.length
+                : 0
+        })).sort((a, b) => b.quantity - a.quantity);
+    }
+
+
+    // ============================================================
+    // MARKET INTELLIGENCE — TornW3B PUBLIC API + LOCAL ANALYSIS v5
+    // ============================================================
+
+    function addIntelDiagnostic(intel, value) {
+        intel.diagnostics.unshift({ at: nowIso(), text: String(value) });
+        intel.diagnostics = intel.diagnostics.slice(0, 50);
+    }
+
+    function unixToMs(value) {
+        const n = Number(value || 0);
+        if (!n) return 0;
+        return n < 100_000_000_000 ? n * 1000 : n;
+    }
+
+    function freshnessInfo(timestamp, warnSeconds = 180) {
+        const ms = typeof timestamp === 'string' ? new Date(timestamp).getTime() : unixToMs(timestamp);
+        if (!ms || !Number.isFinite(ms)) return { ageSeconds: Infinity, score: 0, label: 'UNKNOWN', stale: true };
+        const ageSeconds = Math.max(0, (Date.now() - ms) / 1000);
+        const score = Math.max(0, Math.min(100, 100 - Math.max(0, ageSeconds - 30) * (100 / Math.max(30, warnSeconds * 2))));
+        const label = ageSeconds <= 30 ? 'FRESH' : ageSeconds <= 120 ? 'GOOD' : ageSeconds <= warnSeconds ? 'AGING' : 'STALE';
+        return { ageSeconds, score, label, stale: ageSeconds > warnSeconds };
+    }
+
+    function weav3rRequest(path, params = {}) {
+        return new Promise((resolve, reject) => {
+            const url = new URL(WEAV3R_BASE + path);
+            for (const [key, value] of Object.entries(params || {})) {
+                if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
+            }
+
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url: url.toString(),
+                timeout: 20_000,
+                headers: { Accept: 'application/json' },
+                onload: response => {
+                    if (response.status < 200 || response.status >= 300) {
+                        reject(new Error(`TornW3B HTTP ${response.status}.`));
+                        return;
+                    }
+                    let data;
+                    try { data = JSON.parse(response.responseText); }
+                    catch { reject(new Error('TornW3B returned invalid JSON.')); return; }
+                    if (data?.error) {
+                        reject(new Error(data.error?.message || data.error || 'TornW3B API error.'));
+                        return;
+                    }
+                    resolve(data);
+                },
+                ontimeout: () => reject(new Error('TornW3B request timed out.')),
+                onerror: () => reject(new Error('TornW3B network request failed.'))
+            });
+        });
+    }
+
+
+    const TRAVEL_ONE_WAY_MINUTES = Object.freeze({
+        'Mexico':{standard:24,airstrip:17,wlt:12,business:7},
+        'Cayman Islands':{standard:33,airstrip:23,wlt:17,business:10},
+        'Canada':{standard:39,airstrip:27,wlt:19,business:12},
+        'Hawaii':{standard:127,airstrip:89,wlt:63,business:38},
+        'United Kingdom':{standard:151,airstrip:106,wlt:75,business:45},
+        'Argentina':{standard:158,airstrip:111,wlt:79,business:47},
+        'Switzerland':{standard:166,airstrip:116,wlt:83,business:50},
+        'Japan':{standard:213,airstrip:149,wlt:107,business:64},
+        'China':{standard:229,airstrip:160,wlt:114,business:69},
+        'UAE':{standard:257,airstrip:180,wlt:128,business:77},
+        'South Africa':{standard:282,airstrip:197,wlt:141,business:85}
+    });
+
+    function parseTravelNumber(v){
+        const raw=String(v??'').trim().replaceAll(',','').replaceAll('$','').replaceAll('+','');
+        if(!raw||raw==='—'||raw==='-')return 0;
+        const m=raw.match(/(-?\d+(?:\.\d+)?)\s*([kmb])?/i); if(!m)return 0;
+        const n=Number(m[1]),mult=!m[2]?1:m[2].toLowerCase()==='k'?1e3:m[2].toLowerCase()==='m'?1e6:1e9;
+        return Number.isFinite(n)?n*mult:0;
+    }
+
+    function parseWeav3rTravelStockHtml(html){
+        const doc=new DOMParser().parseFromString(String(html||''),'text/html');
+        const table=[...doc.querySelectorAll('table')].find(t=>{const x=String(t.textContent||'').toLowerCase();return x.includes('country')&&x.includes('item')&&x.includes('stock')&&x.includes('profit');});
+        if(!table)throw new Error('TornW3B Travel Stock table was not found.');
+        let headers=[...table.querySelectorAll('thead th')].map(x=>String(x.textContent||'').trim().toLowerCase());
+        if(!headers.length)headers=[...table.querySelectorAll('tr:first-child th')].map(x=>String(x.textContent||'').trim().toLowerCase());
+        const find=tests=>headers.findIndex(h=>tests.some(re=>re.test(h)));
+        const ci=find([/country/]),ii=find([/^item/,/item/]),si=find([/stock/]),hi=find([/profit.*hr/,/\$\/hr/,/per hour/]);
+        const pi=headers.findIndex((h,i)=>/profit/.test(h)&&i!==hi),co=find([/shop.*cost/,/^cost$/,/buy.*price/]),mi=find([/home.*market/,/market.*price/,/^market$/]);
+        const out=[];
+        for(const tr of [...table.querySelectorAll('tbody tr')]){
+            const c=[...tr.querySelectorAll('td')]; if(c.length<4)continue;
+            const txt=i=>String(c[i]?.textContent||'').replace(/\s+/g,' ').trim();
+            const country=txt(ci>=0?ci:0),itemName=txt(ii>=0?ii:1); if(!country||!itemName)continue;
+            const href=c[ii>=0?ii:1]?.querySelector('a[href]')?.getAttribute('href')||'';
+            const idm=href.match(/(?:item(?:s)?[\/=]|item_id=)(\d+)/i);
+            out.push({
+                country,itemId:idm?idm[1]:'',itemName,
+                stock:Math.max(0,Math.round(parseTravelNumber(txt(si>=0?si:2)))),
+                profit:parseTravelNumber(txt(pi>=0?pi:3)),
+                sourceProfitPerHour:parseTravelNumber(txt(hi>=0?hi:4)),
+                shopCost:co>=0?Math.max(0,parseTravelNumber(txt(co))):0,
+                homeMarket:mi>=0?Math.max(0,parseTravelNumber(txt(mi))):0
+            });
+        }
+        if(!out.length)throw new Error('TornW3B Travel Stock returned no readable item rows.');
+        return out;
+    }
+
+    function travelHistoryKey(r){return String(r.country||'')+'|'+(asId(r.itemId)||normalizeItemName(r.itemName));}
+
+    function recordTravelSnapshots(db,rows,observedAt=Date.now()){
+        const at=Number(observedAt)||Date.now(),cutoff=at-Number(db.travelIntel.settings.historyDays||7)*86400000;
+        for(const r of rows){
+            const k=travelHistoryKey(r),list=Array.isArray(db.travelIntel.history[k])?db.travelIntel.history[k]:[],last=list[list.length-1];
+            if(!last||Number(last.stock)!==Number(r.stock)||at-Number(last.at||0)>=300000)list.push({at,stock:Number(r.stock||0),profit:Number(r.profit||0),sourceProfitPerHour:Number(r.sourceProfitPerHour||0),shopCost:Number(r.shopCost||0),homeMarket:Number(r.homeMarket||0)});
+            db.travelIntel.history[k]=list.filter(x=>Number(x.at||0)>=cutoff).slice(-800);
+        }
+    }
+
+    function captureWeav3rTravelStockPage() {
+        try {
+            const rows = parseWeav3rTravelStockHtml(document.documentElement.outerHTML);
+            const payload = writeTravelFeed({ capturedAt: Date.now(), rows });
+            return payload.rows.length;
+        } catch {
+            return 0;
+        }
+    }
+
+    function installWeav3rTravelCollector() {
+        if ((location.hostname !== 'weav3r.dev' && location.hostname !== 'www.weav3r.dev') || !location.pathname.startsWith('/travel-stock')) return;
+
+        let attempts = 0;
+        let returned = false;
+        let lastCount = 0;
+        let stableCaptures = 0;
+        let observer = null;
+
+        const maybeReturn = count => {
+            if (!count || returned) return false;
+            const verify = readTravelFeed();
+            if (!verify?.rows?.length || Number(verify.capturedAt || 0) <= 0) return false;
+
+            if (count === lastCount) stableCaptures++;
+            else stableCaptures = 1;
+            lastCount = count;
+
+            // Require two successful captures so a partially-rendered table is not persisted.
+            if (stableCaptures < 2) return false;
+
+            const ret = GM_getValue(TRAVEL_RETURN_KEY, null);
+            const requestedAt = Number(ret?.at || 0);
+            const returnUrl = String(ret?.url || '');
+            if (returnUrl.startsWith('https://www.torn.com/') && Date.now() - requestedAt < 5 * 60 * 1000) {
+                returned = true;
+                GM_deleteValue(TRAVEL_RETURN_KEY);
+                if (observer) observer.disconnect();
+                setTimeout(() => { location.href = returnUrl; }, 850);
+                return true;
+            }
+            return false;
+        };
+
+        const capture = () => {
+            if (returned) return;
+            attempts++;
+            const count = captureWeav3rTravelStockPage();
+            if (count > 0) maybeReturn(count);
+            if (!returned && attempts < 90) setTimeout(capture, 1000);
+        };
+
+        observer = new MutationObserver(() => {
+            if (returned) return;
+            const table = [...document.querySelectorAll('table')].find(t => {
+                const x=String(t.textContent||'').toLowerCase();
+                return x.includes('country')&&x.includes('item')&&x.includes('stock')&&x.includes('profit');
+            });
+            if (table) {
+                const count=captureWeav3rTravelStockPage();
+                if (count>0) maybeReturn(count);
+            }
+        });
+        observer.observe(document.documentElement,{childList:true,subtree:true});
+
+        setTimeout(capture,700);
+        setInterval(() => { if (!returned) captureWeav3rTravelStockPage(); },60_000);
+    }
+
+
+    function readTravelFeed() {
+        const raw = GM_getValue(TRAVEL_FEED_KEY, null);
+        if (!raw) return null;
+        if (typeof raw === 'string') {
+            try { return JSON.parse(raw); } catch { return null; }
+        }
+        return raw && typeof raw === 'object' ? raw : null;
+    }
+
+    function writeTravelFeed(payload) {
+        const safe = {
+            capturedAt: Number(payload?.capturedAt || Date.now()),
+            rows: Array.isArray(payload?.rows) ? payload.rows : []
+        };
+        // JSON string is intentionally used for maximum cross-origin userscript-storage compatibility.
+        GM_setValue(TRAVEL_FEED_KEY, JSON.stringify(safe));
+        GM_setValue(TRAVEL_CAPTURE_STATUS_KEY, { capturedAt:safe.capturedAt, rows:safe.rows.length, at:Date.now() });
+        return safe;
+    }
+
+    function fetchWeav3rTravelPage() {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method:'GET',
+                url:'https://weav3r.dev/travel-stock',
+                timeout:20000,
+                headers:{ Accept:'text/html,application/xhtml+xml' },
+                onload:r => {
+                    if (r.status < 200 || r.status >= 300) return reject(new Error('TornW3B HTTP '+r.status));
+                    const body=String(r.responseText||'');
+                    if (/just a moment|challenge-platform|cf-chl/i.test(body)) return reject(new Error('TornW3B Cloudflare challenge blocked direct refresh'));
+                    resolve(body);
+                },
+                ontimeout:()=>reject(new Error('TornW3B direct refresh timed out')),
+                onerror:()=>reject(new Error('TornW3B direct refresh network error'))
+            });
+        });
+    }
+
+    async function backgroundTravelSample() {
+        try {
+            const html=await fetchWeav3rTravelPage();
+            const rows=parseWeav3rTravelStockHtml(html);
+            writeTravelFeed({capturedAt:Date.now(),rows});
+            await syncTravelStock({silent:true,force:true});
+            return rows.length;
+        } catch {
+            // Never navigate away during background sampling. Browser-capture fallback
+            // remains a manual Update Live Travel Data action.
+            return 0;
+        }
+    }
+
+    async function updateTravelData() {
+        statusText='Refreshing TornW3B Travel Stock directly…';
+        render();
+        try {
+            const html=await fetchWeav3rTravelPage();
+            const rows=parseWeav3rTravelStockHtml(html);
+            writeTravelFeed({capturedAt:Date.now(),rows});
+            await syncTravelStock({silent:false,force:true});
+            return rows;
+        } catch (error) {
+            console.warn('[MM CRM] Direct travel refresh unavailable; using same-tab browser capture.', error);
+            statusText='Direct TornW3B refresh blocked. Opening live page for same-tab capture…';
+            render();
+            setTimeout(beginTravelCapture,250);
+            return [];
+        }
+    }
+
+    async function syncTravelStock({silent=false,force=false}={}){
+        const db=dbLoad(),last=Date.parse(db.travelIntel.lastSyncAt||'')||0;
+        const feed=readTravelFeed();
+        const capturedAt=Number(feed?.capturedAt||0);
+        const rows=Array.isArray(feed?.rows)?feed.rows:[];
+        const feedAge=capturedAt?Date.now()-capturedAt:Infinity;
+
+        if(!force&&last&&Date.now()-last<60000&&db.travelIntel.rows.length)return db.travelIntel.rows;
+
+        if(!rows.length){
+            if(!silent){
+                statusText='No captured TornW3B Travel Stock data yet. Click Open TornW3B, let the page load, then return to Torn and Refresh Travel Stock.';
+                render();
+            }
+            return db.travelIntel.rows;
+        }
+
+        if(capturedAt<=last && db.travelIntel.rows.length){
+            if(!silent){
+                statusText=feedAge<=10*60*1000
+                    ? 'Travel Stock is already using the latest captured TornW3B snapshot.'
+                    : 'Travel Stock snapshot is stale. Open TornW3B Travel Stock to capture a newer snapshot.';
+                render();
+            }
+            return db.travelIntel.rows;
+        }
+
+        const fresh=dbLoad();
+        fresh.travelIntel.rows=rows;
+        fresh.travelIntel.lastSyncAt=new Date(capturedAt).toISOString();
+        fresh.travelIntel.source='TornW3B Travel Stock browser capture';
+        fresh.travelIntel.diagnostics.unshift({at:nowIso(),text:`Travel Stock import: ${rows.length} rows; capture age ${Math.round(feedAge/1000)}s.`});
+        fresh.travelIntel.diagnostics=fresh.travelIntel.diagnostics.slice(0,30);
+        recordTravelSnapshots(fresh,rows,capturedAt);
+        dbSave(fresh);
+
+        if(!silent){
+            statusText=`Travel Stock imported: ${rows.length} item routes from TornW3B (${Math.round(feedAge/1000)}s old).`;
+            render();
+        }
+        return rows;
+    }
+
+
+    function resolveTravelTargetTime(value) {
+        const raw=String(value||'').trim();
+        if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(raw))return null;
+
+        // Travel forecasts use Torn City Time (TCT), which is treated as UTC.
+        const parts=raw.split(':').map(Number);
+        const now=Date.now();
+        const d=new Date(now);
+        let target=Date.UTC(
+            d.getUTCFullYear(),
+            d.getUTCMonth(),
+            d.getUTCDate(),
+            parts[0],
+            parts[1],
+            0,
+            0
+        );
+        if(target<=now)target+=24*60*60*1000;
+        return target;
+    }
+
+    function formatTravelTctClock(ms) {
+        if(!Number.isFinite(Number(ms))||Number(ms)<=0)return '—';
+        const text=new Intl.DateTimeFormat('en-GB',{
+            timeZone:'UTC',
+            weekday:'short',
+            hour:'2-digit',
+            minute:'2-digit',
+            hour12:false
+        }).format(new Date(Number(ms)));
+        return text+' TCT';
+    }
+
+    function formatTravelLocalClock(ms) {
+        if(!Number.isFinite(Number(ms))||Number(ms)<=0)return '—';
+        return new Date(Number(ms)).toLocaleString([],{
+            weekday:'short',
+            hour:'numeric',
+            minute:'2-digit'
+        })+' local';
+    }
+
+    function formatTravelClock(ms, showLocal=true) {
+        const tct=formatTravelTctClock(ms);
+        if(tct==='—')return tct;
+        return showLocal ? tct+' / '+formatTravelLocalClock(ms) : tct;
+    }
+
+    function travelHistory12h(db,row) {
+        const cutoff=Date.now()-12*60*60*1000;
+        return (db.travelIntel.history?.[travelHistoryKey(row)]||[])
+            .filter(x=>Number(x.at||0)>=cutoff)
+            .slice()
+            .sort((a,b)=>Number(a.at||0)-Number(b.at||0));
+    }
+
+    function travelRestockProfile12h(db,row) {
+        const h=travelHistory12h(db,row);
+        const depletion=[],restocks=[],restockTimes=[],outageDurations=[];
+        let availableSamples=0;
+        let outageStartedAt=null;
+
+        for(const point of h)if(Number(point.stock||0)>0)availableSamples++;
+
+        for(let i=1;i<h.length;i++){
+            const prev=h[i-1],cur=h[i];
+            const prevStock=Number(prev.stock||0),curStock=Number(cur.stock||0);
+            const mins=(Number(cur.at||0)-Number(prev.at||0))/60000;
+            if(!(mins>0))continue;
+
+            const delta=curStock-prevStock;
+            if(delta<0)depletion.push((-delta)/mins);
+
+            // Track stockout windows so we can estimate restocks even before we have
+            // two full restock-to-restock cycles.
+            if(prevStock>0 && curStock<=0 && outageStartedAt==null){
+                outageStartedAt=Number(cur.at||0);
+            }
+            if(prevStock<=0 && curStock>0){
+                if(outageStartedAt!=null){
+                    const outage=(Number(cur.at||0)-outageStartedAt)/60000;
+                    if(outage>0)outageDurations.push(outage);
+                    outageStartedAt=null;
+                }
+            }
+
+            if((prevStock<=0&&curStock>0)||delta>Math.max(5,prevStock*.20)){
+                restocks.push(Math.max(curStock,delta,0));
+                restockTimes.push(Number(cur.at||0));
+            }
+        }
+
+        // If history currently ends at zero, preserve the active outage start.
+        if(h.length){
+            const last=Number(h[h.length-1].stock||0);
+            if(last<=0 && outageStartedAt==null){
+                for(let i=h.length-1;i>0;i--){
+                    const cur=Number(h[i].stock||0),prev=Number(h[i-1].stock||0);
+                    if(cur<=0 && prev>0){
+                        outageStartedAt=Number(h[i].at||0);
+                        break;
+                    }
+                }
+            }
+        }
+
+        const intervals=[];
+        for(let i=1;i<restockTimes.length;i++){
+            const gap=(restockTimes[i]-restockTimes[i-1])/60000;
+            if(gap>0)intervals.push(gap);
+        }
+
+        const medianInterval=medianNumber(intervals);
+        const medianOutage=medianNumber(outageDurations);
+        const medianRestock=medianNumber(restocks);
+        const depletionRate=medianNumber(depletion);
+
+        let nextRestockAt=null;
+        let nextRestockBasis='insufficient-history';
+
+        if(restockTimes.length>=2 && medianInterval>0){
+            nextRestockAt=restockTimes[restockTimes.length-1]+medianInterval*60000;
+            while(nextRestockAt<=Date.now())nextRestockAt+=medianInterval*60000;
+            nextRestockBasis='restock-cadence';
+        }else if(outageStartedAt && medianOutage>0){
+            nextRestockAt=outageStartedAt+medianOutage*60000;
+            if(nextRestockAt<=Date.now())nextRestockAt=Date.now()+Math.max(5,medianOutage*.5)*60000;
+            nextRestockBasis='stockout-duration';
+        }else if(restockTimes.length===1 && medianOutage>0){
+            // One observed restock + a known typical outage still gives a bounded
+            // estimate for the next restock cycle.
+            const latest=restockTimes[0];
+            const cycleGuess=Math.max(medianOutage*2,60);
+            nextRestockAt=latest+cycleGuess*60000;
+            while(nextRestockAt<=Date.now())nextRestockAt+=cycleGuess*60000;
+            nextRestockBasis='single-cycle-fallback';
+        }else if(h.length>=4){
+            // Final fallback: infer a coarse cycle from the spacing of meaningful
+            // stock changes within the 12h observation window.
+            const changeTimes=[];
+            for(let i=1;i<h.length;i++){
+                if(Number(h[i].stock||0)!==Number(h[i-1].stock||0))changeTimes.push(Number(h[i].at||0));
+            }
+            const changeGaps=[];
+            for(let i=1;i<changeTimes.length;i++){
+                const gap=(changeTimes[i]-changeTimes[i-1])/60000;
+                if(gap>=5)changeGaps.push(gap);
+            }
+            const medianChange=medianNumber(changeGaps);
+            if(medianChange>0){
+                nextRestockAt=Date.now()+Math.max(15,medianChange*2)*60000;
+                nextRestockBasis='change-cadence-fallback';
+            }
+        }
+
+        return {
+            history:h,
+            samples:h.length,
+            availableRate:h.length?availableSamples/h.length:0,
+            depletionRate,
+            medianRestock,
+            medianInterval,
+            medianOutage,
+            restockTimes,
+            outageDurations,
+            activeOutageStartedAt:outageStartedAt,
+            nextRestockAt,
+            nextRestockBasis
+        };
+    }
+
+    function travelPrediction(db,row,arrivalMinutes,carry,targetAt=null){
+        const profile=travelRestockProfile12h(db,row);
+        const current=Math.max(0,Number(row.stock||0));
+        const fresh=freshnessInfo(db.travelIntel.lastSyncAt,600);
+        const targetMs=Number(targetAt||0)>Date.now()?Number(targetAt):Date.now()+Math.max(0,Number(arrivalMinutes||0))*60000;
+        const horizonMinutes=Math.max(0,(targetMs-Date.now())/60000);
+
+        const result={
+            samples:profile.samples,
+            model:'TornW3B live snapshot',
+            targetAt:targetMs,
+            predictedStock:null,
+            arrivalChance:null,
+            confidence:Math.round(fresh.score*.65),
+            depletionPerMinute:profile.depletionRate,
+            medianRestockSize:profile.medianRestock,
+            medianRestockMinutes:profile.medianInterval,
+            medianOutageMinutes:profile.medianOutage,
+            nextExpectedRestockAt:profile.nextRestockAt,
+            nextExpectedRestockBasis:profile.nextRestockBasis,
+            historyWindowHours:12,
+            availabilityRate12h:profile.availableRate,
+            expectedRestocksBeforeTarget:0
+        };
+
+        if(profile.samples<4){
+            result.arrivalChance=current>0?Math.max(.45,Math.min(.85,fresh.score/100)):.10;
+            return result;
+        }
+
+        let predicted=current-profile.depletionRate*horizonMinutes;
+        let restocksBefore=0;
+        if(profile.nextRestockAt&&profile.medianRestock>0){
+            const cycleMinutes=profile.medianInterval>0
+                ? profile.medianInterval
+                : profile.medianOutage>0
+                    ? Math.max(profile.medianOutage*2,60)
+                    : 0;
+            let at=profile.nextRestockAt;
+            while(at<=targetMs&&restocksBefore<12){
+                predicted+=profile.medianRestock;
+                restocksBefore++;
+                if(!(cycleMinutes>0))break;
+                at+=cycleMinutes*60000;
+            }
+        }
+        predicted=Math.max(0,predicted);
+
+        const sampleConfidence=Math.min(1,profile.samples/24);
+        const eventConfidence=Math.min(1,profile.restockTimes.length/3);
+        const freshConfidence=Math.max(0,Math.min(1,fresh.score/100));
+        const stockRatio=Math.min(1.5,predicted/Math.max(1,carry));
+        const chance=Math.max(.02,Math.min(.99,stockRatio*.48+profile.availableRate*.27+sampleConfidence*.15+freshConfidence*.10));
+
+        result.model='12h availability/restock model';
+        result.predictedStock=Math.round(predicted);
+        result.arrivalChance=chance;
+        result.confidence=Math.round((sampleConfidence*.45+eventConfidence*.30+freshConfidence*.25)*100);
+        result.expectedRestocksBeforeTarget=restocksBefore;
+        return result;
+    }
+
+    function travelTimedForecastRows(db){
+        const targetAt=resolveTravelTargetTime(db.travelIntel.settings.targetTime);
+        if(!targetAt)return [];
+        const carry=Math.max(1,Number(db.travelIntel.settings.carry||21));
+
+        return (db.travelIntel.rows||[]).map(row=>{
+            const pred=travelPrediction(db,row,0,carry,targetAt);
+            const stock=pred.predictedStock==null?Number(row.stock||0):Number(pred.predictedStock||0);
+            let state='OUT';
+            if(stock>=carry)state='IN STOCK';
+            else if(stock>0)state='LOW';
+            else if(pred.nextExpectedRestockAt&&pred.nextExpectedRestockAt<=targetAt)state='RESTOCK LIKELY';
+
+            return {
+                ...row,
+                targetAt,
+                prediction:pred,
+                predictedStock:stock,
+                predictedState:state,
+                arrivalChance:pred.arrivalChance??0,
+                nextExpectedRestockAt:pred.nextExpectedRestockAt
+            };
+        }).sort((a,b)=>
+            Number(b.predictedState==='IN STOCK')-Number(a.predictedState==='IN STOCK')||
+            b.arrivalChance-a.arrivalChance||
+            b.profit-a.profit
+        );
+    }
+
+    function travelOpportunityRows(db){
+        const st=db.travelIntel.settings,method=st.method,carry=Math.max(1,Number(st.carry||21));
+        const targetAt=resolveTravelTargetTime(st.targetTime);
+        return (db.travelIntel.rows||[]).map(row=>{
+            const mins=Number(TRAVEL_ONE_WAY_MINUTES[row.country]?.[method]||0),pred=travelPrediction(db,row,mins,carry,targetAt);
+            const basis=pred.predictedStock==null?Number(row.stock||0):pred.predictedStock,possible=Math.max(0,Math.min(carry,Math.floor(basis)));
+            const liveFactor=Number(row.stock||0)>=carry?.85:Number(row.stock||0)>0?.55:.10,chance=pred.arrivalChance==null?liveFactor:pred.arrivalChance;
+            const expectedUnits=Math.max(0,Math.min(carry,Math.floor(possible*chance))),expectedProfit=expectedUnits*Math.max(0,Number(row.profit||0)),tripHours=mins>0?(mins*2)/60:0,pph=tripHours>0?expectedProfit/tripHours:0;
+            let recommendation='AVOID';
+            if(Number(row.profit||0)>0){if(Number(row.stock||0)===0)recommendation='WAIT';else if(possible>=carry&&chance>=.65)recommendation='GO';else if(possible>0&&chance>=.40)recommendation='GO — PARTIAL';else recommendation='HIGH RISK';}
+            return {...row,method,carry,arrivalMinutes:mins,prediction:pred,possibleUnits:possible,expectedUnits,expectedProfit,arrivalChance:chance,riskAdjustedProfitPerHour:pph,recommendation};
+        }).sort((a,b)=>b.riskAdjustedProfitPerHour-a.riskAdjustedProfitPerHour||b.profit-a.profit);
+    }
+
+    function travelBasketRows(db){
+        const carry=Math.max(1,Number(db.travelIntel.settings.carry||21)),cashLimit=Math.max(0,Number(db.travelIntel.settings.cash||0)),g={};
+        for(const r of travelOpportunityRows(db)){if(r.profit<=0||r.possibleUnits<=0)continue;(g[r.country]||(g[r.country]=[])).push(r);}
+        const out=[];
+        for(const [country,items] of Object.entries(g)){
+            items.sort((a,b)=>b.profit-a.profit);
+            let slots=carry,cash=cashLimit,profit=0,cost=0,weighted=0,units=0;const basket=[];
+            for(const r of items){
+                if(slots<=0)break;let qty=Math.min(slots,r.possibleUnits);
+                if(cashLimit>0&&r.shopCost>0)qty=Math.min(qty,Math.floor(cash/r.shopCost));if(qty<=0)continue;
+                basket.push({itemName:r.itemName,qty,profitEach:r.profit,shopCost:r.shopCost});slots-=qty;units+=qty;profit+=qty*r.profit;weighted+=qty*r.arrivalChance;
+                if(r.shopCost>0){const c=qty*r.shopCost;cost+=c;if(cashLimit>0)cash=Math.max(0,cash-c);}
+            }
+            const mins=Number(TRAVEL_ONE_WAY_MINUTES[country]?.[db.travelIntel.settings.method]||0),avg=units?weighted/units:0,adjusted=profit*avg,pph=mins>0?adjusted/((mins*2)/60):0;
+            if(units)out.push({country,basket,units,slots,profit,cost,avgChance:avg,riskAdjustedProfit:adjusted,riskAdjustedProfitPerHour:pph,arrivalMinutes:mins});
+        }
+        return out.sort((a,b)=>b.riskAdjustedProfitPerHour-a.riskAdjustedProfitPerHour);
+    }
+
+    function saveTravelSettings(root){
+        const db=dbLoad(),method=String(root.querySelector('#mm-travel-method')?.value||'standard').toLowerCase();
+        db.travelIntel.settings.method=['standard','airstrip','wlt','business'].includes(method)?method:'standard';
+        db.travelIntel.settings.carry=Math.max(1,Number(root.querySelector('#mm-travel-carry')?.value||21));
+        db.travelIntel.settings.cash=Math.max(0,Number(root.querySelector('#mm-travel-cash')?.value||0));
+        const target=String(root.querySelector('#mm-travel-target-time')?.value||'').trim();
+        if(target && !/^([01]\d|2[0-3]):[0-5]\d$/.test(target)){
+            statusText='Travel target time was not saved because the time value was invalid.';
+            render();
+            return;
+        }
+        db.travelIntel.settings.targetTime=target;
+        db.travelIntel.settings.selectedCountry=String(root.querySelector('#mm-travel-country')?.value||'').trim();
+        db.travelIntel.settings.selectedItemKey=String(root.querySelector('#mm-travel-item')?.value||'').trim();
+        db.travelIntel.settings.showLocalTime=Boolean(root.querySelector('#mm-travel-show-local')?.checked);
+        dbSave(db);
+        statusText=target
+            ? 'Travel target saved: '+target+' TCT (UTC). Forecast uses the last 12 hours of availability history.'
+            : 'Travel settings saved; target time cleared.';
+        render();
+    }
+
+    function travelRecommendationBadge(v){
+        const c={'GO':'background:#1f4a29;color:#c9f4d0;','GO — PARTIAL':'background:#31503a;color:#d9f4df;','WAIT':'background:#5a4319;color:#ffe4a8;','HIGH RISK':'background:#5b3517;color:#ffd0a0;','AVOID':'background:#512323;color:#ffb4b4;'};
+        return `<span style="${c[v]||c.AVOID}padding:2px 6px;border-radius:9px;font-size:10px;font-weight:bold;">${escapeHtml(v)}</span>`;
+    }
+
+
+    function travelItemSelectorKey(row) {
+        return asId(row?.itemId) || normalizeItemName(row?.itemName || '');
+    }
+
+    function travelSelectorState(db) {
+        const rows=Array.isArray(db.travelIntel.rows)?db.travelIntel.rows:[];
+        const countries=[...new Set(rows.map(r=>String(r.country||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+
+        let country=String(db.travelIntel.settings.selectedCountry||'').trim();
+        if(!country || !countries.includes(country)) country=countries[0]||'';
+
+        const countryRows=rows
+            .filter(r=>String(r.country||'')===country)
+            .slice()
+            .sort((a,b)=>String(a.itemName||'').localeCompare(String(b.itemName||'')));
+
+        let itemKey=String(db.travelIntel.settings.selectedItemKey||'').trim();
+        if(itemKey && !countryRows.some(r=>travelItemSelectorKey(r)===itemKey)) itemKey='';
+
+        return {countries,country,countryRows,itemKey};
+    }
+
+    function selectedTravelForecast(db) {
+        const state=travelSelectorState(db);
+        const targetAt=resolveTravelTargetTime(db.travelIntel.settings.targetTime);
+        if(!state.country || !targetAt) return {state,targetAt,row:null};
+
+        const timed=travelTimedForecastRows(db).filter(r=>String(r.country||'')===state.country);
+        let row=null;
+        if(state.itemKey) row=timed.find(r=>travelItemSelectorKey(r)===state.itemKey)||null;
+        if(!row) row=timed[0]||null;
+        return {state,targetAt,row};
+    }
+
+    function travelCommandHtml(db){
+        const st=db.travelIntel.settings;
+        const rows=travelOpportunityRows(db);
+        const baskets=travelBasketRows(db).slice(0,5);
+        const fresh=freshnessInfo(db.travelIntel.lastSyncAt,600);
+        const targetAt=resolveTravelTargetTime(st.targetTime);
+        const selector=travelSelectorState(db);
+        const selected=selectedTravelForecast(db);
+        const timed=travelTimedForecastRows(db);
+
+        const countryOptions=selector.countries.length
+            ? selector.countries.map(c=>'<option value="'+escapeHtml(c)+'" '+(c===selector.country?'selected':'')+'>'+escapeHtml(c)+'</option>').join('')
+            : '<option value="">No countries loaded</option>';
+
+        const itemOptions='<option value="">All items in '+escapeHtml(selector.country||'country')+'</option>'+
+            selector.countryRows.map(r=>{
+                const key=travelItemSelectorKey(r);
+                return '<option value="'+escapeHtml(key)+'" '+(key===selector.itemKey?'selected':'')+'>'+escapeHtml(r.itemName)+'</option>';
+            }).join('');
+
+        const showLocal=st.showLocalTime !== false;
+        const targetSummary=targetAt
+            ? 'Forecast target: <b>'+escapeHtml(formatTravelClock(targetAt,showLocal))+'</b>. Predictor uses only the previous <b>12 hours</b> of captured availability, depletion and restock events.'
+            : 'Enter a target arrival time in <b>Torn Time (TCT / UTC)</b> to predict which items should be in stock and the next expected restock time.';
+
+        const controls=card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
+                '<div><b style="font-size:15px;">Travel Command Center</b><div style="font-size:10px;color:#888;">TornW3B live signal + CRM 12-hour availability history</div></div>'+
+                '<div style="display:flex;gap:5px;"><button id="mm-travel-capture" style="'+btn(true)+'">Update Live Travel Data</button><button id="mm-travel-sync" style="'+btn()+'">Import Last Capture</button></div>'+
+            '</div>'+
+            '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:7px;">'+
+                '<label style="font-size:10px;color:#aaa;">Flight method<select id="mm-travel-method" style="'+inputCss()+'width:100%;"><option value="standard" '+(st.method==='standard'?'selected':'')+'>Standard</option><option value="airstrip" '+(st.method==='airstrip'?'selected':'')+'>Airstrip</option><option value="wlt" '+(st.method==='wlt'?'selected':'')+'>WLT</option><option value="business" '+(st.method==='business'?'selected':'')+'>Business</option></select></label>'+
+                '<label style="font-size:10px;color:#aaa;">Carry capacity<input id="mm-travel-carry" type="number" min="1" value="'+Number(st.carry||21)+'" style="'+inputCss()+'width:100%;"></label>'+
+                '<label style="font-size:10px;color:#aaa;">Travel cash (0 = unlimited)<input id="mm-travel-cash" type="number" min="0" value="'+Number(st.cash||0)+'" style="'+inputCss()+'width:100%;"></label>'+
+                '<label style="font-size:10px;color:#aaa;">Target arrival time (TCT / UTC)<input id="mm-travel-target-time" type="time" value="'+escapeHtml(st.targetTime||'')+'" style="'+inputCss()+'width:100%;"></label>'+
+            '</div>'+
+            '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-top:7px;">'+
+                '<label style="font-size:10px;color:#aaa;">Country<select id="mm-travel-country" style="'+inputCss()+'width:100%;">'+countryOptions+'</select></label>'+
+                '<label style="font-size:10px;color:#aaa;">Item<select id="mm-travel-item" style="'+inputCss()+'width:100%;">'+itemOptions+'</select></label>'+
+            '</div>'+
+            '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;"><button id="mm-travel-save" style="'+btn(true)+'">Save / Run Forecast</button><label style="font-size:10px;color:#aaa;"><input id="mm-travel-show-local" type="checkbox" '+(showLocal?'checked':'')+'> Show local time beside TCT</label></div>'+
+            '<div style="font-size:10px;color:#888;margin-top:6px;">'+targetSummary+' Source '+escapeHtml(fresh.label)+(Number.isFinite(fresh.ageSeconds)?' · '+Math.round(fresh.ageSeconds)+'s old':'')+'.</div>'
+        );
+
+        let selectedBody='';
+        if(!targetAt){
+            selectedBody='<div style="font-size:11px;color:#888;margin-top:5px;">Enter a Target arrival time above, then click Save / Run Forecast.</div>';
+        }else if(!selected.row){
+            selectedBody='<div style="font-size:11px;color:#888;margin-top:5px;">Choose a country/item after loading current travel data.</div>';
+        }else{
+            const r=selected.row;
+            const color=r.predictedState==='IN STOCK'?'#9fe3a8':r.predictedState==='LOW'?'#ffd18a':r.predictedState==='RESTOCK LIKELY'?'#9fd3ff':'#ff9b9b';
+            const nextAt=r.nextExpectedRestockAt;
+            const nextDelta=nextAt?Math.max(0,(Number(nextAt)-Date.now())/60000):null;
+            const interval=r.prediction.medianRestockMinutes?Number(r.prediction.medianRestockMinutes).toFixed(0)+'m':'—';
+            const outage=r.prediction.medianOutageMinutes?Number(r.prediction.medianOutageMinutes).toFixed(0)+'m':'—';
+            const basis=String(r.prediction.nextExpectedRestockBasis||'insufficient-history').replaceAll('-',' ');
+            const dep=r.prediction.depletionPerMinute?Number(r.prediction.depletionPerMinute).toFixed(2)+'/min':'—';
+            selectedBody=
+                '<div style="font-size:12px;line-height:1.6;margin-top:5px;">'+
+                    '<b style="font-size:14px;">'+escapeHtml(r.country)+' · '+escapeHtml(r.itemName)+'</b> · <span style="color:'+color+';font-weight:bold;">'+escapeHtml(r.predictedState)+'</span><br>'+
+                    'Live stock: <b>'+Number(r.stock||0).toLocaleString()+'</b><br>'+
+                    'Adjusted target time: <b>'+escapeHtml(formatTravelClock(r.targetAt,showLocal))+'</b><br>'+
+                    'Predicted stock at target: <b>'+Number(r.predictedStock||0).toLocaleString()+'</b><br>'+
+                    'Availability probability: <b>'+(Number(r.arrivalChance||0)*100).toFixed(0)+'%</b> · Confidence '+Number(r.prediction.confidence||0).toFixed(0)+'%<br>'+
+                    'Next predicted restock: <b>'+escapeHtml(formatTravelClock(nextAt,showLocal))+'</b>'+(nextDelta!=null?' · about '+Math.round(nextDelta)+' min from now':'')+'<br>'+
+                    'Prediction basis: '+escapeHtml(basis)+' · 12h samples '+Number(r.prediction.samples||0)+' · Median restock interval '+interval+' · Median stockout '+outage+' · Depletion '+dep+
+                '</div>';
+        }
+
+        const selectedCard=card('<b>Selected Country / Item Forecast</b>'+selectedBody);
+
+        let forecastRows=timed;
+        if(selector.country) forecastRows=forecastRows.filter(r=>String(r.country||'')===selector.country);
+        if(selector.itemKey) forecastRows=forecastRows.filter(r=>travelItemSelectorKey(r)===selector.itemKey);
+
+        const forecastBody=!targetAt
+            ? '<div style="font-size:11px;color:#888;margin-top:5px;">Enter a Target arrival time above, then click Save / Run Forecast.</div>'
+            : forecastRows.length
+                ? forecastRows.slice(0,30).map(r=>{
+                    const color=r.predictedState==='IN STOCK'?'#9fe3a8':r.predictedState==='LOW'?'#ffd18a':r.predictedState==='RESTOCK LIKELY'?'#9fd3ff':'#ff9b9b';
+                    const interval=r.prediction.medianRestockMinutes?Number(r.prediction.medianRestockMinutes).toFixed(0)+'m':'—';
+                    const outage=r.prediction.medianOutageMinutes?Number(r.prediction.medianOutageMinutes).toFixed(0)+'m':'—';
+                    const basis=String(r.prediction.nextExpectedRestockBasis||'insufficient-history').replaceAll('-',' ');
+                    return '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;">'+
+                        '<b>'+escapeHtml(r.country)+' · '+escapeHtml(r.itemName)+'</b> · <span style="color:'+color+';font-weight:bold;">'+escapeHtml(r.predictedState)+'</span><br>'+
+                        'Predicted stock at '+escapeHtml(formatTravelClock(r.targetAt,showLocal))+': <b>'+Number(r.predictedStock||0).toLocaleString()+'</b> · Availability '+(Number(r.arrivalChance||0)*100).toFixed(0)+'% · Confidence '+Number(r.prediction.confidence||0).toFixed(0)+'%<br>'+
+                        'Next predicted restock: <b>'+escapeHtml(formatTravelClock(r.nextExpectedRestockAt,showLocal))+'</b> · '+escapeHtml(basis)+' · Median interval '+interval+' · Median stockout '+outage+
+                    '</div>';
+                }).join('')
+                : '<div style="font-size:11px;color:#888;margin-top:5px;">No matching travel forecast rows loaded.</div>';
+
+        const forecast=card('<b>12-Hour Stock Forecast'+(targetAt?' — '+escapeHtml(formatTravelClock(targetAt,showLocal)):'')+'</b>'+forecastBody);
+
+        const countryBaskets=selector.country?baskets.filter(b=>b.country===selector.country):baskets;
+        const basketsHtml=card('<b>Trip Basket Optimizer</b>'+
+            (countryBaskets.length
+                ? countryBaskets.map((b,i)=>'<div style="border-top:'+(i?'1px solid #303030':'0')+';padding:6px 0;font-size:11px;"><b>#'+(i+1)+' '+escapeHtml(b.country)+'</b> · '+b.units+'/'+Number(st.carry||21)+' slots · Risk-adjusted '+money(b.riskAdjustedProfit)+' · <b>'+money(b.riskAdjustedProfitPerHour)+'/hr</b> · Arrival signal '+(b.avgChance*100).toFixed(0)+'%<br>'+b.basket.map(x=>escapeHtml(x.itemName)+' × '+x.qty).join(' · ')+'</div>').join('')
+                : '<div style="font-size:11px;color:#888;">No basket available for the selected country yet.</div>')
+        );
+
+        return controls+selectedCard+forecast+basketsHtml;
+    }
+
+    function normalizeWeavMarketplaceItem(row) {
+        return {
+            itemId: asId(row?.item_id),
+            itemName: String(row?.item_name || `Item ${row?.item_id || ''}`),
+            marketPrice: Number(row?.market_price || 0),
+            bazaarAverage: Number(row?.bazaar_average || 0),
+            lowestPrice: Number(row?.lowest_price || 0),
+            totalBazaars: Number(row?.total_bazaars || 0)
+        };
+    }
+
+    function normalizeWeavListing(row) {
+        return {
+            itemId: asId(row?.item_id),
+            uid: row?.uid == null ? null : String(row.uid),
+            sellerId: asId(row?.player_id),
+            sellerName: String(row?.player_name || ''),
+            quantity: Math.max(0, Number(row?.quantity || 0)),
+            price: Math.max(0, Number(row?.price || 0)),
+            contentUpdated: unixToMs(row?.content_updated),
+            lastChecked: unixToMs(row?.last_checked),
+            sponsored: Number(row?.sponsored || 0) === 1
+        };
+    }
+
+    function normalizeWeavTrader(row) {
+        const rating = row?.rating || {};
+        return {
+            traderId: asId(row?.player_id),
+            traderName: String(row?.player_name || ''),
+            price: Math.max(0, Number(row?.price || 0)),
+            upvotes: Number(rating.upvotes || 0),
+            downvotes: Number(rating.downvotes || 0),
+            ratingTotal: Number(rating.total || 0),
+            pricelistId: Number(row?.pricelist_id || 0),
+            lastTrade: unixToMs(row?.last_trade),
+            lastAction: unixToMs(row?.last_action),
+            pricelistUpdated: unixToMs(row?.pricelist_updated),
+            sponsored: Number(row?.sponsored || 0) === 1
+        };
+    }
+
+    function updateSupplierObservations(intel, itemId, itemName, listings) {
+        for (const listing of listings) {
+            if (!listing.sellerId) continue;
+            const id = listing.sellerId;
+            if (!intel.suppliers[id]) {
+                intel.suppliers[id] = {
+                    sellerId: id,
+                    sellerName: listing.sellerName || id,
+                    seenCount: 0,
+                    totalQuantityObserved: 0,
+                    items: {},
+                    firstSeenAt: nowIso(),
+                    lastSeenAt: null
+                };
+            }
+            const supplier = intel.suppliers[id];
+            supplier.sellerName = listing.sellerName || supplier.sellerName;
+            supplier.seenCount += 1;
+            supplier.totalQuantityObserved += Number(listing.quantity || 0);
+            supplier.lastSeenAt = nowIso();
+            if (!supplier.items[itemId]) {
+                supplier.items[itemId] = {
+                    itemId,
+                    itemName,
+                    observations: 0,
+                    minPrice: 0,
+                    lastPrice: 0,
+                    maxQtySeen: 0,
+                    lastSeenAt: null
+                };
+            }
+            const item = supplier.items[itemId];
+            item.observations += 1;
+            item.lastPrice = listing.price;
+            item.minPrice = !item.minPrice ? listing.price : Math.min(item.minPrice, listing.price);
+            item.maxQtySeen = Math.max(item.maxQtySeen, listing.quantity);
+            item.lastSeenAt = nowIso();
+        }
+    }
+
+    function pushIntelHistory(intel, itemId, row) {
+        const id = asId(itemId);
+        if (!Array.isArray(intel.history[id])) intel.history[id] = [];
+        intel.history[id].push({
+            at: nowIso(),
+            lowestPrice: Number(row.lowestPrice || 0),
+            bazaarAverage: Number(row.bazaarAverage || 0),
+            marketPrice: Number(row.marketPrice || 0),
+            totalBazaars: Number(row.totalBazaars || 0)
+        });
+        intel.history[id] = intel.history[id].slice(-MARKET_INTEL_HISTORY_MAX);
+    }
+
+    async function syncWeavMarketplace(force = false) {
+        const db = dbLoad();
+        const intel = db.marketIntel;
+        if (
+            !force &&
+            intel.lastGlobalSyncAt &&
+            Date.now() - new Date(intel.lastGlobalSyncAt).getTime() < WEAV3R_GLOBAL_TTL_MS &&
+            Object.keys(intel.marketplace).length
+        ) return Object.values(intel.marketplace);
+
+        const data = await weav3rRequest('/marketplace');
+        const generatedAtMs = unixToMs(data?.generated_at) || Date.now();
+        const next = {};
+        for (const raw of Array.isArray(data?.items) ? data.items : []) {
+            const row = normalizeWeavMarketplaceItem(raw);
+            if (!row.itemId) continue;
+            next[row.itemId] = row;
+            pushIntelHistory(intel, row.itemId, row);
+        }
+        intel.marketplace = next;
+        intel.marketplaceGeneratedAt = new Date(generatedAtMs).toISOString();
+        intel.lastGlobalSyncAt = nowIso();
+        dbSave(db);
+        return Object.values(next);
+    }
+
+    async function enrichWeavItem(itemId, options = {}) {
+        const id = asId(itemId);
+        if (!/^\d+$/.test(id)) throw new Error(`Invalid item ID: ${id}`);
+
+        const currentDb = dbLoad();
+        const cached = currentDb.marketIntel.details[id];
+        if (
+            !options.force &&
+            cached?.fetchedAt &&
+            Date.now() - new Date(cached.fetchedAt).getTime() < WEAV3R_DETAIL_TTL_MS
+        ) return cached;
+
+        const [detailResult, traderResult] = await Promise.allSettled([
+            weav3rRequest(`/marketplace/${encodeURIComponent(id)}`, { limit: 100 }),
+            weav3rRequest(`/marketplace/${encodeURIComponent(id)}/traders`, { limit: 100, sort: 'price' })
+        ]);
+
+        const db = dbLoad();
+        const intel = db.marketIntel;
+        const base = intel.marketplace[id] || {};
+
+        if (detailResult.status === 'fulfilled') {
+            const data = detailResult.value;
+            const listings = (Array.isArray(data?.listings) ? data.listings : [])
+                .map(normalizeWeavListing)
+                .filter(x => x.price > 0 && x.quantity > 0)
+                .sort((a, b) => a.price - b.price);
+
+            const organic = listings.filter(x => !x.sponsored);
+            const generatedAt = unixToMs(data?.generated_at) || Date.now();
+            const detail = {
+                itemId: id,
+                itemName: String(data?.item_name || base.itemName || `Item ${id}`),
+                marketPrice: Number(data?.market_price || base.marketPrice || 0),
+                bazaarAverage: Number(data?.bazaar_average || base.bazaarAverage || 0),
+                generatedAt: new Date(generatedAt).toISOString(),
+                fetchedAt: nowIso(),
+                listings,
+                organicListings: organic
+            };
+            intel.details[id] = detail;
+            updateSupplierObservations(intel, id, detail.itemName, organic);
+        } else {
+            addIntelDiagnostic(intel, `TornW3B item ${id}: ${detailResult.reason?.message || String(detailResult.reason)}`);
+        }
+
+        if (traderResult.status === 'fulfilled') {
+            const data = traderResult.value;
+            const traders = (Array.isArray(data?.traders) ? data.traders : [])
+                .map(normalizeWeavTrader)
+                .filter(x => x.price > 0)
+                .sort((a, b) => b.price - a.price);
+            intel.traders[id] = {
+                itemId: id,
+                itemName: String(data?.item_name || base.itemName || `Item ${id}`),
+                totalCount: Number(data?.total_count || traders.length),
+                generatedAt: new Date(unixToMs(data?.generated_at) || Date.now()).toISOString(),
+                fetchedAt: nowIso(),
+                traders,
+                organicTraders: traders.filter(x => !x.sponsored)
+            };
+        } else {
+            addIntelDiagnostic(intel, `TornW3B traders ${id}: ${traderResult.reason?.message || String(traderResult.reason)}`);
+        }
+
+        dbSave(db);
+        return db.marketIntel.details[id] || null;
+    }
+
+    function intelHistoryStats(intel, itemId) {
+        const rows = Array.isArray(intel.history[itemId]) ? intel.history[itemId] : [];
+        const prices = rows.map(r => Number(r.bazaarAverage || 0)).filter(v => v > 0);
+        if (!prices.length) return { samples: 0, median: 0, volatilityPct: 0 };
+        const sorted = prices.slice().sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        const mean = prices.reduce((s, v) => s + v, 0) / prices.length;
+        const variance = prices.reduce((s, v) => s + (v - mean) ** 2, 0) / prices.length;
+        return {
+            samples: prices.length,
+            median,
+            volatilityPct: mean ? Math.sqrt(variance) / mean * 100 : 0
+        };
+    }
+
+    function detailedIntelForItem(db, itemId) {
+        const id = asId(itemId);
+        const intel = db.marketIntel;
+        const base = intel.marketplace[id] || {};
+        const detail = intel.details[id] || {};
+        const traderData = intel.traders[id] || {};
+        const listings = Array.isArray(detail.organicListings) ? detail.organicListings : [];
+        const traders = Array.isArray(traderData.organicTraders) ? traderData.organicTraders : [];
+
+        const cheapest = listings[0] || null;
+        const topTrader = traders[0] || null;
+        const bazaarAverage = Number(detail.bazaarAverage || base.bazaarAverage || 0);
+        const marketPrice = Number(detail.marketPrice || base.marketPrice || 0);
+        const haircutPct = Number(intel.settings.bazaarExitHaircutPct || 0);
+        const bazaarExit = bazaarAverage ? Math.floor(bazaarAverage * (1 - haircutPct / 100)) : 0;
+        const itemMarketNet = marketPrice ? Math.floor(marketPrice * (1 - ITEM_MARKET_FEE_RATE)) : 0;
+        const traderExit = Number(topTrader?.price || 0);
+
+        const exits = [
+            { route: 'Bazaar', value: bazaarExit },
+            { route: 'Trader', value: traderExit },
+            { route: 'Item Market Net', value: itemMarketNet }
+        ].filter(x => x.value > 0).sort((a, b) => b.value - a.value);
+
+        const bestExit = exits[0] || { route: 'Unknown', value: 0 };
+        const buyPrice = Number(cheapest?.price || base.lowestPrice || 0);
+        const qty = Number(cheapest?.quantity || 0);
+        const profit = buyPrice > 0 && bestExit.value > 0 ? bestExit.value - buyPrice : 0;
+        const roiPct = buyPrice > 0 ? profit / buyPrice * 100 : 0;
+        const instantProfit = buyPrice > 0 && traderExit > buyPrice ? traderExit - buyPrice : 0;
+        const instantRoiPct = buyPrice > 0 ? instantProfit / buyPrice * 100 : 0;
+        const fresh = freshnessInfo(detail.generatedAt || intel.marketplaceGeneratedAt, intel.settings.freshnessWarnSeconds);
+        const hist = intelHistoryStats(intel, id);
+
+        return {
+            id,
+            name: String(detail.itemName || base.itemName || `Item ${id}`),
+            buyPrice,
+            quantity: qty,
+            sellerId: cheapest?.sellerId || '',
+            sellerName: cheapest?.sellerName || '',
+            sponsoredCheapest: Boolean(cheapest?.sponsored),
+            bazaarAverage,
+            marketPrice,
+            bazaarExit,
+            traderExit,
+            traderName: topTrader?.traderName || '',
+            itemMarketNet,
+            bestExit: bestExit.value,
+            bestExitRoute: bestExit.route,
+            profit,
+            roiPct,
+            instantProfit,
+            instantRoiPct,
+            freshness: fresh,
+            history: hist,
+            listings,
+            traders
+        };
+    }
+
+    function globalOpportunityRows(db) {
+        const intel = db.marketIntel;
+        const settings = intel.settings;
+        const generated = intel.marketplaceGeneratedAt;
+        const fresh = freshnessInfo(generated, settings.freshnessWarnSeconds);
+        const rows = [];
+
+        for (const base of Object.values(intel.marketplace)) {
+            const buy = Number(base.lowestPrice || 0);
+            const bazaarAverage = Number(base.bazaarAverage || 0);
+            const marketPrice = Number(base.marketPrice || 0);
+            if (!(buy > 1)) continue;
+            if (marketPrice < Number(settings.minMarketPrice || 0)) continue;
+            if (buy > Number(settings.maxCandidatePrice || Number.MAX_SAFE_INTEGER)) continue;
+            if (Number(base.totalBazaars || 0) < Number(settings.minBazaarSellers || 0)) continue;
+
+            const bazaarExit = bazaarAverage
+                ? Math.floor(bazaarAverage * (1 - Number(settings.bazaarExitHaircutPct || 0) / 100))
+                : 0;
+            const itemMarketNet = marketPrice ? Math.floor(marketPrice * (1 - ITEM_MARKET_FEE_RATE)) : 0;
+
+            const detail = intel.details[base.itemId];
+            const trader = intel.traders[base.itemId];
+            const organicTrader = trader?.organicTraders?.[0];
+            const organicListing = detail?.organicListings?.[0];
+
+            const liveBuy = Number(organicListing?.price || buy);
+            const traderExit = Number(organicTrader?.price || 0);
+            const exits = [
+                { route: 'Bazaar', value: bazaarExit },
+                { route: 'Trader', value: traderExit },
+                { route: 'Item Market Net', value: itemMarketNet }
+            ].filter(x => x.value > 0).sort((a,b) => b.value - a.value);
+
+            const exit = exits[0] || { route: 'Unknown', value: 0 };
+            const profit = liveBuy > 0 && exit.value > 0 ? exit.value - liveBuy : 0;
+            const roiPct = liveBuy > 0 ? profit / liveBuy * 100 : 0;
+            if (roiPct < Number(settings.minRoiPct || 0)) continue;
+            if (profit < Number(settings.minAbsoluteProfit || 0)) continue;
+
+            const sellerCount = Number(base.totalBazaars || 0);
+            const sellerConfidence = Math.min(100, 25 + Math.log10(sellerCount + 1) * 35);
+            const history = intelHistoryStats(intel, base.itemId);
+            const volatilityPenalty = Math.min(30, history.volatilityPct * 2);
+            const roiScore = Math.min(100, roiPct * 8);
+            const confidence = Math.max(0, Math.min(100,
+                fresh.score * 0.35 +
+                sellerConfidence * 0.35 +
+                Math.min(100, history.samples * 5) * 0.30
+            ));
+            const score = Math.max(0, Math.min(100,
+                roiScore * 0.55 +
+                confidence * 0.35 +
+                Math.min(100, sellerCount * 3) * 0.10 -
+                volatilityPenalty
+            ));
+
+            rows.push({
+                id: base.itemId,
+                name: base.itemName,
+                buyPrice: liveBuy,
+                bazaarAverage,
+                marketPrice,
+                sellerCount,
+                traderExit,
+                bestExit: exit.value,
+                bestExitRoute: exit.route,
+                profit,
+                roiPct,
+                score,
+                confidence,
+                freshness: fresh,
+                history,
+                enriched: Boolean(detail),
+                listingQty: Number(organicListing?.quantity || 0),
+                sellerId: organicListing?.sellerId || '',
+                sellerName: organicListing?.sellerName || ''
+            });
+        }
+
+        return rows.sort((a,b) =>
+            b.score - a.score ||
+            b.roiPct - a.roiPct ||
+            b.profit - a.profit
+        );
+    }
+
+    function restockCommandRows(db) {
+        const localRows = procurementRows(db).filter(r => r.shortage > 0);
+        return localRows.map(local => {
+            const global = db.marketIntel.marketplace[local.id] || {};
+            const detail = detailedIntelForItem(db, local.id);
+            const buyPrice = detail.buyPrice || Number(global.lowestPrice || 0) || local.bestBuyPrice || 0;
+            const exit = detail.bestExit || local.realisticExit || 0;
+            const profit = buyPrice && exit ? exit - buyPrice : 0;
+            const roiPct = buyPrice ? profit / buyPrice * 100 : 0;
+            const qty = Math.max(0, Math.min(
+                local.shortage,
+                Number(detail.quantity || local.shortage || 0)
+            ));
+            const status = buyPrice > 0 && local.buyTarget > 0 && buyPrice <= local.buyTarget
+                ? 'BUY NOW'
+                : buyPrice > 0
+                    ? 'WATCH PRICE'
+                    : 'SOURCE';
+            return {
+                ...local,
+                globalBuyPrice: buyPrice,
+                globalExit: exit,
+                globalRoiPct: roiPct,
+                sourceQty: qty,
+                status,
+                sellerId: detail.sellerId || '',
+                sellerName: detail.sellerName || '',
+                freshness: detail.freshness
+            };
+        }).sort((a,b) =>
+            (a.status === 'BUY NOW' ? 0 : a.status === 'WATCH PRICE' ? 1 : 2) -
+            (b.status === 'BUY NOW' ? 0 : b.status === 'WATCH PRICE' ? 1 : 2) ||
+            a.rank - b.rank ||
+            b.daily - a.daily
+        );
+    }
+
+    function instantArbitrageRows(db) {
+        const rows = [];
+        for (const itemId of Object.keys(db.marketIntel.details)) {
+            const d = detailedIntelForItem(db, itemId);
+            if (!(d.buyPrice > 0 && d.traderExit > d.buyPrice)) continue;
+            rows.push({
+                ...d,
+                maxQty: Number(d.quantity || 0),
+                totalInstantProfit: Number(d.quantity || 0) * d.instantProfit
+            });
+        }
+        return rows.sort((a,b) =>
+            b.instantRoiPct - a.instantRoiPct ||
+            b.totalInstantProfit - a.totalInstantProfit
+        );
+    }
+
+    function sellerBasketRows(db) {
+        const opportunityMap = new Map(globalOpportunityRows(db).map(x => [x.id, x]));
+        const restockMap = new Map(procurementRows(db).map(x => [x.id, x]));
+        const grouped = {};
+
+        for (const [itemId, detail] of Object.entries(db.marketIntel.details)) {
+            for (const listing of detail?.organicListings || []) {
+                if (!listing.sellerId) continue;
+                if (!grouped[listing.sellerId]) {
+                    grouped[listing.sellerId] = {
+                        sellerId: listing.sellerId,
+                        sellerName: listing.sellerName || listing.sellerId,
+                        items: [],
+                        skus: 0,
+                        restockSkus: 0,
+                        totalSpend: 0,
+                        totalExpectedProfit: 0
+                    };
+                }
+                const basket = grouped[listing.sellerId];
+                const opportunity = opportunityMap.get(itemId);
+                const local = restockMap.get(itemId);
+                const exit = opportunity?.bestExit || detailedIntelForItem(db, itemId).bestExit || 0;
+                const neededQty = local?.shortage > 0 ? Math.min(local.shortage, listing.quantity) : Math.min(listing.quantity, 10);
+                if (neededQty <= 0) continue;
+                const expectedProfit = Math.max(0, (exit - listing.price) * neededQty);
+                basket.items.push({
+                    itemId,
+                    itemName: detail.itemName || opportunity?.name || `Item ${itemId}`,
+                    quantity: neededQty,
+                    available: listing.quantity,
+                    price: listing.price,
+                    exit,
+                    expectedProfit,
+                    restock: Boolean(local?.shortage > 0)
+                });
+                basket.totalSpend += listing.price * neededQty;
+                basket.totalExpectedProfit += expectedProfit;
+                basket.skus += 1;
+                if (local?.shortage > 0) basket.restockSkus += 1;
+            }
+        }
+
+        return Object.values(grouped)
+            .filter(x => x.items.length)
+            .sort((a,b) =>
+                b.restockSkus - a.restockSkus ||
+                b.totalExpectedProfit - a.totalExpectedProfit ||
+                b.skus - a.skus
+            );
+    }
+
+    function supplierIntelRows(db) {
+        return Object.values(db.marketIntel.suppliers).map(s => {
+            const itemCount = Object.keys(s.items || {}).length;
+            const avgQty = s.seenCount ? s.totalQuantityObserved / s.seenCount : 0;
+            const activity = freshnessInfo(s.lastSeenAt, 3600);
+            const score = Math.max(0, Math.min(100,
+                Math.min(40, itemCount * 8) +
+                Math.min(35, Math.log10(Number(s.totalQuantityObserved || 0) + 1) * 18) +
+                activity.score * 0.25
+            ));
+            return { ...s, itemCount, avgQty, score };
+        }).sort((a,b) => b.score - a.score);
+    }
+
+    function globalCapitalPlan(db) {
+        const budget = Math.max(0, Number(db.procurement.settings.procurementBudget || 0));
+        let remaining = budget;
+        const restocks = restockCommandRows(db)
+            .filter(r => r.status === 'BUY NOW' && r.globalBuyPrice > 0 && r.sourceQty > 0);
+        const flips = globalOpportunityRows(db)
+            .filter(r => r.buyPrice > 0 && r.profit > 0);
+
+        const plan = [];
+        for (const r of restocks) {
+            if (remaining < r.globalBuyPrice) continue;
+            const qty = Math.min(r.sourceQty || r.shortage, Math.floor(remaining / r.globalBuyPrice));
+            if (qty <= 0) continue;
+            const spend = qty * r.globalBuyPrice;
+            plan.push({
+                type: 'RESTOCK',
+                itemId: r.id,
+                itemName: r.name,
+                quantity: qty,
+                unitPrice: r.globalBuyPrice,
+                spend,
+                expectedProfit: qty * Math.max(0, r.globalExit - r.globalBuyPrice),
+                roiPct: r.globalRoiPct
+            });
+            remaining -= spend;
+        }
+
+        for (const r of flips) {
+            if (remaining < r.buyPrice) continue;
+            const maxQty = Math.max(1, Math.min(r.listingQty || 1, 25));
+            const qty = Math.min(maxQty, Math.floor(remaining / r.buyPrice));
+            if (qty <= 0) continue;
+            const spend = qty * r.buyPrice;
+            plan.push({
+                type: 'FLIP',
+                itemId: r.id,
+                itemName: r.name,
+                quantity: qty,
+                unitPrice: r.buyPrice,
+                spend,
+                expectedProfit: qty * r.profit,
+                roiPct: r.roiPct
+            });
+            remaining -= spend;
+            if (plan.length >= 20) break;
+        }
+
+        return { budget, remaining, plan };
+    }
+
+    async function syncWeavDollarBazaars() {
+        const [itemsData, bazaarsData] = await Promise.all([
+            weav3rRequest('/dollar-bazaars/items', { page: 1, limit: 100 }),
+            weav3rRequest('/dollar-bazaars/bazaars', { page: 1, limit: 100 })
+        ]);
+        const db = dbLoad();
+        db.marketIntel.dollarItems = (Array.isArray(itemsData?.items) ? itemsData.items : []).map(row => ({
+            itemId: asId(row?.itemId),
+            itemName: String(row?.itemName || ''),
+            itemType: String(row?.itemType || ''),
+            sellerId: asId(row?.playerId),
+            sellerName: String(row?.sellerName || ''),
+            quantity: Number(row?.quantity || 0),
+            marketPrice: Number(row?.marketPrice || 0),
+            totalValue: Number(row?.totalValue || 0),
+            lastUpdated: row?.lastUpdated || null
+        }));
+        db.marketIntel.dollarBazaars = (Array.isArray(bazaarsData?.bazaars) ? bazaarsData.bazaars : []).map(row => ({
+            sellerId: asId(row?.playerId),
+            sellerName: String(row?.name || ''),
+            itemCount: Number(row?.itemCount || 0),
+            totalMarketValue: Number(row?.totalMarketValue || 0)
+        }));
+        db.marketIntel.lastDollarSyncAt = nowIso();
+        dbSave(db);
+        return db.marketIntel.dollarItems;
+    }
+
+    async function syncWeavRanked() {
+        const results = await Promise.allSettled([
+            weav3rRequest('/ranked-weapons', { tab: 'weapons', limit: 100, sortField: 'price', sortDirection: 'asc' }),
+            weav3rRequest('/ranked-weapons', { tab: 'armor', limit: 100, sortField: 'price', sortDirection: 'asc' }),
+            weav3rRequest('/auction/listings', { tab: 'weapons', source: 'auction', limit: 100, sortField: 'endsAt', sortDirection: 'asc' }),
+            weav3rRequest('/auction/listings', { tab: 'armor', source: 'auction', limit: 100, sortField: 'endsAt', sortDirection: 'asc' })
+        ]);
+        const db = dbLoad();
+        const intel = db.marketIntel;
+        const ranked = [];
+        const auctions = [];
+
+        for (let i = 0; i < results.length; i++) {
+            const r = results[i];
+            if (r.status !== 'fulfilled') {
+                addIntelDiagnostic(intel, `Ranked feed ${i + 1}: ${r.reason?.message || String(r.reason)}`);
+                continue;
+            }
+            const rows = Array.isArray(r.value?.weapons) ? r.value.weapons : [];
+            for (const row of rows) {
+                const normalized = {
+                    uid: row?.uid == null ? '' : String(row.uid),
+                    itemId: asId(row?.itemId),
+                    itemName: String(row?.itemName || ''),
+                    weaponType: String(row?.weaponType || ''),
+                    rarity: String(row?.rarity || ''),
+                    damage: row?.damage ?? null,
+                    accuracy: row?.accuracy ?? null,
+                    quality: row?.quality ?? null,
+                    bonuses: row?.bonuses || null,
+                    price: Number(row?.price || 0),
+                    sellerId: asId(row?.playerId),
+                    sellerName: String(row?.playerName || ''),
+                    quantity: Number(row?.quantity || 0),
+                    marketPrice: Number(row?.marketPrice || 0),
+                    lastUpdated: row?.lastUpdated || null,
+                    source: String(row?.source || ''),
+                    endsAtUnix: Number(row?.endsAtUnix || 0)
+                };
+                if (i < 2) ranked.push(normalized);
+                else auctions.push(normalized);
+            }
+        }
+        intel.ranked = ranked;
+        intel.auctions = auctions;
+        intel.lastRankedSyncAt = nowIso();
+        dbSave(db);
+        return { ranked, auctions };
+    }
+
+    async function enrichTopGlobalOpportunities() {
+        const db = dbLoad();
+        const limit = Math.max(1, Math.min(
+            WEAV3R_MAX_ENRICH,
+            Number(db.marketIntel.settings.maxEnrich || WEAV3R_MAX_ENRICH)
+        ));
+        const rows = globalOpportunityRows(db).slice(0, limit);
+        let ok = 0;
+        for (const row of rows) {
+            try {
+                await enrichWeavItem(row.id, { force: true });
+                ok++;
+            } catch (error) {
+                const next = dbLoad();
+                addIntelDiagnostic(next.marketIntel, `Enrich ${row.name}: ${error?.message || String(error)}`);
+                dbSave(next);
+            }
+        }
+        return { requested: rows.length, ok };
+    }
+
+    async function syncMarketIntelligence(full = false) {
+        if (procurementRunning) return;
+        procurementRunning = true;
+        statusText = full ? 'Running full global market-intelligence sync…' : 'Refreshing TornW3B global marketplace…';
+        render();
+        try {
+            await syncWeavMarketplace(true);
+            const enrichment = await enrichTopGlobalOpportunities();
+            if (full) {
+                await syncWeavDollarBazaars();
+                await syncWeavRanked();
+            }
+            statusText = full
+                ? `Market intelligence complete: ${Object.keys(dbLoad().marketIntel.marketplace).length.toLocaleString()} items, ${enrichment.ok}/${enrichment.requested} enriched.`
+                : `Global market refreshed: ${Object.keys(dbLoad().marketIntel.marketplace).length.toLocaleString()} items, ${enrichment.ok}/${enrichment.requested} enriched.`;
+        } catch (error) {
+            statusText = `Market intelligence failed: ${error?.message || String(error)}`;
+        } finally {
+            procurementRunning = false;
+            render();
+        }
+    }
+
+    function saveIntelSettings(values) {
+        const db = dbLoad();
+        for (const [key, raw] of Object.entries(values)) {
+            const value = Number(raw);
+            if (Number.isFinite(value) && value >= 0) db.marketIntel.settings[key] = value;
+        }
+        dbSave(db);
+        render();
+    }
+
+
+    // ============================================================
+    // OPERATIONS + ADVANCED ANALYTICS v6
+    // ============================================================
+
+    function salesByItemDetailed(db, itemId) {
+        const id = asId(itemId);
+        const out = [];
+        for (const sale of Object.values(db.sales || {})) {
+            for (const item of sale.items || []) {
+                if (asId(item.id) !== id) continue;
+                out.push({
+                    saleId: String(sale.id),
+                    timestamp: Number(sale.timestamp || 0),
+                    quantity: Number(item.quantity || 0),
+                    unitPrice: Number(item.price || 0),
+                    total: Number(item.total || 0),
+                    customerId: asId(sale.playerId),
+                    customerName: String(sale.playerName || sale.playerId || '')
+                });
+            }
+        }
+        return out.sort((a,b) => a.timestamp - b.timestamp);
+    }
+
+    function dailySeriesForItem(db, itemId, days = 40) {
+        const now = Date.now();
+        const start = now - days * 86400000;
+        const map = new Map();
+        for (let i = 0; i < days; i++) {
+            const d = new Date(start + i * 86400000);
+            map.set(d.toISOString().slice(0,10), 0);
+        }
+        for (const sale of salesByItemDetailed(db, itemId)) {
+            if (sale.timestamp < start) continue;
+            const key = new Date(sale.timestamp).toISOString().slice(0,10);
+            map.set(key, (map.get(key) || 0) + sale.quantity);
+        }
+        return [...map.entries()].map(([day, qty]) => ({ day, qty }));
+    }
+
+    function weightedDemandForecast(db, itemId) {
+        const sales = salesByItemDetailed(db, itemId);
+        const now = Date.now();
+        const sumWindow = (fromDays, toDays) => sales
+            .filter(s => {
+                const age = (now - s.timestamp) / 86400000;
+                return age >= fromDays && age < toDays;
+            })
+            .reduce((sum,s) => sum + s.quantity, 0);
+
+        const recent3 = sumWindow(0,3) / 3;
+        const prior7 = sumWindow(3,10) / 7;
+        const prior30 = sumWindow(10,40) / 30;
+        let base = recent3 * 0.50 + prior7 * 0.30 + prior30 * 0.20;
+
+        const weekdayTotals = Array(7).fill(0);
+        const weekdayCounts = Array(7).fill(0);
+        const cutoff = now - 56 * 86400000;
+        for (const s of sales) {
+            if (s.timestamp < cutoff) continue;
+            const d = new Date(s.timestamp);
+            weekdayTotals[d.getDay()] += s.quantity;
+        }
+        for (let i = 0; i < 56; i++) weekdayCounts[new Date(now - i * 86400000).getDay()]++;
+        const weekdayRates = weekdayTotals.map((v,i) => weekdayCounts[i] ? v / weekdayCounts[i] : 0);
+        const avgWeekday = weekdayRates.reduce((a,b)=>a+b,0) / 7 || 0;
+        const todayRate = weekdayRates[new Date().getDay()] || avgWeekday;
+        const weekdayMultiplier = avgWeekday > 0 ? Math.max(0.65, Math.min(1.5, todayRate / avgWeekday)) : 1;
+
+        const activeEvents = (db.operations.events || []).filter(e => {
+            const start = new Date(e.startAt || 0).getTime();
+            const end = new Date(e.endAt || 0).getTime();
+            return start <= now && now <= end;
+        });
+        const eventMultiplier = activeEvents.reduce((m,e) => m * Math.max(0.1, Number(e.multiplier || 1)), 1);
+
+        const lost = stockoutMetrics(db, itemId, Math.max(base, 0));
+        const observedDays = Math.max(1, 30 - lost.stockoutHours / 24);
+        const observed30 = sumWindow(0,30);
+        const stockoutCorrected30 = observed30 / observedDays;
+        if (stockoutCorrected30 > base) base = base * 0.75 + stockoutCorrected30 * 0.25;
+
+        const forecastDaily = Math.max(0, base * weekdayMultiplier * eventMultiplier);
+        return {
+            forecastDaily,
+            recent3,
+            prior7,
+            prior30,
+            weekdayMultiplier,
+            eventMultiplier,
+            stockoutCorrected30,
+            activeEvents
+        };
+    }
+
+    function recordOperationalSnapshot(db) {
+        const proc = db.procurement;
+        const at = nowIso();
+        const items = {};
+        const ids = new Set([
+            ...Object.keys(proc.bazaar || {}),
+            ...Object.keys(proc.itemMarket || {}),
+            ...Object.keys(proc.inventory || {})
+        ]);
+        for (const id of ids) {
+            items[id] = {
+                bazaarQty: Number(proc.bazaar[id]?.quantity || 0),
+                itemMarketQty: Number(proc.itemMarket[id]?.quantity || 0),
+                onHand: Number(proc.inventory[id]?.quantity || 0),
+                bazaarPrice: Number(proc.bazaar[id]?.price || 0)
+            };
+            items[id].stock = items[id].bazaarQty + items[id].itemMarketQty + items[id].onHand;
+        }
+        db.operations.inventorySnapshots.push({ at, items });
+        db.operations.inventorySnapshots = db.operations.inventorySnapshots.slice(-OPS_SNAPSHOT_MAX);
+        db.operations.lastSnapshotAt = at;
+        return db;
+    }
+
+    function stockoutMetrics(db, itemId, expectedDaily = 0) {
+        const id = asId(itemId);
+        const cutoff = Date.now() - STOCKOUT_LOOKBACK_DAYS * 86400000;
+        const snaps = (db.operations.inventorySnapshots || [])
+            .filter(s => new Date(s.at).getTime() >= cutoff)
+            .sort((a,b) => new Date(a.at) - new Date(b.at));
+        let stockoutMs = 0;
+        for (let i = 0; i < snaps.length - 1; i++) {
+            const a = snaps[i], b = snaps[i+1];
+            const stock = Number(a.items?.[id]?.stock || 0);
+            if (stock <= 0) stockoutMs += Math.max(0, new Date(b.at).getTime() - new Date(a.at).getTime());
+        }
+        const stockoutHours = stockoutMs / 3600000;
+        const lostUnits = expectedDaily > 0 ? expectedDaily * stockoutHours / 24 : 0;
+        return { stockoutHours, lostUnits };
+    }
+
+    function demandVolatility(db, itemId) {
+        const series = dailySeriesForItem(db, itemId, 30).map(x => x.qty);
+        if (!series.length) return { mean: 0, stddev: 0, cv: 0 };
+        const mean = series.reduce((s,v)=>s+v,0) / series.length;
+        const variance = series.reduce((s,v)=>s+(v-mean)**2,0) / series.length;
+        const stddev = Math.sqrt(variance);
+        return { mean, stddev, cv: mean > 0 ? stddev / mean : 0 };
+    }
+
+    function adaptiveSafetyStock(db, itemId, forecastDaily, avgCost, exitPrice) {
+        const vol = demandVolatility(db, itemId);
+        const leadHours = Math.max(1, Number(db.operations.settings.defaultLeadHours || 6));
+        const leadDays = leadHours / 24;
+        const margin = avgCost > 0 && exitPrice > avgCost ? (exitPrice - avgCost) / avgCost : 0;
+        const stockoutPenalty = 1 + Math.min(1.5, margin * 4) * Number(db.operations.settings.stockoutPenaltyWeight || 1);
+        const variability = 1 + Math.min(2, vol.cv);
+        const safetyDays = Math.max(0.5, Math.min(7, leadDays * variability * stockoutPenalty + 0.5));
+        return {
+            safetyDays,
+            units: Math.ceil(forecastDaily * safetyDays),
+            leadHours,
+            cv: vol.cv
+        };
+    }
+
+    function fifoLedger(db, itemId) {
+        const id = asId(itemId);
+        const lots = db.procurement.acquisitions
+            .filter(a => asId(a.itemId) === id)
+            .map(a => ({
+                id: a.id,
+                acquiredAt: new Date(a.acquiredAt || 0).getTime(),
+                quantity: Number(a.quantity || 0),
+                remaining: Number(a.quantity || 0),
+                unitCost: Number(a.unitCost || 0),
+                source: String(a.source || ''),
+                sellerId: asId(a.sellerId || ''),
+                sellerName: String(a.sellerName || '')
+            }))
+            .filter(l => l.quantity > 0)
+            .sort((a,b) => a.acquiredAt - b.acquiredAt);
+
+        let realizedCogs = 0;
+        let matchedUnits = 0;
+        let cursor = 0;
+        const saleRows = [];
+        for (const sale of salesByItemDetailed(db, id)) {
+            let need = sale.quantity;
+            let cogs = 0;
+            let matched = 0;
+            while (need > 0 && cursor < lots.length) {
+                const lot = lots[cursor];
+                const take = Math.min(need, lot.remaining);
+                cogs += take * lot.unitCost;
+                matched += take;
+                lot.remaining -= take;
+                need -= take;
+                if (lot.remaining <= 0) cursor++;
+            }
+            realizedCogs += cogs;
+            matchedUnits += matched;
+            saleRows.push({ ...sale, cogs, matchedUnits: matched, grossProfit: sale.total - cogs });
+        }
+
+        const remainingLots = lots.filter(l => l.remaining > 0);
+        const remainingCost = remainingLots.reduce((s,l) => s + l.remaining * l.unitCost, 0);
+        const remainingQty = remainingLots.reduce((s,l) => s + l.remaining, 0);
+        const now = Date.now();
+        const aged = remainingLots.map(l => ({
+            ...l,
+            ageDays: l.acquiredAt ? (now - l.acquiredAt) / 86400000 : 0,
+            value: l.remaining * l.unitCost
+        }));
+
+        return { lots, remainingLots: aged, remainingCost, remainingQty, realizedCogs, matchedUnits, saleRows };
+    }
+
+    function realizedProfitMetrics(db, itemId, days = ANALYTICS_LOOKBACK_DAYS) {
+        const ledger = fifoLedger(db, itemId);
+        const cutoff = Date.now() - days * 86400000;
+        const sales = ledger.saleRows.filter(s => s.timestamp >= cutoff);
+        const revenue = sales.reduce((s,r)=>s + Number(r.total || 0),0);
+        const cogs = sales.reduce((s,r)=>s + Number(r.cogs || 0),0);
+        const grossProfit = revenue - cogs;
+        const units = sales.reduce((s,r)=>s + Number(r.quantity || 0),0);
+        const avgInventoryCost = ledger.remainingCost || cogs / Math.max(1, days / 30);
+        const gmroi = avgInventoryCost > 0 ? grossProfit / avgInventoryCost : 0;
+        const avgAge = ledger.remainingLots.length
+            ? ledger.remainingLots.reduce((s,l)=>s + l.ageDays * l.remaining,0) / Math.max(1,ledger.remainingQty)
+            : 0;
+        const cashVelocity = cogs > 0 ? (grossProfit / cogs) / Math.max(1, avgAge || 1) : 0;
+        return { revenue, cogs, grossProfit, units, gmroi, cashVelocity, avgAge, ledger };
+    }
+
+    function priceElasticityMetrics(db, itemId) {
+        const id = asId(itemId);
+        const history = (db.operations.bazaarPriceHistory[id] || [])
+            .map(h => ({ at: new Date(h.at).getTime(), price: Number(h.price || 0), quantity: Number(h.quantity || 0) }))
+            .filter(h => h.at && h.price > 0)
+            .sort((a,b)=>a.at-b.at);
+        if (history.length < 2) return { buckets: [], best: null };
+
+        const sales = salesByItemDetailed(db, id);
+        const buckets = new Map();
+        for (let i=0;i<history.length;i++) {
+            const start = history[i].at;
+            const end = history[i+1]?.at || Date.now();
+            const days = Math.max(1/24, (end-start)/86400000);
+            const qty = sales.filter(s => s.timestamp >= start && s.timestamp < end).reduce((sum,s)=>sum+s.quantity,0);
+            const price = history[i].price;
+            if (!buckets.has(price)) buckets.set(price,{price,units:0,days:0});
+            const b = buckets.get(price); b.units += qty; b.days += days;
+        }
+        const basis = fifoCostBasis(db, id, '');
+        const rows = [...buckets.values()].map(b => {
+            const unitsPerDay = b.days ? b.units / b.days : 0;
+            const profitPerUnit = basis.avgCost > 0 ? b.price - basis.avgCost : 0;
+            return { ...b, unitsPerDay, profitPerUnit, profitPerDay: unitsPerDay * profitPerUnit };
+        }).sort((a,b)=>a.price-b.price);
+        const best = rows.slice().sort((a,b)=>b.profitPerDay-a.profitPerDay)[0] || null;
+        return { buckets: rows, best };
+    }
+
+    function itemGrowthRate(db, itemId) {
+        const sales = salesByItemDetailed(db, itemId);
+        const now = Date.now();
+        const sum = (a,b) => sales.filter(s => {
+            const age=(now-s.timestamp)/86400000; return age>=a && age<b;
+        }).reduce((x,s)=>x+s.quantity,0);
+        const recent = sum(0,7);
+        const previous = sum(7,14);
+        return previous > 0 ? (recent-previous)/previous : (recent>0 ? 1 : 0);
+    }
+
+    function advancedInventoryRows(db) {
+        const baseRows = procurementRows(db);
+        const profitRows = baseRows.map(r => {
+            const forecast = weightedDemandForecast(db, r.id);
+            const realized = realizedProfitMetrics(db, r.id, 30);
+            const safety = adaptiveSafetyStock(db, r.id, forecast.forecastDaily, r.avgCost, r.realisticExit);
+            const stockout = stockoutMetrics(db, r.id, forecast.forecastDaily);
+            const ledger = realized.ledger;
+            const deadDays = Number(db.operations.settings.deadStockDays || DEAD_STOCK_DAYS);
+            const deadCapital = ledger.remainingLots.filter(l=>l.ageDays>=deadDays).reduce((s,l)=>s+l.value,0);
+            const maxAge = ledger.remainingLots.reduce((m,l)=>Math.max(m,l.ageDays),0);
+            const targetStock = Math.ceil(forecast.forecastDaily * Number(db.procurement.settings.targetDays || 5) + safety.units);
+            const reorderPoint = Math.ceil(forecast.forecastDaily * (safety.safetyDays + Number(db.operations.settings.defaultLeadHours || 6)/24));
+            const shortage = Math.max(0,targetStock-r.stock);
+            const listingHours = Number(db.operations.settings.listingHours || DEFAULT_LISTING_HOURS);
+            const targetListed = Math.max(0, Math.ceil(forecast.forecastDaily * listingHours/24));
+            const addToBazaar = Math.max(0, Math.min(r.onHand, targetListed-r.bazaarQty));
+            const overstock = r.stock > targetStock * Number(db.operations.settings.overstockMultiplier || 1.5);
+            const growth = itemGrowthRate(db,r.id);
+            const elasticity = priceElasticityMetrics(db,r.id);
+            const plannedPrice = recommendedListingPrice(db,r.id,r,elasticity);
+            const lostProfit = stockout.lostUnits * Math.max(0,(r.realisticExit||plannedPrice)-r.avgCost);
+
+            let state = 'LISTED';
+            if (r.stock <= 0 && forecast.forecastDaily > 0) state='OUT OF STOCK';
+            else if (deadCapital > 0 && maxAge >= deadDays && forecast.forecastDaily < 0.2) state='DEAD STOCK';
+            else if (overstock) state='OVERSTOCKED';
+            else if (addToBazaar > 0) state='NEEDS LISTING';
+            else if (shortage > 0 && r.bestBuyPrice > 0 && r.buyTarget > 0 && r.bestBuyPrice <= r.buyTarget) state='SOURCE NOW';
+            else if (shortage > 0) state='WATCH PRICE';
+            else if (r.bazaarQty <= 0 && r.onHand > 0) state='RECEIVED';
+
+            return {
+                ...r,
+                forecastDaily: forecast.forecastDaily,
+                forecast,
+                safety,
+                stockout,
+                realized,
+                deadCapital,
+                maxAge,
+                adaptiveTargetStock: targetStock,
+                adaptiveReorderPoint: reorderPoint,
+                adaptiveShortage: shortage,
+                targetListed,
+                addToBazaar,
+                growth,
+                elasticity,
+                plannedPrice,
+                lostProfit,
+                state
+            };
+        });
+
+        const totalProfit = profitRows.reduce((s,r)=>s+Math.max(0,r.realized.grossProfit),0);
+        const sortedByProfit = profitRows.slice().sort((a,b)=>b.realized.grossProfit-a.realized.grossProfit);
+        let cumulative=0;
+        for (const r of sortedByProfit) {
+            cumulative += Math.max(0,r.realized.grossProfit);
+            const share = totalProfit>0 ? cumulative/totalProfit : 1;
+            r.abc = share <= .70 ? 'A' : share <= .90 ? 'B' : 'C';
+        }
+
+        for (const r of profitRows) {
+            const found = sortedByProfit.find(x=>x.id===r.id);
+            r.abc = found?.abc || 'C';
+            if (r.state==='DEAD STOCK') r.inventoryClass='DEAD';
+            else if (r.growth > .25 && r.realized.grossProfit > 0) r.inventoryClass='GROWTH';
+            else if (r.abc==='A' && r.forecastDaily > .5) r.inventoryClass='CORE';
+            else if (r.volatilityPct > 15) r.inventoryClass='SPECULATIVE';
+            else r.inventoryClass='OPPORTUNISTIC';
+        }
+        return profitRows.sort((a,b) => {
+            const order={'OUT OF STOCK':0,'SOURCE NOW':1,'NEEDS LISTING':2,'WATCH PRICE':3,'DEAD STOCK':4,'OVERSTOCKED':5,'RECEIVED':6,'LISTED':7};
+            return (order[a.state]??9)-(order[b.state]??9) || b.realized.grossProfit-a.realized.grossProfit;
+        });
+    }
+
+    function recommendedListingPrice(db, itemId, row = null, elasticity = null) {
+        const id=asId(itemId);
+        row = row || procurementRows(db).find(r=>r.id===id) || {};
+        elasticity = elasticity || priceElasticityMetrics(db,id);
+        const intel = db.marketIntel.marketplace[id] || {};
+        const marketReference = Number(intel.bazaarAverage || row.realisticExit || row.bazaarPrice || intel.marketPrice || 0);
+        const cost = Number(row.avgCost || fifoCostBasis(db,id,'').avgCost || 0);
+        const minMargin = Number(db.procurement.settings.minMarginPct || 4) / 100;
+        const floor = cost > 0 ? Math.ceil(cost * (1+minMargin)) : 0;
+        let candidate = elasticity.best?.price || marketReference;
+        if (marketReference > 0) candidate = candidate ? Math.min(candidate,Math.floor(marketReference-1)) : Math.floor(marketReference-1);
+        return Math.max(floor,Math.floor(candidate||0));
+    }
+
+
+    function pricingDirectorRows(db) {
+        const rows = advancedInventoryRows(db).filter(r => r.bazaarQty > 0 && r.bazaarPrice > 0);
+
+        return rows.map(r => {
+            const id = asId(r.id);
+            const intel = db.marketIntel.marketplace[id] || {};
+            const detail = db.marketIntel.details[id] || {};
+            const organic = Array.isArray(detail.organicListings) ? detail.organicListings : [];
+            const competitorPrices = organic
+                .map(x => Number(x.price || 0))
+                .filter(v => v > 0 && v !== Number(r.bazaarPrice || 0))
+                .sort((a, b) => a - b);
+
+            const liveLow = competitorPrices[0] || Number(intel.lowestPrice || 0) || Number(r.realisticExit || 0);
+            const median7d = Number(r.median7d || 0);
+            const current = Number(r.bazaarPrice || 0);
+            const cost = Number(r.avgCost || 0);
+            const minMarginPct = Number(db.procurement.settings.minMarginPct || 4);
+            const floor = cost > 0 ? Math.ceil(cost * (1 + minMarginPct / 100)) : 0;
+
+            const demand = Math.max(0, Number(r.forecastDaily || r.daily || 0));
+            const fast = demand >= 1 || r.liquidityScore >= 70;
+            const slow = demand < 0.2 && r.liquidityScore < 45;
+            const old = Number(r.maxAge || 0) >= Number(db.operations.settings.deadStockDays || DEAD_STOCK_DAYS);
+
+            const marketAnchor = liveLow > 0 ? liveLow : (median7d || current);
+            let recommended = current;
+            let state = 'HOLD';
+
+            const shockPct = median7d > 0 && liveLow > 0
+                ? (liveLow - median7d) / median7d * 100
+                : 0;
+            const marketShock = Math.abs(shockPct) >= 12;
+
+            if (marketShock) {
+                state = 'MARKET SHOCK';
+                recommended = Math.max(floor, current);
+            } else if (old && slow) {
+                recommended = Math.max(floor, marketAnchor > 0 ? Math.floor(marketAnchor * 0.985) : current);
+                state = recommended < current ? 'CLEARANCE' : 'HOLD';
+            } else if (fast && liveLow > current * 1.01) {
+                recommended = Math.max(floor, Math.floor(liveLow - 1));
+                state = recommended > current ? 'RAISE PRICE' : 'HOLD';
+            } else if (liveLow > 0 && current > liveLow * 1.015) {
+                recommended = Math.max(floor, Math.floor(liveLow - 1));
+                state = recommended < current ? 'LOWER PRICE' : 'PROTECT MARGIN';
+            } else {
+                const planned = Number(r.plannedPrice || 0);
+                if (planned > 0) recommended = Math.max(floor, planned);
+                if (recommended > current * 1.005) state = 'RAISE PRICE';
+                else if (recommended < current * 0.995) state = 'LOWER PRICE';
+            }
+
+            if (floor > 0 && marketAnchor > 0 && marketAnchor < floor) {
+                recommended = Math.max(current, floor);
+                state = 'PROTECT MARGIN';
+            }
+
+            const delta = recommended - current;
+            const deltaPct = current > 0 ? delta / current * 100 : 0;
+            const currentMarginPct = cost > 0 ? (current - cost) / cost * 100 : 0;
+            const recommendedMarginPct = cost > 0 ? (recommended - cost) / cost * 100 : 0;
+
+            const confidence = Math.max(0, Math.min(100,
+                Math.min(100, Number(r.historySamples || 0) * 8) * 0.30 +
+                Number(r.liquidityScore || 0) * 0.35 +
+                Math.min(100, demand * 25) * 0.20 +
+                (liveLow > 0 ? 100 : 30) * 0.15
+            ));
+
+            const sim = priceSimulationRows(db, id);
+            const currentSim = sim.slice().sort((a,b) => Math.abs(a.price-current)-Math.abs(b.price-current))[0];
+            const recSim = sim.slice().sort((a,b) => Math.abs(a.price-recommended)-Math.abs(b.price-recommended))[0];
+
+            return {
+                ...r,
+                currentPrice: current,
+                recommendedPrice: Math.max(0, Math.floor(recommended)),
+                pricingState: state,
+                pricingConfidence: confidence,
+                pricingDelta: delta,
+                pricingDeltaPct: deltaPct,
+                liveMarketLow: liveLow,
+                floorPrice: floor,
+                marketShock,
+                marketShockPct: shockPct,
+                currentMarginPct,
+                recommendedMarginPct,
+                estimatedProfitDayCurrent: Number(currentSim?.profitPerDay || 0),
+                estimatedProfitDayRecommended: Number(recSim?.profitPerDay || 0)
+            };
+        }).sort((a, b) => {
+            const order = {
+                'MARKET SHOCK': 0,
+                'PROTECT MARGIN': 1,
+                'RAISE PRICE': 2,
+                'LOWER PRICE': 3,
+                'CLEARANCE': 4,
+                'HOLD': 5
+            };
+            return (order[a.pricingState] ?? 9) - (order[b.pricingState] ?? 9) ||
+                b.pricingConfidence - a.pricingConfidence ||
+                Math.abs(b.pricingDeltaPct) - Math.abs(a.pricingDeltaPct);
+        });
+    }
+
+    function buildRepricingPlan(db) {
+        const plan = {};
+        for (const r of pricingDirectorRows(db)) {
+            if (!['RAISE PRICE', 'LOWER PRICE', 'CLEARANCE'].includes(r.pricingState)) continue;
+            if (!(r.recommendedPrice > 0) || r.recommendedPrice === r.currentPrice) continue;
+
+            plan[r.id] = {
+                itemId: r.id,
+                itemName: r.name,
+                quantity: r.bazaarQty,
+                price: r.recommendedPrice,
+                currentPrice: r.currentPrice,
+                floorPrice: r.floorPrice,
+                state: r.pricingState,
+                confidence: r.pricingConfidence,
+                deltaPct: r.pricingDeltaPct,
+                createdAt: nowIso()
+            };
+        }
+        db.operations.repricingPlan = plan;
+        return plan;
+    }
+
+    function pricingDirectorHtml(db) {
+        const rows = pricingDirectorRows(db);
+        const actionable = rows.filter(r => r.pricingState !== 'HOLD');
+
+        return card(`
+            <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">
+                <div>
+                    <b>Dynamic Pricing Director</b>
+                    <div style="font-size:11px;color:#999;margin-top:3px;">
+                        Optimizes listed Bazaar prices for margin, velocity, liquidity, age and live market conditions.
+                        Market shocks are held for review instead of chased automatically.
+                    </div>
+                </div>
+                <button id="mm-build-repricing-plan" style="${btn(true)}">Build Repricing Plan</button>
+            </div>
+
+            ${rows.length ? rows.slice(0,40).map(r => `
+                <div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:6px 0;">
+                    <div style="font-size:11px;min-width:0;">
+                        <b>${escapeHtml(r.name)}</b>
+                        <span style="color:${r.pricingState==='RAISE PRICE'?'#9fe3a8':r.pricingState==='LOWER PRICE'?'#ffd18a':r.pricingState==='MARKET SHOCK'?'#ff8d8d':'#bbb'};">
+                            ${escapeHtml(r.pricingState)}
+                        </span><br>
+                        Current ${money(r.currentPrice)} → Recommended <b>${money(r.recommendedPrice)}</b>
+                        (${r.pricingDeltaPct>=0?'+':''}${r.pricingDeltaPct.toFixed(1)}%) ·
+                        Market low ${r.liveMarketLow?money(r.liveMarketLow):'—'} · Floor ${r.floorPrice?money(r.floorPrice):'—'}<br>
+                        Margin ${r.currentMarginPct.toFixed(1)}% → ${r.recommendedMarginPct.toFixed(1)}% ·
+                        Forecast ${r.forecastDaily.toFixed(2)}/day · Liquidity ${r.liquidityGrade} ·
+                        Confidence ${r.pricingConfidence.toFixed(0)}%
+                        ${r.marketShock ? `<br><span style="color:#ff8d8d;">Market shock ${r.marketShockPct>=0?'+':''}${r.marketShockPct.toFixed(1)}% vs 7d median — HOLD for review.</span>` : ''}
+                    </div>
+                </div>
+            `).join('') : '<div style="font-size:11px;color:#888;margin-top:6px;">No current Bazaar listings available for pricing analysis.</div>'}
+        `);
+    }
+
+    function buildListingPlan(db) {
+        const plan={};
+        for (const r of advancedInventoryRows(db)) {
+            if (!(r.addToBazaar>0)) continue;
+            plan[r.id]={
+                itemId:r.id,itemName:r.name,quantity:r.addToBazaar,price:r.plannedPrice,
+                targetListed:r.targetListed,currentListed:r.bazaarQty,cost:r.avgCost,
+                expectedMarginPct:r.avgCost>0&&r.plannedPrice>0?(r.plannedPrice-r.avgCost)/r.avgCost*100:0,
+                createdAt:nowIso()
+            };
+        }
+        db.operations.listingPlans=plan;
+        return plan;
+    }
+
+    function startRestockSession() {
+        const db=dbLoad();
+        const rows=restockCommandRows(db).filter(r=>r.shortage>0);
+        if(!rows.length) throw new Error('No current restock shortages.');
+        const budget=Math.max(0,Number(db.procurement.settings.procurementBudget||0));
+        const queue=rows.map(r=>({
+            itemId:r.id,itemName:r.name,status:'pending',need:r.shortage,
+            buyPrice:r.globalBuyPrice||r.bestBuyPrice||0,buyTarget:r.buyTarget||0,
+            exit:r.globalExit||r.realisticExit||0,roiPct:r.globalRoiPct||0,
+            sourceQty:r.sourceQty||0,sellerId:r.sellerId||'',sellerName:r.sellerName||''
+        }));
+        const session={
+            id:makeId('restock'),createdAt:nowIso(),completedAt:null,budget,
+            queue,activeIndex:0,spent:0,expectedProfit:0,notes:''
+        };
+        db.operations.restockSessions.unshift(session);
+        db.operations.restockSessions=db.operations.restockSessions.slice(0,RESTOCK_SESSION_MAX);
+        db.operations.activeRestockSessionId=session.id;
+        dbSave(db);
+        return session;
+    }
+
+    function getActiveRestockSession(db=dbLoad()){
+        return db.operations.restockSessions.find(s=>s.id===db.operations.activeRestockSessionId)||null;
+    }
+
+    function advanceRestockSession(itemStatus='skipped'){
+        const db=dbLoad();
+        const s=getActiveRestockSession(db);
+        if(!s)return;
+        const current=s.queue[s.activeIndex];
+        if(current&&current.status==='pending')current.status=itemStatus;
+        let next=s.queue.findIndex((x,i)=>i>s.activeIndex&&x.status==='pending');
+        if(next<0){
+            s.completedAt=nowIso();
+            db.operations.activeRestockSessionId=null;
+        }else s.activeIndex=next;
+        dbSave(db);render();
+    }
+
+    function logRestockPurchase(quantity,unitCost){
+        const db=dbLoad();
+        const s=getActiveRestockSession(db);
+        if(!s)throw new Error('No active restock session.');
+        const q=s.queue[s.activeIndex];
+        if(!q)throw new Error('No active restock item.');
+        const qty=Number(quantity||0),cost=Number(unitCost||0);
+        if(!(qty>0)||!(cost>=0))throw new Error('Quantity and unit cost are required.');
+        addAcquisition({
+            itemId:q.itemId,itemName:q.itemName,source:'Restock Session',quantity:qty,unitCost:cost,
+            sellerId:q.sellerId,sellerName:q.sellerName,sessionId:s.id,
+            notes:`Restock session ${s.id}`
+        });
+        const fresh=dbLoad();
+        const session=fresh.operations.restockSessions.find(x=>x.id===s.id);
+        const current=session.queue[session.activeIndex];
+        current.status='purchased';current.purchasedQty=qty;current.actualUnitCost=cost;current.purchasedAt=nowIso();
+        session.spent+=qty*cost;
+        session.expectedProfit+=qty*Math.max(0,(current.exit||0)-cost);
+        let next=session.queue.findIndex((x,i)=>i>session.activeIndex&&x.status==='pending');
+        if(next<0){session.completedAt=nowIso();fresh.operations.activeRestockSessionId=null;}
+        else session.activeIndex=next;
+        dbSave(fresh);render();
+    }
+
+    function subscriberInterestMatch(sub,itemId,itemName){
+        const interests=Array.isArray(sub.interests)?sub.interests:[];
+        if(!interests.length)return true;
+        const id=asId(itemId),name=normalizeItemName(itemName);
+        return interests.some(v=>asId(v)===id||normalizeItemName(v)===name);
+    }
+
+    function setSubscriberInterests(playerId,values){
+        const db=dbLoad();const id=asId(playerId);const sub=db.subscribers[id];if(!sub)return;
+        sub.interests=[...new Set(String(values||'').split(',').map(x=>x.trim()).filter(Boolean))];
+        dbSave(db);render();
+    }
+
+    function customerRfmRows(db){
+        const now=Date.now();
+        const affinityByCustomer={};
+        for(const sale of Object.values(db.sales||{})){
+            const id=asId(sale.playerId);
+            if(!id)continue;
+            const affinity=affinityByCustomer[id]||(affinityByCustomer[id]={});
+            for(const item of sale.items||[]){
+                const name=String(item.name||item.itemName||item.item_name||'Unknown item');
+                affinity[name]=(affinity[name]||0)+Number(item.quantity||0);
+            }
+        }
+        const rows=Object.values(db.customers).map(c=>{
+            const recencyDays=c.lastPurchase?Math.max(0,(now-new Date(c.lastPurchase).getTime())/86400000):9999;
+            const frequency=Number(c.purchases||0),monetary=Number(c.spent||0);
+            let segment='DORMANT';
+            if(recencyDays<=7&&frequency>=8)segment='VIP';
+            else if(recencyDays<=14&&frequency>=4)segment='LOYAL';
+            else if(recencyDays<=30&&frequency>=2)segment='REGULAR';
+            else if(frequency<=1&&recencyDays<=30)segment='NEW';
+            else if(frequency>=3&&recencyDays<=60)segment='AT RISK';
+            const topProducts=Object.entries(affinityByCustomer[asId(c.id)]||{}).sort((a,b)=>b[1]-a[1]).slice(0,3);
+            return {...c,recencyDays,frequency,monetary,segment,topProducts};
+        });
+        return rows.sort((a,b)=>a.recencyDays-b.recencyDays||b.monetary-a.monetary);
+    }
+
+    function overallGrossMarginRate(db){
+        const rows=advancedInventoryRows(db);
+        const rev=rows.reduce((s,r)=>s+r.realized.revenue,0);
+        const gp=rows.reduce((s,r)=>s+r.realized.grossProfit,0);
+        return rev>0?Math.max(0,gp/rev):0;
+    }
+
+    function customerClvRows(db){
+        const margin=overallGrossMarginRate(db);
+        const refundsByCustomer={};
+        for(const r of Object.values(db.refunds||{})){
+            if(r.status==='completed'||r.status==='paid')refundsByCustomer[asId(r.playerId)]=(refundsByCustomer[asId(r.playerId)]||0)+Number(r.amount||0);
+        }
+        return customerRfmRows(db).map(c=>({
+            ...c,
+            estimatedGrossProfit:c.spent*margin,
+            cashbackCost:refundsByCustomer[asId(c.id)]||0,
+            estimatedNetValue:c.spent*margin-(refundsByCustomer[asId(c.id)]||0)
+        })).sort((a,b)=>b.estimatedNetValue-a.estimatedNetValue);
+    }
+
+    function couponRoiMetrics(db){
+        const customers=customerRfmRows(db);
+        const redeemed=new Set(Object.values(db.coupons||{}).filter(c=>(c.redemptions||[]).length>0).map(c=>asId(c.playerId)));
+        const withCoupon=customers.filter(c=>redeemed.has(asId(c.id)));
+        const without=customers.filter(c=>!redeemed.has(asId(c.id)));
+        const repeatRate=arr=>arr.length?arr.filter(c=>c.frequency>=2).length/arr.length:0;
+        const cashback=Object.values(db.refunds||{}).filter(r=>r.status==='completed'||r.status==='paid').reduce((s,r)=>s+Number(r.amount||0),0);
+        const margin=overallGrossMarginRate(db);
+        const redeemedRevenue=withCoupon.reduce((s,c)=>s+c.spent,0);
+        const grossProfit=redeemedRevenue*margin;
+        return {
+            couponCustomers:withCoupon.length,nonCouponCustomers:without.length,
+            couponRepeatRate:repeatRate(withCoupon),nonCouponRepeatRate:repeatRate(without),
+            cashback,grossProfit,roi:cashback>0?(grossProfit-cashback)/cashback:0
+        };
+    }
+
+    function ownerBriefing(db, precomputedRows=null){
+        const rows=precomputedRows||advancedInventoryRows(db);
+        const revenue=rows.reduce((s,r)=>s+r.realized.revenue,0);
+        const grossProfit=rows.reduce((s,r)=>s+r.realized.grossProfit,0);
+        const units=rows.reduce((s,r)=>s+r.realized.units,0);
+        const inventoryValue=rows.reduce((s,r)=>s+r.realized.ledger.remainingCost,0);
+        const stockouts=rows.filter(r=>r.state==='OUT OF STOCK').length;
+        const lostProfit=rows.reduce((s,r)=>s+r.lostProfit,0);
+        const critical=rows.filter(r=>['OUT OF STOCK','SOURCE NOW'].includes(r.state)).length;
+        const deadCapital=rows.reduce((s,r)=>s+r.deadCapital,0);
+        const best=rows.slice().sort((a,b)=>b.realized.grossProfit-a.realized.grossProfit)[0]||null;
+        const worst=rows.slice().filter(r=>r.realized.revenue>0||r.deadCapital>0).sort((a,b)=>a.realized.grossProfit-b.realized.grossProfit)[0]||null;
+        return {revenue,grossProfit,units,inventoryValue,stockouts,lostProfit,critical,deadCapital,best,worst};
+    }
+
+    function inventoryWhatIf(db,targetDays){
+        const days=Number(targetDays||5);
+        const rows=advancedInventoryRows(db);
+        const capital=rows.reduce((s,r)=>{
+            const target=Math.ceil(r.forecastDaily*days+r.safety.units);
+            const need=Math.max(0,target-r.stock);
+            const cost=r.bestBuyPrice||r.avgCost||0;
+            return s+need*cost;
+        },0);
+        const stockoutRisk=rows.length?rows.filter(r=>r.stock<r.forecastDaily*Math.max(.5,days/3)).length/rows.length:0;
+        const expectedGross=rows.reduce((s,r)=>s+r.realized.grossProfit,0)*(days/30);
+        return {days,capital,stockoutRisk,expectedGross};
+    }
+
+    function priceSimulationRows(db,itemId){
+        const id=asId(itemId);
+        const r=advancedInventoryRows(db).find(x=>x.id===id);
+        if(!r)return[];
+        const base=r.plannedPrice||r.realisticExit||r.bazaarPrice||0;
+        const cost=r.avgCost||0;
+        const elasticity=r.elasticity;
+        const observed=elasticity.best?.unitsPerDay||r.forecastDaily||0;
+        return [-0.03,-0.015,0,0.015,0.03].map(delta=>{
+            const price=Math.max(1,Math.round(base*(1+delta)));
+            const demandFactor=Math.max(.25,1-delta*6);
+            const unitsPerDay=observed*demandFactor;
+            return {price,unitsPerDay,profitPerDay:unitsPerDay*Math.max(0,price-cost)};
+        });
+    }
+
+    function addDemandEvent(name,startAt,endAt,multiplier){
+        const db=dbLoad();
+        if(!name||!startAt||!endAt)throw new Error('Event name, start, and end are required.');
+        db.operations.events.push({id:makeId('event'),name:String(name),startAt:new Date(startAt).toISOString(),endAt:new Date(endAt).toISOString(),multiplier:Number(multiplier||1)});
+        dbSave(db);render();
+    }
+
+    function removeDemandEvent(id){
+        const db=dbLoad();db.operations.events=db.operations.events.filter(e=>e.id!==id);dbSave(db);render();
+    }
+
+    function notifyOperationalAlerts(db){
+        if(!db.operations.settings.enableBrowserNotifications||Notification.permission!=='granted')return;
+        const rows=advancedInventoryRows(db).filter(r=>['OUT OF STOCK','SOURCE NOW'].includes(r.state));
+        const key=rows.map(r=>`${r.id}:${r.state}`).sort().join('|');
+        if(!key||db.operations.notificationState.lastKey===key)return;
+        db.operations.notificationState.lastKey=key;dbSave(db);
+        new Notification(`${SHOP_NAME} — Restock Alert`,{body:`${rows.length} SKU(s) need action: ${rows.slice(0,4).map(r=>r.name).join(', ')}`});
+    }
+
+    function requestOperationalNotifications(){
+        if(!('Notification'in window)){alert('Browser notifications are not supported here.');return;}
+        Notification.requestPermission().then(result=>{
+            const db=dbLoad();db.operations.settings.enableBrowserNotifications=result==='granted';dbSave(db);render();
+        });
+    }
+
+    function fillInputValue(input,value){
+        if(!input)return false;
+        const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;
+        if(setter)setter.call(input,String(value));else input.value=String(value);
+        input.dispatchEvent(new Event('input',{bubbles:true}));
+        input.dispatchEvent(new Event('change',{bubbles:true}));
+        return true;
+    }
+
+    function findBazaarRowForItem(itemName){
+        const name=normalizeItemName(itemName);
+        const candidates=[...document.querySelectorAll('li, tr, [class*="item"], [class*="row"]')];
+        return candidates.find(el=>normalizeItemName(el.textContent||'').includes(name))||null;
+    }
+
+    function applyListingPlanToRow(plan){
+        const row=findBazaarRowForItem(plan.itemName);
+        if(!row)return false;
+        const inputs=[...row.querySelectorAll('input')].filter(x=>x.offsetParent!==null);
+        if(!inputs.length)return false;
+        let qtyInput=inputs.find(i=>/qty|quantity|amount/i.test(`${i.name} ${i.placeholder} ${i.getAttribute('aria-label')||''}`));
+        let priceInput=inputs.find(i=>/price|cost/i.test(`${i.name} ${i.placeholder} ${i.getAttribute('aria-label')||''}`));
+        if(!qtyInput&&inputs.length>=2)qtyInput=inputs[0];
+        if(!priceInput&&inputs.length>=2)priceInput=inputs[inputs.length-1];
+        let ok=false;
+        if(qtyInput && plan.quantity != null) ok=fillInputValue(qtyInput,plan.quantity)||ok;
+        if(priceInput&&plan.price>0)ok=fillInputValue(priceInput,plan.price)||ok;
+        if(ok){
+            row.dataset.mmCrmFilled='1';
+            row.style.outline='1px solid #d7ad4b';
+        }
+        return ok;
+    }
+
+    function installBazaarListingAssistant(){
+        if(!/bazaar\.php/i.test(location.pathname+location.hash+location.search))return;
+        const db=dbLoad();
+        buildListingPlan(db);
+        buildRepricingPlan(db);
+        dbSave(db);
+
+        const newListingPlans=Object.values(db.operations.listingPlans||{});
+        const repricingPlans=Object.values(db.operations.repricingPlan||{});
+        const plans=[
+            ...newListingPlans,
+            ...repricingPlans.map(p=>({ ...p, quantity: null }))
+        ];
+        if(!plans.length)return;
+        if(document.getElementById('mm-bazaar-listing-assistant'))return;
+        const box=document.createElement('div');
+        box.id='mm-bazaar-listing-assistant';
+        box.style.cssText='position:fixed;right:12px;bottom:12px;z-index:999999;background:#151515;color:#eee;border:1px solid #d7ad4b;border-radius:8px;padding:10px;width:290px;box-shadow:0 4px 18px #0009;font:12px Arial,sans-serif;';
+        box.innerHTML=`<b>${escapeHtml(SHOP_NAME)} Listing / Pricing Assistant</b><div style="color:#aaa;margin:4px 0 7px;">${newListingPlans.length} listing action(s) · ${repricingPlans.length} repricing action(s). Fill only — never submits.</div>
+            <button id="mm-bazaar-fill-all" style="${btn(true)}">Fill Recommended Changes</button>
+            <button id="mm-bazaar-close-helper" style="${btn()}">Close</button>
+            <div id="mm-bazaar-fill-result" style="margin-top:6px;color:#aaa;"></div>`;
+        document.body.appendChild(box);
+        box.querySelector('#mm-bazaar-close-helper')?.addEventListener('click',()=>box.remove());
+        box.querySelector('#mm-bazaar-fill-all')?.addEventListener('click',()=>{
+            let filled=0;for(const plan of plans)if(applyListingPlanToRow(plan))filled++;
+            box.querySelector('#mm-bazaar-fill-result').textContent=`Filled ${filled}/${plans.length} visible matching item row(s). Review before Torn submission.`;
+        });
+    }
+
+
+    // ============================================================
+    // GITHUB HOURLY BACKUP / SYNC
+    // ============================================================
+
+    function getGithubSettings() {
+        const raw = GM_getValue(GITHUB_SETTINGS_KEY, {});
+        return {
+            owner: String(raw?.owner || '').trim(),
+            repo: String(raw?.repo || '').trim(),
+            branch: String(raw?.branch || 'main').trim() || 'main',
+            folder: String(raw?.folder || 'crm-sync').trim().replace(/^\/+|\/+$/g, '') || 'crm-sync',
+            autoSync: raw?.autoSync !== false,
+            encryptedFullBackup: Boolean(raw?.encryptedFullBackup),
+            lastStatus: String(raw?.lastStatus || ''),
+            lastSyncAt: raw?.lastSyncAt || null
+        };
+    }
+
+    function saveGithubSettings(patch) {
+        GM_setValue(GITHUB_SETTINGS_KEY, { ...getGithubSettings(), ...patch });
+    }
+
+    function getGithubToken() {
+        return String(GM_getValue(GITHUB_TOKEN_KEY, '') || '').trim();
+    }
+
+    function setGithubToken(value) {
+        const token = String(value || '').trim();
+        if (token) GM_setValue(GITHUB_TOKEN_KEY, token);
+        else GM_deleteValue(GITHUB_TOKEN_KEY);
+    }
+
+    function getGithubBackupPassphrase() {
+        return String(GM_getValue(GITHUB_BACKUP_PASSPHRASE_KEY, '') || '');
+    }
+
+    function setGithubBackupPassphrase(value) {
+        const passphrase = String(value || '');
+        if (passphrase) GM_setValue(GITHUB_BACKUP_PASSPHRASE_KEY, passphrase);
+        else GM_deleteValue(GITHUB_BACKUP_PASSPHRASE_KEY);
+    }
+
+    function githubConfigured() {
+        const s = getGithubSettings();
+        return Boolean(s.owner && s.repo && getGithubToken());
+    }
+
+    function utf8ToBase64(text) {
+        const bytes = new TextEncoder().encode(String(text));
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        }
+        return btoa(binary);
+    }
+
+    function base64ToUtf8(value) {
+        const binary = atob(String(value || '').replace(/\s+/g, ''));
+        return new TextDecoder().decode(Uint8Array.from(binary, c => c.charCodeAt(0)));
+    }
+
+    function bytesToBase64(bytes) {
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        }
+        return btoa(binary);
+    }
+
+    function base64ToBytes(value) {
+        const binary = atob(String(value || ''));
+        return Uint8Array.from(binary, c => c.charCodeAt(0));
+    }
+
+    async function deriveBackupKey(passphrase, salt) {
+        const material = await crypto.subtle.importKey(
+            'raw',
+            new TextEncoder().encode(passphrase),
+            'PBKDF2',
+            false,
+            ['deriveKey']
+        );
+        return crypto.subtle.deriveKey(
+            { name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' },
+            material,
+            { name: 'AES-GCM', length: 256 },
+            false,
+            ['encrypt', 'decrypt']
+        );
+    }
+
+    async function encryptFullBackup(db, passphrase) {
+        if (!passphrase) throw new Error('Encrypted full backup passphrase is not configured.');
+        const salt = crypto.getRandomValues(new Uint8Array(16));
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const key = await deriveBackupKey(passphrase, salt);
+        const plaintext = new TextEncoder().encode(JSON.stringify(db));
+        const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plaintext));
+        return {
+            format: 'MMCRM-AES-GCM-1',
+            createdAt: nowIso(),
+            iterations: 250000,
+            salt: bytesToBase64(salt),
+            iv: bytesToBase64(iv),
+            ciphertext: bytesToBase64(ciphertext)
+        };
+    }
+
+    async function decryptFullBackup(payload, passphrase) {
+        if (!payload || payload.format !== 'MMCRM-AES-GCM-1') throw new Error('Unsupported encrypted backup format.');
+        if (!passphrase) throw new Error('Backup passphrase is required.');
+        const key = await deriveBackupKey(passphrase, base64ToBytes(payload.salt));
+        const plaintext = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: base64ToBytes(payload.iv) },
+            key,
+            base64ToBytes(payload.ciphertext)
+        );
+        return normalizeDb(JSON.parse(new TextDecoder().decode(plaintext)));
+    }
+
+    function buildSanitizedGithubSnapshot(db) {
+        return {
+            format: 'MMCRM-SANITIZED-1',
+            version: VERSION,
+            schema: db.schema,
+            syncedAt: nowIso(),
+            marketIntel: {
+                marketplace: db.marketIntel.marketplace,
+                marketplaceGeneratedAt: db.marketIntel.marketplaceGeneratedAt,
+                details: db.marketIntel.details,
+                traders: db.marketIntel.traders,
+                dollarItems: db.marketIntel.dollarItems,
+                dollarBazaars: db.marketIntel.dollarBazaars,
+                ranked: db.marketIntel.ranked,
+                auctions: db.marketIntel.auctions,
+                suppliers: db.marketIntel.suppliers,
+                history: db.marketIntel.history,
+                settings: db.marketIntel.settings
+            },
+            procurement: {
+                catalog: db.procurement.catalog,
+                marketSnapshots: db.procurement.marketSnapshots,
+                marketHistory: db.procurement.marketHistory,
+                watchlist: db.procurement.watchlist,
+                settings: db.procurement.settings
+            },
+            operations: {
+                bazaarPriceHistory: db.operations.bazaarPriceHistory,
+                events: db.operations.events,
+                settings: db.operations.settings
+            }
+        };
+    }
+
+    function mergeSanitizedGithubSnapshot(db, snapshot) {
+        if (!snapshot || snapshot.format !== 'MMCRM-SANITIZED-1') throw new Error('Unsupported sanitized GitHub snapshot.');
+        db.marketIntel = { ...db.marketIntel, ...(snapshot.marketIntel || {}) };
+        db.procurement.catalog = snapshot.procurement?.catalog || db.procurement.catalog;
+        db.procurement.marketSnapshots = snapshot.procurement?.marketSnapshots || db.procurement.marketSnapshots;
+        db.procurement.marketHistory = snapshot.procurement?.marketHistory || db.procurement.marketHistory;
+        db.procurement.watchlist = snapshot.procurement?.watchlist || db.procurement.watchlist;
+        db.procurement.settings = { ...db.procurement.settings, ...(snapshot.procurement?.settings || {}) };
+        db.operations.bazaarPriceHistory = snapshot.operations?.bazaarPriceHistory || db.operations.bazaarPriceHistory;
+        db.operations.events = snapshot.operations?.events || db.operations.events;
+        db.operations.settings = { ...db.operations.settings, ...(snapshot.operations?.settings || {}) };
+        db.meta.github.lastRestoreAt = nowIso();
+        db.meta.github.lastRestoreSource = 'sanitized';
+        return normalizeDb(db);
+    }
+
+    function githubApiRequest(method, url, body = null) {
+        const token = getGithubToken();
+        if (!token) return Promise.reject(new Error('GitHub token is not configured.'));
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method,
+                url,
+                timeout: 30000,
+                headers: {
+                    'Accept': 'application/vnd.github+json',
+                    'Authorization': `Bearer ${token}`,
+                    'X-GitHub-Api-Version': '2022-11-28',
+                    'Content-Type': 'application/json'
+                },
+                data: body == null ? undefined : JSON.stringify(body),
+                onload: response => {
+                    let data = null;
+                    try { data = response.responseText ? JSON.parse(response.responseText) : null; } catch {}
+                    if (response.status >= 200 && response.status < 300) {
+                        resolve(data);
+                        return;
+                    }
+                    const error = new Error(`GitHub ${data?.message || response.statusText || `HTTP ${response.status}`}`);
+                    error.status = response.status;
+                    reject(error);
+                },
+                onerror: () => reject(new Error('GitHub network request failed.')),
+                ontimeout: () => reject(new Error('GitHub request timed out.'))
+            });
+        });
+    }
+
+    function githubContentUrl(path) {
+        const s = getGithubSettings();
+        const encodedPath = String(path).split('/').map(encodeURIComponent).join('/');
+        return `https://api.github.com/repos/${encodeURIComponent(s.owner)}/${encodeURIComponent(s.repo)}/contents/${encodedPath}`;
+    }
+
+    async function githubReadFile(relativePath) {
+        const s = getGithubSettings();
+        const path = `${s.folder}/${relativePath}`.replace(/\/+/g, '/');
+        const url = new URL(githubContentUrl(path));
+        url.searchParams.set('ref', s.branch);
+        const data = await githubApiRequest('GET', url.toString());
+        if (!data?.content) throw new Error(`GitHub file ${path} has no content.`);
+        return { path, sha: data.sha, text: base64ToUtf8(data.content) };
+    }
+
+    async function githubWriteFile(relativePath, textContent, commitMessage) {
+        const s = getGithubSettings();
+        const path = `${s.folder}/${relativePath}`.replace(/\/+/g, '/');
+        let sha = null;
+        try {
+            sha = (await githubReadFile(relativePath)).sha;
+        } catch (error) {
+            if (error.status !== 404) throw error;
+        }
+
+        const body = {
+            message: commitMessage,
+            content: utf8ToBase64(textContent),
+            branch: s.branch
+        };
+        if (sha) body.sha = sha;
+        return githubApiRequest('PUT', githubContentUrl(path), body);
+    }
+
+    async function githubSyncNow({ silent = false } = {}) {
+        if (githubSyncRunning) return false;
+        if (!githubConfigured()) {
+            if (!silent) {
+                statusText = 'GitHub sync is not configured.';
+                render();
+            }
+            return false;
+        }
+
+        githubSyncRunning = true;
+        if (!silent) {
+            statusText = 'Syncing CRM backup to GitHub…';
+            render();
+        }
+
+        try {
+            await flushDbWrites();
+            const db = dbLoad();
+            const settings = getGithubSettings();
+            const syncedAt = nowIso();
+
+            const manifest = {
+                format: 'MMCRM-MANIFEST-1',
+                version: VERSION,
+                schema: db.schema,
+                syncedAt,
+                storageBackend: 'IndexedDB',
+                encryptedFullBackup: Boolean(settings.encryptedFullBackup && getGithubBackupPassphrase()),
+                counts: {
+                    customers: Object.keys(db.customers || {}).length,
+                    sales: Object.keys(db.sales || {}).length,
+                    acquisitions: db.procurement?.acquisitions?.length || 0,
+                    marketItems: Object.keys(db.marketIntel?.marketplace || {}).length
+                }
+            };
+
+            await githubWriteFile('manifest.json', JSON.stringify(manifest, null, 2), `CRM sync ${syncedAt}`);
+            await githubWriteFile('sanitized-backup.json', JSON.stringify(buildSanitizedGithubSnapshot(db)), `CRM sanitized backup ${syncedAt}`);
+
+            if (settings.encryptedFullBackup) {
+                const passphrase = getGithubBackupPassphrase();
+                if (!passphrase) throw new Error('Encrypted full backup is enabled, but no backup passphrase is saved.');
+                const encrypted = await encryptFullBackup(db, passphrase);
+                await githubWriteFile('full-backup.enc.json', JSON.stringify(encrypted), `CRM encrypted full backup ${syncedAt}`);
+            }
+
+            saveGithubSettings({ lastStatus: 'PASS', lastSyncAt: syncedAt });
+            const fresh = dbLoad();
+            fresh.meta.github.lastSyncAt = syncedAt;
+            fresh.meta.github.lastStatus = 'PASS';
+            dbSave(fresh);
+
+            if (!silent) {
+                statusText = `GitHub backup synced at ${fmtDate(syncedAt)}.`;
+                render();
+            }
+            return true;
+        } catch (error) {
+            saveGithubSettings({ lastStatus: `FAIL: ${error?.message || String(error)}` });
+            console.error('[MM CRM] GitHub sync failed', error);
+            if (!silent) {
+                statusText = `GitHub sync failed: ${error?.message || String(error)}`;
+                render();
+            }
+            return false;
+        } finally {
+            githubSyncRunning = false;
+        }
+    }
+
+    async function githubRestore({ preferFull = true } = {}) {
+        if (!githubConfigured()) throw new Error('GitHub sync is not configured.');
+
+        if (preferFull) {
+            try {
+                const file = await githubReadFile('full-backup.enc.json');
+                const passphrase = getGithubBackupPassphrase();
+                if (!passphrase) throw new Error('Full backup exists, but the local backup passphrase is not configured.');
+                const restored = await decryptFullBackup(JSON.parse(file.text), passphrase);
+                restored.meta.github.lastRestoreAt = nowIso();
+                restored.meta.github.lastRestoreSource = 'encrypted-full';
+                dbSave(restored);
+                await flushDbWrites();
+                return { type: 'encrypted-full', restored };
+            } catch (error) {
+                if (error.status !== 404 && !String(error.message || '').includes('passphrase')) throw error;
+            }
+        }
+
+        const sanitized = JSON.parse((await githubReadFile('sanitized-backup.json')).text);
+        const merged = mergeSanitizedGithubSnapshot(dbLoad(), sanitized);
+        dbSave(merged);
+        await flushDbWrites();
+        return { type: 'sanitized', restored: merged };
+    }
+
+    async function autoRestoreIfDatabaseEmpty() {
+        if (!githubConfigured()) return false;
+        const db = dbLoad();
+        const hasData =
+            Object.keys(db.customers || {}).length ||
+            Object.keys(db.sales || {}).length ||
+            Object.keys(db.marketIntel?.marketplace || {}).length ||
+            (db.procurement?.acquisitions?.length || 0);
+        if (hasData) return false;
+
+        try {
+            const result = await githubRestore({ preferFull: true });
+            statusText = `Recovered ${result.type === 'encrypted-full' ? 'full' : 'non-sensitive'} data from GitHub.`;
+            return true;
+        } catch (error) {
+            console.warn('[MM CRM] Automatic GitHub restore skipped', error);
+            return false;
+        }
+    }
+
+    function scheduleGithubSync() {
+        if (githubSyncTimer) clearInterval(githubSyncTimer);
+        if (!getGithubSettings().autoSync) return;
+        githubSyncTimer = setInterval(() => {
+            if (githubConfigured()) githubSyncNow({ silent: true });
+        }, GITHUB_SYNC_INTERVAL_MS);
+    }
+
+    // ============================================================
+    // CUSTOMER MESSAGING
+    // ============================================================
+
+
+    function escapeMessageHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function messageListHtml(items) {
+        return `<div style="line-height:1.4;">${items.map(item =>
+            `<div style="margin:0 0 5px 0;">${escapeMessageHtml(item)}</div>`
+        ).join('')}</div>`;
+    }
+
+    function brandedMessageHtml({
+        customerName,
+        greeting = '',
+        centerText = '',
+        rightText = '',
+        columns = [],
+        footerTitle = '',
+        footerLines = [],
+        couponCode = ''
+    }) {
+        const safeName = escapeMessageHtml(customerName || 'Customer');
+        const safeGreeting = escapeMessageHtml(greeting || '');
+        const safeCenter = escapeMessageHtml(centerText);
+        const safeRight = escapeMessageHtml(rightText);
+        const headerColors = ['#f2c94c', '#53c7ff', '#ff9f43'];
+
+        const cells = columns.slice(0, 3).map((col, index) => {
+            const lines = (col.lines || []).map(item =>
+                `<span style="color:#f3f3f3;">&#8226;&nbsp;${escapeMessageHtml(item)}</span><br>`
+            ).join('');
+
+            return `<td width="33%" valign="top" bgcolor="${index % 2 ? '#171717' : '#111111'}" ` +
+                `style="width:33.333%;vertical-align:top;padding:12px 14px;` +
+                `${index < 2 ? 'border-right:1px solid #333333;' : ''}">` +
+                `<strong style="color:${headerColors[index]};font-size:15px;">${escapeMessageHtml(col.title || '')}</strong><br><br>` +
+                lines +
+                `</td>`;
+        }).join('');
+
+        const footer = (footerLines || []).map(line =>
+            `<span style="color:#f3f3f3;">${escapeMessageHtml(line)}</span><br>`
+        ).join('');
+        const safeCoupon = String(couponCode || '').trim();
+        const couponHref = safeCoupon
+            ? `https://www.torn.com/messages.php#/p=compose&XID=${encodeURIComponent(OWNER_TORN_ID)}&subject=${encodeURIComponent(`Coupon Code ${safeCoupon}`)}`
+            : '';
+        const couponActionRow = safeCoupon
+            ? `<tr><td colspan="3" bgcolor="#102614" align="center" style="padding:14px;text-align:center;border-top:2px solid #53d769;border-bottom:1px solid #2f6d39;">` +
+              `<a href="${couponHref}" style="display:inline-block;background:#53d769;color:#071b0b;font-weight:bold;font-size:16px;text-decoration:none;padding:11px 18px;border:1px solid #8bf09a;border-radius:4px;">SEND MY COUPON CODE — ${escapeMessageHtml(safeCoupon)}</a><br>` +
+              `<span style="display:inline-block;margin-top:7px;color:#d7f7dc;font-size:12px;">Opens a message to ${escapeMessageHtml(FAVORITE_PLAYER_NAME)} with your coupon code in the subject. Review it, then press Send.</span>` +
+              `</td></tr>`
+            : '';
+
+        return `<table width="100%" cellpadding="0" cellspacing="0" border="0" ` +
+            `style="width:100%;max-width:900px;border-collapse:collapse;background-color:#0d0d0d;color:#f2f2f2;font-family:Arial,Helvetica,sans-serif;">` +
+            `<tr><td colspan="3" bgcolor="#000000" align="center" style="padding:0;text-align:center;">` +
+            `<img src="${SHOP_BANNER_URL}" alt="${escapeMessageHtml(SHOP_NAME)}" width="900" ` +
+            `style="display:block;width:100%;max-width:900px;height:auto;border:0;">` +
+            `</td></tr>` +
+            (safeGreeting
+                ? `<tr><td colspan="3" bgcolor="#121212" align="center" ` +
+                  `style="padding:12px 14px;text-align:center;border-top:1px solid #333333;border-bottom:1px solid #333333;">` +
+                  `<strong style="color:#f2c94c;font-size:18px;">${safeGreeting}</strong>` +
+                  `</td></tr>`
+                : '') +
+            `<tr bgcolor="#1a1a1a">` +
+            `<td width="33%" align="center" style="width:33.333%;padding:10px;text-align:center;"><strong style="color:#ffffff;">${safeName}</strong></td>` +
+            `<td width="33%" align="center" style="width:33.333%;padding:10px;text-align:center;"><strong style="color:#53c7ff;">${safeCenter}</strong></td>` +
+            `<td width="33%" align="center" style="width:33.333%;padding:10px;text-align:center;"><strong style="color:#f2c94c;">${safeRight}</strong></td>` +
+            `</tr>` +
+            couponActionRow +
+            `<tr>${cells}</tr>` +
+            `<tr><td colspan="3" bgcolor="#3a2a00" align="center" style="padding:12px 14px;text-align:center;border-top:2px solid #f2c94c;border-bottom:1px solid #6b5315;">` +
+            `<strong style="color:#ffd95a;font-size:16px;">${escapeMessageHtml(FAVORITE_CTA)}</strong>` +
+            `</td></tr>` +
+            `<tr><td colspan="3" bgcolor="#181818" style="padding:11px 14px;border-top:1px solid #333333;">` +
+            (footerTitle ? `<strong style="color:#9be564;font-size:14px;">${escapeMessageHtml(footerTitle)}</strong><br><br>` : '') +
+            footer +
+            `</td></tr>` +
+            `</table>`;
+    }
+
+    function plainThreeColumnFallback({ customerName, greeting = '', centerText, rightText, columns, footerTitle, footerLines, couponCode = '' }) {
+        const top = `${greeting ? `${greeting}\n\n` : ''}${customerName} | ${centerText} | ${rightText}`;
+        const colText = columns.map(col =>
+            `${col.title}\n${(col.lines || []).map(line => `• ${line}`).join('\n')}`
+        ).join('\n\n');
+        const footer = footerTitle
+            ? `\n\n${footerTitle}\n${(footerLines || []).map(line => `• ${line}`).join('\n')}`
+            : '';
+        const safeCoupon = String(couponCode || '').trim();
+        const couponLine = safeCoupon
+            ? `\n\nSEND MY COUPON CODE — ${safeCoupon}\nhttps://www.torn.com/messages.php#/p=compose&XID=${OWNER_TORN_ID}&subject=${encodeURIComponent(`Coupon Code ${safeCoupon}`)}`
+            : '';
+        return `${top}\n\n${colText}${couponLine}\n\n★ ★ ★ ADD ME TO FAVORITES ★ ★ ★\n${FAVORITE_CTA}${footer}`;
+    }
+
+    function customerHasBeenContacted(customer) {
+        return Boolean(customer?.contacted || customer?.firstMessageSent || Number(customer?.messageCount || 0) > 0);
+    }
+
+    function customerMessage(customer) {
+        const db = dbLoad();
+        const id = asId(customer.id);
+        const coupon = ensureCoupon(db, customer);
+        const username = displayUsername(customer);
+        if (!username) throw new Error(`No resolved Torn username for [${id}].`);
+
+        const firstContact = !customerHasBeenContacted(customer);
+        const remaining = couponRemaining(coupon);
+        const subject = firstContact ? `Welcome to ${SHOP_NAME}!` : `Welcome Back to ${SHOP_NAME}!`;
+        const greeting = firstContact
+            ? `WELCOME TO ${SHOP_NAME}, ${username}!`
+            : `WELCOME BACK TO ${SHOP_NAME}, ${username}!`;
+
+        const columns = [
+            {
+                title: 'HOW IT WORKS',
+                lines: [
+                    '1. Buy normally from my Bazaar',
+                    '2. Message me your coupon code',
+                    '3. I verify the purchase',
+                    '4. Cashback is sent'
+                ]
+            },
+            {
+                title: 'CASHBACK TIERS',
+                lines: [
+                    '$50,000+ → $5,000 cashback',
+                    '$250,000+ → $10,000 cashback',
+                    '$1,000,000+ → $20,000 cashback'
+                ]
+            },
+            {
+                title: 'IMPORTANT',
+                lines: [
+                    'Purchases must be made after the coupon is issued',
+                    'Qualifying purchases remain eligible for 24 hours',
+                    'Each sale can only be used once'
+                ]
+            }
+        ];
+
+        const footerLines = [
+            'Reply RESTOCK to receive restock notifications.',
+            'Reply STOP at any time to leave the notification list.'
+        ];
+
+        const bodyHtml = brandedMessageHtml({
+            customerName: username,
+            greeting,
+            centerText: `Coupon: ${coupon.code}`,
+            rightText: `${remaining} redemption${remaining === 1 ? '' : 's'} remaining`,
+            columns,
+            footerTitle: 'RESTOCK ALERTS',
+            footerLines,
+            couponCode: coupon.code
+        });
+
+        const body = plainThreeColumnFallback({
+            customerName: username,
+            greeting,
+            centerText: `Coupon: ${coupon.code}`,
+            rightText: `${remaining} redemption${remaining === 1 ? '' : 's'} remaining`,
+            columns,
+            footerTitle: 'RESTOCK ALERTS',
+            footerLines,
+            couponCode: coupon.code
+        });
+
+        return { subject, body, bodyHtml, firstContact };
+    }
+
+    function couponReminderMessage(customer) {
+        const db = dbLoad();
+        const id = asId(customer.id);
+        const coupon = ensureCoupon(db, customer);
+        const username = displayUsername(customer);
+        if (!username) throw new Error('No resolved Torn username for [' + id + '].');
+
+        const remaining = couponRemaining(coupon);
+        const q = couponQualification(db, coupon);
+        const recentLine = q.qualified
+            ? 'Your recent qualifying purchase currently qualifies for ' + money(q.cashback) + ' cashback.'
+            : 'Your coupon is still available for your next qualifying purchase.';
+
+        const columns = [
+            { title: 'YOUR COUPON', lines: ['Code: ' + coupon.code, remaining + ' redemption' + (remaining === 1 ? '' : 's') + ' remaining', recentLine] },
+            { title: 'HOW TO USE IT', lines: ['Buy normally from my Bazaar', 'Message me your coupon code after the purchase', 'I verify the purchase and send the refund manually'] },
+            { title: 'CASHBACK TIERS', lines: ['$50,000+ → $5,000 cashback', '$250,000+ → $10,000 cashback', '$1,000,000+ → $20,000 cashback'] }
+        ];
+
+        const greeting = 'WELCOME BACK, ' + username + ' — DON\'T FORGET YOUR COUPON!';
+        const footerLines = [
+            'Qualifying purchases must be made after the coupon was issued.',
+            'Eligible purchases remain available for 24 hours.',
+            'Each sale can only be used once.'
+        ];
+
+        return {
+            subject: SHOP_NAME + ' — Cashback coupon reminder',
+            body: plainThreeColumnFallback({customerName: username, greeting: greeting, centerText: 'Coupon: ' + coupon.code, rightText: remaining + ' use' + (remaining === 1 ? '' : 's') + ' left', columns: columns, footerTitle: 'IMPORTANT', footerLines: footerLines, couponCode: coupon.code}),
+            bodyHtml: brandedMessageHtml({customerName: username, greeting: greeting, centerText: 'Coupon: ' + coupon.code, rightText: remaining + ' use' + (remaining === 1 ? '' : 's') + ' left', columns: columns, footerTitle: 'IMPORTANT', footerLines: footerLines, couponCode: coupon.code}),
+            qualified: q.qualified, cashback: q.cashback || 0
+        };
+    }
+
+    function prepareCouponReminder(playerId) {
+        const id = asId(playerId);
+        const db = dbLoad();
+        const customer = db.customers[id];
+        if (!customer) return;
+        const coupon = ensureCoupon(db, customer);
+        if (!coupon?.issuedAt) { statusText = 'Coupon has not been issued yet.'; render(); return; }
+        if (couponRemaining(coupon) <= 0) { statusText = 'No cashback redemptions remain for this customer.'; render(); return; }
+        const msg = couponReminderMessage(customer);
+        composeMessage(id, msg.subject, msg.body, msg.bodyHtml);
+        statusText = 'Coupon reminder prepared for ' + (displayUsername(customer) || id) + '. Send remains manual.';
+        render();
+    }
+    function composeMessage(playerId, subject, body, bodyHtml = '', options = {}) {
+        const id = asId(playerId);
+        const payload = {
+            playerId: id,
+            subject: String(subject || ''),
+            body: String(body || ''),
+            bodyHtml: String(bodyHtml || ''),
+            createdAt: Date.now()
+        };
+
+        /*
+            Keep a Tampermonkey-side copy of the compose payload.
+            Torn's current message SPA may rewrite the hash while loading,
+            so the destination tab must not depend only on URL parameters.
+        */
+        GM_setValue(PENDING_COMPOSE_KEY, payload);
+
+        if (options?.autoDetectFirstSend) {
+            GM_setValue(PENDING_FIRST_SEND_KEY, {
+                playerId: id,
+                subject: payload.subject,
+                createdAt: Date.now(),
+                composeOpenedAt: Date.now(),
+                state: 'awaiting-send'
+            });
+        } else {
+            GM_deleteValue(PENDING_FIRST_SEND_KEY);
+        }
+
+        const url = 'https://www.torn.com/messages.php#/p=compose' +
+            '&XID=' + encodeURIComponent(id) +
+            '&subject=' + encodeURIComponent(payload.subject);
+
+        navigateFromCRM(url);
+    }
+
+    async function composeCustomer(customer) {
+        const id = asId(customer.id);
+        try {
+            if (!hasRealUsername(customer)) {
+                statusText = `Looking up customer [${id}]…`;
+                render();
+                await refreshCustomerUsername(id, true);
+            }
+            const db = dbLoad();
+            const fresh = db.customers[id];
+            if (!hasRealUsername(fresh)) throw new Error(`Could not resolve Torn username for [${id}].`);
+            const message = customerMessage(fresh);
+            composeMessage(id, message.subject, message.body, message.bodyHtml, { autoDetectFirstSend: Boolean(message.firstContact) });
+            statusText = `Message prepared for ${displayUsername(fresh)}. Send remains manual.`;
+        } catch (error) {
+            statusText = `Message not opened: ${error?.message || String(error)}`;
+            alert(statusText);
+        }
+        render();
+    }
+
+    function markCustomerContacted(playerId) {
+        const id = asId(playerId);
+        const db = dbLoad();
+        const customer = db.customers[id];
+        if (!customer) return;
+        const first = !customerHasBeenContacted(customer);
+        customer.contacted = true;
+        customer.firstMessageSent = true;
+        customer.messageCount = Number(customer.messageCount || 0) + 1;
+        customer.lastContacted = nowIso();
+        const coupon = ensureCoupon(db, customer);
+        // Coupon begins when the first customer welcome is actually marked sent.
+        if (first && !coupon.issuedAt) coupon.issuedAt = customer.lastContacted;
+        rememberContactState(customer);
+        dbSave(db);
+        statusText = `${displayUsername(customer) || id} marked contacted.`;
+        render();
+    }
+
+
+    function completeFirstMessageSend(playerId, source = 'auto-detect') {
+        const id = asId(playerId);
+        const db = dbLoad();
+        const customer = db.customers[id];
+        if (!customer) return false;
+
+        // Idempotent: this automation is ONLY for the customer's first welcome message.
+        if (customerHasBeenContacted(customer)) {
+            GM_deleteValue(PENDING_FIRST_SEND_KEY);
+            return false;
+        }
+
+        customer.contacted = true;
+        customer.firstMessageSent = true;
+        customer.messageCount = Math.max(1, Number(customer.messageCount || 0) + 1);
+        customer.lastContacted = nowIso();
+
+        const coupon = ensureCoupon(db, customer);
+        if (!coupon.issuedAt) coupon.issuedAt = customer.lastContacted;
+
+        rememberContactState(customer);
+        dbSave(db);
+        GM_deleteValue(PENDING_FIRST_SEND_KEY);
+
+        statusText = `${displayUsername(customer) || id} first message detected as sent. Customer marked contacted; coupon activated.`;
+        try { render(); } catch {}
+        console.info('[MM CRM] First-message send completed', { playerId:id, source });
+        return true;
+    }
+
+    // ============================================================
+    // RESTOCK SUBSCRIBERS
+    // ============================================================
+
+    function subscribeCustomer(customer) {
+        const db = dbLoad();
+        const id = asId(customer.id);
+        db.subscribers[id] = {
+            id,
+            name: customer.name || id,
+            subscribedAt: db.subscribers[id]?.subscribedAt || nowIso(),
+            lastPrepared: db.subscribers[id]?.lastPrepared || null,
+            lastNotified: db.subscribers[id]?.lastNotified || null,
+            pendingNotification: db.subscribers[id]?.pendingNotification || null,
+            interests: Array.isArray(db.subscribers[id]?.interests) ? db.subscribers[id].interests : []
+        };
+        dbSave(db);
+        statusText = `${displayUsername(customer) || id} added to restock alerts.`;
+        render();
+    }
+
+    function unsubscribeCustomer(playerId) {
+        const db = dbLoad();
+        const id = asId(playerId);
+        delete db.subscribers[id];
+        dbSave(db);
+        statusText = `Subscriber [${id}] removed.`;
+        render();
+    }
+
+    function restockMessage(subscriber, item, quantity, price) {
+        const name = displayUsername(subscriber) || 'there';
+        const columns = [
+            {
+                title: 'RESTOCKED',
+                lines: [
+                    item,
+                    `Quantity: ${quantity.toLocaleString()}`,
+                    `Price: ${money(price)} each`
+                ]
+            },
+            {
+                title: 'HOW TO BUY',
+                lines: [
+                    'Open MANIC’S MAD HOUSE Bazaar',
+                    'Buy normally from the Bazaar listing',
+                    'Stock is first come, first served'
+                ]
+            },
+            {
+                title: 'IMPORTANT',
+                lines: [
+                    'Price and quantity can change quickly',
+                    'This alert does not reserve inventory',
+                    'Availability is based on current Bazaar stock'
+                ]
+            }
+        ];
+        const footerLines = ['Reply STOP if you no longer want restock alerts.'];
+
+        return {
+            subject: `${SHOP_NAME} Restock Alert`,
+            body: plainThreeColumnFallback({
+                customerName: name,
+                greeting: `Good news, ${name} — an item is back in stock!`,
+                centerText: item,
+                rightText: `${quantity.toLocaleString()} available`,
+                columns,
+                footerTitle: 'RESTOCK ALERTS',
+                footerLines
+            }),
+            bodyHtml: brandedMessageHtml({
+                customerName: name,
+                greeting: `Good news, ${name} — an item is back in stock!`,
+                centerText: item,
+                rightText: `${quantity.toLocaleString()} available`,
+                columns,
+                footerTitle: 'RESTOCK ALERTS',
+                footerLines
+            })
+        };
+    }
+
+
+    function currentBazaarInventoryRows(db, subscriber = null) {
+        const rows = Object.values(db.procurement?.bazaar || {})
+            .map(row => ({
+                id: asId(row.id),
+                name: String(row.name || db.procurement?.catalog?.[asId(row.id)]?.name || `Item ${row.id || ''}`),
+                quantity: Math.max(0, Number(row.quantity || 0)),
+                price: Math.max(0, Number(row.price || 0))
+            }))
+            .filter(row => row.quantity > 0 && row.price >= 0);
+
+        const filtered = subscriber
+            ? rows.filter(row => subscriberInterestMatch(subscriber, row.id, row.name))
+            : rows;
+
+        return filtered.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    function bazaarInventoryMessage(subscriber, rows, lastBazaarAt = null) {
+        const name = displayUsername(subscriber) || 'there';
+        const maxRows = 30;
+        const visibleRows = rows.slice(0, maxRows);
+        const omitted = Math.max(0, rows.length - visibleRows.length);
+        const chunks = [[], [], []];
+
+        visibleRows.forEach((row, index) => {
+            chunks[index % 3].push(`${row.name} — Qty ${row.quantity.toLocaleString()} — ${money(row.price)} each`);
+        });
+
+        const columns = chunks.map((lines, index) => ({
+            title: index === 0 ? 'CURRENT STOCK' : 'MORE STOCK',
+            lines: lines.length ? lines : ['No additional items']
+        }));
+
+        const footerLines = [
+            'Stock and prices can change quickly and are first come, first served.',
+            ...(omitted ? [`${omitted.toLocaleString()} additional item${omitted === 1 ? '' : 's'} omitted to keep this message compact.`] : []),
+            'Reply STOP if you no longer want restock alerts.'
+        ];
+
+        const totalUnits = rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+        const centerText = `${rows.length.toLocaleString()} SKU${rows.length === 1 ? '' : 's'}`;
+        const rightText = `${totalUnits.toLocaleString()} total units`;
+
+        return {
+            subject: `${SHOP_NAME} Current Bazaar Stock`,
+            body: plainThreeColumnFallback({
+                customerName: name,
+                greeting: `Here’s what’s currently available at ${SHOP_NAME}, ${name}.`,
+                centerText,
+                rightText,
+                columns,
+                footerTitle: 'RESTOCK ALERTS',
+                footerLines
+            }),
+            bodyHtml: brandedMessageHtml({
+                customerName: name,
+                greeting: `Here’s what’s currently available at ${SHOP_NAME}, ${name}.`,
+                centerText,
+                rightText,
+                columns,
+                footerTitle: 'RESTOCK ALERTS',
+                footerLines
+            }),
+            listedCount: rows.length,
+            includedCount: visibleRows.length,
+            omittedCount: omitted,
+            inventoryAsOf: lastBazaarAt || null
+        };
+    }
+
+    async function refreshOwnBazaarInventoryForMessage() {
+        if (!getApiKey()) return dbLoad();
+
+        await refreshProcurementCatalog(false);
+        const db = dbLoad();
+        try {
+            await syncOwnBazaar(db.procurement, db.procurement.catalog);
+            dbSave(db);
+            await flushDbWrites();
+        } catch (error) {
+            console.warn('[MM CRM] Bazaar inventory refresh before message failed', error);
+            throw error;
+        }
+        return dbLoad();
+    }
+
+    async function prepareBazaarInventoryNotification(playerId) {
+        const id = asId(playerId);
+        let db = dbLoad();
+        let sub = db.subscribers[id];
+        if (!sub) return;
+
+        statusText = `Refreshing Bazaar inventory for ${displayUsername(sub) || id}…`;
+        render();
+
+        try {
+            db = await refreshOwnBazaarInventoryForMessage();
+            sub = db.subscribers[id];
+            if (!sub) return;
+
+            const rows = currentBazaarInventoryRows(db, sub);
+            if (!rows.length) {
+                const interestText = sub.interests?.length
+                    ? ` matching this subscriber's interests (${sub.interests.join(', ')})`
+                    : '';
+                alert(`No current Bazaar inventory${interestText} was found. Sync your Bazaar or update the subscriber's Interests.`);
+                statusText = 'No matching Bazaar inventory to include.';
+                render();
+                return;
+            }
+
+            const msg = bazaarInventoryMessage(sub, rows, db.procurement?.lastBazaarAt);
+            sub.lastPrepared = nowIso();
+            sub.pendingNotification = {
+                id: makeId('notice'),
+                type: 'bazaar-inventory',
+                item: 'Current Bazaar Inventory',
+                quantity: rows.reduce((sum, row) => sum + row.quantity, 0),
+                price: 0,
+                itemCount: rows.length,
+                includedCount: msg.includedCount,
+                omittedCount: msg.omittedCount,
+                inventoryAsOf: db.procurement?.lastBazaarAt || null,
+                preparedAt: sub.lastPrepared
+            };
+            dbSave(db);
+            composeMessage(id, msg.subject, msg.body, msg.bodyHtml);
+
+            statusText =
+                `Bazaar inventory message prepared for ${displayUsername(sub) || id}: ` +
+                `${msg.includedCount}/${msg.listedCount} item${msg.listedCount === 1 ? '' : 's'} included` +
+                `${msg.omittedCount ? ` (${msg.omittedCount} omitted for message length)` : ''}.`;
+            render();
+        } catch (error) {
+            statusText = `Could not prepare Bazaar inventory message: ${error?.message || String(error)}`;
+            render();
+        }
+    }
+
+    function prepareRestockNotification(playerId, item, quantity, price) {
+        const db = dbLoad();
+        const id = asId(playerId);
+        const sub = db.subscribers[id];
+        if (!sub) return;
+        const catalogMatch = Object.values(db.procurement.catalog || {}).find(x => normalizeItemName(x.name) === normalizeItemName(item));
+        if (!subscriberInterestMatch(sub, catalogMatch?.id || '', item)) {
+            alert(`${sub.name || id} is not subscribed to ${item || 'this item'}. Update Interests first if you want to notify them.`);
+            return;
+        }
+        if (!item || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price < 0) {
+            alert('Enter a valid restock item, quantity, and price.');
+            return;
+        }
+        const msg = restockMessage(sub, item, quantity, price);
+        sub.lastPrepared = nowIso();
+        sub.pendingNotification = { id: makeId('notice'), item, quantity, price, preparedAt: sub.lastPrepared };
+        dbSave(db);
+        composeMessage(id, msg.subject, msg.body, msg.bodyHtml);
+        statusText = `Restock message prepared for ${displayUsername(sub) || id}. Mark notified only after sending.`;
+        render();
+    }
+
+    function markSubscriberNotified(playerId) {
+        const db = dbLoad();
+        const id = asId(playerId);
+        const sub = db.subscribers[id];
+        if (!sub?.pendingNotification) return;
+        const notice = { ...sub.pendingNotification, playerId: id, playerName: sub.name, sentAt: nowIso() };
+        sub.lastNotified = notice.sentAt;
+        sub.pendingNotification = null;
+        db.notificationHistory.unshift(notice);
+        db.notificationHistory = db.notificationHistory.slice(0, 500);
+        dbSave(db);
+        statusText = `Restock notification marked sent for ${displayUsername(sub) || id}.`;
+        render();
+    }
+
+    function processCustomerCommand(playerId, command) {
+        const id = asId(playerId);
+        const text = String(command || '').trim().toUpperCase();
+        const db = dbLoad();
+        const customer = db.customers[id];
+        if (!customer) return false;
+        if (text === 'RESTOCK') { subscribeCustomer(customer); return true; }
+        if (text === 'STOP') { unsubscribeCustomer(id); return true; }
+        return false;
+    }
+
+    // ============================================================
+    // CASHBACK REFUNDS
+    // ============================================================
+
+    function startCouponRefund(playerId) {
+        const id = asId(playerId);
+        const db = dbLoad();
+        const customer = db.customers[id];
+        const coupon = db.coupons[id];
+        if (!customer || !coupon) return;
+        const q = couponQualification(db, coupon);
+        if (!q.qualified) {
+            alert(q.reason);
+            return;
+        }
+        const refundId = makeId('refund');
+        db.refunds[refundId] = {
+            id: refundId,
+            playerId: id,
+            playerName: customer.name || id,
+            couponCode: coupon.code,
+            amount: q.cashback,
+            purchaseTotal: q.total,
+            saleIds: q.sales.map(s => String(s.id)),
+            status: 'pending',
+            createdAt: nowIso(),
+            completedAt: null,
+            cancelledAt: null
+        };
+        coupon.pendingRefundId = refundId;
+        dbSave(db);
+        statusText = `Cashback refund created for ${displayUsername(customer) || id}: ${money(q.cashback)}.`;
+        render();
+    }
+
+    function completeRefund(refundId) {
+        const db = dbLoad();
+        const refund = db.refunds[refundId];
+        if (!refund || refund.status !== 'pending') return;
+        const coupon = db.coupons[refund.playerId];
+        if (!coupon || coupon.pendingRefundId !== refundId) {
+            alert('Refund/coupon state mismatch. No data changed.');
+            return;
+        }
+        refund.status = 'completed';
+        refund.completedAt = nowIso();
+        coupon.uses = Number(coupon.uses || 0) + 1;
+        coupon.redemptions.push({
+            refundId,
+            amount: refund.amount,
+            purchaseTotal: refund.purchaseTotal,
+            saleIds: [...refund.saleIds],
+            completedAt: refund.completedAt
+        });
+        coupon.pendingRefundId = null;
+        dbSave(db);
+        statusText = `Refund ${money(refund.amount)} marked paid.`;
+        render();
+    }
+
+    function cancelRefund(refundId) {
+        const db = dbLoad();
+        const refund = db.refunds[refundId];
+        if (!refund || refund.status !== 'pending') return;
+        refund.status = 'cancelled';
+        refund.cancelledAt = nowIso();
+        const coupon = db.coupons[refund.playerId];
+        if (coupon?.pendingRefundId === refundId) coupon.pendingRefundId = null;
+        dbSave(db);
+        statusText = 'Pending refund cancelled.';
+        render();
+    }
+
+    function refundProfileUrl(refund) {
+        const message = `Cashback refund from ${SHOP_NAME} - coupon ${refund.couponCode}`;
+        const url = new URL('https://www.torn.com/profiles.php');
+        url.searchParams.set('XID', refund.playerId);
+        url.searchParams.set('mmcrm_refund', refund.id);
+        url.searchParams.set('mmcrm_amount', String(refund.amount));
+        url.searchParams.set('mmcrm_message', message);
+        return url.toString();
+    }
+
+    function openRefundProfile(refund) {
+        navigateFromCRM(refundProfileUrl(refund));
+    }
+
+    function visible(el) {
+        if (!el || !el.isConnected) return false;
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+    }
+
+    function setNativeValue(element, value) {
+        if (!element) return;
+        const win = element.ownerDocument?.defaultView || window;
+        const tag = String(element.tagName || '').toLowerCase();
+        const proto = tag === 'textarea' ? win.HTMLTextAreaElement?.prototype : win.HTMLInputElement?.prototype;
+        const setter = proto ? Object.getOwnPropertyDescriptor(proto, 'value')?.set : null;
+
+        if (setter) setter.call(element, String(value));
+        else element.value = String(value);
+
+        // React-style controlled inputs can keep an internal value tracker.
+        try {
+            if (element._valueTracker) element._valueTracker.setValue('');
+        } catch {}
+
+        try {
+            element.dispatchEvent(new win.InputEvent('input', {
+                bubbles: true,
+                inputType: 'insertText',
+                data: String(value)
+            }));
+        } catch {
+            element.dispatchEvent(new win.Event('input', { bubbles: true }));
+        }
+
+        element.dispatchEvent(new win.Event('change', { bubbles: true }));
+        element.dispatchEvent(new win.Event('blur', { bubbles: true }));
+    }
+
+    function findGiveMoneyContainer() {
+        const candidates = [...document.querySelectorAll('div,section,form')].filter(visible);
+        return candidates.find(el => /give\s+(some\s+)?money/i.test(el.innerText || '')) || null;
+    }
+
+    function findGiveMoneyTrigger() {
+        return [...document.querySelectorAll('button,a,[role="button"]')]
+            .filter(visible)
+            .find(el => /give\s+(some\s+)?money/i.test((el.innerText || el.textContent || '').trim())) || null;
+    }
+
+    function fillRefundForm() {
+        if (!location.pathname.includes('profiles.php')) return;
+        const params = new URLSearchParams(location.search);
+        const refundId = params.get('mmcrm_refund');
+        const amount = Number(params.get('mmcrm_amount'));
+        const message = params.get('mmcrm_message') || '';
+        const xid = asId(params.get('XID'));
+        if (!refundId || !xid || !Number.isFinite(amount) || amount <= 0) return;
+
+        let attempts = 0;
+        let clicked = false;
+        const timer = setInterval(() => {
+            attempts++;
+            let container = findGiveMoneyContainer();
+            if (!container && !clicked && attempts >= 4) {
+                const trigger = findGiveMoneyTrigger();
+                if (trigger) { clicked = true; trigger.click(); }
+            }
+            container = findGiveMoneyContainer();
+            if (container) {
+                const inputs = [...container.querySelectorAll('input')].filter(visible);
+                const amountInput = inputs.find(input => {
+                    const meta = `${input.name} ${input.id} ${input.placeholder} ${input.getAttribute('aria-label') || ''}`.toLowerCase();
+                    return /amount|money|cash/.test(meta);
+                });
+                const messageInput = [...container.querySelectorAll('textarea,input')].filter(visible).find(input => {
+                    const meta = `${input.name} ${input.id} ${input.placeholder} ${input.getAttribute('aria-label') || ''}`.toLowerCase();
+                    return /message|reason|note/.test(meta);
+                });
+                if (amountInput) {
+                    setNativeValue(amountInput, amount);
+                    if (messageInput) setNativeValue(messageInput, message);
+                    clearInterval(timer);
+                    statusText = `Refund form prepared for [${xid}] — final Send remains manual.`;
+                    render();
+                }
+            }
+            if (attempts >= 60) clearInterval(timer);
+        }, 250);
+    }
+
+    // ============================================================
+    // TORN MESSAGE COMPOSER PREFILL
+    // ============================================================
+
+    function getComposeParams() {
+        const hash = location.hash || '';
+        const amp = hash.indexOf('&');
+        return amp >= 0 ? new URLSearchParams(hash.slice(amp + 1)) : new URLSearchParams();
+    }
+
+    function composePayloadForCurrentPage() {
+        const params = getComposeParams();
+        const xid = asId(params.get('XID') || params.get('xid') || '');
+
+        const pending = GM_getValue(PENDING_COMPOSE_KEY, null);
+        if (pending && typeof pending === 'object') {
+            if (Date.now() - Number(pending.createdAt || 0) > 5 * 60 * 1000) {
+                GM_deleteValue(PENDING_COMPOSE_KEY);
+            } else {
+                const pendingId = asId(pending.playerId);
+                if (!xid || !pendingId || xid === pendingId) {
+                    return {
+                        playerId: pendingId || xid,
+                        subject: String(pending.subject || ''),
+                        body: String(pending.body || ''),
+                        bodyHtml: String(pending.bodyHtml || ''),
+                        source: 'storage'
+                    };
+                }
+            }
+        }
+
+        // URL values are fallback only. Rich CRM payload must win.
+        const urlSubject = params.get('subject');
+        const urlBody = params.get('body');
+        if (urlSubject !== null || urlBody !== null) {
+            return {
+                playerId: xid,
+                subject: urlSubject || '',
+                body: urlBody || '',
+                bodyHtml: '',
+                source: 'url'
+            };
+        }
+
+        return null;
+    }
+
+    function elementMeta(element) {
+        if (!element) return '';
+        const labelText = element.labels
+            ? [...element.labels].map(label => label.textContent || '').join(' ')
+            : '';
+        return [
+            element.name,
+            element.id,
+            element.placeholder,
+            element.getAttribute('aria-label'),
+            element.getAttribute('data-placeholder'),
+            element.getAttribute('title'),
+            labelText
+        ].filter(Boolean).join(' ').toLowerCase();
+    }
+
+    function findComposeSubjectInput() {
+        const preferredSelectors = [
+            'input[placeholder="Subject"]',
+            'input[placeholder*="subject" i]',
+            'input[name*="subject" i]',
+            'input[id*="subject" i]',
+            'input[aria-label*="subject" i]',
+            'textarea[placeholder="Subject"]',
+            'textarea[placeholder*="subject" i]'
+        ];
+
+        for (const selector of preferredSelectors) {
+            const el = [...document.querySelectorAll(selector)].find(visible);
+            if (el) return el;
+        }
+
+        const candidates = [...document.querySelectorAll(
+            'input:not([type="hidden"]), textarea'
+        )].filter(visible);
+
+        return candidates.find(el => /subject|title/.test(elementMeta(el))) || null;
+    }
+
+    function findComposeBodyInput(subjectInput) {
+        const textareas = [...document.querySelectorAll('textarea')].filter(visible);
+        const labelledTextarea = textareas.find(el => /message|body|mail|content/.test(elementMeta(el)));
+        if (labelledTextarea && labelledTextarea !== subjectInput) return labelledTextarea;
+
+        const editables = [...document.querySelectorAll(
+            '[contenteditable="true"], [role="textbox"][contenteditable], [role="textbox"]'
+        )].filter(visible);
+
+        const labelledEditable = editables.find(el =>
+            el !== subjectInput &&
+            /message|body|mail|content|write|compose/.test(elementMeta(el))
+        );
+        if (labelledEditable) return labelledEditable;
+
+        const unlabelledEditable = editables.find(el => el !== subjectInput);
+        if (unlabelledEditable) return unlabelledEditable;
+
+        return textareas.find(el => el !== subjectInput) || null;
+    }
+
+
+
+    function findTornCodeEditorToggle() {
+        const exactSelectors = [
+            '[aria-label="Toggle Code Editor"]',
+            '[title="Toggle Code Editor"]',
+            'button[aria-label*="Code Editor" i]',
+            'button[title*="Code Editor" i]',
+            '[role="button"][aria-label*="Code Editor" i]',
+            '[role="button"][title*="Code Editor" i]'
+        ];
+
+        for (const selector of exactSelectors) {
+            const found = [...document.querySelectorAll(selector)].find(visible);
+            if (found) return found;
+        }
+
+        return [...document.querySelectorAll('button,a,[role="button"]')]
+            .filter(visible)
+            .find(el => {
+                const meta = [
+                    el.title,
+                    el.getAttribute('aria-label'),
+                    el.getAttribute('data-tooltip'),
+                    el.textContent
+                ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
+
+                return meta === '{}' ||
+                    meta === '{ }' ||
+                    /toggle code editor|code editor|source code|source editor|html source/.test(meta);
+            }) || null;
+    }
+
+    function sourceEditorCandidates() {
+        const selectors = [
+            'textarea',
+            '.cm-content[contenteditable="true"]',
+            '.CodeMirror textarea',
+            '.monaco-editor textarea',
+            '.monaco-editor [contenteditable="true"]',
+            '[data-language="html"][contenteditable="true"]',
+            '[data-mode="html"][contenteditable="true"]',
+            '[role="textbox"][contenteditable="true"]'
+        ];
+
+        const set = new Set();
+        for (const selector of selectors) {
+            for (const el of document.querySelectorAll(selector)) {
+                if (visible(el)) set.add(el);
+            }
+        }
+        return [...set];
+    }
+
+    function likelyTornSourceEditor(before = new Set()) {
+        const candidates = sourceEditorCandidates()
+            .filter(el => !before.has(el))
+            .filter(el => {
+                const meta = elementMeta(el) + ' ' + String(el.className || '').toLowerCase();
+                const rect = el.getBoundingClientRect?.();
+                const largeEnough = !rect || rect.height >= 80 || rect.width >= 300;
+                const codeLike = /code|source|html|editor|cm-|codemirror|monaco/.test(meta);
+                const isTextarea = String(el.tagName || '').toLowerCase() === 'textarea';
+                return largeEnough && (codeLike || isTextarea || el.isContentEditable);
+            });
+
+        if (candidates.length) return candidates[0];
+
+        return sourceEditorCandidates()
+            .find(el => {
+                const meta = elementMeta(el) + ' ' + String(el.className || '').toLowerCase();
+                return /code|source|html|cm-|codemirror|monaco/.test(meta);
+            }) || null;
+    }
+
+    function getEditorText(element) {
+        if (!element) return '';
+        const tag = String(element.tagName || '').toLowerCase();
+        if (tag === 'textarea' || tag === 'input') return String(element.value || '');
+        return String(element.innerText || element.textContent || '');
+    }
+
+    function setSourceEditorValue(element, value) {
+        if (!element) return false;
+        const html = String(value || '');
+        const tag = String(element.tagName || '').toLowerCase();
+        const win = element.ownerDocument?.defaultView || window;
+
+        try { element.focus(); } catch {}
+
+        if (tag === 'textarea' || tag === 'input') {
+            setNativeValue(element, html);
+            dispatchEditorEvents(element);
+            return getEditorText(element).includes('<table') && getEditorText(element).includes('HOW IT WORKS');
+        }
+
+        try {
+            element.textContent = html;
+            element.dispatchEvent(new win.InputEvent('input', {
+                bubbles: true,
+                inputType: 'insertText',
+                data: html
+            }));
+        } catch {
+            try { element.dispatchEvent(new win.Event('input', { bubbles: true })); } catch {}
+        }
+
+        dispatchEditorEvents(element);
+        const current = getEditorText(element);
+        return current.includes('<table') && current.includes('HOW IT WORKS');
+    }
+
+    function sleepMs(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function waitForValue(getter, timeoutMs = 1800, intervalMs = 50) {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            const value = getter();
+            if (value) return value;
+            await sleepMs(intervalMs);
+        }
+        return null;
+    }
+
+    function expectedGreetingFromHtml(html) {
+        const temp = document.createElement('div');
+        temp.innerHTML = String(html || '');
+        const text = String(temp.textContent || '').replace(/\s+/g, ' ').trim();
+        const match = text.match(/WELCOME(?: BACK)? TO MANIC'S MAD HOUSE,\s*[^!]+!/i);
+        return match ? match[0] : '';
+    }
+
+    function verifyRenderedBrandedMessage(html) {
+        const greeting = expectedGreetingFromHtml(html);
+        const pageText = String(document.body?.innerText || '').replace(/\s+/g, ' ');
+
+        if (greeting && !pageText.toLowerCase().includes(greeting.toLowerCase())) return false;
+        if (!pageText.includes('HOW IT WORKS')) return false;
+        if (!pageText.includes('CASHBACK TIERS') && String(html).includes('CASHBACK TIERS')) return false;
+        if (!pageText.includes('IMPORTANT') && String(html).includes('IMPORTANT')) return false;
+
+        const matchingTable = [...document.querySelectorAll('table')].find(table => {
+            if (!visible(table)) return false;
+            const t = String(table.innerText || table.textContent || '');
+            return t.includes('HOW IT WORKS') &&
+                (!String(html).includes('CASHBACK TIERS') || t.includes('CASHBACK TIERS')) &&
+                (!String(html).includes('IMPORTANT') || t.includes('IMPORTANT'));
+        });
+
+        return Boolean(matchingTable);
+    }
+
+    async function injectHtmlThroughTornCodeEditor(htmlValue) {
+        const html = String(htmlValue || '').replace(/>\s+</g, '><').trim();
+        if (!html) return false;
+
+        const toggle = findTornCodeEditorToggle();
+        if (!toggle) return false;
+
+        const before = new Set(sourceEditorCandidates());
+
+        try { toggle.click(); } catch { return false; }
+
+        const source = await waitForValue(() => likelyTornSourceEditor(before), 2000, 50);
+        if (!source) {
+            // Try to return to visual mode if the click partially switched state.
+            try { toggle.click(); } catch {}
+            return false;
+        }
+
+        const sourceOK = setSourceEditorValue(source, html);
+        if (!sourceOK) {
+            try { toggle.click(); } catch {}
+            return false;
+        }
+
+        // Give Torn's editor state time to consume the source value before
+        // switching back to the visual editor.
+        await sleepMs(120);
+
+        const toggleBack = findTornCodeEditorToggle() || toggle;
+        try { toggleBack.click(); } catch { return false; }
+
+        await sleepMs(180);
+        return verifyRenderedBrandedMessage(html);
+    }
+
+    function findComposeRichEditorBody() {
+        const iframes = [...document.querySelectorAll('iframe')].filter(visible);
+
+        for (const frame of iframes) {
+            try {
+                const doc = frame.contentDocument || frame.contentWindow?.document;
+                const body = doc?.body;
+                if (!body) continue;
+
+                const meta = [
+                    frame.id,
+                    frame.name,
+                    frame.className,
+                    frame.title,
+                    frame.getAttribute('aria-label'),
+                    body.className,
+                    body.getAttribute('contenteditable'),
+                    body.getAttribute('role')
+                ].filter(Boolean).join(' ').toLowerCase();
+
+                const looksLikeEditor =
+                    body.isContentEditable ||
+                    body.getAttribute('contenteditable') === 'true' ||
+                    /editor|wysiwyg|message|compose|sceditor|mail/.test(meta);
+
+                if (looksLikeEditor) return body;
+            } catch {}
+        }
+
+        return null;
+    }
+
+    function dispatchEditorEvents(element) {
+        const win = element?.ownerDocument?.defaultView || window;
+        for (const type of ['input', 'change', 'keyup', 'blur']) {
+            try { element.dispatchEvent(new win.Event(type, { bubbles: true })); } catch {}
+        }
+    }
+
+    function setComposeField(element, value, htmlValue = '') {
+        if (!element) return false;
+        const text = String(value || '');
+        const richHtml = String(htmlValue || '');
+        const tag = String(element.tagName || '').toLowerCase();
+
+        if (tag === 'input' || tag === 'textarea') {
+            setNativeValue(element, text);
+            dispatchEditorEvents(element);
+            return String(element.value || '') === text;
+        }
+
+        const richTarget =
+            element.isContentEditable ||
+            element.getAttribute?.('contenteditable') === 'true' ||
+            element.getAttribute?.('role') === 'textbox' ||
+            tag === 'body';
+
+        if (richTarget) {
+            try { element.focus(); } catch {}
+            try {
+                if (richHtml) element.innerHTML = richHtml;
+                else element.textContent = text;
+            } catch {
+                return false;
+            }
+
+            dispatchEditorEvents(element);
+
+            if (richHtml) {
+                const hasBanner = Boolean(element.querySelector?.(`img[src="${SHOP_BANNER_URL}"]`));
+                const hasTable = Boolean(element.querySelector?.('table'));
+                return hasBanner && hasTable;
+            }
+
+            return String(element.innerText || element.textContent || '').trim() === text.trim();
+        }
+
+        return false;
+    }
+
+    function fillMessageComposer() {
+        if (!location.pathname.includes('messages.php')) return;
+
+        const payload = composePayloadForCurrentPage();
+        if (!payload || (!payload.subject && !payload.body && !payload.bodyHtml)) return;
+
+        let attempts = 0;
+        let observer = null;
+        let timer = null;
+        let inFlight = false;
+        let finished = false;
+
+        const stop = success => {
+            finished = true;
+            if (timer) clearInterval(timer);
+            if (observer) observer.disconnect();
+
+            if (success) {
+                GM_deleteValue(PENDING_COMPOSE_KEY);
+                statusText = `Message fields prepared for [${payload.playerId || 'recipient'}]. Send remains manual.`;
+            } else {
+                statusText = payload.bodyHtml
+                    ? 'Torn rich message preparation failed verification. The pending message was preserved; nothing was sent.'
+                    : 'Torn message composer fields could not be prepared.';
+            }
+            try { render(); } catch {}
+        };
+
+        const tryFill = async () => {
+            if (finished || inFlight) return false;
+            inFlight = true;
+            attempts++;
+
+            try {
+                const subjectInput = findComposeSubjectInput();
+                let subjectOK = false;
+
+                if (subjectInput) {
+                    setNativeValue(subjectInput, payload.subject);
+                    await sleepMs(25);
+                    subjectOK = String(subjectInput.value || '').trim() === String(payload.subject || '').trim();
+
+                    if (!subjectOK) {
+                        setNativeValue(subjectInput, payload.subject);
+                        await sleepMs(25);
+                        subjectOK = String(subjectInput.value || '').trim() === String(payload.subject || '').trim();
+                    }
+                }
+
+                let bodyOK = false;
+
+                if (payload.bodyHtml) {
+                    bodyOK = await injectHtmlThroughTornCodeEditor(payload.bodyHtml);
+                } else {
+                    const bodyInput = findComposeBodyInput(subjectInput);
+                    if (bodyInput) bodyOK = setComposeField(bodyInput, payload.body);
+                }
+
+                if (subjectOK && bodyOK) {
+                    stop(true);
+                    return true;
+                }
+
+                if (attempts >= 40) stop(false);
+                return false;
+            } finally {
+                inFlight = false;
+            }
+        };
+
+        tryFill();
+
+        timer = setInterval(() => {
+            if (!finished) tryFill();
+        }, 750);
+
+        observer = new MutationObserver(() => {
+            if (!finished && attempts < 40) tryFill();
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+    }
+
+    // ============================================================
+    // MANUAL CUSTOMER MANAGEMENT
+    // ============================================================
+
+    async function addManualCustomer(playerId) {
+        const id = asId(playerId);
+        if (!/^\d+$/.test(id)) { alert('Enter a valid Torn player ID.'); return; }
+        const db = dbLoad();
+        if (!db.customers[id]) {
+            const customer = ensureCustomer(db, id, id);
+            customer.manual = true;
+            ensureCoupon(db, customer);
+            dbSave(db);
+        }
+        try {
+            await refreshCustomerUsername(id, true);
+            statusText = `Customer [${id}] added/refreshed.`;
+        } catch (error) {
+            statusText = `Customer [${id}] saved, but username lookup failed: ${error?.message || String(error)}`;
+        }
+        render();
+    }
+
+    function removeCustomer(playerId) {
+        const id = asId(playerId);
+        const db = dbLoad();
+        const customer = db.customers[id];
+        if (!customer) return;
+
+        const label = displayUsername(customer) || `[${id}]`;
+        if (!confirm(
+            `Remove ${label} from the active CRM list?\n\n` +
+            `Their sales ledger and CRM history are preserved. Future purchases remain tracked, ` +
+            `but Rebuild Sales History will keep this customer filtered from the active list.`
+        )) return;
+
+        db.removedCustomers[id] = {
+            playerId: id,
+            playerName: displayUsername(customer) || customer.name || id,
+            removedAt: nowIso()
+        };
+        delete db.customers[id];
+        delete db.subscribers[id];
+        dbSave(db);
+
+        statusText = `${label} removed from active CRM. Sales remain tracked and rebuild will preserve the filter.`;
+        render();
+    }
+
+    function restoreRemovedCustomer(playerId) {
+        const id = asId(playerId);
+        const db = dbLoad();
+        const removed = db.removedCustomers[id];
+        if (!removed) return false;
+
+        delete db.removedCustomers[id];
+        const customer = ensureCustomer(db, id, removed.playerName || id);
+        customer.purchases = 0;
+        customer.units = 0;
+        customer.spent = 0;
+        customer.firstPurchase = null;
+        customer.lastPurchase = null;
+
+        const sales = Object.values(db.sales)
+            .filter(s => asId(s.playerId) === id)
+            .sort((a,b) => Number(a.timestamp) - Number(b.timestamp));
+
+        for (const sale of sales) applySaleToCustomer(db, sale, removed.playerName || sale.playerName || id);
+        dbSave(db);
+        statusText = `${removed.playerName || `[${id}]`} restored with ${sales.length} tracked sale${sales.length === 1 ? '' : 's'}.`;
+        render();
+        return true;
+    }
+
+
+    // ============================================================
+    // UI
+    // ============================================================
+
+    function btn(gold = false) {
+        return `border:1px solid ${gold ? '#e7c46d' : '#666'};background:${gold ? '#d7ad4b' : '#303030'};color:${gold ? '#111' : '#fff'};border-radius:5px;padding:6px 9px;cursor:pointer;font-weight:${gold ? '700' : '500'};`;
+    }
+
+    function inputCss() {
+        return 'box-sizing:border-box;background:#171717;color:#eee;border:1px solid #555;border-radius:5px;padding:7px;min-width:0;';
+    }
+
+    function card(content) {
+        return `<div style="background:#181818;border:1px solid #444;border-radius:7px;padding:10px;margin:8px 0;">${content}</div>`;
+    }
+
+    function tabsHtml() {
+        const simpleTabs = [['home','Home'],['stock','Stock'],['deals','Deals'],['customers','Customers'],['more','More']];
+        const advancedTabs = [['ops','Operations'],['customers','Customers'],['inventory','Inventory'],['procurement','Procure'],['intel','Market Intel'],['analytics','Analytics'],['coupons','Coupons'],['subscribers','Restock'],['refunds','Refunds'],['sales','Sales'],['settings','Settings']];
+        const tabs = simpleMode ? simpleTabs : advancedTabs;
+        return `<div style="display:flex;gap:5px;flex-wrap:wrap;margin:8px 0;align-items:center;">
+            ${tabs.map(([id,label]) => `<button data-tab="${id}" style="${btn(activeTab === id)}${activeTab === id ? 'border-color:#d7ad4b;' : ''}">${label}</button>`).join('')}
+            <button id="mm-ui-mode-toggle" style="${btn()}margin-left:auto;font-size:11px;">${simpleMode ? 'Advanced' : 'Simple'} mode</button>
+        </div>`;
+    }
+
+    function customerMatchesFilters(db, c) {
+        const id = asId(c.id || c.playerId);
+        const contacted = customerHasBeenContacted(c);
+        const subscribed = Boolean(db.subscribers[id]);
+        const coupon = db.coupons[id];
+        const cashback = coupon ? couponQualification(db, coupon).qualified : false;
+
+        if (customerFilters.message === 'sent' && !contacted) return false;
+        if (customerFilters.message === 'not-sent' && contacted) return false;
+        if (customerFilters.contacted === 'yes' && !contacted) return false;
+        if (customerFilters.contacted === 'no' && contacted) return false;
+        if (customerFilters.restock === 'yes' && !subscribed) return false;
+        if (customerFilters.restock === 'no' && subscribed) return false;
+        if (customerFilters.cashback === 'eligible' && !cashback) return false;
+        if (customerFilters.cashback === 'not-eligible' && cashback) return false;
+        return true;
+    }
+
+    function customerFiltersHtml(total, shown) {
+        const select = (id, value, choices) => `<select id="${id}" style="${inputCss()}padding:5px 7px;font-size:12px;">${choices.map(([v,l]) => `<option value="${v}"${value === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+        return card(`<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;"><b>Filter</b>${select('mm-filter-message', customerFilters.message, [['all','Messages: All'],['sent','Messages: Sent'],['not-sent','Messages: Not sent']])}${select('mm-filter-contacted', customerFilters.contacted, [['all','Contacted: All'],['yes','Contacted: Yes'],['no','Contacted: No']])}${select('mm-filter-restock', customerFilters.restock, [['all','Restock: All'],['yes','Restock: Yes'],['no','Restock: No']])}${select('mm-filter-cashback', customerFilters.cashback, [['all','Cashback: All'],['eligible','Cashback: Eligible'],['not-eligible','Cashback: Not eligible']])}<button id="mm-filter-reset" style="${btn()}padding:5px 9px;font-size:12px;">Reset</button><span style="font-size:12px;color:#aaa;margin-left:auto;">Showing ${shown} of ${total}</span></div>`);
+    }
+
+    function customersHtml(db) {
+        const allCustomers = Object.values(db.customers).filter(c => !db.removedCustomers[asId(c.id || c.playerId)]).sort((a,b) => Number(new Date(b.lastPurchase || 0)) - Number(new Date(a.lastPurchase || 0)));
+        const customers = allCustomers.filter(c => customerMatchesFilters(db, c));
+        const add = `<div style="display:flex;gap:6px;"><input id="mm-add-id" placeholder="Torn player ID" style="${inputCss()}flex:1"><button id="mm-add-customer" style="${btn(true)}">Add</button><button id="mm-refresh-customers" style="${btn()}">Refresh Customers</button></div>`;
+        const filters = customerFiltersHtml(allCustomers.length, customers.length);
+        if (!allCustomers.length) return add + filters + card('No customers yet. API Bazaar sales will populate this automatically.');
+        if (!customers.length) return add + filters + card('No customers match the selected filters.');
+        return customerReorderHtml(db) + add + filters + customers.map(c => {
+            const coupon = db.coupons[c.id];
+            const q = couponQualification(db, coupon);
+            const name = escapeHtml(displayUsername(c) || 'Customer');
+            return card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;"><div><b>${name}</b> <span style="color:#888">[${escapeHtml(c.id)}]</span><div style="font-size:12px;color:#bbb;margin-top:4px;">Purchases: ${c.purchases.toLocaleString()} · Units: ${c.units.toLocaleString()} · Spent: ${money(c.spent)}<br>Last purchase: ${escapeHtml(fmtDate(c.lastPurchase))}<br>Contacted: ${customerHasBeenContacted(c) ? `Yes (${c.messageCount})` : 'No'} · Coupon: ${escapeHtml(coupon?.code || '—')} · Uses left: ${couponRemaining(coupon)}<br>Cashback: ${q.qualified ? `${money(q.cashback)} on ${money(q.total)}` : escapeHtml(q.reason)}</div></div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><button data-action="compose" data-id="${c.id}" style="${btn(true)}">Compose</button>${coupon?.issuedAt && couponRemaining(coupon) > 0 ? `<button data-action="coupon-reminder" data-id="${c.id}" style="${btn(q.qualified)}">Coupon Reminder</button>` : ''}<button data-action="contacted" data-id="${c.id}" style="${btn()}">Mark contacted</button><button data-action="subscribe" data-id="${c.id}" style="${btn()}">Restock+</button><button data-action="start-refund" data-id="${c.id}" style="${btn()}" ${q.qualified ? '' : 'disabled'}>Cashback</button><button data-action="profile" data-id="${c.id}" style="${btn()}">Profile</button><button data-action="remove" data-id="${c.id}" style="${btn()}">Remove</button></div></div>`);
+        }).join('');
+    }
+
+    function couponsHtml(db) {
+        const coupons = Object.values(db.coupons).sort((a,b) => String(a.playerName).localeCompare(String(b.playerName)));
+        if (!coupons.length) return card('No coupons yet.');
+        return coupons.map(c => {
+            const q = couponQualification(db, c);
+            return card(`<b>${escapeHtml(c.playerName)} [${escapeHtml(c.playerId)}]</b><div style="font-size:12px;color:#bbb;margin-top:4px;">Code: <b>${escapeHtml(c.code)}</b> · Remaining: ${couponRemaining(c)}/${c.maxUses}<br>Issued: ${escapeHtml(fmtDate(c.issuedAt))}<br>Current qualification: ${q.qualified ? `${money(q.cashback)} cashback on ${money(q.total)}` : escapeHtml(q.reason)}<br>Completed redemptions: ${(c.redemptions || []).length}</div>`);
+        }).join('');
+    }
+
+    function subscribersHtml(db) {
+        const subs = Object.values(db.subscribers);
+        const bazaarCount = Object.keys(db.procurement?.bazaar || {}).length;
+        const bazaarQty = Object.values(db.procurement?.bazaar || {}).reduce((sum, row) => sum + Number(row.quantity || 0), 0);
+        const lastBazaar = db.procurement?.lastBazaarAt;
+
+        const inventoryControls = card(`
+            <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">
+                <div>
+                    <b>Automatic Bazaar Inventory Message</b>
+                    <div style="font-size:11px;color:#999;margin-top:3px;">
+                        Current cache: ${bazaarCount.toLocaleString()} SKU(s) · ${bazaarQty.toLocaleString()} units · Last refreshed ${escapeHtml(fmtDate(lastBazaar))}.
+                        Inventory is refreshed again automatically when you compose an Inventory Alert.
+                    </div>
+                </div>
+                <button id="mm-restock-refresh-inventory" style="${btn()}">Refresh Bazaar Inventory</button>
+            </div>
+        `);
+
+        const manualControls = `<details style="margin:7px 0;">
+            <summary style="cursor:pointer;font-size:11px;color:#aaa;">Single-item restock message</summary>
+            <div style="display:grid;grid-template-columns:1.5fr .7fr .9fr;gap:6px;margin-top:6px;">
+                <input id="mm-restock-item" placeholder="Item" style="${inputCss()}">
+                <input id="mm-restock-qty" type="number" min="1" placeholder="Qty" style="${inputCss()}">
+                <input id="mm-restock-price" type="number" min="0" placeholder="Price" style="${inputCss()}">
+            </div>
+        </details>`;
+
+        if (!subs.length) {
+            return inventoryControls + manualControls + card('No restock subscribers. Add customers manually after they reply RESTOCK.');
+        }
+
+        return inventoryControls + manualControls + subs.map(s => {
+            const matching = currentBazaarInventoryRows(db, s);
+            return card(`<div style="display:flex;justify-content:space-between;gap:8px;">
+                <div>
+                    <b>${escapeHtml(displayUsername(s) || `[${s.id}]`)}</b>
+                    <div style="font-size:12px;color:#bbb;">
+                        Subscribed: ${escapeHtml(fmtDate(s.subscribedAt))}<br>
+                        Last sent: ${escapeHtml(fmtDate(s.lastNotified))}<br>
+                        Interests: ${s.interests?.length ? escapeHtml(s.interests.join(', ')) : 'All items'}<br>
+                        Current matching Bazaar inventory: <b>${matching.length}</b> SKU(s)
+                        ${s.pendingNotification ? '<br><span style="color:#e7c46d">Prepared message awaiting manual sent confirmation.</span>' : ''}
+                    </div>
+                </div>
+                <div style="display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;align-content:flex-start;">
+                    <button data-action="notify-inventory" data-id="${s.id}" style="${btn(true)}">Inventory Alert</button>
+                    <button data-action="notify" data-id="${s.id}" style="${btn()}">Single Item</button>
+                    <button data-action="edit-interests" data-id="${s.id}" style="${btn()}">Interests</button>
+                    ${s.pendingNotification ? `<button data-action="notified" data-id="${s.id}" style="${btn()}">Mark notified</button>` : ''}
+                    <button data-action="unsubscribe" data-id="${s.id}" style="${btn()}">Remove</button>
+                </div>
+            </div>`);
+        }).join('');
+    }
+
+    function refundsHtml(db) {
+        const refunds = Object.values(db.refunds).sort((a,b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+        if (!refunds.length) return card('No cashback refunds yet.');
+        return refunds.map(r => card(`<div style="display:flex;justify-content:space-between;gap:8px;"><div><b>${escapeHtml(r.playerName)} — ${money(r.amount)}</b><div style="font-size:12px;color:#bbb;">Status: ${escapeHtml(r.status)} · Purchase total: ${money(r.purchaseTotal)}<br>Created: ${escapeHtml(fmtDate(r.createdAt))}</div></div><div style="display:flex;gap:5px;flex-wrap:wrap;">${r.status === 'pending' ? `<button data-action="open-refund" data-refund="${r.id}" style="${btn(true)}">Open refund</button><button data-action="complete-refund" data-refund="${r.id}" style="${btn()}">Mark paid</button><button data-action="cancel-refund" data-refund="${r.id}" style="${btn()}">Cancel</button>` : ''}</div></div>`)).join('');
+    }
+
+    function salesHtml(db) {
+        const sales = Object.values(db.sales).sort((a,b) => Number(b.timestamp) - Number(a.timestamp)).slice(0, 150);
+        if (!sales.length) return card('No Bazaar sales imported yet.');
+        return sales.map(s => card(`<b>${escapeHtml(s.playerName)} [${escapeHtml(s.playerId)}]</b> — ${money(s.total)}<div style="font-size:12px;color:#bbb;">${escapeHtml(fmtDate(s.timestamp))} · ${Number(s.units || 0).toLocaleString()} unit(s) · Log ${escapeHtml(s.id)}${s.items?.length ? `<br>${s.items.map(i => `${escapeHtml(i.name)} × ${Number(i.quantity || 0).toLocaleString()}`).join(', ')}` : ''}</div>`)).join('');
+    }
+
+
+    function priorityBadge(priority) {
+        const styles = {
+            CRITICAL: 'background:#6b1f1f;color:#ffd0d0;border:1px solid #a94a4a;',
+            HIGH: 'background:#5b431a;color:#ffe0a3;border:1px solid #9b742f;',
+            MEDIUM: 'background:#273d54;color:#cfe7ff;border:1px solid #476d92;',
+            WATCH: 'background:#39304d;color:#ded0ff;border:1px solid #66568d;',
+            HEALTHY: 'background:#203d29;color:#c9f0d3;border:1px solid #3f7550;'
+        };
+        return `<span style="${styles[priority] || styles.HEALTHY}padding:2px 6px;border-radius:10px;font-size:10px;font-weight:bold;">${escapeHtml(priority)}</span>`;
+    }
+
+    function inventoryHtml(db) {
+        const rows = procurementRows(db);
+        const proc = db.procurement;
+        const syncLine =
+            `Last sync: ${fmtDate(proc.lastSyncAt)} · Bazaar ${Object.keys(proc.bazaar).length} SKU(s) · ` +
+            `Cost lots ${proc.acquisitions.length.toLocaleString()}`;
+
+        if (!rows.length) {
+            return card(
+                `<b>Inventory Director</b><div style="font-size:12px;color:#bbb;margin-top:5px;">` +
+                `No inventory or sales SKUs are available yet. Run Sync Procurement and Rebuild Sales History.</div>` +
+                `<button id="mm-proc-sync" style="${btn(true)}margin-top:8px;">Sync Procurement</button>`
+            );
+        }
+
+        return `
+            ${pricingDirectorHtml(db)}
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0 7px;">
+                <button id="mm-proc-sync" style="${btn(true)}">Sync Procurement</button>
+                <button id="mm-proc-refresh-markets" style="${btn()}">Refresh Priority Markets</button>
+                <span style="font-size:11px;color:#999;">${escapeHtml(syncLine)}</span>
+            </div>
+            ${rows.map(r => card(`
+                <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
+                    <div style="min-width:0;">
+                        <div>
+                            <b>${escapeHtml(r.name)}</b>
+                            <span style="color:#777">[${escapeHtml(r.id)}]</span>
+                            ${priorityBadge(r.priority)}
+                            <span style="margin-left:4px;font-size:10px;color:${r.action === 'BUY' ? '#9fe3a8' : r.action === 'WATCH' ? '#ffd18a' : '#888'};">
+                                ${escapeHtml(r.action)}
+                            </span>
+                        </div>
+                        <div style="font-size:11px;color:#bbb;margin-top:4px;line-height:1.5;">
+                            Stock <b>${r.stock}</b> (Bazaar ${r.bazaarQty} · IM ${r.itemMarketQty} · On-hand ${r.onHand})<br>
+                            Sold 24h ${r.sold24h} · 7d ${r.sold7d} · 30d ${r.sold30d} · Velocity ${r.daily.toFixed(2)}/day<br>
+                            Days stock ${Number.isFinite(r.daysStock) ? r.daysStock.toFixed(1) : '∞'} · Target ${r.targetStock} · Reorder ${r.reorderPoint} · Need <b>${r.shortage}</b><br>
+                            Acquisition score <b>${r.acquisitionScore.toFixed(0)}/100</b> · Live ROI ${r.bestDealMarginPct.toFixed(1)}% · Quick-sale score ${r.velocityScore.toFixed(0)}/100 · Turnover ${Number.isFinite(r.turnoverDays)?r.turnoverDays.toFixed(1)+'d':'—'}<br>
+                            Liquidity <b>${r.liquidityGrade}</b> (${r.liquidityScore.toFixed(0)}/100) · Market depth ±3% ${r.depth3Pct.toLocaleString()}<br>
+                            Realistic exit ${r.realisticExit ? money(r.realisticExit) : '—'} · Best live buy ${r.bestBuyPrice ? money(r.bestBuyPrice) : '—'} · Buy target ${r.buyTarget ? money(r.buyTarget) : '—'}<br>
+                            FIFO cost ${r.avgCost ? money(r.avgCost) : '—'}${r.avgCost && r.realisticExit ? ` · Held-margin ${r.marginPct.toFixed(1)}%` : ''}${r.bestBuyPrice && r.realisticExit ? ` · Live-deal ${r.bestDealMarginPct.toFixed(1)}%` : ''}<br>
+                            7d market median ${r.median7d ? money(r.median7d) : '—'} · Volatility ${r.historySamples ? `${r.volatilityPct.toFixed(1)}% (${r.historySamples})` : '—'}
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">
+                        <button data-proc-action="watch" data-item="${r.id}" style="${btn(r.watched)}">${r.watched ? 'Watching' : 'Watch'}</button>
+                        <button data-proc-action="market" data-item="${r.id}" style="${btn()}">Refresh Market</button>
+                        <button data-proc-action="log-buy" data-item="${r.id}" data-name="${escapeHtml(r.name)}" style="${btn()}">Log Buy</button>
+                    </div>
+                </div>
+            `)).join('')}
+        `;
+    }
+
+
+    // ============================================================
+    // VALUE / ROI INTELLIGENCE v6.5
+    // ============================================================
+
+    function medianNumber(values){
+        const a=values.map(Number).filter(Number.isFinite).sort((x,y)=>x-y);
+        if(!a.length)return 0; const m=Math.floor(a.length/2);
+        return a.length%2?a[m]:(a[m-1]+a[m])/2;
+    }
+
+    function capitalRotationRows(db){
+        return procurementRows(db).filter(r=>r.bestBuyPrice>0&&r.realisticExit>r.bestBuyPrice&&r.bestDealProfit>0).map(r=>{
+            const qty=Math.max(1,Number(r.opportunityQtyCap||1));
+            const spend=qty*Number(r.bestBuyPrice||0), profit=qty*Number(r.bestDealProfit||0);
+            let days=Number(r.turnoverDays);
+            if(!Number.isFinite(days)||days<=0)days=r.liquidityScore>=80?1:r.liquidityScore>=60?2:r.liquidityScore>=40?4:7;
+            days=Math.max(.25,days);
+            const ppd=profit/days, eff=spend>0?ppd/spend*100:0;
+            const score=Math.max(0,Math.min(100,Number(r.acquisitionScore||0)*.4+Math.min(100,eff*18)*.4+Number(r.liquidityScore||0)*.2));
+            return Object.assign({},r,{rotationQty:qty,rotationSpend:spend,rotationExpectedProfit:profit,rotationSellDays:days,profitPerDay:ppd,capitalEfficiencyPctDay:eff,rotationScore:score});
+        }).sort((a,b)=>b.rotationScore-a.rotationScore||b.profitPerDay-a.profitPerDay);
+    }
+
+    function capitalCommandHtml(db){
+        const rows=capitalRotationRows(db).slice(0,12);
+        const travel=travelOpportunityRows(db).filter(r=>r.profit>0).slice(0,5);
+        return card('<b>Capital Command Center - Profit Velocity</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Ranks market capital by expected profit/day and compares Travel as a separate fast-rotation channel using TornW3B live stock plus the CRM arrival model.</div>'+
+            (rows.length?rows.map((r,i)=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>#'+(i+1)+' '+escapeHtml(r.name)+'</b> · Score <b>'+r.rotationScore.toFixed(0)+'</b><br>Deploy '+money(r.rotationSpend)+' · Expected '+money(r.rotationExpectedProfit)+' · <b>'+money(r.profitPerDay)+'/day</b> · '+r.capitalEfficiencyPctDay.toFixed(2)+'%/day · '+r.rotationSellDays.toFixed(1)+'d · ROI '+r.bestDealMarginPct.toFixed(1)+'%</div>').join(''):'<div style="font-size:11px;color:#888;">Sync procurement and market data to rank capital opportunities.</div>')+
+            '<div style="border-top:2px solid #444;margin-top:7px;padding-top:6px;font-size:11px;"><b>Travel alternatives</b></div>'+
+            (travel.length?travel.map((r,i)=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>#'+(i+1)+' '+escapeHtml(r.country)+' · '+escapeHtml(r.itemName)+'</b> '+travelRecommendationBadge(r.recommendation)+'<br>Risk-adjusted '+money(r.riskAdjustedProfitPerHour)+'/hr · Profit/item '+money(r.profit)+' · Live stock '+Number(r.stock||0).toLocaleString()+'</div>').join(''):'<div style="font-size:11px;color:#888;">Refresh Travel Stock to compare travel against market sourcing.</div>'));
+    }
+
+    function salesForCustomer(db,id){
+        id=asId(id); return Object.values(db.sales||{}).filter(x=>asId(x.playerId)===id).sort((a,b)=>Number(a.timestamp||0)-Number(b.timestamp||0));
+    }
+
+    function customerAffinityRows(db){
+        return Object.values(db.customers||{}).map(c=>{
+            const p={},cats={}; let total=0;
+            salesForCustomer(db,c.id).forEach(s=>(s.items||[]).forEach(i=>{
+                const id=asId(i.itemId??i.item_id??i.id??''), name=String(i.name??i.itemName??i.item_name??'Unknown item'), q=Math.max(0,Number(i.quantity||0));
+                if(!q)return; total+=q; const k=id||name;
+                if(!p[k])p[k]={id:id,name:name,units:0}; p[k].units+=q;
+                const type=String(db.procurement.catalog?.[id]?.type||'Other'); cats[type]=(cats[type]||0)+q;
+            }));
+            const products=Object.values(p).sort((a,b)=>b.units-a.units).slice(0,5).map(x=>Object.assign({},x,{share:total?x.units/total:0}));
+            const categories=Object.entries(cats).sort((a,b)=>b[1]-a[1]).slice(0,4).map(x=>({name:x[0],units:x[1],share:total?x[1]/total:0}));
+            return Object.assign({},c,{totalAffinityUnits:total,affinityProducts:products,affinityCategories:categories});
+        }).sort((a,b)=>b.totalAffinityUnits-a.totalAffinityUnits);
+    }
+
+    function customerReorderRows(db){
+        const affin=new Map(customerAffinityRows(db).map(x=>[asId(x.id),x])), now=Date.now(), out=[];
+        Object.values(db.customers||{}).forEach(c=>{
+            const sales=salesForCustomer(db,c.id); if(sales.length<2)return;
+            const t=sales.map(x=>Number(x.timestamp||0)).filter(x=>x>0).sort((a,b)=>a-b), ints=[];
+            for(let i=1;i<t.length;i++)ints.push((t[i]-t[i-1])/86400000);
+            const typical=Math.max(.25,medianNumber(ints)||7), last=t[t.length-1]||0, since=last?Math.max(0,(now-last)/86400000):999;
+            const top=affin.get(asId(c.id))?.affinityProducts?.[0]||null;
+            let stock=null;
+            if(top){
+                if(top.id&&Number(db.procurement.bazaar?.[top.id]?.quantity||0)>0)stock=db.procurement.bazaar[top.id];
+                else stock=Object.values(db.procurement.bazaar||{}).find(x=>String(x.name||'').toLowerCase()===String(top.name||'').toLowerCase()&&Number(x.quantity||0)>0)||null;
+            }
+            const score=Math.max(0,Math.min(100,Math.min(100,since/typical*65)+Math.min(20,sales.length*2)+(stock?15:0)));
+            out.push(Object.assign({},c,{typicalReorderDays:typical,daysSincePurchase:since,reorderScore:score,topAffinity:top,currentStockMatch:stock,predictedNextAt:last?new Date(last+typical*86400000).toISOString():null}));
+        });
+        return out.sort((a,b)=>b.reorderScore-a.reorderScore);
+    }
+
+    function prepareReorderOutreach(id){
+        const db=dbLoad(), r=customerReorderRows(db).find(x=>asId(x.id)===asId(id));
+        if(!r){statusText='Not enough purchase history to calculate a reorder signal.';render();return;}
+        const name=displayUsername(r)||r.id, top=r.topAffinity, stock=r.currentStockMatch;
+        const columns=[
+            {title:'YOUR FAVORITES',lines:[top?top.name+' - '+(top.share*100).toFixed(0)+'% of tracked units':'No dominant item yet','Typical reorder: '+r.typicalReorderDays.toFixed(1)+' days']},
+            {title:'CURRENT STOCK',lines:[stock?(stock.name||top?.name)+' - Qty '+Number(stock.quantity||0).toLocaleString():'Your top item is not currently listed',stock?money(stock.price)+' each':'I can notify you when it returns']},
+            {title:'QUICK INFO',lines:[r.daysSincePurchase.toFixed(1)+' days since your last purchase','Stock is first come, first served','Reply STOP to leave restock alerts']}
+        ];
+        const subject=SHOP_NAME+' - something you usually buy is available', greeting='Welcome back to '+SHOP_NAME+', '+name+'!';
+        const body=plainThreeColumnFallback({customerName:name,greeting:greeting,centerText:top?top.name:'Your usual items',rightText:'Reorder score '+r.reorderScore.toFixed(0)+'/100',columns:columns,footerTitle:'RESTOCK',footerLines:['Reply RESTOCK for inventory alerts.','Reply STOP at any time to leave the list.']});
+        const html=brandedMessageHtml({customerName:name,greeting:greeting,centerText:top?top.name:'Your usual items',rightText:'Reorder score '+r.reorderScore.toFixed(0)+'/100',columns:columns,footerTitle:'RESTOCK',footerLines:['Reply RESTOCK for inventory alerts.','Reply STOP at any time to leave the list.']});
+        composeMessage(r.id,subject,body,html); statusText='Reorder message prepared for '+name+'. Send remains manual.'; render();
+    }
+
+    function customerReorderHtml(db){
+        const rows=customerReorderRows(db).filter(x=>x.reorderScore>=65).slice(0,12);
+        return card('<b>Automated Customer Reorder Intelligence</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Predicts repeat-purchase timing from real order intervals and product affinity. Compose only - never sends automatically.</div>'+
+            (rows.length?rows.map(r=>'<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;"><div style="font-size:11px;"><b>'+escapeHtml(displayUsername(r)||r.id)+'</b> · Score <b>'+r.reorderScore.toFixed(0)+'</b> · Last '+r.daysSincePurchase.toFixed(1)+'d · Typical '+r.typicalReorderDays.toFixed(1)+'d<br>Favorite '+(r.topAffinity?escapeHtml(r.topAffinity.name)+' '+(r.topAffinity.share*100).toFixed(0)+'%':'—')+' · '+(r.currentStockMatch?'<span style="color:#9fe3a8;">In stock now</span>':'<span style="color:#aaa;">Not currently listed</span>')+'</div><button data-action="reorder-compose" data-id="'+r.id+'" style="'+btn(true)+'">Compose Reorder</button></div>').join(''):'<div style="font-size:11px;color:#888;">No customers are currently above the reorder threshold.</div>'));
+    }
+
+    function supplierPerformanceRows(db){
+        const g={}, proc=new Map(procurementRows(db).map(r=>[asId(r.id),r]));
+        (db.procurement.acquisitions||[]).forEach(a=>{
+            const sid=asId(a.sellerId??a.seller_id??a.playerId??''), sn=String(a.sellerName??a.seller_name??a.vendor??'').trim(); if(!sid&&!sn)return;
+            const k=sid||'name:'+sn.toLowerCase(); if(!g[k])g[k]={sellerId:sid,sellerName:sn||sid,purchases:0,spend:0,estimatedProfit:0,items:{},observed:0};
+            const x=g[k],q=Math.max(0,Number(a.quantity||0)),c=Math.max(0,Number(a.unitCost||0)),iid=asId(a.itemId||a.item_id||''),exit=Number(proc.get(iid)?.realisticExit||0);
+            x.purchases++;x.spend+=q*c;x.estimatedProfit+=Math.max(0,(exit-c)*q);x.items[iid||String(a.itemName||'Unknown')]=true;
+        });
+        Object.entries(db.marketIntel.suppliers||{}).forEach(([id,o])=>{if(!g[id])g[id]={sellerId:id,sellerName:o.sellerName||id,purchases:0,spend:0,estimatedProfit:0,items:{},observed:0};const x=g[id];x.observed=Number(o.seenCount||0);Object.keys(o.items||{}).forEach(i=>x.items[i]=true);});
+        return Object.values(g).map(x=>{const roi=x.spend?x.estimatedProfit/x.spend*100:0,c=Object.keys(x.items).filter(Boolean).length,score=Math.max(0,Math.min(100,Math.min(100,roi*4)*.4+Math.min(100,x.purchases*8)*.25+Math.min(100,x.observed*2)*.2+Math.min(100,c*10)*.15));return Object.assign({},x,{roiPct:roi,itemCount:c,score:score});}).sort((a,b)=>b.score-a.score);
+    }
+
+    function supplierPerformanceHtml(db){
+        const rows=supplierPerformanceRows(db).slice(0,15);
+        return card('<b>Supplier Performance & Deal Memory</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Combines acquisitions with repeated seller observations.</div>'+
+            (rows.length?rows.map(r=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>'+escapeHtml(r.sellerName||r.sellerId||'Unknown')+'</b> '+(r.sellerId?'['+escapeHtml(r.sellerId)+']':'')+' · Score <b>'+r.score.toFixed(0)+'</b> · Buys '+r.purchases+' · '+r.itemCount+' SKU(s) · Spend '+money(r.spend)+' · Est. profit '+money(r.estimatedProfit)+' · ROI '+r.roiPct.toFixed(1)+'% · Observed '+r.observed+'</div>').join(''):'<div style="font-size:11px;color:#888;">Supplier memory grows from acquisitions and enriched market scans.</div>'));
+    }
+
+    function opportunityAlertRows(db){
+        const map=new Map(procurementRows(db).map(r=>[asId(r.id),r])),out=[];
+        Object.entries(db.procurement.watchlist||{}).forEach(([id,w])=>{if(!w||typeof w!=='object')return;const r=map.get(asId(id));if(!r)return;
+            const max=Number(w.alertMaxBuyPrice??w.maxBuyPrice??0),roi=Number(w.alertMinRoiPct??w.minRoiPct??db.procurement.settings.minMarginPct??4),liq=Number(w.alertMinLiquidityScore??45);
+            const has=max>0||w.alertMinRoiPct!=null||w.alertMinLiquidityScore!=null,hit=has&&(!max||(r.bestBuyPrice>0&&r.bestBuyPrice<=max))&&r.bestDealMarginPct>=roi&&r.liquidityScore>=liq;
+            out.push(Object.assign({},r,{alertMaxBuyPrice:max,alertMinRoiPct:roi,alertMinLiquidityScore:liq,hasRule:has,alertTriggered:hit}));
+        });return out.sort((a,b)=>Number(b.alertTriggered)-Number(a.alertTriggered)||b.acquisitionScore-a.acquisitionScore);
+    }
+
+    function setOpportunityAlertRule(id){
+        id=asId(id);const db=dbLoad(),r=procurementRows(db).find(x=>x.id===id);if(!db.procurement.watchlist[id])db.procurement.watchlist[id]={itemId:id,createdAt:nowIso()};const w=db.procurement.watchlist[id];
+        const a=prompt('Maximum buy price for '+(r?.name||id)+' (0 = no ceiling):',String(w.alertMaxBuyPrice??w.maxBuyPrice??r?.buyTarget??0));if(a==null)return;
+        const b=prompt('Minimum ROI %:',String(w.alertMinRoiPct??db.procurement.settings.minMarginPct??4));if(b==null)return;
+        const c=prompt('Minimum liquidity score 0-100:',String(w.alertMinLiquidityScore??45));if(c==null)return;
+        w.alertMaxBuyPrice=Math.max(0,Number(a)||0);w.alertMinRoiPct=Math.max(0,Number(b)||0);w.alertMinLiquidityScore=Math.max(0,Math.min(100,Number(c)||0));dbSave(db);statusText='Buy alert saved for '+(r?.name||id)+'.';render();
+    }
+
+    function evaluateOpportunityAlerts(db,notify){
+        const rows=opportunityAlertRows(db);db.operations.notificationState=db.operations.notificationState||{};
+        rows.filter(x=>x.alertTriggered).forEach(r=>{const k='opportunity:'+r.id,last=Date.parse(db.operations.notificationState[k]?.at||'')||0,fp=r.bestBuyPrice+'|'+r.bestDealMarginPct.toFixed(2)+'|'+r.liquidityScore.toFixed(0);if(db.operations.notificationState[k]?.fingerprint===fp&&Date.now()-last<3600000)return;db.operations.notificationState[k]={at:nowIso(),fingerprint:fp};if(notify&&db.operations.settings.enableBrowserNotifications&&typeof Notification!=='undefined'&&Notification.permission==='granted'){try{new Notification(SHOP_NAME+': Buy opportunity',{body:r.name+': '+money(r.bestBuyPrice)+' · ROI '+r.bestDealMarginPct.toFixed(1)+'% · Liquidity '+r.liquidityScore.toFixed(0)+'/100'});}catch{}}});return rows;
+    }
+
+    function opportunityAlertsHtml(db){
+        const rows=evaluateOpportunityAlerts(db,false);
+        const suggested=procurementRows(db)
+            .filter(r=>!db.procurement.watchlist?.[r.id] && r.bestBuyPrice>0 && r.realisticExit>r.bestBuyPrice)
+            .sort((a,b)=>b.acquisitionScore-a.acquisitionScore||b.bestDealMarginPct-a.bestDealMarginPct)
+            .slice(0,8);
+
+        const watchedHtml = rows.length
+            ? rows.slice(0,15).map(r=>'<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;"><div style="font-size:11px;"><b>'+escapeHtml(r.name)+'</b> · '+(r.alertTriggered?'<span style="color:#9fe3a8;font-weight:bold;">TRIGGERED</span>':'Watching')+'<br>Buy '+(r.bestBuyPrice?money(r.bestBuyPrice):'—')+' / max '+(r.alertMaxBuyPrice?money(r.alertMaxBuyPrice):'—')+' · ROI '+r.bestDealMarginPct.toFixed(1)+'% / min '+r.alertMinRoiPct.toFixed(1)+'% · Liquidity '+r.liquidityScore.toFixed(0)+' / min '+r.alertMinLiquidityScore.toFixed(0)+'</div><button data-proc-action="alert-rule" data-item="'+r.id+'" style="'+btn(r.alertTriggered)+'">Alert Rule</button></div>').join('')
+            : '<div style="font-size:11px;color:#888;">No watched items yet.</div>';
+
+        const suggestedHtml = suggested.length
+            ? '<div style="margin-top:8px;border-top:2px solid #444;padding-top:6px;font-size:11px;"><b>Suggested live opportunities</b></div>'+
+              suggested.map(r=>'<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;"><div style="font-size:11px;"><b>'+escapeHtml(r.name)+'</b> · '+escapeHtml(r.action)+' · Score '+r.acquisitionScore.toFixed(0)+'<br>Buy '+money(r.bestBuyPrice)+' → Exit '+money(r.realisticExit)+' · ROI '+r.bestDealMarginPct.toFixed(1)+'% · Liquidity '+r.liquidityScore.toFixed(0)+'</div><div style="display:flex;gap:4px;"><button data-proc-action="watch" data-item="'+r.id+'" style="'+btn()+'">Watch</button><button data-proc-action="alert-rule" data-item="'+r.id+'" style="'+btn(true)+'">Set Alert</button></div></div>').join('')
+            : '<div style="font-size:11px;color:#888;margin-top:8px;">No current priced opportunities. Sync procurement/market data below.</div>';
+
+        return card('<b>Opportunity Watchlist + Alerts</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Set buy-price, ROI and liquidity thresholds. Alerts never purchase anything.</div>'+
+            '<div style="display:flex;gap:5px;margin-bottom:6px;"><button id="mm-opportunity-sync" style="'+btn(true)+'">Sync Procurement</button><button id="mm-opportunity-market" style="'+btn()+'">Refresh Market Intel</button></div>'+
+            watchedHtml+suggestedHtml);
+    }
+
+    function deadCapitalRows(db){
+        const best=capitalRotationRows(db)[0]?.capitalEfficiencyPctDay||0,dd=Number(db.operations.settings.deadStockDays||DEAD_STOCK_DAYS);
+        return advancedInventoryRows(db).filter(r=>r.deadCapital>0||(r.maxAge>=dd&&r.stock>0)).map(r=>{const trapped=Math.max(Number(r.deadCapital||0),Number(r.avgCost||0)*Number(r.stock||0)),cost=trapped*best/100;let action='HOLD';if(r.maxAge>=dd*2||r.forecastDaily<.05)action='LIQUIDATE';else if(r.forecastDaily<.2)action='DISCOUNT 7%';else if(r.maxAge>=dd)action='DISCOUNT 3%';return Object.assign({},r,{trappedCapital:trapped,opportunityCostDay:cost,liquidationAction:action});}).sort((a,b)=>b.opportunityCostDay-a.opportunityCostDay);
+    }
+
+    function deadCapitalDirectorHtml(db){
+        const rows=deadCapitalRows(db).slice(0,15),total=rows.reduce((s,r)=>s+r.trappedCapital,0);
+        return card('<b>Dead Capital Liquidation Director</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Flagged capital: <b>'+money(total)+'</b>. Opportunity cost compares this inventory with the best current capital rotation.</div>'+
+            (rows.length?rows.map(r=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>'+escapeHtml(r.name)+'</b> · <span style="color:'+(r.liquidationAction==='LIQUIDATE'?'#ff8d8d':'#ffd18a')+'">'+escapeHtml(r.liquidationAction)+'</span> · Capital '+money(r.trappedCapital)+' · Age '+r.maxAge.toFixed(1)+'d · Forecast '+r.forecastDaily.toFixed(2)+'/d · Opportunity cost <b>'+money(r.opportunityCostDay)+'/day</b></div>').join(''):'<div style="font-size:11px;color:#888;">No meaningful dead-capital positions detected.</div>'));
+    }
+
+    function customerAffinityHtml(db){
+        const rows=customerAffinityRows(db).filter(r=>r.totalAffinityUnits>0).slice(0,20);
+        return card('<b>Customer Product Affinity</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Used by reorder targeting and subscriber relevance.</div>'+
+            (rows.length?rows.map(r=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>'+escapeHtml(displayUsername(r)||r.id)+'</b> · Products: '+(r.affinityProducts.slice(0,3).map(x=>escapeHtml(x.name)+' '+(x.share*100).toFixed(0)+'%').join(' · ')||'—')+'<br>Categories: '+(r.affinityCategories.slice(0,3).map(x=>escapeHtml(x.name)+' '+(x.share*100).toFixed(0)+'%').join(' · ')||'—')+'</div>').join(''):'<div style="font-size:11px;color:#888;">Affinity appears after tracked customer purchases.</div>'));
+    }
+
+    function saleRevenue(s){return (s.items||[]).reduce((n,i)=>n+Number(i.quantity||0)*Number(i.price||i.unitPrice||0),0)||Number(s.total||s.amount||0);}
+
+    function salesFunnelMetrics(db){
+        const sales=Object.values(db.sales||{}),map={};sales.forEach(s=>{const id=asId(s.playerId);(map[id]||(map[id]=[])).push(s);});
+        let ws=0,wc=0,wr=0;Object.values(db.customers||{}).forEach(c=>{const at=Date.parse(db.coupons?.[asId(c.id)]?.issuedAt||c.lastContacted||'')||0;if(!at)return;ws++;const a=(map[asId(c.id)]||[]).filter(s=>Number(s.timestamp||0)>at&&Number(s.timestamp||0)<=at+86400000);if(a.length){wc++;wr+=a.reduce((n,s)=>n+saleRevenue(s),0);}});
+        const notices=(db.notificationHistory||[]).filter(n=>n.sentAt);let rc=0,rr=0;notices.forEach(n=>{const at=Date.parse(n.sentAt)||0,a=(map[asId(n.playerId)]||[]).filter(s=>Number(s.timestamp||0)>at&&Number(s.timestamp||0)<=at+86400000);if(a.length){rc++;rr+=a.reduce((n,s)=>n+saleRevenue(s),0);}});
+        const coupons=Object.values(db.coupons||{}),ci=coupons.filter(c=>c.issuedAt).length,cr=coupons.filter(c=>(c.redemptions||[]).length>0).length,msg=Object.values(db.customers||{}).reduce((n,c)=>n+Number(c.messageCount||0),0)+notices.length,rev=wr+rr;
+        return {welcomeSent:ws,welcomeConverted:wc,welcomeRevenue:wr,welcomeConversionRate:ws?wc/ws:0,restockSent:notices.length,restockConverted:rc,restockRevenue:rr,restockConversionRate:notices.length?rc/notices.length:0,couponsIssued:ci,couponsRedeemed:cr,couponRedemptionRate:ci?cr/ci:0,outreachCount:msg,attributedRevenue:rev,revenuePerOutreach:msg?rev/msg:0};
+    }
+
+    function salesFunnelHtml(db){
+        const m=salesFunnelMetrics(db);
+        return card('<b>Sales Funnel / Conversion Analytics</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">24-hour attribution after tracked welcome/contact and restock sends.</div><div style="font-size:11px;line-height:1.6;">Welcome/contact: '+m.welcomeSent+' tracked · '+m.welcomeConverted+' converted · <b>'+(m.welcomeConversionRate*100).toFixed(1)+'%</b> · '+money(m.welcomeRevenue)+' revenue<br>Restock: '+m.restockSent+' sent · '+m.restockConverted+' converted · <b>'+(m.restockConversionRate*100).toFixed(1)+'%</b> · '+money(m.restockRevenue)+' revenue<br>Coupons: '+m.couponsIssued+' issued · '+m.couponsRedeemed+' redeemed · <b>'+(m.couponRedemptionRate*100).toFixed(1)+'%</b><br>Revenue / tracked outreach: <b>'+money(m.revenuePerOutreach)+'</b></div>');
+    }
+
+    function competitorIntelligenceRows(db){
+        const g={};Object.entries(db.marketIntel.details||{}).forEach(([iid,d])=>{const a=(d?.organicListings||[]).filter(x=>x.sellerId&&x.price>0);if(!a.length)return;const low=Math.min(...a.map(x=>Number(x.price||Infinity)));a.forEach(l=>{const id=asId(l.sellerId);if(!g[id])g[id]={sellerId:id,sellerName:l.sellerName||id,items:{},listings:0,totalQty:0,positionSum:0,lowMatches:0};const x=g[id];x.sellerName=l.sellerName||x.sellerName;x.items[iid]=true;x.listings++;x.totalQty+=Number(l.quantity||0);const p=low>0?(Number(l.price||0)-low)/low*100:0;x.positionSum+=p;if(p<=.1)x.lowMatches++;});});
+        return Object.values(g).map(x=>{const sk=Object.keys(x.items).length,p=x.listings?x.positionSum/x.listings:0,lr=x.listings?x.lowMatches/x.listings:0;let b='SPECIALIST';if(sk>=6)b='BROAD SELLER';if(lr>=.6)b='AGGRESSIVE LOW';else if(p>=5)b='PREMIUM';return Object.assign({},x,{skuCount:sk,avgPremiumPct:p,lowRate:lr,behavior:b,competitorScore:Math.max(0,Math.min(100,lr*50+Math.min(30,sk*5)+Math.min(20,x.listings*2)))});}).sort((a,b)=>b.competitorScore-a.competitorScore);
+    }
+
+    function competitorIntelHtml(db){
+        const rows=competitorIntelligenceRows(db).slice(0,20);
+        return card('<b>Competitive Bazaar Intelligence</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Profiles recurring organic sellers from enriched Bazaar listings. Sponsored listings are excluded.</div>'+
+            (rows.length?rows.map(r=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>'+escapeHtml(r.sellerName)+'</b> ['+escapeHtml(r.sellerId)+'] · '+escapeHtml(r.behavior)+' · Score <b>'+r.competitorScore.toFixed(0)+'</b> · '+r.skuCount+' SKU(s) · '+r.totalQty.toLocaleString()+' units · Lowest-price match '+(r.lowRate*100).toFixed(0)+'% · Avg premium '+r.avgPremiumPct.toFixed(1)+'%</div>').join(''):'<div style="font-size:11px;color:#888;">Enrich market items to build competitor profiles.</div>'));
+    }
+
+    function procurementHtml(db) {
+        const proc = db.procurement;
+        const rows = procurementRows(db);
+        const opportunities = rows
+            .filter(r => r.action !== 'SKIP')
+            .sort((a,b) => b.acquisitionScore-a.acquisitionScore || b.bestDealMarginPct-a.bestDealMarginPct || b.liquidityScore-a.liquidityScore)
+            .slice(0, 30);
+        const capital = capitalAllocationPlan(db);
+        const acquisitions = proc.acquisitions.slice().sort((a,b) => new Date(b.acquiredAt) - new Date(a.acquiredAt)).slice(0, 40);
+        const travelRows = proc.travelLedger.slice(0, 30);
+        const travelStats = travelAnalytics(db).slice(0, 12);
+
+        const settings = card(`
+            <b>Procurement Control</b>
+            <div style="font-size:12px;color:#bbb;margin:5px 0 8px;">
+                Core procurement is calculated inside the CRM from Torn API data and your local ledger.
+                Travel Command additionally uses the public TornW3B Travel Stock page for live abroad stock, profit and profit/hour signals, then layers local CRM history on top.
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;">
+                <label style="font-size:10px;color:#aaa;">Budget
+                    <input id="mm-proc-budget" type="number" min="0" value="${Number(proc.settings.procurementBudget || 0)}" style="${inputCss()}width:100%;">
+                </label>
+                <label style="font-size:10px;color:#aaa;">Target days
+                    <input id="mm-proc-target-days" type="number" min="0" value="${Number(proc.settings.targetDays || 5)}" style="${inputCss()}width:100%;">
+                </label>
+                <label style="font-size:10px;color:#aaa;">Safety days
+                    <input id="mm-proc-safety-days" type="number" min="0" value="${Number(proc.settings.safetyDays || 2)}" style="${inputCss()}width:100%;">
+                </label>
+                <label style="font-size:10px;color:#aaa;">Min margin %
+                    <input id="mm-proc-margin" type="number" min="0" step="0.1" value="${Number(proc.settings.minMarginPct || 4)}" style="${inputCss()}width:100%;">
+                </label>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;">
+                <button id="mm-save-proc-settings" style="${btn(true)}">Save Targets</button>
+                <button id="mm-proc-sync" style="${btn(true)}">Sync All Procurement</button>
+                <button id="mm-rebuild-acquisitions" style="${btn()}">Rebuild Cost Basis</button>
+                <button id="mm-proc-refresh-markets" style="${btn()}">Refresh Priority Markets</button>
+            </div>
+        `);
+
+        const capitalHtml = card(`
+            <b>Capital Allocation</b>
+            <div style="font-size:12px;color:#bbb;margin-top:5px;">
+                Budget ${money(capital.budget)} · Planned ${money(capital.budget - capital.remaining)} · Reserve ${money(capital.remaining)}
+            </div>
+            ${capital.plan.length ? capital.plan.map(p => `
+                <div style="border-top:1px solid #333;padding-top:5px;margin-top:5px;font-size:11px;">
+                    <b>${escapeHtml(p.name)}</b> ${priorityBadge(p.priority)} · Buy ${p.allocatedQty} @ ${money(p.bestBuyPrice || p.buyTarget)}
+                    · Allocate <b>${money(p.allocatedSpend)}</b> · Liquidity ${p.liquidityGrade}
+                </div>
+            `).join('') : `<div style="font-size:11px;color:#888;margin-top:6px;">Set a budget and sync markets to generate allocations.</div>`}
+        `);
+
+        const scanner = card(`
+            <b>Native Market Scanner / Sourcing Queue</b>
+            <div style="font-size:11px;color:#999;margin:4px 0 7px;">
+                BUY means current official Bazaar/Item Market pricing is at or below your calculated buy target.
+                WATCH means stock is needed but the live spread is not good enough yet.
+            </div>
+            ${opportunities.length ? opportunities.map(r => `
+                <div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #333;padding:6px 0;">
+                    <div style="font-size:11px;">
+                        <b>${escapeHtml(r.name)}</b> [${escapeHtml(r.id)}] ·
+                        <b style="color:${r.action === 'BUY' ? '#9fe3a8' : '#ffd18a'}">${r.action}</b> · ${r.priority}<br>
+                        Need ${r.shortage} · Live buy ${r.bestBuyPrice ? money(r.bestBuyPrice) : '—'} · Target ${r.buyTarget ? money(r.buyTarget) : '—'} ·
+                        Exit ${r.realisticExit ? money(r.realisticExit) : '—'} · Deal margin ${r.bestDealMarginPct.toFixed(1)}% ·
+                        Liquidity ${r.liquidityGrade} · Volatility ${r.historySamples ? r.volatilityPct.toFixed(1) + '%' : '—'}
+                    </div>
+                    <div style="display:flex;gap:4px;align-items:flex-start;flex-wrap:wrap;">
+                        <button data-proc-action="market" data-item="${r.id}" style="${btn()}">Refresh</button>
+                        <button data-proc-action="log-buy" data-item="${r.id}" data-name="${escapeHtml(r.name)}" style="${btn()}">Log Buy</button>
+                    </div>
+                </div>
+            `).join('') : `<div style="font-size:11px;color:#888;">No current restock opportunities. Sync procurement or add watched items.</div>`}
+        `);
+
+        const acquisitionForm = card(`
+            <b>Acquisition Ledger / Native Cost Basis</b>
+            <div style="font-size:11px;color:#999;margin:4px 0 7px;">
+                Item Market Buy (1112) and Bazaar Buy (1225) logs are imported automatically. Use this form for Direct Trade, Travel, faction, or other acquisitions not represented by those logs.
+            </div>
+            <div style="display:grid;grid-template-columns:.8fr 1.4fr .8fr 1fr 1fr;gap:5px;">
+                <input id="mm-buy-item-id" placeholder="Item ID" style="${inputCss()}">
+                <input id="mm-buy-item-name" placeholder="Item name" style="${inputCss()}">
+                <input id="mm-buy-qty" type="number" min="0" placeholder="Qty" style="${inputCss()}">
+                <input id="mm-buy-cost" type="number" min="0" placeholder="Unit cost" style="${inputCss()}">
+                <select id="mm-buy-source" style="${inputCss()}">
+                    <option>Direct Trade</option><option>Travel</option><option>Faction</option><option>NPC</option><option>Manual</option>
+                </select>
+            </div>
+            <input id="mm-buy-notes" placeholder="Notes / seller / destination" style="${inputCss()}width:100%;margin-top:5px;">
+            <button id="mm-add-acquisition" style="${btn(true)}margin-top:6px;">Add Acquisition</button>
+            <div style="margin-top:8px;font-size:11px;">
+                ${acquisitions.length ? acquisitions.map(a => `
+                    <div style="display:flex;justify-content:space-between;gap:6px;border-top:1px solid #303030;padding:5px 0;">
+                        <span>${escapeHtml(fmtDate(a.acquiredAt))} · <b>${escapeHtml(a.itemName)}</b> × ${Number(a.quantity || 0)} · ${money(a.unitCost)}/ea · ${escapeHtml(a.source)}</span>
+                        ${String(a.externalId || '').startsWith('logbuy:') ? '' : `<button data-proc-action="remove-acquisition" data-acquisition="${a.id}" style="${btn()}">Remove</button>`}
+                    </div>
+                `).join('') : 'No acquisition lots recorded.'}
+            </div>
+        `);
+
+        const travel = card(`
+            <b>Travel Ledger</b>
+            <div style="font-size:11px;color:#999;margin:4px 0 7px;">
+                Record foreign-shop observations and purchases. Entries also feed the cost-basis ledger.
+            </div>
+            <div style="display:grid;grid-template-columns:1.1fr .7fr 1.2fr .7fr .9fr .8fr;gap:5px;">
+                <input id="mm-travel-destination" placeholder="Destination" style="${inputCss()}">
+                <input id="mm-travel-item-id" placeholder="Item ID" style="${inputCss()}">
+                <input id="mm-travel-item-name" placeholder="Item name" style="${inputCss()}">
+                <input id="mm-travel-qty" type="number" min="0" placeholder="Qty" style="${inputCss()}">
+                <input id="mm-travel-cost" type="number" min="0" placeholder="Unit cost" style="${inputCss()}">
+                <input id="mm-travel-stock" type="number" min="0" placeholder="Stock seen" style="${inputCss()}">
+            </div>
+            <input id="mm-travel-notes" placeholder="Notes" style="${inputCss()}width:100%;margin-top:5px;">
+            <button id="mm-add-travel" style="${btn(true)}margin-top:6px;">Add Travel Purchase</button>
+            ${travelStats.length ? `<div style="margin-top:8px;font-size:11px;color:#bbb;">${travelStats.map(t =>
+                `${escapeHtml(t.destination)} · <b>${escapeHtml(t.itemName)}</b>: ${t.quantity} bought across ${t.trips} record(s), avg cost ${money(t.avgUnitCost)}, avg observed stock ${t.avgObservedStock ? t.avgObservedStock.toFixed(1) : '—'}`
+            ).join('<br>')}</div>` : ''}
+            ${travelRows.length ? `<details style="margin-top:7px;"><summary>Recent travel entries</summary>${travelRows.map(t => `
+                <div style="display:flex;justify-content:space-between;gap:6px;font-size:11px;border-top:1px solid #303030;padding:5px 0;">
+                    <span>${escapeHtml(fmtDate(t.at))} · ${escapeHtml(t.destination)} · ${escapeHtml(t.itemName)} × ${t.quantity} @ ${money(t.unitCost)}</span>
+                    <button data-proc-action="remove-travel" data-travel="${t.id}" style="${btn()}">Remove</button>
+                </div>`).join('')}</details>` : ''}
+        `);
+
+        const diagnostics = proc.diagnostics.length
+            ? card(`<b>Diagnostics</b><div style="font-size:11px;color:#aaa;margin-top:5px;">${proc.diagnostics.slice(0,12).map(d => `${escapeHtml(fmtDate(d.at))}: ${escapeHtml(d.text)}`).join('<br>')}</div>`)
+            : '';
+
+        return capitalCommandHtml(db) + travelCommandHtml(db) + opportunityAlertsHtml(db) + settings + capitalHtml + scanner + acquisitionForm + travel + diagnostics;
+    }
+
+
+    function intelStatusBadge(label) {
+        const styles = {
+            'BUY NOW': 'background:#1f4a29;color:#c9f4d0;border:1px solid #4e8b5d;',
+            'WATCH PRICE': 'background:#5a4319;color:#ffe4a8;border:1px solid #9d7530;',
+            'SOURCE': 'background:#333;color:#ddd;border:1px solid #666;'
+        };
+        return `<span style="${styles[label] || styles.SOURCE}padding:2px 6px;border-radius:10px;font-size:10px;font-weight:bold;">${escapeHtml(label)}</span>`;
+    }
+
+    function marketIntelHtml(db) {
+        const intel = db.marketIntel;
+        const settings = intel.settings;
+        const global = globalOpportunityRows(db);
+        const restocks = restockCommandRows(db);
+        const instant = instantArbitrageRows(db);
+        const baskets = sellerBasketRows(db).slice(0, 15);
+        const suppliers = supplierIntelRows(db).slice(0, 15);
+        const dollars = intel.dollarItems.slice().sort((a,b) => b.totalValue - a.totalValue).slice(0, 30);
+        const ranked = intel.ranked.slice().sort((a,b) => a.price - b.price).slice(0, 20);
+        const auctions = intel.auctions.slice().sort((a,b) => (a.endsAtUnix || Infinity) - (b.endsAtUnix || Infinity)).slice(0, 20);
+        const capital = globalCapitalPlan(db);
+        const freshness = freshnessInfo(intel.marketplaceGeneratedAt, settings.freshnessWarnSeconds);
+
+        const controls = card(`
+            <b>Global Market Intelligence</b>
+            <div style="font-size:11px;color:#aaa;margin:4px 0 7px;">
+                Provider: TornW3B public API · cache age ${Number.isFinite(freshness.ageSeconds) ? `${Math.round(freshness.ageSeconds)}s` : '—'} ·
+                freshness ${escapeHtml(freshness.label)} · API cap documented at 100 calls/min.
+                Sponsored rows are retained for visibility but organic listings/traders are independently ranked.
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;">
+                <label style="font-size:10px;color:#aaa;">Min ROI %
+                    <input id="mm-intel-min-roi" type="number" step="0.1" min="0" value="${settings.minRoiPct}" style="${inputCss()}width:100%;">
+                </label>
+                <label style="font-size:10px;color:#aaa;">Min Profit
+                    <input id="mm-intel-min-profit" type="number" min="0" value="${settings.minAbsoluteProfit}" style="${inputCss()}width:100%;">
+                </label>
+                <label style="font-size:10px;color:#aaa;">Min Market $
+                    <input id="mm-intel-min-market" type="number" min="0" value="${settings.minMarketPrice}" style="${inputCss()}width:100%;">
+                </label>
+                <label style="font-size:10px;color:#aaa;">Min Sellers
+                    <input id="mm-intel-min-sellers" type="number" min="0" value="${settings.minBazaarSellers}" style="${inputCss()}width:100%;">
+                </label>
+                <label style="font-size:10px;color:#aaa;">Enrich Top
+                    <input id="mm-intel-max-enrich" type="number" min="1" max="15" value="${settings.maxEnrich}" style="${inputCss()}width:100%;">
+                </label>
+                <label style="font-size:10px;color:#aaa;">Exit haircut %
+                    <input id="mm-intel-haircut" type="number" min="0" step="0.1" value="${settings.bazaarExitHaircutPct}" style="${inputCss()}width:100%;">
+                </label>
+            </div>
+            <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">
+                <button id="mm-save-intel-settings" style="${btn(true)}">Save Scanner Rules</button>
+                <button id="mm-intel-global-sync" style="${btn(true)}">Refresh Global Market</button>
+                <button id="mm-intel-full-sync" style="${btn(true)}">Full Intelligence Sync</button>
+                <button id="mm-intel-enrich" style="${btn()}">Enrich Top Deals</button>
+                <button id="mm-intel-dollar" style="${btn()}">$1 Scanner</button>
+                <button id="mm-intel-ranked" style="${btn()}">Ranked/Auction</button>
+            </div>
+        `);
+
+        const restockHtml = card(`
+            <b>Restock Command Center</b>
+            <div style="font-size:11px;color:#999;margin:4px 0 6px;">Local demand + Torn inventory + global Bazaar sourcing in one queue.</div>
+            ${restocks.length ? restocks.slice(0, 25).map(r => `
+                <div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:6px 0;">
+                    <div style="font-size:11px;">
+                        <b>${escapeHtml(r.name)}</b> ${priorityBadge(r.priority)} ${intelStatusBadge(r.status)}<br>
+                        Need ${r.shortage} · Source qty ${r.sourceQty || '—'} · Buy ${r.globalBuyPrice ? money(r.globalBuyPrice) : '—'} ·
+                        Target ${r.buyTarget ? money(r.buyTarget) : '—'} · Exit ${r.globalExit ? money(r.globalExit) : '—'} · ROI ${r.globalRoiPct.toFixed(1)}%
+                        ${r.sellerName ? `<br>Seller: ${escapeHtml(r.sellerName)} [${escapeHtml(r.sellerId)}]` : ''}
+                    </div>
+                    <div style="display:flex;gap:4px;align-items:flex-start;flex-wrap:wrap;">
+                        <button data-intel-action="enrich" data-item="${r.id}" style="${btn()}">Verify</button>
+                        ${r.sellerId ? `<button data-intel-action="profile" data-seller="${r.sellerId}" style="${btn()}">Seller</button>` : ''}
+                        <button data-proc-action="log-buy" data-item="${r.id}" data-name="${escapeHtml(r.name)}" style="${btn()}">Log Buy</button>
+                    </div>
+                </div>
+            `).join('') : `<div style="font-size:11px;color:#888;">No current local shortages.</div>`}
+        `);
+
+        const globalHtml = card(`
+            <b>Global Deal Scanner</b>
+            <div style="font-size:11px;color:#999;margin:4px 0 6px;">
+                Coarse scan uses TornW3B aggregate market data; enriched rows add seller-level listings and trader exits.
+            </div>
+            ${global.length ? global.slice(0, 40).map((r, index) => `
+                <div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:6px 0;">
+                    <div style="font-size:11px;">
+                        <b>#${index + 1} ${escapeHtml(r.name)}</b> [${escapeHtml(r.id)}] · Score <b>${r.score.toFixed(0)}</b> · Confidence ${r.confidence.toFixed(0)}%<br>
+                        Buy ${money(r.buyPrice)} · Best exit ${money(r.bestExit)} (${escapeHtml(r.bestExitRoute)}) · Profit ${money(r.profit)} · ROI <b>${r.roiPct.toFixed(1)}%</b><br>
+                        Bazaar avg ${r.bazaarAverage ? money(r.bazaarAverage) : '—'} · Torn market ${r.marketPrice ? money(r.marketPrice) : '—'} · Sellers ${r.sellerCount}
+                        ${r.enriched ? ` · Listing qty ${r.listingQty || '—'}${r.sellerName ? ` · ${escapeHtml(r.sellerName)}` : ''}` : ' · aggregate only'}
+                    </div>
+                    <div style="display:flex;gap:4px;align-items:flex-start;flex-wrap:wrap;">
+                        <button data-intel-action="enrich" data-item="${r.id}" style="${btn(r.enriched)}">${r.enriched ? 'Refresh' : 'Analyze'}</button>
+                        ${r.sellerId ? `<button data-intel-action="profile" data-seller="${r.sellerId}" style="${btn()}">Seller</button>` : ''}
+                    </div>
+                </div>
+            `).join('') : `<div style="font-size:11px;color:#888;">Run Refresh Global Market to populate opportunities.</div>`}
+        `);
+
+        const instantHtml = card(`
+            <b>Instant Trader Arbitrage</b>
+            <div style="font-size:11px;color:#999;margin:4px 0 6px;">Cheapest organic Bazaar listing compared with highest organic active public trader buy price.</div>
+            ${instant.length ? instant.slice(0, 25).map(r => `
+                <div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;">
+                    <b>${escapeHtml(r.name)}</b> · Buy ${money(r.buyPrice)} → Trader ${money(r.traderExit)} ·
+                    Spread ${money(r.instantProfit)} · ROI <b>${r.instantRoiPct.toFixed(1)}%</b> · Qty ${r.maxQty || '—'} ·
+                    Total potential ${money(r.totalInstantProfit)}
+                    ${r.sellerName ? `<br>Seller ${escapeHtml(r.sellerName)} [${escapeHtml(r.sellerId)}]` : ''}
+                    ${r.traderName ? ` · Trader ${escapeHtml(r.traderName)}` : ''}
+                </div>
+            `).join('') : `<div style="font-size:11px;color:#888;">No verified positive Bazaar → trader spreads in enriched items.</div>`}
+        `);
+
+        const basketHtml = card(`
+            <b>Supplier Basket Optimizer</b>
+            <div style="font-size:11px;color:#999;margin:4px 0 6px;">Groups verified listings by seller so one seller can solve multiple shortages/deals.</div>
+            ${baskets.length ? baskets.map(b => `
+                <details style="border-top:1px solid #303030;padding:5px 0;">
+                    <summary style="cursor:pointer;font-size:11px;">
+                        <b>${escapeHtml(b.sellerName)}</b> [${escapeHtml(b.sellerId)}] · ${b.restockSkus} restock SKU(s) · ${b.skus} analyzed SKU(s) ·
+                        Spend ${money(b.totalSpend)} · Expected profit ${money(b.totalExpectedProfit)}
+                    </summary>
+                    <div style="font-size:10px;color:#bbb;padding:4px 0 0 8px;">
+                        ${b.items.slice(0,20).map(i =>
+                            `${escapeHtml(i.itemName)} × ${i.quantity} @ ${money(i.price)} → ${i.exit ? money(i.exit) : '—'} · profit ${money(i.expectedProfit)}${i.restock ? ' · RESTOCK' : ''}`
+                        ).join('<br>')}
+                    </div>
+                </details>
+            `).join('') : `<div style="font-size:11px;color:#888;">Enrich several deal/restock items to build seller baskets.</div>`}
+        `);
+
+        const capitalHtml = card(`
+            <b>Capital Allocation v2</b>
+            <div style="font-size:11px;color:#bbb;margin:4px 0 6px;">
+                Budget ${money(capital.budget)} · Planned ${money(capital.budget - capital.remaining)} · Reserve ${money(capital.remaining)}
+            </div>
+            ${capital.plan.length ? capital.plan.map(p => `
+                <div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;">
+                    <b>${escapeHtml(p.type)}</b> · ${escapeHtml(p.itemName)} × ${p.quantity} @ ${money(p.unitPrice)}
+                    · Spend ${money(p.spend)} · Expected profit ${money(p.expectedProfit)} · ROI ${p.roiPct.toFixed(1)}%
+                </div>
+            `).join('') : `<div style="font-size:11px;color:#888;">Set procurement budget and sync market intelligence.</div>`}
+        `);
+
+        const dollarHtml = card(`
+            <b>$1 Bazaar Scanner</b>
+            <div style="font-size:11px;color:#999;margin:4px 0 6px;">Public $1 listings are high-race-condition opportunities; always verify before buying.</div>
+            ${dollars.length ? dollars.map(d => {
+                const f = freshnessInfo(d.lastUpdated, settings.freshnessWarnSeconds);
+                return `<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;font-size:11px;">
+                    <div><b>${escapeHtml(d.itemName)}</b> × ${d.quantity} · Market ${money(d.marketPrice)} · Total ${money(d.totalValue)} · Age ${Number.isFinite(f.ageSeconds) ? Math.round(f.ageSeconds) + 's' : '—'}<br>
+                    ${escapeHtml(d.sellerName)} [${escapeHtml(d.sellerId)}]</div>
+                    <button data-intel-action="profile" data-seller="${d.sellerId}" style="${btn()}">Seller</button>
+                </div>`;
+            }).join('') : `<div style="font-size:11px;color:#888;">Run $1 Scanner or Full Intelligence Sync.</div>`}
+        `);
+
+        const supplierHtml = card(`
+            <b>Supplier Intelligence</b>
+            ${suppliers.length ? suppliers.map(s => `
+                <div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;">
+                    <b>${escapeHtml(s.sellerName)}</b> [${escapeHtml(s.sellerId)}] · Score ${s.score.toFixed(0)} ·
+                    ${s.itemCount} SKU(s) observed · ${Number(s.totalQuantityObserved || 0).toLocaleString()} units observed · Last ${escapeHtml(fmtDate(s.lastSeenAt))}
+                </div>
+            `).join('') : `<div style="font-size:11px;color:#888;">Supplier intelligence grows automatically from detailed Bazaar listing scans.</div>`}
+        `);
+
+        const rankedHtml = card(`
+            <b>Ranked / Auction Intelligence</b>
+            <div style="font-size:11px;color:#999;margin:4px 0 6px;">Separate high-variance equipment feed. No automatic ROI claim is made without comparable item detail.</div>
+            ${ranked.length ? `<details><summary>Ranked listings (${intel.ranked.length})</summary>${ranked.map(r => `
+                <div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">
+                    ${escapeHtml(r.rarity)} ${escapeHtml(r.itemName)} · ${money(r.price)} · ${escapeHtml(r.source)} ·
+                    Dmg ${escapeHtml(r.damage ?? '—')} · Acc ${escapeHtml(r.accuracy ?? '—')} · Q ${escapeHtml(r.quality ?? '—')}
+                    ${r.sellerName ? ` · ${escapeHtml(r.sellerName)}` : ''}
+                </div>
+            `).join('')}</details>` : '<div style="font-size:11px;color:#888;">No ranked feed loaded.</div>'}
+            ${auctions.length ? `<details style="margin-top:6px;"><summary>Live auctions (${intel.auctions.length})</summary>${auctions.map(r => `
+                <div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">
+                    ${escapeHtml(r.rarity)} ${escapeHtml(r.itemName)} · Current ${money(r.price)} · Ends ${r.endsAtUnix ? escapeHtml(fmtDate(r.endsAtUnix * 1000)) : '—'}
+                </div>
+            `).join('')}</details>` : ''}
+        `);
+
+        const diagnostics = intel.diagnostics.length
+            ? card(`<b>Market Intel Diagnostics</b><div style="font-size:10px;color:#aaa;margin-top:5px;">${intel.diagnostics.slice(0,15).map(d => `${escapeHtml(fmtDate(d.at))}: ${escapeHtml(d.text)}`).join('<br>')}</div>`)
+            : '';
+
+        return controls + competitorIntelHtml(db) + supplierPerformanceHtml(db) + restockHtml + globalHtml + instantHtml + basketHtml + capitalHtml + dollarHtml + supplierHtml + rankedHtml + diagnostics;
+    }
+
+
+    function opsStateBadge(state){
+        const map={
+            'OUT OF STOCK':'#7a1f1f','SOURCE NOW':'#5d2c15','NEEDS LISTING':'#4f4517','WATCH PRICE':'#374560',
+            'PURCHASED':'#26425c','RECEIVED':'#24493a','OVERSTOCKED':'#49345b','DEAD STOCK':'#5a2c39','LISTED':'#24422d'
+        };
+        return `<span style="background:${map[state]||'#333'};border:1px solid #777;color:#fff;border-radius:10px;padding:2px 6px;font-size:10px;font-weight:bold;">${escapeHtml(state)}</span>`;
+    }
+
+    function operationsHtml(db){
+        const rows=advancedInventoryRows(db);
+        const brief=ownerBriefing(db);
+        const session=getActiveRestockSession(db);
+        const plans=buildListingPlan(db); dbSave(db);
+        const sessionHistory=db.operations.restockSessions.slice(0,8);
+        const events=db.operations.events||[];
+
+        const briefHtml=card(`<b>Daily Bazaar Briefing</b><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:7px;font-size:11px;">
+            <div>30d Revenue<br><b>${money(brief.revenue)}</b></div><div>30d Gross Profit<br><b>${money(brief.grossProfit)}</b></div>
+            <div>Inventory Cost<br><b>${money(brief.inventoryValue)}</b></div><div>Units Sold<br><b>${brief.units.toLocaleString()}</b></div>
+            <div>Critical Actions<br><b>${brief.critical}</b></div><div>Stockouts Now<br><b>${brief.stockouts}</b></div>
+            <div>Est. Lost Profit<br><b>${money(brief.lostProfit)}</b></div><div>Dead Capital<br><b>${money(brief.deadCapital)}</b></div>
+        </div><div style="font-size:11px;color:#aaa;margin-top:6px;">Best SKU: ${escapeHtml(brief.best?.name||'—')} · Worst/slowest: ${escapeHtml(brief.worst?.name||'—')}</div>`);
+
+        let sessionHtml='';
+        if(session){
+            const q=session.queue[session.activeIndex];
+            sessionHtml=card(`<b>Active Restock Session</b><div style="font-size:11px;color:#aaa;margin:4px 0;">Session ${escapeHtml(session.id)} · ${session.activeIndex+1}/${session.queue.length} · Spent ${money(session.spent)} · Expected profit ${money(session.expectedProfit)}</div>
+                ${q?`<div style="font-size:13px;"><b>${escapeHtml(q.itemName)}</b> ${intelStatusBadge(q.buyPrice&&q.buyTarget&&q.buyPrice<=q.buyTarget?'BUY NOW':'WATCH PRICE')}<br>
+                Need ${q.need} · Available ${q.sourceQty||'—'} · Buy ${q.buyPrice?money(q.buyPrice):'—'} · Max ${q.buyTarget?money(q.buyTarget):'—'} · Exit ${q.exit?money(q.exit):'—'} · ROI ${Number(q.roiPct||0).toFixed(1)}%
+                ${q.sellerName?`<br>Seller ${escapeHtml(q.sellerName)} [${escapeHtml(q.sellerId)}]`:''}</div>
+                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">
+                    ${q.sellerId?`<button data-ops-action="seller" data-seller="${q.sellerId}" style="${btn()}">Open Seller</button>`:''}
+                    <button id="mm-restock-log-purchase" style="${btn(true)}">Log Purchase</button>
+                    <button id="mm-restock-skip" style="${btn()}">Skip / Next</button>
+                </div>`:'Session complete.'}
+            `);
+        } else {
+            const shortages=rows.filter(r=>['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)).length;
+            sessionHtml=card(`<b>Guided Restock Session</b><div style="font-size:11px;color:#aaa;margin:5px 0;">${shortages} SKU(s) currently need sourcing. Budget ${money(db.procurement.settings.procurementBudget||0)}.</div>
+                <button id="mm-start-restock-session" style="${btn(true)}">Start Restock Session</button>`);
+        }
+
+        const actionQueue=card(`<b>Action Queue</b>${rows.slice(0,35).map(r=>`<div style="display:flex;justify-content:space-between;gap:7px;border-top:1px solid #303030;padding:5px 0;font-size:11px;">
+            <div><b>${escapeHtml(r.name)}</b> ${opsStateBadge(r.state)} · ABC ${r.abc} · ${escapeHtml(r.inventoryClass)}<br>
+            Stock ${r.stock} · Forecast ${r.forecastDaily.toFixed(2)}/day · Target ${r.adaptiveTargetStock} · Need ${r.adaptiveShortage} · Safety ${r.safety.units}<br>
+            Bazaar ${r.bazaarQty}/${r.targetListed} target listed · Add ${r.addToBazaar} · Price ${r.plannedPrice?money(r.plannedPrice):'—'} · GMROI ${(r.realized.gmroi*100).toFixed(1)}%</div>
+            <div>${r.addToBazaar>0?`<button data-ops-action="listing-plan" data-item="${r.id}" style="${btn()}">Listing Plan</button>`:''}</div>
+        </div>`).join('')}`);
+
+        const listingHtml=card(`<b>Bazaar Listing Assistant</b><div style="font-size:11px;color:#aaa;margin:4px 0;">${Object.keys(plans).length} SKU(s) currently need replenishment on your Bazaar. On Torn's Bazaar page, the helper fills quantity/price only; you manually submit.</div>
+            <button id="mm-open-bazaar-add" style="${btn(true)}">Open Bazaar Add Page</button>
+            <details style="margin-top:7px;"><summary>Current listing plan</summary>${Object.values(plans).map(p=>`<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">${escapeHtml(p.itemName)} × ${p.quantity} @ ${money(p.price)} · Cost ${p.cost?money(p.cost):'—'} · Margin ${p.expectedMarginPct.toFixed(1)}%</div>`).join('')||'No listing replenishment needed.'}</details>`);
+
+        const historyHtml=card(`<b>Restock Session History</b>${sessionHistory.length?sessionHistory.map(s=>`<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">${escapeHtml(fmtDate(s.createdAt))} · ${s.queue.length} SKU(s) · Spent ${money(s.spent)} · Expected profit ${money(s.expectedProfit)} · ${s.completedAt?'Completed':'Active'}</div>`).join(''):'<div style="font-size:11px;color:#888;">No sessions yet.</div>'}`);
+
+        const eventHtml=card(`<b>Demand Events</b><div style="font-size:11px;color:#999;margin:4px 0;">Use known Torn/event periods to adjust demand forecasts without hardcoding assumptions.</div>
+            <div style="display:grid;grid-template-columns:1.3fr 1fr 1fr .6fr;gap:5px;"><input id="mm-event-name" placeholder="Event name" style="${inputCss()}"><input id="mm-event-start" type="datetime-local" style="${inputCss()}"><input id="mm-event-end" type="datetime-local" style="${inputCss()}"><input id="mm-event-mult" type="number" min=".1" step=".1" value="1.2" style="${inputCss()}"></div>
+            <button id="mm-add-event" style="${btn()}margin-top:5px;">Add Event</button>
+            ${events.map(e=>`<div style="display:flex;justify-content:space-between;gap:5px;font-size:10px;border-top:1px solid #303030;padding:4px 0;"><span>${escapeHtml(e.name)} · ${escapeHtml(fmtDate(e.startAt))} → ${escapeHtml(fmtDate(e.endAt))} · ×${Number(e.multiplier||1).toFixed(2)}</span><button data-ops-action="remove-event" data-event="${e.id}" style="${btn()}">Remove</button></div>`).join('')}`);
+
+        return briefHtml+sessionHtml+actionQueue+listingHtml+historyHtml+eventHtml;
+    }
+
+    function analyticsHtml(db){
+        const rows=advancedInventoryRows(db);
+        const clv=customerClvRows(db);
+        const coupon=couponRoiMetrics(db);
+        const whatifs=[3,5,7,10].map(d=>inventoryWhatIf(db,d));
+        const dead=rows.filter(r=>r.deadCapital>0).sort((a,b)=>b.deadCapital-a.deadCapital).slice(0,20);
+        const profit=rows.slice().sort((a,b)=>b.realized.grossProfit-a.realized.grossProfit).slice(0,30);
+
+        const profitHtml=card(`<b>Profit / Capital Efficiency</b>${profit.map(r=>`<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>${escapeHtml(r.name)}</b> · Revenue ${money(r.realized.revenue)} · COGS ${money(r.realized.cogs)} · Gross ${money(r.realized.grossProfit)} · GMROI ${(r.realized.gmroi*100).toFixed(1)}% · Cash velocity ${(r.realized.cashVelocity*100).toFixed(2)}%/day · Avg age ${r.realized.avgAge.toFixed(1)}d · ABC ${r.abc} · ${escapeHtml(r.inventoryClass)}</div>`).join('')}`);
+
+        const deadHtml=card(`<b>Inventory Aging / Dead Capital</b>${dead.length?dead.map(r=>`<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>${escapeHtml(r.name)}</b> · Dead capital ${money(r.deadCapital)} · Oldest ${r.maxAge.toFixed(1)}d · Forecast ${r.forecastDaily.toFixed(2)}/day · ${opsStateBadge(r.state)}</div>`).join(''):'<div style="font-size:11px;color:#888;">No dead-capital lots detected from tracked FIFO acquisitions.</div>'}`);
+
+        const forecastHtml=card(`<b>Demand Forecast / Lost Sales</b>${rows.slice(0,30).map(r=>`<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;"><b>${escapeHtml(r.name)}</b> · Forecast ${r.forecastDaily.toFixed(2)}/d · 3d ${r.forecast.recent3.toFixed(2)} · prior7 ${r.forecast.prior7.toFixed(2)} · prior30 ${r.forecast.prior30.toFixed(2)} · safety ${r.safety.units} (${r.safety.safetyDays.toFixed(1)}d) · stockout ${r.stockout.stockoutHours.toFixed(1)}h · est. lost ${r.stockout.lostUnits.toFixed(1)} units / ${money(r.lostProfit)}</div>`).join('')}`);
+
+        const elasticityHtml=card(`<b>Price Elasticity / Pricing Simulation</b>${rows.filter(r=>r.elasticity.buckets.length).slice(0,15).map(r=>`<details style="border-top:1px solid #303030;padding:4px 0;"><summary style="font-size:11px;"><b>${escapeHtml(r.name)}</b> · recommended ${r.plannedPrice?money(r.plannedPrice):'—'} · best observed ${r.elasticity.best?money(r.elasticity.best.price):'—'}</summary><div style="font-size:10px;color:#bbb;">Observed: ${r.elasticity.buckets.slice(-8).map(b=>`${money(b.price)} → ${b.unitsPerDay.toFixed(2)}/d, ${money(b.profitPerDay)}/d`).join('<br>')}<br><br>Simulation: ${priceSimulationRows(db,r.id).map(x=>`${money(x.price)} → ${x.unitsPerDay.toFixed(2)}/d → ${money(x.profitPerDay)}/d`).join('<br>')}</div></details>`).join('')||'<div style="font-size:11px;color:#888;">Price elasticity will become available after multiple Bazaar price snapshots and sales intervals are collected.</div>'}`);
+
+        const whatifHtml=card(`<b>Inventory What-if Simulation</b>${whatifs.map(w=>`<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>${w.days} target days</b> · Additional capital ${money(w.capital)} · Approx stockout exposure ${(w.stockoutRisk*100).toFixed(1)}% · Proportional gross-profit baseline ${money(w.expectedGross)}</div>`).join('')}`);
+
+        const customerHtml=card(`<b>Customer Intelligence — RFM / CLV / Affinity</b><div style="font-size:11px;color:#aaa;margin:4px 0;">Estimated CLV uses your tracked 30-day realized gross-margin rate; it is an operational estimate, not accounting profit.</div>${clv.slice(0,30).map(c=>`<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;"><b>${escapeHtml(c.name)} [${escapeHtml(c.id)}]</b> · ${escapeHtml(c.segment)} · Recency ${c.recencyDays.toFixed(1)}d · Freq ${c.frequency} · Spend ${money(c.monetary)} · Est net value ${money(c.estimatedNetValue)} · Affinity ${c.topProducts.map(x=>`${escapeHtml(x[0])}×${x[1]}`).join(', ')||'—'}</div>`).join('')}`);
+
+        const couponHtml=card(`<b>Coupon ROI</b><div style="font-size:11px;">Coupon customers ${coupon.couponCustomers} · Repeat ${(coupon.couponRepeatRate*100).toFixed(1)}%<br>Non-coupon customers ${coupon.nonCouponCustomers} · Repeat ${(coupon.nonCouponRepeatRate*100).toFixed(1)}%<br>Cashback paid ${money(coupon.cashback)} · Estimated gross profit from coupon-customer revenue ${money(coupon.grossProfit)} · Estimated ROI ${(coupon.roi*100).toFixed(1)}%</div>`);
+
+        return capitalCommandHtml(db)+deadCapitalDirectorHtml(db)+salesFunnelHtml(db)+customerAffinityHtml(db)+pricingDirectorHtml(db)+profitHtml+deadHtml+forecastHtml+elasticityHtml+whatifHtml+customerHtml+couponHtml;
+    }
+
+
+    function applyStrategyPreset(name) {
+        const db = dbLoad();
+        const preset = String(name || 'BALANCED').toUpperCase();
+        const presets = {
+            BALANCED: { targetDays:5, safetyDays:2, minMarginPct:4, listingHours:12, deadStockDays:30, overstockMultiplier:1.5, minRoiPct:3, minBazaarSellers:2 },
+            FAST_TURNOVER: { targetDays:3, safetyDays:1, minMarginPct:2.5, listingHours:8, deadStockDays:14, overstockMultiplier:1.3, minRoiPct:2.5, minBazaarSellers:2 },
+            HIGH_MARGIN: { targetDays:5, safetyDays:2, minMarginPct:7, listingHours:12, deadStockDays:30, overstockMultiplier:1.5, minRoiPct:7, minBazaarSellers:2 },
+            LOW_RISK: { targetDays:4, safetyDays:2.5, minMarginPct:4, listingHours:10, deadStockDays:21, overstockMultiplier:1.3, minRoiPct:4, minBazaarSellers:4 }
+        };
+        if (preset !== 'CUSTOM' && presets[preset]) {
+            const p = presets[preset];
+            db.procurement.settings.targetDays = p.targetDays;
+            db.procurement.settings.safetyDays = p.safetyDays;
+            db.procurement.settings.minMarginPct = p.minMarginPct;
+            db.operations.settings.listingHours = p.listingHours;
+            db.operations.settings.deadStockDays = p.deadStockDays;
+            db.operations.settings.overstockMultiplier = p.overstockMultiplier;
+            db.marketIntel.settings.minRoiPct = p.minRoiPct;
+            db.marketIntel.settings.minBazaarSellers = p.minBazaarSellers;
+        }
+        db.operations.settings.strategyPreset = preset;
+        dbSave(db);
+        statusText = `Strategy preset: ${preset.replaceAll('_',' ')}`;
+        render();
+    }
+
+    function simpleMetric(label, value, note = '') {
+        return `<div style="background:#151515;border:1px solid #333;border-radius:7px;padding:9px;min-width:0;">
+            <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.4px;">${escapeHtml(label)}</div>
+            <div style="font-size:17px;font-weight:700;margin-top:2px;overflow:hidden;text-overflow:ellipsis;">${value}</div>
+            ${note ? `<div style="font-size:10px;color:#777;margin-top:2px;">${escapeHtml(note)}</div>` : ''}
+        </div>`;
+    }
+
+    function simpleActionButton(label, tab, primary = false) {
+        return `<button data-simple-go="${tab}" style="${btn(primary)}padding:9px 12px;min-width:112px;">${escapeHtml(label)}</button>`;
+    }
+
+    function compactItemDetails(r) {
+        return `<details style="margin-top:5px;">
+            <summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary>
+            <div style="font-size:10px;color:#aaa;line-height:1.55;margin-top:4px;">
+                Forecast ${Number(r.forecastDaily || 0).toFixed(2)}/day · Safety ${Number(r.safety?.units || 0)} ·
+                GMROI ${(Number(r.realized?.gmroi || 0)*100).toFixed(1)}% · Cash velocity ${(Number(r.realized?.cashVelocity || 0)*100).toFixed(2)}%/day<br>
+                ABC ${escapeHtml(r.abc || '—')} · ${escapeHtml(r.inventoryClass || '—')} ·
+                Volatility ${Number(r.volatilityPct || 0).toFixed(1)}% · Cost ${r.avgCost ? money(r.avgCost) : '—'} ·
+                Dead capital ${money(r.deadCapital || 0)}
+            </div>
+        </details>`;
+    }
+
+    function homeHtml(db) {
+        const rows = advancedInventoryRows(db);
+        const brief = ownerBriefing(db, rows);
+        const deals = globalOpportunityRows(db);
+        const urgent = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','NEEDS LISTING','WATCH PRICE','DEAD STOCK'].includes(r.state));
+        const needRestock = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)).length;
+        const needListing = rows.filter(r => r.state === 'NEEDS LISTING').length;
+        const goodDeals = deals.filter(d => d.score >= 60).length;
+        const pendingAlerts = Object.values(db.subscribers || {}).filter(s => s.pendingNotification).length;
+
+        const metrics = `<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">
+            ${simpleMetric('30d Revenue', money(brief.revenue))}
+            ${simpleMetric('30d Profit', money(brief.grossProfit))}
+            ${simpleMetric('Restock', String(needRestock), 'items need stock')}
+            ${simpleMetric('Need Listing', String(needListing), 'ready for Bazaar')}
+        </div>`;
+
+        const actions = card(`<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;">
+            <div><b style="font-size:15px;">What needs attention</b><div style="font-size:11px;color:#999;margin-top:3px;">${needRestock} restock · ${needListing} listing · ${goodDeals} strong deal(s) · ${pendingAlerts} customer alert(s)</div></div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">${simpleActionButton('Restock','stock',true)}${simpleActionButton('List Bazaar','stock')}${simpleActionButton('Find Deals','deals')}${simpleActionButton('Customers','customers')}</div>
+        </div>`);
+
+        const queue = card(`<b>Priority Actions</b>
+            ${urgent.length ? urgent.slice(0,10).map(r => {
+                const label = ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state) ? 'Restock' : r.state === 'NEEDS LISTING' ? 'List' : 'Review';
+                return `<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;align-items:flex-start;">
+                    <div style="min-width:0;font-size:11px;"><div><b>${escapeHtml(r.name)}</b> ${opsStateBadge(r.state)}</div>
+                    <div style="color:#aaa;margin-top:3px;">Stock ${r.stock} · Need ${r.adaptiveShortage} · ${r.state === 'NEEDS LISTING' ? `Add ${r.addToBazaar} @ ${r.plannedPrice ? money(r.plannedPrice) : '—'}` : `Buy target ${r.buyTarget ? money(r.buyTarget) : '—'}`}</div>${compactItemDetails(r)}</div>
+                    <button data-simple-go="stock" style="${btn(true)}white-space:nowrap;">${label}</button>
+                </div>`;
+            }).join('') : `<div style="font-size:11px;color:#888;margin-top:6px;">No urgent inventory actions right now.</div>`}
+        `);
+
+        const health = card(`<b>Business Health</b><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:6px;">
+            ${simpleMetric('Lost Profit', money(brief.lostProfit))}${simpleMetric('Dead Capital', money(brief.deadCapital))}${simpleMetric('Stockouts', String(brief.stockouts))}${simpleMetric('Best SKU', brief.best?.name || '—')}
+        </div><div style="margin-top:7px;"><button data-open-advanced="analytics" style="${btn()}">View full analytics</button></div>`);
+        return metrics + actions + queue + health;
+    }
+
+    function stockSimpleHtml(db) {
+        const rows = advancedInventoryRows(db);
+        const session = getActiveRestockSession(db);
+        // Rendering must be read-only. Persisting a listing plan on every tab render
+        // was creating unnecessary IndexedDB writes and cross-tab merge work.
+        const plans = buildListingPlan(db);
+        const restockRows = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state));
+        const listingRows = rows.filter(r => r.addToBazaar > 0);
+        const preset = String(db.operations.settings.strategyPreset || 'BALANCED');
+
+        const presetBar = card(`<b>Strategy</b><div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
+            ${[['BALANCED','Balanced'],['FAST_TURNOVER','Fast Turnover'],['HIGH_MARGIN','High Margin'],['LOW_RISK','Low Risk'],['CUSTOM','Custom']].map(([id,label]) => `<button data-strategy-preset="${id}" style="${btn(preset===id)}">${label}</button>`).join('')}
+        </div><div style="font-size:10px;color:#888;margin-top:5px;">Presets adjust existing thresholds only; Advanced mode still exposes every setting.</div>`);
+
+        const quickRestock = card(`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div><b style="font-size:15px;">Quick Restock</b><div style="font-size:11px;color:#999;margin-top:2px;">${restockRows.length} item(s) need sourcing · Budget ${money(db.procurement.settings.procurementBudget || 0)}</div></div>
+            ${session ? `<span style="font-size:11px;color:#e7c46d;">Session active</span>` : `<button id="mm-start-restock-session" style="${btn(true)}">Start Restock Session</button>`}
+        </div>
+        ${session ? (() => {
+            const q = session.queue[session.activeIndex];
+            return q ? `<div style="border-top:1px solid #333;margin-top:7px;padding-top:7px;font-size:12px;"><b>${escapeHtml(q.itemName)}</b><br>
+                Need ${q.need} · Buy ${q.buyPrice ? money(q.buyPrice) : '—'} · Max ${q.buyTarget ? money(q.buyTarget) : '—'} · Exit ${q.exit ? money(q.exit) : '—'} · ROI ${Number(q.roiPct||0).toFixed(1)}%
+                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">${q.sellerId?`<button data-ops-action="seller" data-seller="${q.sellerId}" style="${btn()}">Open Seller</button>`:''}<button id="mm-restock-log-purchase" style="${btn(true)}">Log Purchase</button><button id="mm-restock-skip" style="${btn()}">Skip</button></div>
+            </div>` : '';
+        })() : ''}
+        ${restockRows.length ? restockRows.slice(0,12).map(r => `<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;">
+            <div style="font-size:11px;"><b>${escapeHtml(r.name)}</b> ${opsStateBadge(r.state)}<br>Need <b>${r.adaptiveShortage}</b> · Best buy ${r.bestBuyPrice?money(r.bestBuyPrice):'—'} · Max ${r.buyTarget?money(r.buyTarget):'—'} · Forecast ${r.forecastDaily.toFixed(2)}/day${compactItemDetails(r)}</div>
+            <details><summary style="${btn()}list-style:none;">•••</summary><div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;"><button data-proc-action="market" data-item="${r.id}" style="${btn()}">Refresh Market</button><button data-proc-action="log-buy" data-item="${r.id}" data-name="${escapeHtml(r.name)}" style="${btn()}">Log Buy</button><button data-open-advanced="inventory" style="${btn()}">Full Inventory</button></div></details>
+        </div>`).join('') : `<div style="font-size:11px;color:#888;margin-top:7px;">No restock action required.</div>`}`);
+
+        const listing = card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">List Bazaar</b><div style="font-size:11px;color:#999;margin-top:2px;">${listingRows.length} SKU(s) ready to replenish listings</div></div><button id="mm-open-bazaar-add" style="${btn(true)}">Open Bazaar Add</button></div>
+            ${Object.values(plans).slice(0,15).map(p=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(p.itemName)}</b> · Add ${p.quantity} @ <b>${money(p.price)}</b> · Margin ${p.expectedMarginPct.toFixed(1)}%</div>`).join('') || `<div style="font-size:11px;color:#888;margin-top:7px;">No listing replenishment needed.</div>`}
+            <div style="font-size:10px;color:#777;margin-top:6px;">Fill Recommended Listings fills quantity and price only; you still submit manually.</div>`);
+
+        return presetBar + quickRestock + listing + `<div style="display:flex;gap:5px;flex-wrap:wrap;"><button data-open-advanced="ops" style="${btn()}">Full Operations</button><button data-open-advanced="inventory" style="${btn()}">Inventory Detail</button><button data-open-advanced="procurement" style="${btn()}">Procurement Detail</button></div>`;
+    }
+
+    function dealsSimpleHtml(db) {
+        const deals = globalOpportunityRows(db);
+        const instant = instantArbitrageRows(db);
+        const travel = travelOpportunityRows(db).filter(r => r.profit > 0).slice(0,5);
+        const top = deals.slice(0,10);
+        const freshness = freshnessInfo(db.marketIntel.marketplaceGeneratedAt, db.marketIntel.settings.freshnessWarnSeconds);
+
+        const controls = card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">Best Deals Now</b><div style="font-size:11px;color:#999;margin-top:2px;">${deals.length} qualifying deal(s) · feed ${escapeHtml(freshness.label)}${Number.isFinite(freshness.ageSeconds)?` · ${Math.round(freshness.ageSeconds)}s old`:''}</div></div><button id="mm-intel-global-sync" style="${btn(true)}">Refresh Deals</button></div>`);
+
+        const topHtml = card(`${top.length ? top.map((r,i)=>`<div style="display:flex;justify-content:space-between;gap:8px;border-top:${i?'1px solid #303030':'0'};padding:7px 0;"><div style="font-size:11px;min-width:0;"><b>#${i+1} ${escapeHtml(r.name)}</b> · ROI <b>${r.roiPct.toFixed(1)}%</b> · Profit ${money(r.profit)} · Confidence ${r.confidence.toFixed(0)}%<br>Buy ${money(r.buyPrice)} → ${money(r.bestExit)} via ${escapeHtml(r.bestExitRoute)}
+            <details style="margin-top:4px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Score ${r.score.toFixed(0)} · Sellers ${r.sellerCount} · Bazaar avg ${r.bazaarAverage?money(r.bazaarAverage):'—'} · Torn market ${r.marketPrice?money(r.marketPrice):'—'} · History ${r.history.samples}</div></details></div>
+            <div style="display:flex;gap:4px;align-items:flex-start;"><button data-intel-action="enrich" data-item="${r.id}" style="${btn(true)}">${r.enriched?'Refresh':'Analyze'}</button><details><summary style="${btn()}list-style:none;">•••</summary><div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;">${r.sellerId?`<button data-intel-action="profile" data-seller="${r.sellerId}" style="${btn()}">Seller</button>`:''}<button data-open-advanced="intel" style="${btn()}">Full Market Intel</button></div></details></div></div>`).join('') : `<div style="font-size:11px;color:#888;">Refresh the global market to load opportunities.</div>`}</div>`);
+
+        const travelHtml = card(`<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><b>Best Travel Opportunities</b><button data-open-advanced="procurement" style="${btn()}">Travel Command</button></div>${travel.length?travel.map(r=>`<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>${escapeHtml(r.country)} · ${escapeHtml(r.itemName)}</b> ${travelRecommendationBadge(r.recommendation)}<br>Live stock ${Number(r.stock||0).toLocaleString()} · Profit/item ${money(r.profit)} · Risk-adjusted <b>${money(r.riskAdjustedProfitPerHour)}/hr</b></div>`).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">Travel Stock has not loaded yet.</div>'}`);
+        const scanners = card(`<details><summary style="cursor:pointer;font-weight:700;">More Scanners</summary><div style="margin-top:7px;"><div style="font-size:11px;"><b>Instant Trader Arbitrage:</b> ${instant.length} verified positive spread(s)</div>${instant.slice(0,5).map(r=>`<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">${escapeHtml(r.name)} · Buy ${money(r.buyPrice)} → Trader ${money(r.traderExit)} · ROI ${r.instantRoiPct.toFixed(1)}%</div>`).join('')}<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;"><button id="mm-intel-dollar" style="${btn()}">$1 Bazaar</button><button id="mm-intel-ranked" style="${btn()}">Ranked/Auction</button><button data-open-advanced="intel" style="${btn()}">Supplier Baskets + Full Scanners</button></div></div></details>`);
+        return controls + topHtml + travelHtml + scanners;
+    }
+
+    function customersSimpleHtml(db) {
+        const rfm = customerRfmRows(db);
+        // Keep the simple Customers tab fast: rank by tracked spend here instead of
+        // recomputing full inventory gross-margin/CLV analytics on every tab click.
+        const topBySpend = rfm.slice().sort((a,b)=>b.monetary-a.monetary);
+        const counts = {};
+        for (const c of rfm) counts[c.segment] = (counts[c.segment] || 0) + 1;
+        const pending = Object.values(db.subscribers || {}).filter(s => s.pendingNotification);
+        const eligible = Object.values(db.coupons || {}).filter(c => couponQualification(db,c).qualified);
+        const top = topBySpend.slice(0,10);
+        const summary = `<div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;">${['VIP','LOYAL','REGULAR','NEW','AT RISK','DORMANT'].map(s=>simpleMetric(s,String(counts[s]||0))).join('')}</div>`;
+        const actions = card(`<b>Customer Actions</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;"><button id="mm-refresh-customers" style="${btn(true)}">Refresh Customers</button><button data-open-advanced="customers" style="${btn()}">View Customers</button><button data-open-advanced="subscribers" style="${btn()}">Restock Alerts ${pending.length?`(${pending.length})`:''}</button><button data-open-advanced="coupons" style="${btn()}">Coupons ${eligible.length?`(${eligible.length} eligible)`:''}</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button></div>`);
+        const values = card(`<b>Top Customer Value</b>${top.map(c=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(c.name)} [${escapeHtml(c.id)}]</b> · ${escapeHtml(c.segment)} · Spend ${money(c.monetary)}<details style="margin-top:3px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Recency ${c.recencyDays.toFixed(1)}d · Purchases ${c.frequency} · Affinity ${c.topProducts.map(x=>`${escapeHtml(x[0])}×${x[1]}`).join(', ')||'—'}</div></details></div>`).join('')||'<div style="font-size:11px;color:#888;">No customer history yet.</div>'}`);
+        return summary + actions + values;
+    }
+
+    function moreSimpleHtml(db) {
+        const brief = ownerBriefing(db);
+        const preset = String(db.operations.settings.strategyPreset || 'BALANCED').replaceAll('_',' ');
+        return card(`<b>More</b><div style="font-size:11px;color:#999;margin:4px 0 8px;">Advanced reports and configuration remain fully available. Current strategy: <b>${escapeHtml(preset)}</b>.</div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;"><button data-open-advanced="analytics" style="${btn()}">Analytics & Reports</button><button data-open-advanced="sales" style="${btn()}">Sales Ledger</button><button data-open-advanced="inventory" style="${btn()}">Full Inventory</button><button data-open-advanced="procurement" style="${btn()}">Full Procurement</button><button data-open-advanced="intel" style="${btn()}">Full Market Intel</button><button data-open-advanced="subscribers" style="${btn()}">Restock Subscribers</button><button data-open-advanced="coupons" style="${btn()}">Coupons</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button><button data-open-advanced="ops" style="${btn()}">Operations Detail</button><button data-open-advanced="settings" style="${btn(true)}">Settings & Diagnostics</button></div><div style="border-top:1px solid #333;margin-top:9px;padding-top:7px;font-size:11px;color:#aaa;">Revenue ${money(brief.revenue)} · Gross profit ${money(brief.grossProfit)} · Dead capital ${money(brief.deadCapital)} · Lost profit ${money(brief.lostProfit)}</div>`);
+    }
+
+
+    function compareVersions(a,b) {
+        const pa=String(a||'0').split('.').map(x=>Number(x)||0);
+        const pb=String(b||'0').split('.').map(x=>Number(x)||0);
+        const n=Math.max(pa.length,pb.length);
+        for(let i=0;i<n;i++){
+            const av=pa[i]||0,bv=pb[i]||0;
+            if(av>bv)return 1;
+            if(av<bv)return -1;
+        }
+        return 0;
+    }
+
+    function crmUpdateStatus() {
+        const value=GM_getValue(CRM_UPDATE_STATUS_KEY,null);
+        return value&&typeof value==='object'?value:{};
+    }
+
+    function setCrmUpdateStatus(patch) {
+        const next={...crmUpdateStatus(),...patch,updatedAt:Date.now()};
+        GM_setValue(CRM_UPDATE_STATUS_KEY,next);
+        return next;
+    }
+
+    function fetchLatestCrmSource() {
+        return new Promise((resolve,reject)=>{
+            GM_xmlhttpRequest({
+                method:'GET',
+                url:CRM_UPDATE_URL+'?t='+Date.now(),
+                timeout:15000,
+                headers:{Accept:'text/plain'},
+                onload:r=>{
+                    if(r.status<200||r.status>=300)return reject(new Error('CRM update HTTP '+r.status));
+                    resolve(String(r.responseText||''));
+                },
+                ontimeout:()=>reject(new Error('CRM update check timed out.')),
+                onerror:()=>reject(new Error('CRM update network error.'))
+            });
+        });
+    }
+
+    function sourceVersion(source) {
+        const match=String(source||'').match(/^\s*\/\/\s*@version\s+([^\s]+)/m);
+        return match?String(match[1]).trim():'';
+    }
+
+    async function checkCrmUpdate({silent=false}={}) {
+        try{
+            const source=await fetchLatestCrmSource();
+            const latest=sourceVersion(source);
+            if(!latest)throw new Error('Could not read the published CRM version.');
+            const available=compareVersions(latest,VERSION)>0;
+            setCrmUpdateStatus({checkedAt:Date.now(),latestVersion:latest,available,error:''});
+            if(!silent){
+                statusText=available?'CRM update available: v'+latest+'.':'CRM is current at v'+VERSION+'.';
+                render();
+            }
+            return {latestVersion:latest,available};
+        }catch(error){
+            setCrmUpdateStatus({checkedAt:Date.now(),error:error?.message||String(error)});
+            if(!silent){statusText='CRM update check failed: '+(error?.message||String(error));render();}
+            throw error;
+        }
+    }
+
+    function openCrmUpdateInstaller() {
+        setCrmUpdateStatus({lastActionAt:Date.now(),lastAction:'open-installer'});
+        statusText='Opening the CRM update installer in this tab...';
+        try{render();}catch{}
+        navigateFromCRM(CRM_UPDATE_URL+'?t='+Date.now());
+    }
+
+    function updateCenterHtml() {
+        const us=crmUpdateStatus();
+        const available=Boolean(us.latestVersion&&compareVersions(us.latestVersion,VERSION)>0);
+        return '<div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;">'+
+            '<b>CRM Update Center</b>'+
+            '<div style="font-size:11px;color:#aaa;margin:4px 0 7px;">Installed: <b>v'+escapeHtml(VERSION)+'</b>'+
+            (us.latestVersion?' · Published: <b>v'+escapeHtml(us.latestVersion)+'</b>':'')+
+            (available?' · <span style="color:#9fe3a8;font-weight:bold;">UPDATE AVAILABLE</span>':'')+
+            '</div>'+
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;">'+
+                '<button id="mm-update-check" style="'+btn()+'">Check for Updates</button>'+
+                '<button id="mm-update-open" style="'+btn(available)+'">Update CRM</button>'+
+            '</div>'+
+            '<div style="font-size:10px;color:#888;margin-top:6px;">Safe mode: CRM remains a normal Tampermonkey userscript. Update is initiated from CRM and opens the installer in the same tab. Existing IndexedDB and GM storage are preserved.'+
+            (us.error?'<br><span style="color:#ff9b9b;">Last error: '+escapeHtml(us.error)+'</span>':'')+
+            '</div>'+
+        '</div>';
+    }
+
+    function settingsHtml() {
+        const hasKey = Boolean(getApiKey());
+        const db = dbLoad();
+        const audit = db.meta?.lastSalesAudit;
+        const auditText = audit
+            ? `${audit.ok ? 'PASS' : 'FAIL'} · ${Number(audit.sales || 0).toLocaleString()} sales · ${Number(audit.customersWithSales || 0).toLocaleString()} customers · ${escapeHtml(fmtDate(audit.at))}`
+            : 'Not run yet';
+
+        return card(`
+            <b>Torn API</b>
+            <div style="font-size:12px;color:${hasKey ? '#9fe3a8' : '#ff9b9b'};margin:4px 0 8px;font-weight:700;">${hasKey ? 'API STATUS: CONNECTED' : 'API STATUS: NOT CONFIGURED — sales and customer sync are stopped'}</div>
+            <div style="font-size:12px;color:#bbb;margin:4px 0 8px;">
+                v4 uses Torn directly: <b>User → Basic</b>, <b>User → Log</b> (Bazaar Sell 1226, Bazaar Buy 1225, Item Market Buy 1112),
+                <b>User → Bazaar</b>, <b>User → Item Market</b>, <b>Torn → Items</b>,
+                <b>Market → Item Market</b>, and <b>Market → Bazaar</b>.
+                <b>User → Inventory</b> is optional but improves stock counts.
+                No third-party pricing/procurement service is required.
+            </div>
+            <div style="display:flex;gap:6px;">
+                <input id="mm-api-key" type="password" autocomplete="off"
+                    placeholder="${hasKey ? 'API key saved — enter a new key to replace it' : 'Paste Torn API key'}"
+                    style="${inputCss()}flex:1">
+                <button id="mm-save-api" style="${btn(true)}">Save</button>
+                <button id="mm-clear-api" style="${btn()}">Clear</button>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
+                <button id="mm-sync-now" style="${btn(true)}">Sync Sales</button>
+                <button id="mm-proc-sync" style="${btn(true)}">Sync Procurement</button>
+                <button id="mm-rebuild-sales" style="${btn(true)}">Rebuild Sales History</button>
+                <button id="mm-rebuild-acquisitions" style="${btn()}">Rebuild Cost Basis</button>
+                <button id="mm-repair-names" style="${btn()}">Repair Usernames</button>
+                <button id="mm-repair-sales-integrity" style="${btn()}">Repair Sales Integrity</button>
+            </div>
+            <div style="font-size:12px;color:#aaa;margin-top:8px;">
+                Sales integrity: ${auditText}<br>
+                Last full sales rebuild: ${escapeHtml(fmtDate(db.meta?.salesRebuiltAt))}<br>
+                Last acquisition rebuild: ${escapeHtml(fmtDate(db.procurement?.lastAcquisitionRebuildAt))}<br>
+                Acquisition lots: ${Number(db.procurement?.acquisitions?.length || 0).toLocaleString()}<br>
+                Filtered customers: ${Object.keys(db.removedCustomers || {}).length}
+            </div>
+            <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;">
+                <b>Operations</b>
+                <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:5px;">
+                    <label style="font-size:10px;color:#aaa;">Listing hours<input id="mm-ops-listing-hours" type="number" min="1" value="${Number(db.operations.settings.listingHours||DEFAULT_LISTING_HOURS)}" style="${inputCss()}width:100%;"></label>
+                    <label style="font-size:10px;color:#aaa;">Lead hours<input id="mm-ops-lead-hours" type="number" min="1" value="${Number(db.operations.settings.defaultLeadHours||6)}" style="${inputCss()}width:100%;"></label>
+                    <label style="font-size:10px;color:#aaa;">Dead stock days<input id="mm-ops-dead-days" type="number" min="1" value="${Number(db.operations.settings.deadStockDays||DEAD_STOCK_DAYS)}" style="${inputCss()}width:100%;"></label>
+                    <label style="font-size:10px;color:#aaa;">Overstock ×<input id="mm-ops-overstock" type="number" min="1" step=".1" value="${Number(db.operations.settings.overstockMultiplier||1.5)}" style="${inputCss()}width:100%;"></label>
+                </div>
+                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;"><button id="mm-save-ops-settings" style="${btn()}">Save Operations</button><button id="mm-enable-notifications" style="${btn()}">Enable Browser Alerts</button></div>
+            </div>
+            <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;">
+                <b>Data Storage & GitHub Backup</b>
+                <div style="margin:6px 0;">
+                    <button id="mm-repair-contact-state" style="${btn()}">Repair Contacted Status</button>
+                    <span style="font-size:10px;color:#888;margin-left:6px;">Restores previously contacted customers from durable contact/coupon evidence.</span>
+                </div>
+                <div style="font-size:11px;color:#aaa;margin:4px 0 7px;">
+                    Primary database: <b>IndexedDB</b>. GitHub sync runs hourly when configured.
+                    Sanitized backup excludes customer records, API keys, refunds, coupons, private notes, acquisitions, and account-specific inventory.
+                    Optional encrypted full backup protects the complete CRM database.
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;">
+                    <input id="mm-gh-owner" placeholder="GitHub owner" value="${escapeHtml(getGithubSettings().owner)}" style="${inputCss()}">
+                    <input id="mm-gh-repo" placeholder="Repository" value="${escapeHtml(getGithubSettings().repo)}" style="${inputCss()}">
+                    <input id="mm-gh-branch" placeholder="Branch" value="${escapeHtml(getGithubSettings().branch)}" style="${inputCss()}">
+                    <input id="mm-gh-folder" placeholder="Folder" value="${escapeHtml(getGithubSettings().folder)}" style="${inputCss()}">
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:5px;">
+                    <input id="mm-gh-token" type="password" autocomplete="off" placeholder="${getGithubToken() ? 'GitHub fine-grained token saved — enter to replace' : 'GitHub fine-grained PAT (Contents read/write)'}" style="${inputCss()}">
+                    <input id="mm-gh-passphrase" type="password" autocomplete="off" placeholder="${getGithubBackupPassphrase() ? 'Encrypted backup passphrase saved — enter to replace' : 'Optional encrypted full-backup passphrase'}" style="${inputCss()}">
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px;font-size:11px;">
+                    <label><input id="mm-gh-auto" type="checkbox" ${getGithubSettings().autoSync ? 'checked' : ''}> Hourly sync</label>
+                    <label><input id="mm-gh-full" type="checkbox" ${getGithubSettings().encryptedFullBackup ? 'checked' : ''}> Encrypted full backup</label>
+                    <button id="mm-gh-save" style="${btn(true)}">Save GitHub</button>
+                    <button id="mm-gh-sync-now" style="${btn()}">Sync Now</button>
+                    <button id="mm-gh-restore" style="${btn()}">Restore from GitHub</button>
+                </div>
+                <div style="font-size:10px;color:#888;margin-top:6px;">
+                    Last GitHub sync: ${escapeHtml(fmtDate(getGithubSettings().lastSyncAt))} · Status: ${escapeHtml(getGithubSettings().lastStatus || 'Not run')}<br>
+                    Local backend: IndexedDB · Last local save: ${escapeHtml(fmtDate(db.meta?.storage?.lastSavedAt))}
+                </div>
+            </div>
+            ${updateCenterHtml()}
+            <div style="font-size:12px;color:#888;margin-top:8px;">
+                CRM v${VERSION}. Simple mode is task-first; Advanced mode exposes every detailed page. Torn data and TornW3B public market intelligence are normalized locally; scoring, ROI, liquidity, supplier, allocation, customer, demand, and realized-profit calculations run in this userscript.
+                Messages, purchases, Bazaar submissions, trades, and money transfers are never auto-submitted.
+            </div>
+        `);
+    }
+
+    function panelBody(db) {
+        if (simpleMode) {
+            if (activeTab === 'home') return homeHtml(db);
+            if (activeTab === 'stock') return stockSimpleHtml(db);
+            if (activeTab === 'deals') return dealsSimpleHtml(db);
+            if (activeTab === 'customers') return customersSimpleHtml(db);
+            if (activeTab === 'more') return moreSimpleHtml(db);
+        }
+        if (activeTab === 'ops') return operationsHtml(db);
+        if (activeTab === 'customers') return customersHtml(db);
+        if (activeTab === 'inventory') return inventoryHtml(db);
+        if (activeTab === 'procurement') return procurementHtml(db);
+        if (activeTab === 'intel') return marketIntelHtml(db);
+        if (activeTab === 'analytics') return analyticsHtml(db);
+        if (activeTab === 'coupons') return couponsHtml(db);
+        if (activeTab === 'subscribers') return subscribersHtml(db);
+        if (activeTab === 'refunds') return refundsHtml(db);
+        if (activeTab === 'sales') return salesHtml(db);
+        return settingsHtml();
+    }
+
+    function createPanel() {
+        if (document.getElementById(ROOT_ID)) return;
+        const root = document.createElement('div');
+        root.id = ROOT_ID;
+        root.style.cssText = 'position:fixed;z-index:2147483646;width:min(660px,calc(100vw - 24px));max-height:calc(100vh - 100px);overflow:auto;background:#101010;color:#eee;border:1px solid #6b5a2e;border-radius:9px;box-shadow:0 12px 35px #000b;font:13px/1.35 Arial,sans-serif;';
+        document.body.appendChild(root);
+    }
+
+    function createLauncher() {
+        if (document.getElementById(LAUNCHER_ID)) return;
+        const b = document.createElement('button');
+        b.id = LAUNCHER_ID;
+        b.textContent = 'CRM';
+        b.style.cssText = `position:fixed;right:0;top:160px;z-index:2147483647;${btn(true)}border-radius:6px 0 0 6px;`;
+        b.onclick = showCRM;
+        document.body.appendChild(b);
+    }
+
+    function render() {
+        const root = document.getElementById(ROOT_ID);
+        if (!root) return;
+        const ui = getUI();
+        if (ui.minimized) return;
+        const db = dbLoad();
+        root.innerHTML = `<div id="mm-drag" style="position:sticky;top:0;z-index:2;background:#111;border-bottom:1px solid #4b4024;cursor:move;"><div style="height:76px;background:linear-gradient(90deg,#0008,#0002),url('${BANNER_URL}') center/cover;border-radius:8px 8px 0 0;display:flex;align-items:flex-end;justify-content:space-between;padding:8px;box-sizing:border-box;"><div><b style="font-size:17px;text-shadow:0 2px 4px #000;">${SHOP_NAME}</b><div style="font-size:11px;text-shadow:0 1px 3px #000;">Bazaar Customer CRM v${VERSION}</div></div><div style="display:flex;gap:5px;"><button id="mm-minimize" style="${btn()}">−</button><button id="mm-close" style="${btn()}">×</button></div></div></div><div style="padding:9px;">${tabsHtml()}<div style="padding:6px 8px;background:#151515;border:1px solid #333;border-radius:5px;color:#d7ad4b;margin-bottom:7px;">${escapeHtml(statusText)}</div>${panelBody(db)}</div>`;
+        bindPanelEvents(root);
+        enableDragging(root);
+    }
+
+    function showCRM() {
+        const root = document.getElementById(ROOT_ID);
+        const launcher = document.getElementById(LAUNCHER_ID);
+        const ui = getUI();
+        saveUI({ minimized: false });
+        if (root) {
+            root.style.display = 'block';
+            const left = ui.left == null ? Math.max(10, innerWidth - 690) : Math.min(Math.max(0, ui.left), Math.max(0, innerWidth - root.offsetWidth));
+            const top = Math.min(Math.max(0, ui.top), Math.max(0, innerHeight - 80));
+            root.style.left = `${left}px`;
+            root.style.top = `${top}px`;
+        }
+        if (launcher) launcher.style.display = 'none';
+        render();
+    }
+
+    function minimizeCRM() {
+        saveUI({ minimized: true });
+        const root = document.getElementById(ROOT_ID);
+        const launcher = document.getElementById(LAUNCHER_ID);
+        if (root) root.style.display = 'none';
+        if (launcher) launcher.style.display = 'block';
+    }
+
+    function enableDragging(root) {
+        const handle = root.querySelector('#mm-drag');
+        if (!handle || handle.dataset.bound) return;
+        handle.dataset.bound = '1';
+        handle.addEventListener('pointerdown', event => {
+            if (event.target.closest('button')) return;
+            const rect = root.getBoundingClientRect();
+            const dx = event.clientX - rect.left;
+            const dy = event.clientY - rect.top;
+            handle.setPointerCapture(event.pointerId);
+            const move = e => {
+                const left = Math.min(Math.max(0, e.clientX - dx), Math.max(0, innerWidth - root.offsetWidth));
+                const top = Math.min(Math.max(0, e.clientY - dy), Math.max(0, innerHeight - 50));
+                root.style.left = `${left}px`;
+                root.style.top = `${top}px`;
+            };
+            const up = e => {
+                handle.releasePointerCapture(e.pointerId);
+                handle.removeEventListener('pointermove', move);
+                handle.removeEventListener('pointerup', up);
+                const r = root.getBoundingClientRect();
+                saveUI({ left: r.left, top: r.top });
+            };
+            handle.addEventListener('pointermove', move);
+            handle.addEventListener('pointerup', up);
+        });
+    }
+
+    function bindPanelEvents(root) {
+        root.querySelector('#mm-ui-mode-toggle')?.addEventListener('click', () => {
+            simpleMode = !simpleMode;
+            GM_setValue(UI_MODE_KEY, simpleMode ? 'simple' : 'advanced');
+            activeTab = simpleMode ? 'home' : 'ops';
+            statusText = simpleMode ? 'Simple mode enabled.' : 'Advanced mode enabled.';
+            render();
+        });
+
+        root.querySelectorAll('[data-simple-go]').forEach(button => button.addEventListener('click', () => {
+            simpleMode = true;
+            GM_setValue(UI_MODE_KEY, 'simple');
+            activeTab = button.dataset.simpleGo || 'home';
+            render();
+        }));
+
+        root.querySelectorAll('[data-open-advanced]').forEach(button => button.addEventListener('click', () => {
+            simpleMode = false;
+            GM_setValue(UI_MODE_KEY, 'advanced');
+            activeTab = button.dataset.openAdvanced || 'ops';
+            render();
+        }));
+
+        root.querySelectorAll('[data-strategy-preset]').forEach(button => button.addEventListener('click', () => {
+            applyStrategyPreset(button.dataset.strategyPreset);
+        }));
+
+        root.querySelector('#mm-minimize')?.addEventListener('click', minimizeCRM);
+        root.querySelector('#mm-close')?.addEventListener('click', minimizeCRM);
+        root.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { activeTab = b.dataset.tab; render(); }));
+        root.querySelector('#mm-start-restock-session')?.addEventListener('click', () => {
+            try { startRestockSession(); statusText='Restock session started.'; render(); }
+            catch(error){statusText=`Could not start restock session: ${error?.message||String(error)}`;render();}
+        });
+        root.querySelector('#mm-restock-skip')?.addEventListener('click',()=>advanceRestockSession('skipped'));
+        root.querySelector('#mm-restock-log-purchase')?.addEventListener('click',()=>{
+            const db=dbLoad(),s=getActiveRestockSession(db),q=s?.queue?.[s.activeIndex];if(!q)return;
+            const qty=prompt(`Quantity purchased for ${q.itemName}:`,String(q.sourceQty||q.need||1));if(qty==null)return;
+            const cost=prompt('Actual unit cost:',String(q.buyPrice||''));if(cost==null)return;
+            try{logRestockPurchase(qty,cost);statusText='Purchase logged and restock session advanced.';}
+            catch(error){statusText=`Purchase not logged: ${error?.message||String(error)}`;render();}
+        });
+        root.querySelector('#mm-open-bazaar-add')?.addEventListener('click',()=>navigateFromCRM('https://www.torn.com/bazaar.php#/p=add'));
+        root.querySelector('#mm-add-event')?.addEventListener('click',()=>{
+            try{
+                addDemandEvent(root.querySelector('#mm-event-name')?.value,root.querySelector('#mm-event-start')?.value,root.querySelector('#mm-event-end')?.value,root.querySelector('#mm-event-mult')?.value);
+                statusText='Demand event added.';
+            }catch(error){statusText=`Event not added: ${error?.message||String(error)}`;render();}
+        });
+        root.querySelectorAll('[data-ops-action]').forEach(button=>button.addEventListener('click',()=>{
+            const action=button.dataset.opsAction;
+            if(action==='seller'&&button.dataset.seller)return navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(button.dataset.seller)}`);
+            if(action==='remove-event')return removeDemandEvent(button.dataset.event);
+            if(action==='listing-plan'){
+                const db=dbLoad(),plan=db.operations.listingPlans[button.dataset.item];
+                if(plan)alert(`${plan.itemName}\nAdd ${plan.quantity} to Bazaar\nRecommended price: ${money(plan.price)}\nExpected margin: ${plan.expectedMarginPct.toFixed(1)}%`);
+            }
+        }));
+
+        root.querySelector('#mm-travel-capture')?.addEventListener('click', () => updateTravelData().catch(error => { statusText=`Travel refresh failed: ${error?.message||String(error)}`; render(); }));
+        root.querySelector('#mm-travel-sync')?.addEventListener('click', () => syncTravelStock({ silent:false, force:true }).catch(()=>{}));
+        root.querySelector('#mm-travel-country')?.addEventListener('change', e => {
+            const db=dbLoad();
+            db.travelIntel.settings.selectedCountry=String(e.currentTarget.value||'');
+            db.travelIntel.settings.selectedItemKey='';
+            dbSave(db);
+            render();
+        });
+        root.querySelector('#mm-travel-item')?.addEventListener('change', e => {
+            const db=dbLoad();
+            db.travelIntel.settings.selectedItemKey=String(e.currentTarget.value||'');
+            dbSave(db);
+            render();
+        });
+        root.querySelector('#mm-travel-save')?.addEventListener('click', () => saveTravelSettings(root));
+        root.querySelector('#mm-opportunity-sync')?.addEventListener('click', () => syncProcurement());
+        root.querySelector('#mm-opportunity-market')?.addEventListener('click', () => syncMarketIntelligence(false));
+
+        root.querySelector('#mm-add-customer')?.addEventListener('click', () => addManualCustomer(root.querySelector('#mm-add-id')?.value));
+        root.querySelector('#mm-refresh-customers')?.addEventListener('click', async () => {
+            try {
+                await repairRecentSalesCoverage({ lookbackMs: CUSTOMER_REFRESH_LOOKBACK_MS, silent: false });
+            } catch (error) {
+                statusText = `Customer refresh failed: ${error?.message || String(error)}`;
+                render();
+            }
+        });
+        root.querySelector('#mm-add-id')?.addEventListener('keydown', e => { if (e.key === 'Enter') addManualCustomer(e.currentTarget.value); });
+
+        const bindCustomerFilter = (selector, key) => root.querySelector(selector)?.addEventListener('change', e => {
+            customerFilters[key] = e.currentTarget.value;
+            render();
+        });
+        bindCustomerFilter('#mm-filter-message', 'message');
+        bindCustomerFilter('#mm-filter-contacted', 'contacted');
+        bindCustomerFilter('#mm-filter-restock', 'restock');
+        bindCustomerFilter('#mm-filter-cashback', 'cashback');
+        root.querySelector('#mm-filter-reset')?.addEventListener('click', () => {
+            customerFilters.message = 'all';
+            customerFilters.contacted = 'all';
+            customerFilters.restock = 'all';
+            customerFilters.cashback = 'all';
+            render();
+        });
+
+        root.querySelector('#mm-save-api')?.addEventListener('click', () => {
+            const value = root.querySelector('#mm-api-key')?.value || '';
+            if (!value.trim()) { alert('Enter an API key first.'); return; }
+            setApiKey(value);
+            fatal = false;
+            statusText = 'API key saved in Tampermonkey storage.';
+            render();
+            sync();
+        });
+        root.querySelector('#mm-clear-api')?.addEventListener('click', () => {
+            setApiKey('');
+            fatal = false;
+            statusText = 'API key removed.';
+            render();
+        });
+        root.querySelector('#mm-sync-now')?.addEventListener('click', sync);
+        root.querySelector('#mm-rebuild-sales')?.addEventListener('click', rebuildSalesHistory);
+        root.querySelector('#mm-repair-names')?.addEventListener('click', async () => {
+            statusText = 'Repairing unresolved usernames…'; render();
+            const count = await repairUsernames(25);
+            statusText = `Username repair complete: ${count} repaired.`; render();
+        });
+        root.querySelector('#mm-repair-sales-integrity')?.addEventListener('click', repairSalesIntegrityNow);
+        root.querySelector('#mm-update-check')?.addEventListener('click', () => checkCrmUpdate({silent:false}).catch(()=>{}));
+        root.querySelector('#mm-update-open')?.addEventListener('click', openCrmUpdateInstaller);
+
+        root.querySelector('#mm-intel-global-sync')?.addEventListener('click', () => syncMarketIntelligence(false));
+        root.querySelector('#mm-intel-full-sync')?.addEventListener('click', () => syncMarketIntelligence(true));
+        root.querySelector('#mm-intel-enrich')?.addEventListener('click', async () => {
+            if (procurementRunning) return;
+            procurementRunning = true;
+            statusText = 'Enriching top global opportunities…';
+            render();
+            try {
+                const r = await enrichTopGlobalOpportunities();
+                statusText = `Deal enrichment complete: ${r.ok}/${r.requested}.`;
+            } catch (error) {
+                statusText = `Deal enrichment failed: ${error?.message || String(error)}`;
+            } finally {
+                procurementRunning = false;
+                render();
+            }
+        });
+        root.querySelector('#mm-intel-dollar')?.addEventListener('click', async () => {
+            statusText = 'Refreshing $1 Bazaar intelligence…'; render();
+            try {
+                const rows = await syncWeavDollarBazaars();
+                statusText = `$1 scanner refreshed: ${rows.length} item listing(s).`;
+            } catch (error) {
+                statusText = `$1 scanner failed: ${error?.message || String(error)}`;
+            }
+            render();
+        });
+        root.querySelector('#mm-intel-ranked')?.addEventListener('click', async () => {
+            statusText = 'Refreshing ranked and auction intelligence…'; render();
+            try {
+                const r = await syncWeavRanked();
+                statusText = `Ranked intelligence refreshed: ${r.ranked.length} listing(s), ${r.auctions.length} auction(s).`;
+            } catch (error) {
+                statusText = `Ranked intelligence failed: ${error?.message || String(error)}`;
+            }
+            render();
+        });
+        root.querySelector('#mm-save-intel-settings')?.addEventListener('click', () => {
+            saveIntelSettings({
+                minRoiPct: root.querySelector('#mm-intel-min-roi')?.value,
+                minAbsoluteProfit: root.querySelector('#mm-intel-min-profit')?.value,
+                minMarketPrice: root.querySelector('#mm-intel-min-market')?.value,
+                minBazaarSellers: root.querySelector('#mm-intel-min-sellers')?.value,
+                maxEnrich: root.querySelector('#mm-intel-max-enrich')?.value,
+                bazaarExitHaircutPct: root.querySelector('#mm-intel-haircut')?.value
+            });
+            statusText = 'Market scanner rules saved.';
+            render();
+        });
+
+        root.querySelectorAll('[data-intel-action]').forEach(button => button.addEventListener('click', async () => {
+            const action = button.dataset.intelAction;
+            if (action === 'profile') {
+                const seller = button.dataset.seller;
+                if (seller) navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(seller)}`);
+                return;
+            }
+            if (action === 'enrich') {
+                const id = button.dataset.item;
+                if (!id) return;
+                statusText = `Verifying global listings and trader exits for item ${id}…`;
+                render();
+                try {
+                    await enrichWeavItem(id, { force: true });
+                    statusText = `Item ${id} market intelligence refreshed.`;
+                } catch (error) {
+                    statusText = `Item analysis failed: ${error?.message || String(error)}`;
+                }
+                render();
+                return;
+            }
+        }));
+
+        root.querySelector('#mm-repair-contact-state')?.addEventListener('click', () => {
+            const db = dbLoad();
+            let repaired = 0;
+            const before = {};
+
+            for (const [id, c] of Object.entries(db.customers || {})) {
+                before[id] = customerHasBeenContacted(c);
+            }
+
+            mergeDurableContactState(db);
+
+            for (const [id, c] of Object.entries(db.customers || {})) {
+                if (!before[id] && customerHasBeenContacted(c)) repaired++;
+                if (customerHasBeenContacted(c)) rememberContactState(c);
+            }
+
+            dbSave(db);
+            statusText = repaired
+                ? `Contact status repaired for ${repaired} customer${repaired === 1 ? '' : 's'}.`
+                : 'Contact status checked. No additional repairs were needed.';
+            render();
+        });
+
+        root.querySelector('#mm-gh-save')?.addEventListener('click', () => {
+            saveGithubSettings({
+                owner: root.querySelector('#mm-gh-owner')?.value || '',
+                repo: root.querySelector('#mm-gh-repo')?.value || '',
+                branch: root.querySelector('#mm-gh-branch')?.value || 'main',
+                folder: root.querySelector('#mm-gh-folder')?.value || 'crm-sync',
+                autoSync: Boolean(root.querySelector('#mm-gh-auto')?.checked),
+                encryptedFullBackup: Boolean(root.querySelector('#mm-gh-full')?.checked)
+            });
+            const token = root.querySelector('#mm-gh-token')?.value || '';
+            const passphrase = root.querySelector('#mm-gh-passphrase')?.value || '';
+            if (token) setGithubToken(token);
+            if (passphrase) setGithubBackupPassphrase(passphrase);
+            scheduleGithubSync();
+            statusText = 'GitHub backup settings saved.';
+            render();
+        });
+
+        root.querySelector('#mm-gh-sync-now')?.addEventListener('click', () => githubSyncNow({ silent: false }));
+
+        root.querySelector('#mm-gh-restore')?.addEventListener('click', async () => {
+            if (!confirm('Restore CRM data from the configured GitHub backup? Encrypted full backup is preferred when available.')) return;
+            statusText = 'Restoring CRM backup from GitHub…';
+            render();
+            try {
+                const result = await githubRestore({ preferFull: true });
+                statusText = `GitHub restore complete (${result.type}).`;
+            } catch (error) {
+                statusText = `GitHub restore failed: ${error?.message || String(error)}`;
+            }
+            render();
+        });
+
+        root.querySelector('#mm-save-ops-settings')?.addEventListener('click',()=>{
+            const db=dbLoad();
+            const pairs={
+                listingHours:root.querySelector('#mm-ops-listing-hours')?.value,
+                defaultLeadHours:root.querySelector('#mm-ops-lead-hours')?.value,
+                deadStockDays:root.querySelector('#mm-ops-dead-days')?.value,
+                overstockMultiplier:root.querySelector('#mm-ops-overstock')?.value
+            };
+            for(const [k,v] of Object.entries(pairs)){const n=Number(v);if(Number.isFinite(n)&&n>0)db.operations.settings[k]=n;}
+            dbSave(db);statusText='Operations settings saved.';render();
+        });
+        root.querySelector('#mm-enable-notifications')?.addEventListener('click',requestOperationalNotifications);
+        root.querySelector('#mm-build-repricing-plan')?.addEventListener('click', () => {
+            const db=dbLoad();
+            const plan=buildRepricingPlan(db);
+            dbSave(db);
+            statusText=`Repricing plan ready: ${Object.keys(plan).length} item${Object.keys(plan).length===1?'':'s'}. Open your Bazaar to use the fill assistant.`;
+            render();
+        });
+
+        root.querySelector('#mm-proc-sync')?.addEventListener('click', syncProcurement);
+        root.querySelector('#mm-rebuild-acquisitions')?.addEventListener('click', rebuildAcquisitionHistory);
+        root.querySelector('#mm-save-proc-settings')?.addEventListener('click', () => {
+            saveProcurementSettings({
+                procurementBudget: root.querySelector('#mm-proc-budget')?.value,
+                targetDays: root.querySelector('#mm-proc-target-days')?.value,
+                safetyDays: root.querySelector('#mm-proc-safety-days')?.value,
+                minMarginPct: root.querySelector('#mm-proc-margin')?.value
+            });
+            statusText = 'Procurement targets saved.';
+            render();
+        });
+
+        root.querySelector('#mm-proc-refresh-markets')?.addEventListener('click', async () => {
+            const db = dbLoad();
+            const rows = procurementRows(db)
+                .filter(r => /^\d+$/.test(r.id) && (r.watched || r.rank <= 2 || r.shortage > 0))
+                .slice(0, Math.max(1, Math.min(30, Number(db.procurement.settings.marketRefreshLimit || PROCUREMENT_MARKET_REFRESH_LIMIT))));
+            statusText = `Refreshing ${rows.length} market snapshot${rows.length === 1 ? '' : 's'}…`;
+            render();
+            let ok = 0;
+            for (const row of rows) {
+                try { await refreshMarketSnapshot(row.id); ok++; }
+                catch (error) {
+                    const next = dbLoad();
+                    addProcurementDiagnostic(next.procurement, `Market ${row.name}: ${error?.message || String(error)}`);
+                    dbSave(next);
+                }
+            }
+            statusText = `Market refresh complete: ${ok}/${rows.length}.`;
+            render();
+        });
+
+        root.querySelector('#mm-add-acquisition')?.addEventListener('click', () => {
+            try {
+                addAcquisition({
+                    itemId: root.querySelector('#mm-buy-item-id')?.value,
+                    itemName: root.querySelector('#mm-buy-item-name')?.value,
+                    quantity: root.querySelector('#mm-buy-qty')?.value,
+                    unitCost: root.querySelector('#mm-buy-cost')?.value,
+                    source: root.querySelector('#mm-buy-source')?.value,
+                    notes: root.querySelector('#mm-buy-notes')?.value
+                });
+                statusText = 'Acquisition logged.';
+            } catch (error) {
+                statusText = `Acquisition not logged: ${error?.message || String(error)}`;
+            }
+            render();
+        });
+
+        root.querySelector('#mm-add-travel')?.addEventListener('click', () => {
+            try {
+                addTravelEntry({
+                    destination: root.querySelector('#mm-travel-destination')?.value,
+                    itemId: root.querySelector('#mm-travel-item-id')?.value,
+                    itemName: root.querySelector('#mm-travel-item-name')?.value,
+                    quantity: root.querySelector('#mm-travel-qty')?.value,
+                    unitCost: root.querySelector('#mm-travel-cost')?.value,
+                    observedStock: root.querySelector('#mm-travel-stock')?.value,
+                    notes: root.querySelector('#mm-travel-notes')?.value
+                });
+                statusText = 'Travel purchase added to travel and acquisition ledgers.';
+            } catch (error) {
+                statusText = `Travel entry not added: ${error?.message || String(error)}`;
+            }
+            render();
+        });
+
+        root.querySelectorAll('[data-proc-action]').forEach(button => button.addEventListener('click', async () => {
+            const action = button.dataset.procAction;
+            const id = button.dataset.item;
+
+            if (action === 'watch') return toggleWatchItem(id);
+            if (action === 'alert-rule') return setOpportunityAlertRule(id);
+
+            if (action === 'market') {
+                statusText = `Refreshing official markets for item ${id}…`;
+                render();
+                try {
+                    await refreshMarketSnapshot(id);
+                    statusText = `Market snapshot refreshed for item ${id}.`;
+                } catch (error) {
+                    statusText = `Market refresh failed: ${error?.message || String(error)}`;
+                }
+                render();
+                return;
+            }
+
+            if (action === 'log-buy') {
+                const qty = prompt(`Quantity purchased for ${button.dataset.name || id}:`, '1');
+                if (qty == null) return;
+                const cost = prompt('Unit cost:', '');
+                if (cost == null) return;
+                const source = prompt('Source (Direct Trade / Travel / Faction / NPC / Manual):', 'Direct Trade') || 'Manual';
+                try {
+                    addAcquisition({
+                        itemId: id,
+                        itemName: button.dataset.name || '',
+                        source,
+                        quantity: qty,
+                        unitCost: cost,
+                        notes: ''
+                    });
+                    statusText = 'Acquisition logged.';
+                } catch (error) {
+                    statusText = `Acquisition not logged: ${error?.message || String(error)}`;
+                }
+                render();
+                return;
+            }
+
+            if (action === 'remove-acquisition') return removeAcquisition(button.dataset.acquisition);
+            if (action === 'remove-travel') return removeTravelEntry(button.dataset.travel);
+        }));
+
+        root.querySelector('#mm-restock-refresh-inventory')?.addEventListener('click', async () => {
+            statusText = 'Refreshing current Bazaar inventory…';
+            render();
+            try {
+                const db = await refreshOwnBazaarInventoryForMessage();
+                const count = Object.keys(db.procurement?.bazaar || {}).length;
+                statusText = `Bazaar inventory refreshed: ${count.toLocaleString()} SKU(s).`;
+            } catch (error) {
+                statusText = `Bazaar inventory refresh failed: ${error?.message || String(error)}`;
+            }
+            render();
+        });
+
+        root.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', async () => {
+            const action = button.dataset.action;
+            const id = button.dataset.id;
+            const refundId = button.dataset.refund;
+            const db = dbLoad();
+            if (action === 'compose' && db.customers[id]) return composeCustomer(db.customers[id]);
+            if (action === 'coupon-reminder') return prepareCouponReminder(id);
+            if (action === 'reorder-compose') return prepareReorderOutreach(id);
+            if (action === 'contacted') return markCustomerContacted(id);
+            if (action === 'subscribe' && db.customers[id]) return subscribeCustomer(db.customers[id]);
+            if (action === 'unsubscribe') return unsubscribeCustomer(id);
+            if (action === 'profile') return navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(id)}`);
+            if (action === 'remove') return removeCustomer(id);
+            if (action === 'start-refund') return startCouponRefund(id);
+            if (action === 'open-refund' && db.refunds[refundId]) return openRefundProfile(db.refunds[refundId]);
+            if (action === 'complete-refund' && db.refunds[refundId]) {
+                const r = db.refunds[refundId];
+                if (confirm(`Confirm Torn successfully sent ${money(r.amount)} to ${r.playerName || r.playerId}?\n\nOnly continue after Torn confirms the transfer.`)) completeRefund(refundId);
+                return;
+            }
+            if (action === 'cancel-refund') return cancelRefund(refundId);
+            if (action === 'edit-interests') {
+                const db = dbLoad();
+                const sub = db.subscribers[id];
+                if (!sub) return;
+                const current = Array.isArray(sub.interests) ? sub.interests.join(', ') : '';
+                const value = prompt('Interested item IDs or names, comma-separated. Leave blank for all items:', current);
+                if (value != null) setSubscriberInterests(id, value);
+                return;
+            }
+            if (action === 'notify-inventory') return prepareBazaarInventoryNotification(id);
+            if (action === 'notify') {
+                const item = root.querySelector('#mm-restock-item')?.value.trim() || '';
+                const qty = Number(root.querySelector('#mm-restock-qty')?.value);
+                const price = Number(root.querySelector('#mm-restock-price')?.value);
+                return prepareRestockNotification(id, item, qty, price);
+            }
+            if (action === 'notified') return markSubscriberNotified(id);
+        }));
+    }
+
+    // ============================================================
+    // ROUTING / INITIALIZATION
+    // ============================================================
+
+
+    function visibleSendButton() {
+        const candidates = [...document.querySelectorAll('button, input[type="submit"], [role="button"]')].filter(visible);
+        return candidates.find(el => {
+            const text = String(el.innerText || el.value || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || '').trim().toLowerCase();
+            if (!/(^|\s)send(\s|$)|send message/.test(text)) return false;
+            const meta = elementMeta(el);
+            return !/search|friend|money|cash|trade|gift/.test(meta);
+        }) || null;
+    }
+
+    function composeStillVisible(expectedSubject = '') {
+        const subject = findComposeSubjectInput();
+        if (!subject || !visible(subject)) return false;
+        if (!expectedSubject) return true;
+        const value = String(subject.value || '').trim();
+        return !value || value === String(expectedSubject || '').trim();
+    }
+
+    function messageSentConfirmationVisible() {
+        const nodes = [...document.querySelectorAll('[role="alert"], [class*="success" i], [class*="message" i], [class*="notification" i], [class*="toast" i]')]
+            .filter(visible)
+            .slice(-80);
+        return nodes.some(el => {
+            const t = String(el.innerText || el.textContent || '').trim().toLowerCase();
+            return /message\s+(has\s+been\s+)?sent|sent\s+successfully|successfully\s+sent/.test(t);
+        });
+    }
+
+    function installFirstMessageSendDetector() {
+        if (!location.pathname.includes('messages.php')) return;
+
+        const pending = GM_getValue(PENDING_FIRST_SEND_KEY, null);
+        const id = asId(pending?.playerId);
+        const createdAt = Number(pending?.createdAt || 0);
+        if (!id || !createdAt || Date.now() - createdAt > 15 * 60 * 1000) {
+            if (pending) GM_deleteValue(PENDING_FIRST_SEND_KEY);
+            return;
+        }
+
+        let armed = true;
+        let clickedAt = 0;
+        let verifyTimer = null;
+        let scanTimer = null;
+        let observer = null;
+
+        const cleanup = keepPending => {
+            armed = false;
+            if (verifyTimer) clearInterval(verifyTimer);
+            if (scanTimer) clearInterval(scanTimer);
+            if (observer) observer.disconnect();
+            document.removeEventListener('click', clickHandler, true);
+            document.removeEventListener('submit', submitHandler, true);
+            if (!keepPending) GM_deleteValue(PENDING_FIRST_SEND_KEY);
+        };
+
+        const verifyAfterSend = () => {
+            if (!armed || !clickedAt) return;
+            const elapsed = Date.now() - clickedAt;
+
+            // Confirmation hierarchy:
+            // 1) explicit Torn "message sent" UI
+            // 2) compose form/subject disappears or route exits compose after the human Send click.
+            const confirmed =
+                messageSentConfirmationVisible() ||
+                !location.hash.includes('compose') ||
+                !composeStillVisible(pending.subject);
+
+            if (confirmed) {
+                cleanup(true);
+                completeFirstMessageSend(id, 'messages-page-send-confirmed');
+                return;
+            }
+
+            // Do not mark on a failed/blocked send. Re-arm for another click.
+            if (elapsed >= 5000) {
+                clickedAt = 0;
+                if (verifyTimer) { clearInterval(verifyTimer); verifyTimer = null; }
+                GM_setValue(PENDING_FIRST_SEND_KEY, { ...pending, state:'awaiting-send', lastFailedVerifyAt:Date.now() });
+                console.warn('[MM CRM] Send click was not confirmed within 5s; first-message state left pending.');
+            }
+        };
+
+        const armVerification = () => {
+            if (!armed || clickedAt) return;
+            clickedAt = Date.now();
+            GM_setValue(PENDING_FIRST_SEND_KEY, { ...pending, state:'send-clicked', sendClickedAt:clickedAt });
+            verifyTimer = setInterval(verifyAfterSend, 250);
+            // Immediate and delayed scans cover fast Torn SPA transitions.
+            setTimeout(verifyAfterSend, 350);
+            setTimeout(verifyAfterSend, 1200);
+            setTimeout(verifyAfterSend, 3000);
+            setTimeout(verifyAfterSend, 4800);
+        };
+
+        const clickHandler = event => {
+            if (!armed) return;
+            const el = event.target?.closest?.('button, input[type="submit"], [role="button"]');
+            if (!el || !visible(el)) return;
+            const text = String(el.innerText || el.value || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || '').trim().toLowerCase();
+            if (/(^|\s)send(\s|$)|send message/.test(text) && !/search|money|cash|trade|gift/.test(elementMeta(el))) {
+                armVerification();
+            }
+        };
+
+        const submitHandler = event => {
+            if (!armed) return;
+            const form = event.target;
+            if (!(form instanceof HTMLFormElement)) return;
+            const send = visibleSendButton();
+            if (send && (form.contains(send) || composeStillVisible(pending.subject))) armVerification();
+        };
+
+        document.addEventListener('click', clickHandler, true);
+        document.addEventListener('submit', submitHandler, true);
+
+        // 3–5 second scanning window begins after Compose opens, as requested.
+        const started = Date.now();
+        scanTimer = setInterval(() => {
+            if (!armed) return;
+            if (Date.now() - started > 5 * 60 * 1000) {
+                cleanup(true);
+                return;
+            }
+            // Ensure the Send control is present and the compose page is still alive.
+            visibleSendButton();
+            if (clickedAt) verifyAfterSend();
+        }, 400);
+
+        observer = new MutationObserver(() => {
+            if (armed && clickedAt) verifyAfterSend();
+        });
+        observer.observe(document.documentElement, { childList:true, subtree:true, attributes:true, attributeFilter:['class','style','disabled'] });
+    }
+
+    function runPageHelpers() {
+        fillMessageComposer();
+        installFirstMessageSendDetector();
+        fillRefundForm();
+        setTimeout(installBazaarListingAssistant, 450);
+    }
+
+    function onRouteChanged() {
+        if (routeTimer) clearTimeout(routeTimer);
+        routeTimer = setTimeout(() => {
+            if (location.href === lastHref) return;
+            lastHref = location.href;
+            runPageHelpers();
+        }, 120);
+    }
+
+    function installRouteHooks() {
+        window.addEventListener('hashchange', onRouteChanged);
+        window.addEventListener('popstate', onRouteChanged);
+        for (const method of ['pushState', 'replaceState']) {
+            const original = history[method];
+            history[method] = function (...args) {
+                const result = original.apply(this, args);
+                onRouteChanged();
+                return result;
+            };
+        }
+    }
+
+    function clampPanel() {
+        const root = document.getElementById(ROOT_ID);
+        if (!root || getUI().minimized) return;
+        const r = root.getBoundingClientRect();
+        const left = Math.min(Math.max(0, r.left), Math.max(0, innerWidth - root.offsetWidth));
+        const top = Math.min(Math.max(0, r.top), Math.max(0, innerHeight - 50));
+        root.style.left = `${left}px`;
+        root.style.top = `${top}px`;
+        saveUI({ left, top });
+    }
+
+    async function initialize() {
+        migrateApiKey();
+
+        const storage = await initializeStorage();
+        installDbCrossTabSync();
+        if (storage.migrated) statusText = 'Database migrated to IndexedDB.';
+
+        await autoRestoreIfDatabaseEmpty();
+        {
+            const repairedDb = dbLoad();
+            mergeDurableContactState(repairedDb);
+            reconcileSalesIntegrity(repairedDb);
+            dbSave(repairedDb);
+        }
+        await flushDbWrites();
+
+        createPanel();
+        createLauncher();
+        const ui = getUI();
+        if (ui.minimized) minimizeCRM(); else showCRM();
+        installRouteHooks();
+        runPageHelpers();
+        window.addEventListener('resize', clampPanel);
+        scheduleGithubSync();
+
+        if (githubConfigured() && getGithubSettings().autoSync) {
+            setTimeout(() => githubSyncNow({ silent: true }), 90_000);
+        }
+
+        if (getApiKey()) {
+            setTimeout(async () => {
+                await repairUsernames(8);
+                render();
+                sync({ silent: true });
+                setTimeout(() => repairRecentSalesCoverage({ lookbackMs: FIRST_SYNC_LOOKBACK_MS, silent: true }).catch(error => console.warn('[MM CRM] Recent sales repair failed', error)), 1800);
+                setTimeout(syncProcurement, 2500);
+            }, 1000);
+        } else {
+            statusText = 'Torn API key missing. Sales/customer sync is paused. Open More → Settings, paste your Torn API key, and Save.';
+            render();
+        }
+        setInterval(() => {
+            if (getApiKey()) sync({ silent: true });
+        }, POLL_MS);
+
+        setTimeout(() => checkCrmUpdate({silent:true}).catch(()=>{}), 12_000);
+
+        setTimeout(() => syncTravelStock({ silent:true, force:true }).then(rows => {
+            if (rows?.length && !getUI().minimized) {
+                statusText = `Travel Stock ready: ${rows.length} live item routes loaded.`;
+                render();
+            }
+        }).catch(error => console.warn('[MM CRM] Travel Stock startup sync failed', error)), 1800);
+        setInterval(() => {
+            backgroundTravelSample().then(count => {
+                if(!count) syncTravelStock({ silent:true }).catch(error => console.warn('[MM CRM] Travel Stock background sync failed', error));
+            }).catch(() => {});
+        }, TRAVEL_SYNC_INTERVAL_MS);
+    }
+
+    // Manual utility surface. No automatic messaging or money transfer actions are exposed.
+    window.MMBazaarCRM = Object.freeze({
+        version: VERSION,
+        open: showCRM,
+        sync,
+        rebuildSalesHistory,
+        repairSalesIntegrityNow,
+        restoreRemovedCustomer,
+        auditSales: () => auditSalesData(dbLoad()),
+        repairUsernames,
+        processCustomerCommand,
+        refreshCustomerUsername,
+        syncProcurement,
+        syncMarketIntelligence,
+        syncWeavMarketplace,
+        enrichWeavItem,
+        globalOpportunityRows: () => globalOpportunityRows(dbLoad()),
+        restockCommandRows: () => restockCommandRows(dbLoad()),
+        instantArbitrageRows: () => instantArbitrageRows(dbLoad()),
+        sellerBasketRows: () => sellerBasketRows(dbLoad()),
+        globalCapitalPlan: () => globalCapitalPlan(dbLoad()),
+        advancedInventoryRows: () => advancedInventoryRows(dbLoad()),
+        ownerBriefing: () => ownerBriefing(dbLoad()),
+        customerRfmRows: () => customerRfmRows(dbLoad()),
+        customerClvRows: () => customerClvRows(dbLoad()),
+        couponRoiMetrics: () => couponRoiMetrics(dbLoad()),
+        buildListingPlan: () => { const db=dbLoad(); const p=buildListingPlan(db); dbSave(db); return p; },
+        startRestockSession,
+        applyStrategyPreset,
+        setSimpleMode: value => { simpleMode = Boolean(value); GM_setValue(UI_MODE_KEY, simpleMode ? 'simple' : 'advanced'); activeTab = simpleMode ? 'home' : 'ops'; render(); },
+        procurementRows: () => procurementRows(dbLoad()),
+        pricingDirectorRows: () => pricingDirectorRows(dbLoad()),
+        capitalRotationRows: () => capitalRotationRows(dbLoad()),
+        customerReorderRows: () => customerReorderRows(dbLoad()),
+        prepareCouponReminder,
+        couponReminderMessage,
+        customerAffinityRows: () => customerAffinityRows(dbLoad()),
+        supplierPerformanceRows: () => supplierPerformanceRows(dbLoad()),
+        opportunityAlertRows: () => opportunityAlertRows(dbLoad()),
+        deadCapitalRows: () => deadCapitalRows(dbLoad()),
+        salesFunnelMetrics: () => salesFunnelMetrics(dbLoad()),
+        competitorIntelligenceRows: () => competitorIntelligenceRows(dbLoad()),
+        syncTravelStock,
+        updateTravelData,
+        backgroundTravelSample,
+        travelOpportunityRows: () => travelOpportunityRows(dbLoad()),
+        travelTimedForecastRows: () => travelTimedForecastRows(dbLoad()),
+        selectedTravelForecast: () => selectedTravelForecast(dbLoad()),
+        travelBasketRows: () => travelBasketRows(dbLoad()),
+        buildRepricingPlan: () => {
+            const db=dbLoad(); const plan=buildRepricingPlan(db); dbSave(db); return plan;
+        },
+        capitalPlan: () => capitalAllocationPlan(dbLoad()),
+        refreshMarketSnapshot,
+        rebuildAcquisitionHistory,
+        syncAcquisitionLogs,
+        storageInfo: () => ({ backend: 'IndexedDB', dbName: IDB_NAME, lastSavedAt: dbLoad().meta?.storage?.lastSavedAt }),
+        githubSyncNow,
+        githubRestore,
+        githubSettings: getGithubSettings,
+        currentBazaarInventory: () => currentBazaarInventoryRows(dbLoad()),
+        prepareBazaarInventoryNotification,
+        repairRecentSalesCoverage,
+        recalculateCustomerSalesTotals,
+        checkCrmUpdate,
+        openCrmUpdateInstaller
+    });
+
+    if (location.hostname === 'weav3r.dev' || location.hostname === 'www.weav3r.dev') {
+        installWeav3rTravelCollector();
+        return;
+    }
+
+    initialize().catch(error => {
+        console.error('[MM CRM] Initialization failed', error);
+        alert(`Torn Bazaar Customer CRM failed to initialize: ${error?.message || String(error)}`);
+    });
 })();
