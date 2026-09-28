@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.8.0
+// @version      6.8.1
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -25,7 +25,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.8.0';
+    const VERSION = '6.8.1';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -399,6 +399,7 @@
         db.travelIntel.settings.method = ['standard','airstrip','wlt','business'].includes(String(db.travelIntel.settings.method || '').toLowerCase()) ? String(db.travelIntel.settings.method).toLowerCase() : 'standard';
         db.travelIntel.settings.carry = Math.max(1, Number(db.travelIntel.settings.carry || 21));
         db.travelIntel.settings.cash = Math.max(0, Number(db.travelIntel.settings.cash || 0));
+        db.travelIntel.settings.targetTime = /^([01]\\d|2[0-3]):[0-5]\\d$/.test(String(db.travelIntel.settings.targetTime || '')) ? String(db.travelIntel.settings.targetTime) : '';
         db.travelIntel.settings.historyDays = Math.max(1, Math.min(30, Number(db.travelIntel.settings.historyDays || 7)));
         db.travelIntel.diagnostics = Array.isArray(db.travelIntel.diagnostics) ? db.travelIntel.diagnostics : [];
         db.meta = db.meta && typeof db.meta === 'object' ? db.meta : {};
@@ -2942,38 +2943,162 @@
     }
 
 
-    function travelPrediction(db,row,arrivalMinutes,carry){
-        const h=(db.travelIntel.history?.[travelHistoryKey(row)]||[]).slice().sort((a,b)=>Number(a.at||0)-Number(b.at||0));
-        const current=Math.max(0,Number(row.stock||0)),fresh=freshnessInfo(db.travelIntel.lastSyncAt,600);
-        const result={samples:h.length,model:'TornW3B live snapshot',predictedStock:null,arrivalChance:null,confidence:Math.round(fresh.score*.75),depletionPerMinute:0,medianRestockSize:0,medianRestockMinutes:0};
-        if(h.length<8)return result;
-        const dep=[],restocks=[],rt=[];
+    function resolveTravelTargetTime(value) {
+        const raw=String(value||'').trim();
+        if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(raw))return null;
+        const parts=raw.split(':').map(Number);
+        const now=new Date();
+        const target=new Date(now);
+        target.setHours(parts[0],parts[1],0,0);
+        if(target.getTime()<=now.getTime())target.setDate(target.getDate()+1);
+        return target.getTime();
+    }
+
+    function formatTravelClock(ms) {
+        if(!Number.isFinite(Number(ms))||Number(ms)<=0)return '—';
+        return new Date(Number(ms)).toLocaleString([], {weekday:'short',hour:'numeric',minute:'2-digit'});
+    }
+
+    function travelHistory12h(db,row) {
+        const cutoff=Date.now()-12*60*60*1000;
+        return (db.travelIntel.history?.[travelHistoryKey(row)]||[])
+            .filter(x=>Number(x.at||0)>=cutoff)
+            .slice()
+            .sort((a,b)=>Number(a.at||0)-Number(b.at||0));
+    }
+
+    function travelRestockProfile12h(db,row) {
+        const h=travelHistory12h(db,row);
+        const depletion=[],restocks=[],restockTimes=[];
+        let availableSamples=0;
+
+        for(const point of h)if(Number(point.stock||0)>0)availableSamples++;
+
         for(let i=1;i<h.length;i++){
-            const a=h[i-1],b=h[i],mins=(Number(b.at)-Number(a.at))/60000;if(!(mins>0))continue;
-            const d=Number(b.stock||0)-Number(a.stock||0);
-            if(d<0)dep.push((-d)/mins);
-            if(d>Math.max(5,Number(a.stock||0)*.20)){restocks.push(d);rt.push(Number(b.at||0));}
+            const prev=h[i-1],cur=h[i];
+            const mins=(Number(cur.at||0)-Number(prev.at||0))/60000;
+            if(!(mins>0))continue;
+            const delta=Number(cur.stock||0)-Number(prev.stock||0);
+            if(delta<0)depletion.push((-delta)/mins);
+            if((Number(prev.stock||0)<=0&&Number(cur.stock||0)>0)||delta>Math.max(5,Number(prev.stock||0)*.20)){
+                restocks.push(Math.max(0,delta));
+                restockTimes.push(Number(cur.at||0));
+            }
         }
-        if(dep.length<3 && restocks.length<1)return result;
-        const rate=medianNumber(dep),size=medianNumber(restocks),ints=[];
-        for(let i=1;i<rt.length;i++)ints.push((rt[i]-rt[i-1])/60000);
-        const interval=medianNumber(ints);
-        let expectedRestock=0;
-        if(interval>0&&rt.length){
-            const since=Math.max(0,(Date.now()-rt[rt.length-1])/60000),until=Math.max(0,interval-since);
-            if(until<=arrivalMinutes){const pr=Math.max(.20,Math.min(.75,(arrivalMinutes-until+15)/(arrivalMinutes+15)));expectedRestock=size*pr;}
+
+        const intervals=[];
+        for(let i=1;i<restockTimes.length;i++)intervals.push((restockTimes[i]-restockTimes[i-1])/60000);
+
+        const medianInterval=medianNumber(intervals);
+        const medianRestock=medianNumber(restocks);
+        const depletionRate=medianNumber(depletion);
+
+        let nextRestockAt=null;
+        if(restockTimes.length&&medianInterval>0){
+            nextRestockAt=restockTimes[restockTimes.length-1]+medianInterval*60000;
+            while(nextRestockAt<=Date.now())nextRestockAt+=medianInterval*60000;
         }
-        const predicted=Math.max(0,current-rate*arrivalMinutes+expectedRestock),sample=Math.min(1,h.length/24),data=Math.max(0,Math.min(1,fresh.score/100)),ratio=Math.min(1.5,predicted/Math.max(1,carry));
-        result.model='Local history estimate';result.predictedStock=Math.round(predicted);
-        result.arrivalChance=Math.max(.03,Math.min(.98,ratio*.60+sample*.20+data*.20));
-        result.confidence=Math.round((sample*.55+data*.45)*100);result.depletionPerMinute=rate;result.medianRestockSize=size;result.medianRestockMinutes=interval;
+
+        return {
+            history:h,
+            samples:h.length,
+            availableRate:h.length?availableSamples/h.length:0,
+            depletionRate,
+            medianRestock,
+            medianInterval,
+            restockTimes,
+            nextRestockAt
+        };
+    }
+
+    function travelPrediction(db,row,arrivalMinutes,carry,targetAt=null){
+        const profile=travelRestockProfile12h(db,row);
+        const current=Math.max(0,Number(row.stock||0));
+        const fresh=freshnessInfo(db.travelIntel.lastSyncAt,600);
+        const targetMs=Number(targetAt||0)>Date.now()?Number(targetAt):Date.now()+Math.max(0,Number(arrivalMinutes||0))*60000;
+        const horizonMinutes=Math.max(0,(targetMs-Date.now())/60000);
+
+        const result={
+            samples:profile.samples,
+            model:'TornW3B live snapshot',
+            targetAt:targetMs,
+            predictedStock:null,
+            arrivalChance:null,
+            confidence:Math.round(fresh.score*.65),
+            depletionPerMinute:profile.depletionRate,
+            medianRestockSize:profile.medianRestock,
+            medianRestockMinutes:profile.medianInterval,
+            nextExpectedRestockAt:profile.nextRestockAt,
+            historyWindowHours:12,
+            availabilityRate12h:profile.availableRate,
+            expectedRestocksBeforeTarget:0
+        };
+
+        if(profile.samples<4){
+            result.arrivalChance=current>0?Math.max(.45,Math.min(.85,fresh.score/100)):.10;
+            return result;
+        }
+
+        let predicted=current-profile.depletionRate*horizonMinutes;
+        let restocksBefore=0;
+        if(profile.nextRestockAt&&profile.medianInterval>0&&profile.medianRestock>0){
+            let at=profile.nextRestockAt;
+            while(at<=targetMs&&restocksBefore<12){
+                predicted+=profile.medianRestock;
+                restocksBefore++;
+                at+=profile.medianInterval*60000;
+            }
+        }
+        predicted=Math.max(0,predicted);
+
+        const sampleConfidence=Math.min(1,profile.samples/24);
+        const eventConfidence=Math.min(1,profile.restockTimes.length/3);
+        const freshConfidence=Math.max(0,Math.min(1,fresh.score/100));
+        const stockRatio=Math.min(1.5,predicted/Math.max(1,carry));
+        const chance=Math.max(.02,Math.min(.99,stockRatio*.48+profile.availableRate*.27+sampleConfidence*.15+freshConfidence*.10));
+
+        result.model='12h availability/restock model';
+        result.predictedStock=Math.round(predicted);
+        result.arrivalChance=chance;
+        result.confidence=Math.round((sampleConfidence*.45+eventConfidence*.30+freshConfidence*.25)*100);
+        result.expectedRestocksBeforeTarget=restocksBefore;
         return result;
+    }
+
+    function travelTimedForecastRows(db){
+        const targetAt=resolveTravelTargetTime(db.travelIntel.settings.targetTime);
+        if(!targetAt)return [];
+        const carry=Math.max(1,Number(db.travelIntel.settings.carry||21));
+
+        return (db.travelIntel.rows||[]).map(row=>{
+            const pred=travelPrediction(db,row,0,carry,targetAt);
+            const stock=pred.predictedStock==null?Number(row.stock||0):Number(pred.predictedStock||0);
+            let state='OUT';
+            if(stock>=carry)state='IN STOCK';
+            else if(stock>0)state='LOW';
+            else if(pred.nextExpectedRestockAt&&pred.nextExpectedRestockAt<=targetAt)state='RESTOCK LIKELY';
+
+            return {
+                ...row,
+                targetAt,
+                prediction:pred,
+                predictedStock:stock,
+                predictedState:state,
+                arrivalChance:pred.arrivalChance??0,
+                nextExpectedRestockAt:pred.nextExpectedRestockAt
+            };
+        }).sort((a,b)=>
+            Number(b.predictedState==='IN STOCK')-Number(a.predictedState==='IN STOCK')||
+            b.arrivalChance-a.arrivalChance||
+            b.profit-a.profit
+        );
     }
 
     function travelOpportunityRows(db){
         const st=db.travelIntel.settings,method=st.method,carry=Math.max(1,Number(st.carry||21));
+        const targetAt=resolveTravelTargetTime(st.targetTime);
         return (db.travelIntel.rows||[]).map(row=>{
-            const mins=Number(TRAVEL_ONE_WAY_MINUTES[row.country]?.[method]||0),pred=travelPrediction(db,row,mins,carry);
+            const mins=Number(TRAVEL_ONE_WAY_MINUTES[row.country]?.[method]||0),pred=travelPrediction(db,row,mins,carry,targetAt);
             const basis=pred.predictedStock==null?Number(row.stock||0):pred.predictedStock,possible=Math.max(0,Math.min(carry,Math.floor(basis)));
             const liveFactor=Number(row.stock||0)>=carry?.85:Number(row.stock||0)>0?.55:.10,chance=pred.arrivalChance==null?liveFactor:pred.arrivalChance;
             const expectedUnits=Math.max(0,Math.min(carry,Math.floor(possible*chance))),expectedProfit=expectedUnits*Math.max(0,Number(row.profit||0)),tripHours=mins>0?(mins*2)/60:0,pph=tripHours>0?expectedProfit/tripHours:0;
@@ -3007,7 +3132,11 @@
         db.travelIntel.settings.method=['standard','airstrip','wlt','business'].includes(method)?method:'standard';
         db.travelIntel.settings.carry=Math.max(1,Number(root.querySelector('#mm-travel-carry')?.value||21));
         db.travelIntel.settings.cash=Math.max(0,Number(root.querySelector('#mm-travel-cash')?.value||0));
-        dbSave(db);statusText='Travel settings saved.';render();
+        const target=String(root.querySelector('#mm-travel-target-time')?.value||'').trim();
+        db.travelIntel.settings.targetTime=/^([01]\\d|2[0-3]):[0-5]\\d$/.test(target)?target:'';
+        dbSave(db);
+        statusText=db.travelIntel.settings.targetTime?'Travel target saved: '+db.travelIntel.settings.targetTime+'. Forecast uses the last 12 hours of availability history.':'Travel settings saved; target time cleared.';
+        render();
     }
 
     function travelRecommendationBadge(v){
@@ -3016,13 +3145,66 @@
     }
 
     function travelCommandHtml(db){
-        const st=db.travelIntel.settings,rows=travelOpportunityRows(db),baskets=travelBasketRows(db).slice(0,5),fresh=freshnessInfo(db.travelIntel.lastSyncAt,600),top=rows.filter(r=>r.profit>0).slice(0,18);
-        const controls=card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">Travel Command Center</b><div style="font-size:10px;color:#888;">TornW3B live signal + CRM local history</div></div><div style="display:flex;gap:5px;"><button id="mm-travel-capture" style="${btn(true)}">Update Live Travel Data</button><button id="mm-travel-sync" style="${btn()}">Import Last Capture</button></div></div>
-        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:7px;"><label style="font-size:10px;color:#aaa;">Flight method<select id="mm-travel-method" style="${inputCss()}width:100%;"><option value="standard" ${st.method==='standard'?'selected':''}>Standard</option><option value="airstrip" ${st.method==='airstrip'?'selected':''}>Airstrip</option><option value="wlt" ${st.method==='wlt'?'selected':''}>WLT</option><option value="business" ${st.method==='business'?'selected':''}>Business</option></select></label><label style="font-size:10px;color:#aaa;">Carry capacity<input id="mm-travel-carry" type="number" min="1" value="${Number(st.carry||21)}" style="${inputCss()}width:100%;"></label><label style="font-size:10px;color:#aaa;">Travel cash (0 = unlimited)<input id="mm-travel-cash" type="number" min="0" value="${Number(st.cash||0)}" style="${inputCss()}width:100%;"></label></div>
-        <div style="margin-top:6px;"><button id="mm-travel-save" style="${btn()}">Save Travel Settings</button></div><div style="font-size:10px;color:#888;margin-top:6px;">Source ${escapeHtml(fresh.label)}${Number.isFinite(fresh.ageSeconds)?' · '+Math.round(fresh.ageSeconds)+'s old':''}. Use <b>Update Live Travel Data</b>: the CRM opens TornW3B in this tab, captures the rendered live table, and returns to Torn automatically. TornW3B says quantities are snapshots, not guarantees. Until enough local stock changes are observed, the CRM shows live sufficiency rather than a fabricated forecast.</div>`);
-        const basketsHtml=card(`<b>Trip Basket Optimizer</b>${baskets.length?baskets.map((b,i)=>`<div style="border-top:${i?'1px solid #303030':'0'};padding:6px 0;font-size:11px;"><b>#${i+1} ${escapeHtml(b.country)}</b> · ${b.units}/${Number(st.carry||21)} slots · Risk-adjusted ${money(b.riskAdjustedProfit)} · <b>${money(b.riskAdjustedProfitPerHour)}/hr</b> · Arrival signal ${(b.avgChance*100).toFixed(0)}%<br>${b.basket.map(x=>`${escapeHtml(x.itemName)} × ${x.qty}`).join(' · ')}${st.cash>0&&!b.cost?'<br><span style="color:#d7ad4b;">Shop cost was not exposed in the parsed source; cash limit is partial.</span>':''}</div>`).join(''):'<div style="font-size:11px;color:#888;">Use Update Live Travel Data above to load current TornW3B stock and build country baskets.</div>'}`);
-        const opp=card(`<b>Fly / Wait / Avoid</b>${top.length?top.map(r=>`<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>${escapeHtml(r.country)} · ${escapeHtml(r.itemName)}</b> ${travelRecommendationBadge(r.recommendation)}<br>Live stock ${Number(r.stock||0).toLocaleString()} · Profit/item ${money(r.profit)} · TornW3B $/hr ${money(r.sourceProfitPerHour)} · One-way ${r.arrivalMinutes||'—'}m<br>${r.prediction.predictedStock==null?`Arrival estimate: <b>not enough local history</b> · Live sufficiency ${(r.arrivalChance*100).toFixed(0)}%`:`Predicted arrival stock <b>${Number(r.prediction.predictedStock).toLocaleString()}</b> · Availability estimate ${(r.arrivalChance*100).toFixed(0)}% · Confidence ${r.prediction.confidence}%`} · Risk-adjusted $/hr <b>${money(r.riskAdjustedProfitPerHour)}</b></div>`).join(''):'<div style="font-size:11px;color:#888;">No live travel rows loaded yet. Use Update Live Travel Data above; the CRM will return here automatically after capture.</div>'}`);
-        return controls+basketsHtml+opp;
+        const st=db.travelIntel.settings;
+        const rows=travelOpportunityRows(db);
+        const baskets=travelBasketRows(db).slice(0,5);
+        const fresh=freshnessInfo(db.travelIntel.lastSyncAt,600);
+        const top=rows.filter(r=>r.profit>0).slice(0,18);
+        const targetAt=resolveTravelTargetTime(st.targetTime);
+        const timed=travelTimedForecastRows(db);
+
+        const targetSummary=targetAt
+            ? 'Forecast target: <b>'+escapeHtml(formatTravelClock(targetAt))+'</b>. Predictor uses only the previous <b>12 hours</b> of captured availability, depletion and restock events.'
+            : 'Enter a target arrival time to predict which items should be in stock and the next expected restock time.';
+
+        const controls=card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
+                '<div><b style="font-size:15px;">Travel Command Center</b><div style="font-size:10px;color:#888;">TornW3B live signal + CRM 12-hour availability history</div></div>'+
+                '<div style="display:flex;gap:5px;"><button id="mm-travel-capture" style="'+btn(true)+'">Update Live Travel Data</button><button id="mm-travel-sync" style="'+btn()+'">Import Last Capture</button></div>'+
+            '</div>'+
+            '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:7px;">'+
+                '<label style="font-size:10px;color:#aaa;">Flight method<select id="mm-travel-method" style="'+inputCss()+'width:100%;"><option value="standard" '+(st.method==='standard'?'selected':'')+'>Standard</option><option value="airstrip" '+(st.method==='airstrip'?'selected':'')+'>Airstrip</option><option value="wlt" '+(st.method==='wlt'?'selected':'')+'>WLT</option><option value="business" '+(st.method==='business'?'selected':'')+'>Business</option></select></label>'+
+                '<label style="font-size:10px;color:#aaa;">Carry capacity<input id="mm-travel-carry" type="number" min="1" value="'+Number(st.carry||21)+'" style="'+inputCss()+'width:100%;"></label>'+
+                '<label style="font-size:10px;color:#aaa;">Travel cash (0 = unlimited)<input id="mm-travel-cash" type="number" min="0" value="'+Number(st.cash||0)+'" style="'+inputCss()+'width:100%;"></label>'+
+                '<label style="font-size:10px;color:#aaa;">Target arrival time<input id="mm-travel-target-time" type="time" value="'+escapeHtml(st.targetTime||'')+'" style="'+inputCss()+'width:100%;"></label>'+
+            '</div>'+
+            '<div style="margin-top:6px;"><button id="mm-travel-save" style="'+btn()+'">Save / Run Forecast</button></div>'+
+            '<div style="font-size:10px;color:#888;margin-top:6px;">'+targetSummary+' Source '+escapeHtml(fresh.label)+(Number.isFinite(fresh.ageSeconds)?' · '+Math.round(fresh.ageSeconds)+'s old':'')+'.</div>'
+        );
+
+        let forecastBody='';
+        if(!targetAt){
+            forecastBody='<div style="font-size:11px;color:#888;margin-top:5px;">Enter a Target arrival time above, then click Save / Run Forecast.</div>';
+        }else if(!timed.length){
+            forecastBody='<div style="font-size:11px;color:#888;margin-top:5px;">No travel rows are loaded yet. Update Live Travel Data first.</div>';
+        }else{
+            forecastBody=timed.slice(0,30).map(r=>{
+                const color=r.predictedState==='IN STOCK'?'#9fe3a8':r.predictedState==='LOW'?'#ffd18a':r.predictedState==='RESTOCK LIKELY'?'#9fd3ff':'#ff9b9b';
+                const interval=r.prediction.medianRestockMinutes?Number(r.prediction.medianRestockMinutes).toFixed(0)+'m':'—';
+                const dep=r.prediction.depletionPerMinute?Number(r.prediction.depletionPerMinute).toFixed(2)+'/min':'—';
+                return '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;">'+
+                    '<b>'+escapeHtml(r.country)+' · '+escapeHtml(r.itemName)+'</b> · <span style="color:'+color+';font-weight:bold;">'+escapeHtml(r.predictedState)+'</span><br>'+
+                    'Predicted stock at '+escapeHtml(formatTravelClock(r.targetAt))+': <b>'+Number(r.predictedStock||0).toLocaleString()+'</b> · Availability '+(Number(r.arrivalChance||0)*100).toFixed(0)+'% · Confidence '+Number(r.prediction.confidence||0).toFixed(0)+'%<br>'+
+                    'Next expected restock: <b>'+escapeHtml(formatTravelClock(r.nextExpectedRestockAt))+'</b> · 12h samples '+Number(r.prediction.samples||0)+' · Median restock interval '+interval+' · Depletion '+dep+
+                '</div>';
+            }).join('');
+        }
+
+        const forecast=card('<b>12-Hour Stock Forecast'+(targetAt?' — '+escapeHtml(formatTravelClock(targetAt)):'')+'</b>'+forecastBody);
+
+        const basketsHtml=card('<b>Trip Basket Optimizer</b>'+
+            (baskets.length
+                ? baskets.map((b,i)=>'<div style="border-top:'+(i?'1px solid #303030':'0')+';padding:6px 0;font-size:11px;"><b>#'+(i+1)+' '+escapeHtml(b.country)+'</b> · '+b.units+'/'+Number(st.carry||21)+' slots · Risk-adjusted '+money(b.riskAdjustedProfit)+' · <b>'+money(b.riskAdjustedProfitPerHour)+'/hr</b> · Arrival signal '+(b.avgChance*100).toFixed(0)+'%<br>'+b.basket.map(x=>escapeHtml(x.itemName)+' × '+x.qty).join(' · ')+'</div>').join('')
+                : '<div style="font-size:11px;color:#888;">Use Update Live Travel Data above to load current TornW3B stock and build country baskets.</div>')
+        );
+
+        const opp=card('<b>Fly / Wait / Avoid</b>'+
+            (top.length
+                ? top.map(r=>'<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>'+escapeHtml(r.country)+' · '+escapeHtml(r.itemName)+'</b> '+travelRecommendationBadge(r.recommendation)+'<br>Live stock '+Number(r.stock||0).toLocaleString()+' · Profit/item '+money(r.profit)+' · TornW3B $/hr '+money(r.sourceProfitPerHour)+' · '+(targetAt?'Forecast target '+escapeHtml(formatTravelClock(targetAt)):'One-way '+(r.arrivalMinutes||'—')+'m')+'<br>'+(r.prediction.predictedStock==null?'Arrival estimate: <b>not enough 12h history</b> · Live sufficiency '+(r.arrivalChance*100).toFixed(0)+'%':'Predicted target stock <b>'+Number(r.prediction.predictedStock).toLocaleString()+'</b> · Availability estimate '+(r.arrivalChance*100).toFixed(0)+'% · Confidence '+r.prediction.confidence+'%')+' · Next restock '+escapeHtml(formatTravelClock(r.prediction.nextExpectedRestockAt))+' · Risk-adjusted $/hr <b>'+money(r.riskAdjustedProfitPerHour)+'</b></div>').join('')
+                : '<div style="font-size:11px;color:#888;">No live travel rows loaded yet. Use Update Live Travel Data above.</div>')
+        );
+
+        return controls+forecast+basketsHtml+opp;
     }
 
     function normalizeWeavMarketplaceItem(row) {
@@ -8078,6 +8260,7 @@
         syncTravelStock,
         updateTravelData,
         travelOpportunityRows: () => travelOpportunityRows(dbLoad()),
+        travelTimedForecastRows: () => travelTimedForecastRows(dbLoad()),
         travelBasketRows: () => travelBasketRows(dbLoad()),
         buildRepricingPlan: () => {
             const db=dbLoad(); const plan=buildRepricingPlan(db); dbSave(db); return plan;
