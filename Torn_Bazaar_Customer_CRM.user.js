@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.5.2
+// @version      6.6.0
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -23,7 +23,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.5.2';
+    const VERSION = '6.6.0';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -34,6 +34,7 @@
     const PENDING_COMPOSE_KEY = 'mm_bazaar_crm_pending_compose_v1';
     const POLL_MS = 15_000;
     const FIRST_SYNC_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+    const CUSTOMER_REFRESH_LOOKBACK_MS = 72 * 60 * 60 * 1000;
     const NORMAL_LOOKBACK_MS = 6 * 60 * 60 * 1000;
     const DEEP_SALES_RECONCILE_MS = 5 * 60 * 1000;
     const COUPON_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -514,6 +515,22 @@
             current.firstMessageSent = Boolean(current.firstMessageSent || oldCustomer.firstMessageSent);
             current.messageCount = Math.max(Number(current.messageCount || 0), Number(oldCustomer.messageCount || 0));
             if (oldLast > newLast) current.lastContacted = oldCustomer.lastContacted;
+
+            // Sales/customer totals are monotonic because the sales ledger is append-only.
+            // Merge those fields directly instead of rebuilding every customer from every
+            // sale on every IndexedDB write. This removes the largest UI latency source.
+            current.purchases = Math.max(Number(current.purchases || 0), Number(oldCustomer.purchases || 0));
+            current.units = Math.max(Number(current.units || 0), Number(oldCustomer.units || 0));
+            current.spent = Math.max(Number(current.spent || 0), Number(oldCustomer.spent || 0));
+            const oldFirst = Date.parse(oldCustomer.firstPurchase || '') || 0;
+            const newFirst = Date.parse(current.firstPurchase || '') || 0;
+            if (oldFirst && (!newFirst || oldFirst < newFirst)) current.firstPurchase = oldCustomer.firstPurchase;
+            const oldPurchase = Date.parse(oldCustomer.lastPurchase || '') || 0;
+            const newPurchase = Date.parse(current.lastPurchase || '') || 0;
+            if (oldPurchase > newPurchase) current.lastPurchase = oldCustomer.lastPurchase;
+            if ((!current.name || /^\d+$/.test(String(current.name))) && oldCustomer.name && !/^\d+$/.test(String(oldCustomer.name))) {
+                current.name = oldCustomer.name;
+            }
         }
 
         merged.coupons = { ...(latest.coupons || {}), ...(merged.coupons || {}) };
@@ -521,7 +538,6 @@
         merged.subscribers = { ...(latest.subscribers || {}), ...(merged.subscribers || {}) };
         merged.removedCustomers = { ...(latest.removedCustomers || {}), ...(merged.removedCustomers || {}) };
 
-        recalculateCustomerSalesTotals(merged);
         mergeDurableContactState(merged);
         return normalizeDb(merged);
     }
@@ -1127,29 +1143,49 @@
         return db;
     }
 
-    async function repairRecentSalesCoverage({ lookbackMs = FIRST_SYNC_LOOKBACK_MS, silent = false } = {}) {
-        if (!getApiKey()) return { imported: 0, checked: 0, repaired: false };
+    function importBazaarSaleIntoDb(db, sale) {
+        const saleId = String(sale?.id || '').trim();
+        if (!saleId || db.sales[saleId]) return false;
+
+        let name = String(sale.playerName || sale.playerId || '').trim();
+        if (!name) name = String(sale.playerId || '');
+
+        sale.playerName = name;
+        db.sales[saleId] = sale;
+        maybeReactivateCustomerForSale(db, sale);
+        if (!db.removedCustomers?.[asId(sale.playerId)]) {
+            applySaleToCustomer(db, sale, name);
+        }
+        return true;
+    }
+
+    async function repairRecentSalesCoverage({ lookbackMs = CUSTOMER_REFRESH_LOOKBACK_MS, silent = false } = {}) {
+        if (!getApiKey()) return { imported: 0, checked: 0, repaired: false, rejected: 0 };
 
         if (!silent) {
-            statusText = 'Refreshing recent customer purchase history…';
+            statusText = 'Refreshing customer sales from the last 72 hours…';
             render();
         }
 
         const fromMs = Math.max(
             0,
-            Date.now() - Math.max(NORMAL_LOOKBACK_MS, Number(lookbackMs || FIRST_SYNC_LOOKBACK_MS))
+            Date.now() - Math.max(NORMAL_LOOKBACK_MS, Number(lookbackMs || CUSTOMER_REFRESH_LOOKBACK_MS))
         );
         const rows = await fetchBazaarLogs(fromMs / 1000, 25);
         const db = dbLoad();
         const processed = new Set(getProcessed());
         let imported = 0;
         let checked = 0;
+        let rejected = 0;
 
         rows.sort((a, b) => numeric(a.timestamp, 0) - numeric(b.timestamp, 0));
 
         for (const entry of rows) {
             const id = String(entry?.id ?? entry?.log_id ?? '');
-            if (!id) continue;
+            if (!id) {
+                rejected++;
+                continue;
+            }
             checked++;
 
             if (db.sales[id]) {
@@ -1158,61 +1194,55 @@
             }
 
             const sale = extractBazaarSale(entry);
-            if (!sale) continue;
-
-            let name = String(sale.playerName || sale.playerId).trim();
-            if (!name || name === sale.playerId || /^\d+$/.test(name)) {
-                try { name = await fetchTornUsername(sale.playerId); }
-                catch { name = sale.playerId; }
+            if (!sale) {
+                rejected++;
+                console.warn('[MM CRM] Customer refresh rejected Bazaar row', entry);
+                continue;
             }
 
-            sale.playerName = name;
-            db.sales[id] = sale;
-            processed.add(id);
-            imported++;
+            if (importBazaarSaleIntoDb(db, sale)) {
+                processed.add(id);
+                imported++;
+            }
         }
 
+        // One deterministic rebuild and one persistence write for the entire refresh.
+        // This is dramatically faster than resolving usernames and saving per sale.
         recalculateCustomerSalesTotals(db);
 
         const audit = auditSalesData(db);
         db.meta.lastSalesAudit = { at: nowIso(), ...audit };
         db.meta.lastRecentSalesRepairAt = nowIso();
         dbSave(db);
-        await flushDbWrites();
         saveProcessed([...processed]);
+
+        if (!silent) {
+            statusText = imported
+                ? `Customers refreshed: ${imported} missing sale${imported === 1 ? '' : 's'} imported from ${checked} checked${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`
+                : `Customers refreshed: ${checked} recent Bazaar sale log${checked === 1 ? '' : 's'} checked${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`;
+            render();
+        }
+
+        await flushDbWrites();
 
         if (!audit.ok) {
             throw new Error(`Sales repair audit failed: ${audit.problems.slice(0, 3).join('; ')}`);
         }
 
-        if (!silent) {
-            statusText = imported
-                ? `Customer history repaired: ${imported} missing Bazaar sale${imported === 1 ? '' : 's'} restored. Integrity PASS.`
-                : `Customer history refreshed: ${checked} recent Bazaar sale log${checked === 1 ? '' : 's'} checked. Integrity PASS.`;
-            render();
+        if (imported > 0) {
+            setTimeout(() => repairUsernames(25).then(() => render()).catch(() => {}), 50);
         }
 
-        return { imported, checked, repaired: imported > 0 };
+        return { imported, checked, repaired: imported > 0, rejected };
     }
 
     async function storeBazaarSale(sale) {
         const db = dbLoad();
-        const saleId = String(sale.id);
-        if (db.sales[saleId]) return false;
-
-        let name = String(sale.playerName || sale.playerId).trim();
-        if (!name || name === sale.playerId || /^\d+$/.test(name)) {
-            try { name = await fetchTornUsername(sale.playerId); } catch { name = sale.playerId; }
-        }
-
-        sale.playerName = name;
-        db.sales[saleId] = sale;
-        maybeReactivateCustomerForSale(db, sale);
-        if (!db.removedCustomers[sale.playerId]) {
-            applySaleToCustomer(db, sale, name);
-        }
+        if (!importBazaarSaleIntoDb(db, sale)) return false;
+        recalculateCustomerSalesTotals(db);
         dbSave(db);
         await flushDbWrites();
+        setTimeout(() => repairUsernames(5).then(() => render()).catch(() => {}), 50);
         return true;
     }
 
@@ -1450,7 +1480,8 @@
             const fromMs = Math.max(0, (state.lastSuccess || Date.now()) - lookback);
             const rows = await fetchBazaarLogs(fromMs / 1000, 25);
             const processed = new Set(getProcessed());
-            const knownSales = new Set(Object.keys(dbLoad().sales || {}));
+            const db = dbLoad();
+            const knownSales = new Set(Object.keys(db.sales || {}));
             let imported = 0;
             let alreadyKnown = 0;
             let repairedProcessedGap = 0;
@@ -1478,22 +1509,16 @@
                     continue;
                 }
 
-                await storeBazaarSale(sale);
-                markProcessed(id);
-                processed.add(id);
-                knownSales.add(id);
-                imported++;
-                if (wasProcessedWithoutSale) repairedProcessedGap++;
+                if (importBazaarSaleIntoDb(db, sale)) {
+                    processed.add(id);
+                    knownSales.add(id);
+                    imported++;
+                    if (wasProcessedWithoutSale) repairedProcessedGap++;
+                }
             }
 
-            if (rejected > 0) {
-                throw new Error(
-                    `${rejected} Bazaar log 1226 record(s) could not be parsed. ` +
-                    `They were NOT marked processed. Use Rebuild Sales History after updating the CRM.`
-                );
-            }
-
-            let db = dbLoad();
+            // Rejected rows remain unprocessed and will be retried on the next overlapping sync.
+            // Do not block valid new customers because one Torn log row is malformed.
 
             const lastDeep = Date.parse(db.meta?.lastDeepSalesReconcileAt || '') || 0;
             if (Date.now() - lastDeep >= DEEP_SALES_RECONCILE_MS) {
@@ -1511,40 +1536,40 @@
                         continue;
                     }
 
-                    let name = String(sale.playerName || sale.playerId).trim();
-                    if (!name || name === sale.playerId || /^\d+$/.test(name)) {
-                        try { name = await fetchTornUsername(sale.playerId); }
-                        catch { name = sale.playerId; }
+                    if (importBazaarSaleIntoDb(db, sale)) {
+                        processed.add(id);
+                        knownSales.add(id);
+                        deepImported++;
                     }
-                    sale.playerName = name;
-                    db.sales[id] = sale;
-                    processed.add(id);
-                    knownSales.add(id);
-                    deepImported++;
                 }
 
-                if (deepImported > 0) {
-                    imported += deepImported;
-                    recalculateCustomerSalesTotals(db);
-                    saveProcessed([...processed]);
-                }
+                if (deepImported > 0) imported += deepImported;
                 db.meta.lastDeepSalesReconcileAt = nowIso();
             }
+
+            if (imported > 0) recalculateCustomerSalesTotals(db);
 
             const audit = auditSalesData(db);
             db.meta.lastSalesAudit = { at: nowIso(), ...audit };
             dbSave(db);
+            saveProcessed([...processed]);
+            saveSyncState({ lastSuccess: Date.now() });
+
+            fatal = false;
+            statusText = imported
+                ? `Sync complete: ${imported} Bazaar sale${imported === 1 ? '' : 's'} imported${repairedProcessedGap ? ` (${repairedProcessedGap} missing ledger record${repairedProcessedGap === 1 ? '' : 's'} repaired)` : ''}${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`
+                : `Sync complete: no new Bazaar sales${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`;
+            render();
+
             await flushDbWrites();
 
             if (!audit.ok) {
                 throw new Error(`Sales integrity audit failed: ${audit.problems.slice(0, 3).join('; ')}`);
             }
 
-            saveSyncState({ lastSuccess: Date.now() });
-            fatal = false;
-            statusText = imported
-                ? `Sync complete: ${imported} Bazaar sale${imported === 1 ? '' : 's'} imported${repairedProcessedGap ? ` (${repairedProcessedGap} missing ledger record${repairedProcessedGap === 1 ? '' : 's'} repaired)` : ''}. Integrity PASS.`
-                : `Sync complete: no new Bazaar sales. Integrity PASS.`;
+            if (imported > 0) {
+                setTimeout(() => repairUsernames(25).then(() => render()).catch(() => {}), 50);
+            }
         } catch (error) {
             const code = Number(error?.code || 0);
             // Authentication/permission errors are surfaced, but never permanently
@@ -3775,6 +3800,16 @@
 
     function customerRfmRows(db){
         const now=Date.now();
+        const affinityByCustomer={};
+        for(const sale of Object.values(db.sales||{})){
+            const id=asId(sale.playerId);
+            if(!id)continue;
+            const affinity=affinityByCustomer[id]||(affinityByCustomer[id]={});
+            for(const item of sale.items||[]){
+                const name=String(item.name||item.itemName||item.item_name||'Unknown item');
+                affinity[name]=(affinity[name]||0)+Number(item.quantity||0);
+            }
+        }
         const rows=Object.values(db.customers).map(c=>{
             const recencyDays=c.lastPurchase?Math.max(0,(now-new Date(c.lastPurchase).getTime())/86400000):9999;
             const frequency=Number(c.purchases||0),monetary=Number(c.spent||0);
@@ -3784,10 +3819,7 @@
             else if(recencyDays<=30&&frequency>=2)segment='REGULAR';
             else if(frequency<=1&&recencyDays<=30)segment='NEW';
             else if(frequency>=3&&recencyDays<=60)segment='AT RISK';
-            const sales=Object.values(db.sales).filter(s=>asId(s.playerId)===asId(c.id));
-            const affinity={};
-            for(const s of sales)for(const i of s.items||[])affinity[i.name]=(affinity[i.name]||0)+Number(i.quantity||0);
-            const topProducts=Object.entries(affinity).sort((a,b)=>b[1]-a[1]).slice(0,3);
+            const topProducts=Object.entries(affinityByCustomer[asId(c.id)]||{}).sort((a,b)=>b[1]-a[1]).slice(0,3);
             return {...c,recencyDays,frequency,monetary,segment,topProducts};
         });
         return rows.sort((a,b)=>a.recencyDays-b.recencyDays||b.monetary-a.monetary);
@@ -3831,8 +3863,8 @@
         };
     }
 
-    function ownerBriefing(db){
-        const rows=advancedInventoryRows(db);
+    function ownerBriefing(db, precomputedRows=null){
+        const rows=precomputedRows||advancedInventoryRows(db);
         const revenue=rows.reduce((s,r)=>s+r.realized.revenue,0);
         const grossProfit=rows.reduce((s,r)=>s+r.realized.grossProfit,0);
         const units=rows.reduce((s,r)=>s+r.realized.units,0);
@@ -6461,7 +6493,7 @@
 
     function homeHtml(db) {
         const rows = advancedInventoryRows(db);
-        const brief = ownerBriefing(db);
+        const brief = ownerBriefing(db, rows);
         const deals = globalOpportunityRows(db);
         const urgent = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','NEEDS LISTING','WATCH PRICE','DEAD STOCK'].includes(r.state));
         const needRestock = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)).length;
@@ -6501,8 +6533,9 @@
     function stockSimpleHtml(db) {
         const rows = advancedInventoryRows(db);
         const session = getActiveRestockSession(db);
+        // Rendering must be read-only. Persisting a listing plan on every tab render
+        // was creating unnecessary IndexedDB writes and cross-tab merge work.
         const plans = buildListingPlan(db);
-        dbSave(db);
         const restockRows = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state));
         const listingRows = rows.filter(r => r.addToBazaar > 0);
         const preset = String(db.operations.settings.strategyPreset || 'BALANCED');
@@ -6552,15 +6585,17 @@
 
     function customersSimpleHtml(db) {
         const rfm = customerRfmRows(db);
-        const clv = customerClvRows(db);
+        // Keep the simple Customers tab fast: rank by tracked spend here instead of
+        // recomputing full inventory gross-margin/CLV analytics on every tab click.
+        const topBySpend = rfm.slice().sort((a,b)=>b.monetary-a.monetary);
         const counts = {};
         for (const c of rfm) counts[c.segment] = (counts[c.segment] || 0) + 1;
         const pending = Object.values(db.subscribers || {}).filter(s => s.pendingNotification);
         const eligible = Object.values(db.coupons || {}).filter(c => couponQualification(db,c).qualified);
-        const top = clv.slice(0,10);
+        const top = topBySpend.slice(0,10);
         const summary = `<div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;">${['VIP','LOYAL','REGULAR','NEW','AT RISK','DORMANT'].map(s=>simpleMetric(s,String(counts[s]||0))).join('')}</div>`;
         const actions = card(`<b>Customer Actions</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;"><button data-open-advanced="customers" style="${btn(true)}">View Customers</button><button data-open-advanced="subscribers" style="${btn()}">Restock Alerts ${pending.length?`(${pending.length})`:''}</button><button data-open-advanced="coupons" style="${btn()}">Coupons ${eligible.length?`(${eligible.length} eligible)`:''}</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button></div>`);
-        const values = card(`<b>Top Customer Value</b>${top.map(c=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(c.name)} [${escapeHtml(c.id)}]</b> · ${escapeHtml(c.segment)} · Spend ${money(c.monetary)} · Est. net value ${money(c.estimatedNetValue)}<details style="margin-top:3px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Recency ${c.recencyDays.toFixed(1)}d · Purchases ${c.frequency} · Affinity ${c.topProducts.map(x=>`${escapeHtml(x[0])}×${x[1]}`).join(', ')||'—'}</div></details></div>`).join('')||'<div style="font-size:11px;color:#888;">No customer history yet.</div>'}`);
+        const values = card(`<b>Top Customer Value</b>${top.map(c=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(c.name)} [${escapeHtml(c.id)}]</b> · ${escapeHtml(c.segment)} · Spend ${money(c.monetary)}<details style="margin-top:3px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Recency ${c.recencyDays.toFixed(1)}d · Purchases ${c.frequency} · Affinity ${c.topProducts.map(x=>`${escapeHtml(x[0])}×${x[1]}`).join(', ')||'—'}</div></details></div>`).join('')||'<div style="font-size:11px;color:#888;">No customer history yet.</div>'}`);
         return summary + actions + values;
     }
 
@@ -6822,7 +6857,7 @@
         root.querySelector('#mm-add-customer')?.addEventListener('click', () => addManualCustomer(root.querySelector('#mm-add-id')?.value));
         root.querySelector('#mm-refresh-customers')?.addEventListener('click', async () => {
             try {
-                await repairRecentSalesCoverage({ lookbackMs: FIRST_SYNC_LOOKBACK_MS, silent: false });
+                await repairRecentSalesCoverage({ lookbackMs: CUSTOMER_REFRESH_LOOKBACK_MS, silent: false });
             } catch (error) {
                 statusText = `Customer refresh failed: ${error?.message || String(error)}`;
                 render();
