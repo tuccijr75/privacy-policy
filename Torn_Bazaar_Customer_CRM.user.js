@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.8.3
+// @version      6.8.4
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -25,7 +25,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.8.3';
+    const VERSION = '6.8.4';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -402,6 +402,7 @@
         db.travelIntel.settings.targetTime = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(db.travelIntel.settings.targetTime || '')) ? String(db.travelIntel.settings.targetTime) : '';
         db.travelIntel.settings.selectedCountry = String(db.travelIntel.settings.selectedCountry || '');
         db.travelIntel.settings.selectedItemKey = String(db.travelIntel.settings.selectedItemKey || '');
+        db.travelIntel.settings.showLocalTime = db.travelIntel.settings.showLocalTime !== false;
         db.travelIntel.settings.historyDays = Math.max(1, Math.min(30, Number(db.travelIntel.settings.historyDays || 7)));
         db.travelIntel.diagnostics = Array.isArray(db.travelIntel.diagnostics) ? db.travelIntel.diagnostics : [];
         db.meta = db.meta && typeof db.meta === 'object' ? db.meta : {};
@@ -2948,17 +2949,49 @@
     function resolveTravelTargetTime(value) {
         const raw=String(value||'').trim();
         if(!/^([01]\d|2[0-3]):[0-5]\d$/.test(raw))return null;
+
+        // Travel forecasts use Torn City Time (TCT), which is treated as UTC.
         const parts=raw.split(':').map(Number);
-        const now=new Date();
-        const target=new Date(now);
-        target.setHours(parts[0],parts[1],0,0);
-        if(target.getTime()<=now.getTime())target.setDate(target.getDate()+1);
-        return target.getTime();
+        const now=Date.now();
+        const d=new Date(now);
+        let target=Date.UTC(
+            d.getUTCFullYear(),
+            d.getUTCMonth(),
+            d.getUTCDate(),
+            parts[0],
+            parts[1],
+            0,
+            0
+        );
+        if(target<=now)target+=24*60*60*1000;
+        return target;
     }
 
-    function formatTravelClock(ms) {
+    function formatTravelTctClock(ms) {
         if(!Number.isFinite(Number(ms))||Number(ms)<=0)return '—';
-        return new Date(Number(ms)).toLocaleString([], {weekday:'short',hour:'numeric',minute:'2-digit'});
+        const text=new Intl.DateTimeFormat('en-GB',{
+            timeZone:'UTC',
+            weekday:'short',
+            hour:'2-digit',
+            minute:'2-digit',
+            hour12:false
+        }).format(new Date(Number(ms)));
+        return text+' TCT';
+    }
+
+    function formatTravelLocalClock(ms) {
+        if(!Number.isFinite(Number(ms))||Number(ms)<=0)return '—';
+        return new Date(Number(ms)).toLocaleString([],{
+            weekday:'short',
+            hour:'numeric',
+            minute:'2-digit'
+        })+' local';
+    }
+
+    function formatTravelClock(ms, showLocal=true) {
+        const tct=formatTravelTctClock(ms);
+        if(tct==='—')return tct;
+        return showLocal ? tct+' / '+formatTravelLocalClock(ms) : tct;
     }
 
     function travelHistory12h(db,row) {
@@ -3143,9 +3176,10 @@
         db.travelIntel.settings.targetTime=target;
         db.travelIntel.settings.selectedCountry=String(root.querySelector('#mm-travel-country')?.value||'').trim();
         db.travelIntel.settings.selectedItemKey=String(root.querySelector('#mm-travel-item')?.value||'').trim();
+        db.travelIntel.settings.showLocalTime=Boolean(root.querySelector('#mm-travel-show-local')?.checked);
         dbSave(db);
         statusText=target
-            ? 'Travel target saved: '+target+'. Forecast uses the last 12 hours of availability history.'
+            ? 'Travel target saved: '+target+' TCT (UTC). Forecast uses the last 12 hours of availability history.'
             : 'Travel settings saved; target time cleared.';
         render();
     }
@@ -3210,9 +3244,10 @@
                 return '<option value="'+escapeHtml(key)+'" '+(key===selector.itemKey?'selected':'')+'>'+escapeHtml(r.itemName)+'</option>';
             }).join('');
 
+        const showLocal=st.showLocalTime !== false;
         const targetSummary=targetAt
-            ? 'Forecast target: <b>'+escapeHtml(formatTravelClock(targetAt))+'</b>. Predictor uses only the previous <b>12 hours</b> of captured availability, depletion and restock events.'
-            : 'Enter a target arrival time to predict which items should be in stock and the next expected restock time.';
+            ? 'Forecast target: <b>'+escapeHtml(formatTravelClock(targetAt,showLocal))+'</b>. Predictor uses only the previous <b>12 hours</b> of captured availability, depletion and restock events.'
+            : 'Enter a target arrival time in <b>Torn Time (TCT / UTC)</b> to predict which items should be in stock and the next expected restock time.';
 
         const controls=card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
@@ -3223,13 +3258,13 @@
                 '<label style="font-size:10px;color:#aaa;">Flight method<select id="mm-travel-method" style="'+inputCss()+'width:100%;"><option value="standard" '+(st.method==='standard'?'selected':'')+'>Standard</option><option value="airstrip" '+(st.method==='airstrip'?'selected':'')+'>Airstrip</option><option value="wlt" '+(st.method==='wlt'?'selected':'')+'>WLT</option><option value="business" '+(st.method==='business'?'selected':'')+'>Business</option></select></label>'+
                 '<label style="font-size:10px;color:#aaa;">Carry capacity<input id="mm-travel-carry" type="number" min="1" value="'+Number(st.carry||21)+'" style="'+inputCss()+'width:100%;"></label>'+
                 '<label style="font-size:10px;color:#aaa;">Travel cash (0 = unlimited)<input id="mm-travel-cash" type="number" min="0" value="'+Number(st.cash||0)+'" style="'+inputCss()+'width:100%;"></label>'+
-                '<label style="font-size:10px;color:#aaa;">Target arrival time<input id="mm-travel-target-time" type="time" value="'+escapeHtml(st.targetTime||'')+'" style="'+inputCss()+'width:100%;"></label>'+
+                '<label style="font-size:10px;color:#aaa;">Target arrival time (TCT / UTC)<input id="mm-travel-target-time" type="time" value="'+escapeHtml(st.targetTime||'')+'" style="'+inputCss()+'width:100%;"></label>'+
             '</div>'+
             '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-top:7px;">'+
                 '<label style="font-size:10px;color:#aaa;">Country<select id="mm-travel-country" style="'+inputCss()+'width:100%;">'+countryOptions+'</select></label>'+
                 '<label style="font-size:10px;color:#aaa;">Item<select id="mm-travel-item" style="'+inputCss()+'width:100%;">'+itemOptions+'</select></label>'+
             '</div>'+
-            '<div style="margin-top:6px;"><button id="mm-travel-save" style="'+btn(true)+'">Save / Run Forecast</button></div>'+
+            '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;"><button id="mm-travel-save" style="'+btn(true)+'">Save / Run Forecast</button><label style="font-size:10px;color:#aaa;"><input id="mm-travel-show-local" type="checkbox" '+(showLocal?'checked':'')+'> Show local time beside TCT</label></div>'+
             '<div style="font-size:10px;color:#888;margin-top:6px;">'+targetSummary+' Source '+escapeHtml(fresh.label)+(Number.isFinite(fresh.ageSeconds)?' · '+Math.round(fresh.ageSeconds)+'s old':'')+'.</div>'
         );
 
@@ -3249,10 +3284,10 @@
                 '<div style="font-size:12px;line-height:1.6;margin-top:5px;">'+
                     '<b style="font-size:14px;">'+escapeHtml(r.country)+' · '+escapeHtml(r.itemName)+'</b> · <span style="color:'+color+';font-weight:bold;">'+escapeHtml(r.predictedState)+'</span><br>'+
                     'Live stock: <b>'+Number(r.stock||0).toLocaleString()+'</b><br>'+
-                    'Adjusted target time: <b>'+escapeHtml(formatTravelClock(r.targetAt))+'</b><br>'+
+                    'Adjusted target time: <b>'+escapeHtml(formatTravelClock(r.targetAt,showLocal))+'</b><br>'+
                     'Predicted stock at target: <b>'+Number(r.predictedStock||0).toLocaleString()+'</b><br>'+
                     'Availability probability: <b>'+(Number(r.arrivalChance||0)*100).toFixed(0)+'%</b> · Confidence '+Number(r.prediction.confidence||0).toFixed(0)+'%<br>'+
-                    'Next predicted restock: <b>'+escapeHtml(formatTravelClock(nextAt))+'</b>'+(nextDelta!=null?' · about '+Math.round(nextDelta)+' min from now':'')+'<br>'+
+                    'Next predicted restock: <b>'+escapeHtml(formatTravelClock(nextAt,showLocal))+'</b>'+(nextDelta!=null?' · about '+Math.round(nextDelta)+' min from now':'')+'<br>'+
                     '12h samples: '+Number(r.prediction.samples||0)+' · Median restock interval '+interval+' · Depletion '+dep+
                 '</div>';
         }
@@ -3271,13 +3306,13 @@
                     const interval=r.prediction.medianRestockMinutes?Number(r.prediction.medianRestockMinutes).toFixed(0)+'m':'—';
                     return '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;">'+
                         '<b>'+escapeHtml(r.country)+' · '+escapeHtml(r.itemName)+'</b> · <span style="color:'+color+';font-weight:bold;">'+escapeHtml(r.predictedState)+'</span><br>'+
-                        'Predicted stock at '+escapeHtml(formatTravelClock(r.targetAt))+': <b>'+Number(r.predictedStock||0).toLocaleString()+'</b> · Availability '+(Number(r.arrivalChance||0)*100).toFixed(0)+'% · Confidence '+Number(r.prediction.confidence||0).toFixed(0)+'%<br>'+
-                        'Next predicted restock: <b>'+escapeHtml(formatTravelClock(r.nextExpectedRestockAt))+'</b> · Median interval '+interval+
+                        'Predicted stock at '+escapeHtml(formatTravelClock(r.targetAt,showLocal))+': <b>'+Number(r.predictedStock||0).toLocaleString()+'</b> · Availability '+(Number(r.arrivalChance||0)*100).toFixed(0)+'% · Confidence '+Number(r.prediction.confidence||0).toFixed(0)+'%<br>'+
+                        'Next predicted restock: <b>'+escapeHtml(formatTravelClock(r.nextExpectedRestockAt,showLocal))+'</b> · Median interval '+interval+
                     '</div>';
                 }).join('')
                 : '<div style="font-size:11px;color:#888;margin-top:5px;">No matching travel forecast rows loaded.</div>';
 
-        const forecast=card('<b>12-Hour Stock Forecast'+(targetAt?' — '+escapeHtml(formatTravelClock(targetAt)):'')+'</b>'+forecastBody);
+        const forecast=card('<b>12-Hour Stock Forecast'+(targetAt?' — '+escapeHtml(formatTravelClock(targetAt,showLocal)):'')+'</b>'+forecastBody);
 
         const countryBaskets=selector.country?baskets.filter(b=>b.country===selector.country):baskets;
         const basketsHtml=card('<b>Trip Basket Optimizer</b>'+
