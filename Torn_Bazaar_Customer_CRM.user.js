@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.6.1
+// @version      6.6.2
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -23,7 +23,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.6.1';
+    const VERSION = '6.6.2';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -491,15 +491,23 @@
         if (!latest || typeof latest !== 'object') return normalizeDb(incoming);
         const merged = normalizeDb(deepClone(incoming));
 
-        // Sales are append-only ledger records. Union both sides so a stale Torn
-        // tab can never erase a sale already committed by another tab.
+        const incomingSaleIds = new Set(Object.keys(merged.sales || {}));
+        const latestSales = latest.sales || {};
+        let latestOnlySaleFound = false;
+        for (const id of Object.keys(latestSales)) {
+            if (!incomingSaleIds.has(id)) {
+                latestOnlySaleFound = true;
+                break;
+            }
+        }
+
+        // Sales are append-only. Preserve records committed by another Torn tab,
+        // but keep the incoming customer's sale-derived totals authoritative.
         merged.sales = {
-            ...(latest.sales || {}),
+            ...latestSales,
             ...(merged.sales || {})
         };
 
-        // Preserve customers that exist only in the latest database and merge
-        // monotonic contact/message state for customers present in both.
         const latestCustomers = latest.customers || {};
         merged.customers = merged.customers || {};
         for (const [id, oldCustomer] of Object.entries(latestCustomers)) {
@@ -509,6 +517,7 @@
                 continue;
             }
 
+            // Relationship/contact state is monotonic and safe to merge.
             const oldLast = Date.parse(oldCustomer.lastContacted || '') || 0;
             const newLast = Date.parse(current.lastContacted || '') || 0;
             current.contacted = Boolean(current.contacted || oldCustomer.contacted);
@@ -516,27 +525,24 @@
             current.messageCount = Math.max(Number(current.messageCount || 0), Number(oldCustomer.messageCount || 0));
             if (oldLast > newLast) current.lastContacted = oldCustomer.lastContacted;
 
-            // Sales/customer totals are monotonic because the sales ledger is append-only.
-            // Merge those fields directly instead of rebuilding every customer from every
-            // sale on every IndexedDB write. This removes the largest UI latency source.
-            current.purchases = Math.max(Number(current.purchases || 0), Number(oldCustomer.purchases || 0));
-            current.units = Math.max(Number(current.units || 0), Number(oldCustomer.units || 0));
-            current.spent = Math.max(Number(current.spent || 0), Number(oldCustomer.spent || 0));
-            const oldFirst = Date.parse(oldCustomer.firstPurchase || '') || 0;
-            const newFirst = Date.parse(current.firstPurchase || '') || 0;
-            if (oldFirst && (!newFirst || oldFirst < newFirst)) current.firstPurchase = oldCustomer.firstPurchase;
-            const oldPurchase = Date.parse(oldCustomer.lastPurchase || '') || 0;
-            const newPurchase = Date.parse(current.lastPurchase || '') || 0;
-            if (oldPurchase > newPurchase) current.lastPurchase = oldCustomer.lastPurchase;
-            if ((!current.name || /^\d+$/.test(String(current.name))) && oldCustomer.name && !/^\d+$/.test(String(oldCustomer.name))) {
+            // Preserve a resolved username from either tab.
+            if ((!current.name || /^\d+$/.test(String(current.name))) &&
+                oldCustomer.name && !/^\d+$/.test(String(oldCustomer.name))) {
                 current.name = oldCustomer.name;
             }
+
+            // Do NOT max purchases/units/spend here. Those values must exactly
+            // match the append-only sales ledger or the integrity audit will fail.
         }
 
         merged.coupons = { ...(latest.coupons || {}), ...(merged.coupons || {}) };
         merged.refunds = { ...(latest.refunds || {}), ...(merged.refunds || {}) };
         merged.subscribers = { ...(latest.subscribers || {}), ...(merged.subscribers || {}) };
         merged.removedCustomers = { ...(latest.removedCustomers || {}), ...(merged.removedCustomers || {}) };
+
+        // Only pay the full reconciliation cost when another tab contributed
+        // sale records that were absent from the incoming snapshot.
+        if (latestOnlySaleFound) recalculateCustomerSalesTotals(merged);
 
         mergeDurableContactState(merged);
         return normalizeDb(merged);
@@ -1235,9 +1241,12 @@
             throw new Error(`Sales repair audit failed: ${audit.problems.slice(0, 3).join('; ')}`);
         }
 
-        if (imported > 0) {
-            setTimeout(() => repairUsernames(25).then(() => render()).catch(() => {}), 50);
-        }
+        // Refresh unresolved usernames even when the sales were already present.
+        // This repairs customers that were imported during a prior failed audit.
+        setTimeout(() => repairUsernames(25).then(count => {
+            if (count > 0) statusText = `Customer names repaired: ${count}.`;
+            render();
+        }).catch(() => {}), 50);
 
         return { imported, checked, repaired: imported > 0, rejected };
     }
@@ -1579,7 +1588,10 @@
             }
 
             if (imported > 0) {
-                setTimeout(() => repairUsernames(25).then(() => render()).catch(() => {}), 50);
+                setTimeout(() => repairUsernames(25).then(count => {
+                    if (count > 0) statusText = `Sync complete. Customer names repaired: ${count}.`;
+                    render();
+                }).catch(() => {}), 50);
             }
         } catch (error) {
             const code = Number(error?.code || 0);
@@ -5707,7 +5719,7 @@
         return customerReorderHtml(db) + add + filters + customers.map(c => {
             const coupon = db.coupons[c.id];
             const q = couponQualification(db, coupon);
-            const name = escapeHtml(displayUsername(c) || `[${c.id}]`);
+            const name = escapeHtml(displayUsername(c) || 'Customer');
             return card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;"><div><b>${name}</b> <span style="color:#888">[${escapeHtml(c.id)}]</span><div style="font-size:12px;color:#bbb;margin-top:4px;">Purchases: ${c.purchases.toLocaleString()} · Units: ${c.units.toLocaleString()} · Spent: ${money(c.spent)}<br>Last purchase: ${escapeHtml(fmtDate(c.lastPurchase))}<br>Contacted: ${customerHasBeenContacted(c) ? `Yes (${c.messageCount})` : 'No'} · Coupon: ${escapeHtml(coupon?.code || '—')} · Uses left: ${couponRemaining(coupon)}<br>Cashback: ${q.qualified ? `${money(q.cashback)} on ${money(q.total)}` : escapeHtml(q.reason)}</div></div><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><button data-action="compose" data-id="${c.id}" style="${btn(true)}">Compose</button>${coupon?.issuedAt && couponRemaining(coupon) > 0 ? `<button data-action="coupon-reminder" data-id="${c.id}" style="${btn(q.qualified)}">Coupon Reminder</button>` : ''}<button data-action="contacted" data-id="${c.id}" style="${btn()}">Mark contacted</button><button data-action="subscribe" data-id="${c.id}" style="${btn()}">Restock+</button><button data-action="start-refund" data-id="${c.id}" style="${btn()}" ${q.qualified ? '' : 'disabled'}>Cashback</button><button data-action="profile" data-id="${c.id}" style="${btn()}">Profile</button><button data-action="remove" data-id="${c.id}" style="${btn()}">Remove</button></div></div>`);
         }).join('');
     }
