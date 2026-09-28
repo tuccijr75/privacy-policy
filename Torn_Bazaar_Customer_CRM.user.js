@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.6.2
+// @version      6.7.0
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -23,7 +23,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.6.2';
+    const VERSION = '6.7.0';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -74,6 +74,8 @@
     const GITHUB_TOKEN_KEY = 'mm_bazaar_crm_github_token_v1';
     const GITHUB_BACKUP_PASSPHRASE_KEY = 'mm_bazaar_crm_github_backup_passphrase_v1';
     const CONTACT_LEDGER_KEY = 'mm_bazaar_crm_contact_ledger_v1';
+    const DB_CHANNEL_NAME = 'mm_bazaar_crm_cross_tab_v1';
+    const TRAVEL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
     const CASHBACK_TIERS = [
         { minimum: 1_000_000, cashback: 20_000 },
@@ -105,6 +107,9 @@
     let dbWriteChain = Promise.resolve();
     let githubSyncRunning = false;
     let githubSyncTimer = null;
+    const tabInstanceId = makeId('tab');
+    let dbChannel = null;
+    let dbChannelRefreshTimer = null;
 
     // ============================================================
     // BASIC HELPERS
@@ -126,6 +131,15 @@
         .replaceAll("'", '&#039;');
     const makeId = prefix => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const makeCouponCode = playerId => `SAVE-${asId(playerId)}`;
+
+    function navigateFromCRM(url) {
+        const target = String(url || '').trim();
+        if (!target) return;
+        try { minimizeCRM(); } catch {}
+        statusText = 'Opening…';
+        // Same-tab navigation keeps Torn workflows predictable and prevents popup/tab sprawl.
+        setTimeout(() => { location.href = target; }, 20);
+    }
 
     function readJson(key, fallback) {
         try {
@@ -447,6 +461,30 @@
         });
     }
 
+    function installDbCrossTabSync() {
+        if (dbChannel || typeof BroadcastChannel === 'undefined') return;
+        try {
+            dbChannel = new BroadcastChannel(DB_CHANNEL_NAME);
+            dbChannel.addEventListener('message', event => {
+                if (!event?.data || event.data.source === tabInstanceId) return;
+                if (dbChannelRefreshTimer) clearTimeout(dbChannelRefreshTimer);
+                dbChannelRefreshTimer = setTimeout(async () => {
+                    try {
+                        const latest = await idbGet(IDB_MAIN_KEY);
+                        if (latest && typeof latest === 'object') {
+                            dbCache = normalizeDb(latest);
+                            render();
+                        }
+                    } catch (error) {
+                        console.warn('[MM CRM] Cross-tab refresh failed', error);
+                    }
+                }, 120);
+            });
+        } catch (error) {
+            console.warn('[MM CRM] BroadcastChannel unavailable', error);
+        }
+    }
+
     async function initializeStorage() {
         let stored = null;
         try { stored = await idbGet(IDB_MAIN_KEY); }
@@ -540,9 +578,10 @@
         merged.subscribers = { ...(latest.subscribers || {}), ...(merged.subscribers || {}) };
         merged.removedCustomers = { ...(latest.removedCustomers || {}), ...(merged.removedCustomers || {}) };
 
-        // Only pay the full reconciliation cost when another tab contributed
-        // sale records that were absent from the incoming snapshot.
-        if (latestOnlySaleFound) recalculateCustomerSalesTotals(merged);
+        // Customer purchase/unit/spend fields are derived data. Rebuild them from the
+        // append-only sales ledger at the persistence boundary so stale/older Torn tabs
+        // can never reintroduce integrity mismatches.
+        recalculateCustomerSalesTotals(merged);
 
         mergeDurableContactState(merged);
         return normalizeDb(merged);
@@ -564,6 +603,7 @@
                 const merged = mergeCriticalPersistenceState(latest, snapshot);
                 dbCache = deepClone(merged);
                 await idbPut(IDB_MAIN_KEY, merged);
+                try { dbChannel?.postMessage({ source: tabInstanceId, at: Date.now() }); } catch {}
             })
             .catch(error => {
                 console.error('[MM CRM] IndexedDB save failed', error);
@@ -1222,7 +1262,7 @@
         // This is dramatically faster than resolving usernames and saving per sale.
         recalculateCustomerSalesTotals(db);
 
-        const audit = auditSalesData(db);
+        const audit = reconcileSalesIntegrity(db);
         db.meta.lastSalesAudit = { at: nowIso(), ...audit };
         db.meta.lastRecentSalesRepairAt = nowIso();
         dbSave(db);
@@ -1395,6 +1435,17 @@
         };
     }
 
+    function reconcileSalesIntegrity(db) {
+        let audit = auditSalesData(db);
+        if (!audit.ok) {
+            recalculateCustomerSalesTotals(db);
+            audit = auditSalesData(db);
+            db.meta.lastSalesSelfRepairAt = nowIso();
+            db.meta.lastSalesSelfRepairOk = audit.ok;
+        }
+        return audit;
+    }
+
     async function rebuildSalesHistory() {
         if (syncRunning || !getApiKey()) return;
         if (!confirm(
@@ -1462,7 +1513,7 @@
                 }
             }
 
-            const audit = auditSalesData(db);
+            const audit = reconcileSalesIntegrity(db);
             if (!audit.ok) {
                 throw new Error(`Internal rebuild audit failed: ${audit.problems.slice(0, 3).join('; ')}`);
             }
@@ -1569,7 +1620,7 @@
 
             if (imported > 0) recalculateCustomerSalesTotals(db);
 
-            const audit = auditSalesData(db);
+            const audit = reconcileSalesIntegrity(db);
             db.meta.lastSalesAudit = { at: nowIso(), ...audit };
             dbSave(db);
             saveProcessed([...processed]);
@@ -4636,7 +4687,7 @@
             '&XID=' + encodeURIComponent(id) +
             '&subject=' + encodeURIComponent(payload.subject);
 
-        window.open(url, '_blank', 'noopener');
+        navigateFromCRM(url);
     }
 
     async function composeCustomer(customer) {
@@ -5035,7 +5086,7 @@
     }
 
     function openRefundProfile(refund) {
-        window.open(refundProfileUrl(refund), '_blank', 'noopener');
+        navigateFromCRM(refundProfileUrl(refund));
     }
 
     function visible(el) {
@@ -6861,7 +6912,7 @@
             try{logRestockPurchase(qty,cost);statusText='Purchase logged and restock session advanced.';}
             catch(error){statusText=`Purchase not logged: ${error?.message||String(error)}`;render();}
         });
-        root.querySelector('#mm-open-bazaar-add')?.addEventListener('click',()=>window.open('https://www.torn.com/bazaar.php#/p=add','_blank','noopener'));
+        root.querySelector('#mm-open-bazaar-add')?.addEventListener('click',()=>navigateFromCRM('https://www.torn.com/bazaar.php#/p=add'));
         root.querySelector('#mm-add-event')?.addEventListener('click',()=>{
             try{
                 addDemandEvent(root.querySelector('#mm-event-name')?.value,root.querySelector('#mm-event-start')?.value,root.querySelector('#mm-event-end')?.value,root.querySelector('#mm-event-mult')?.value);
@@ -6870,7 +6921,7 @@
         });
         root.querySelectorAll('[data-ops-action]').forEach(button=>button.addEventListener('click',()=>{
             const action=button.dataset.opsAction;
-            if(action==='seller'&&button.dataset.seller)return window.open(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(button.dataset.seller)}`,'_blank','noopener');
+            if(action==='seller'&&button.dataset.seller)return navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(button.dataset.seller)}`);
             if(action==='remove-event')return removeDemandEvent(button.dataset.event);
             if(action==='listing-plan'){
                 const db=dbLoad(),plan=db.operations.listingPlans[button.dataset.item];
@@ -6982,7 +7033,7 @@
             const action = button.dataset.intelAction;
             if (action === 'profile') {
                 const seller = button.dataset.seller;
-                if (seller) window.open(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(seller)}`, '_blank', 'noopener');
+                if (seller) navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(seller)}`);
                 return;
             }
             if (action === 'enrich') {
@@ -7216,7 +7267,7 @@
             if (action === 'contacted') return markCustomerContacted(id);
             if (action === 'subscribe' && db.customers[id]) return subscribeCustomer(db.customers[id]);
             if (action === 'unsubscribe') return unsubscribeCustomer(id);
-            if (action === 'profile') return window.open(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(id)}`, '_blank', 'noopener');
+            if (action === 'profile') return navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(id)}`);
             if (action === 'remove') return removeCustomer(id);
             if (action === 'start-refund') return startCouponRefund(id);
             if (action === 'open-refund' && db.refunds[refundId]) return openRefundProfile(db.refunds[refundId]);
@@ -7293,12 +7344,14 @@
         migrateApiKey();
 
         const storage = await initializeStorage();
+        installDbCrossTabSync();
         if (storage.migrated) statusText = 'Database migrated to IndexedDB.';
 
         await autoRestoreIfDatabaseEmpty();
         {
             const repairedDb = dbLoad();
             mergeDurableContactState(repairedDb);
+            reconcileSalesIntegrity(repairedDb);
             dbSave(repairedDb);
         }
         await flushDbWrites();
