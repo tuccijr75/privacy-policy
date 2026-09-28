@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.1.1
+// @version      7.2.0
 // @description  Bazaar operations CRM with in-CRM update checking, TornW3B travel intelligence, customer automation, procurement, analytics, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.1.1';
+    const VERSION = '7.2.0';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -84,6 +84,8 @@
     const YATA_TRAVEL_URL = 'https://yata.yt/api/v1/travel/export/';
     const YATA_SAMPLE_INTERVAL_MS = 60 * 1000;
     const TRAVEL_HISTORY_WINDOW_HOURS = 24;
+    const TRAVEL_FORECAST_LEDGER_MAX = 1000;
+    const TRAVEL_FORECAST_MODEL_VERSION = '7.2.0-eval-1';
     const YATA_COUNTRIES = Object.freeze({
         mex:'Mexico', cay:'Cayman Islands', can:'Canada', haw:'Hawaii', uni:'United Kingdom',
         arg:'Argentina', swi:'Switzerland', jap:'Japan', chi:'China', uae:'UAE', sou:'South Africa'
@@ -181,7 +183,7 @@
 
     function defaultDb() {
         return {
-            schema: 8,
+            schema: 9,
             customers: {},
             sales: {},
             coupons: {},
@@ -265,6 +267,7 @@
             travelIntel: {
                 rows: [],
                 history: {},
+                forecastLedger: [],
                 lastSyncAt: null,
                 lastYataSyncAt: null,
                 lastYataObservationAt: null,
@@ -338,7 +341,7 @@
 
     function normalizeDb(input) {
         const db = input && typeof input === 'object' ? input : defaultDb();
-        db.schema = 8;
+        db.schema = 9;
         db.customers = db.customers && typeof db.customers === 'object' ? db.customers : {};
         db.sales = db.sales && typeof db.sales === 'object' ? db.sales : {};
         db.coupons = db.coupons && typeof db.coupons === 'object' ? db.coupons : {};
@@ -407,6 +410,7 @@
         db.travelIntel = db.travelIntel && typeof db.travelIntel === 'object' ? db.travelIntel : {};
         db.travelIntel.rows = Array.isArray(db.travelIntel.rows) ? db.travelIntel.rows : [];
         db.travelIntel.history = db.travelIntel.history && typeof db.travelIntel.history === 'object' ? db.travelIntel.history : {};
+        db.travelIntel.forecastLedger = Array.isArray(db.travelIntel.forecastLedger) ? db.travelIntel.forecastLedger.slice(-TRAVEL_FORECAST_LEDGER_MAX) : [];
         db.travelIntel.lastSyncAt = db.travelIntel.lastSyncAt || null;
         db.travelIntel.lastYataSyncAt = db.travelIntel.lastYataSyncAt || null;
         db.travelIntel.lastYataObservationAt = db.travelIntel.lastYataObservationAt || null;
@@ -3077,10 +3081,12 @@
         db.travelIntel.lastYataSyncAt=nowIso();
         if(newestObservation>0)db.travelIntel.lastYataObservationAt=new Date(newestObservation).toISOString();
         db.travelIntel.source='TornW3B pricing + YATA shared overseas stock history';
-        if(inserted>0){
+        const resolvedForecasts=resolveTravelForecastOutcomes(db);
+        const recordedForecasts=recordTravelForecastPredictions(db);
+        if(inserted>0||resolvedForecasts>0||recordedForecasts>0){
             db.travelIntel.diagnostics.unshift({
                 at:nowIso(),
-                text:'YATA shared history: '+inserted+' new stock observation'+(inserted===1?'':'s')+' across '+groups.size+' countries.'
+                text:'YATA shared history: '+inserted+' new stock observation'+(inserted===1?'':'s')+' across '+groups.size+' countries; '+resolvedForecasts+' forecast outcome'+(resolvedForecasts===1?'':'s')+' resolved; '+recordedForecasts+' forecast snapshot'+(recordedForecasts===1?'':'s')+' recorded.'
             });
             db.travelIntel.diagnostics=db.travelIntel.diagnostics.slice(0,30);
         }
@@ -3354,6 +3360,170 @@
         };
     }
 
+    function travelYataRestockEvents(db,row) {
+        const h=(db.travelIntel.history?.[travelHistoryKey(row)]||[])
+            .filter(point=>/YATA/i.test(String(point.source||'')))
+            .slice()
+            .sort((a,b)=>Number(a.at||0)-Number(b.at||0));
+        const events=[];
+        for(let i=1;i<h.length;i++){
+            const prev=h[i-1],cur=h[i];
+            const prevStock=Math.max(0,Number(prev.stock||0));
+            const curStock=Math.max(0,Number(cur.stock||0));
+            const delta=curStock-prevStock;
+            if((prevStock<=0&&curStock>0)||delta>Math.max(5,prevStock*.20)){
+                events.push({
+                    at:Number(cur.at||0),
+                    stock:curStock,
+                    previousStock:prevStock,
+                    size:Math.max(curStock,delta,0),
+                    source:String(cur.source||'YATA shared abroad stock')
+                });
+            }
+        }
+        return events.filter(event=>Number(event.at||0)>0);
+    }
+
+    function resolveTravelForecastOutcomes(db) {
+        const ledger=Array.isArray(db.travelIntel.forecastLedger)?db.travelIntel.forecastLedger:[];
+        const cache=new Map();
+        let resolved=0;
+
+        for(const forecast of ledger){
+            if(String(forecast.status||'open')!=='open')continue;
+            const createdAt=Number(forecast.createdAt||0);
+            if(!(createdAt>0))continue;
+
+            const key=String(forecast.historyKey||travelHistoryKey(forecast));
+            if(!cache.has(key))cache.set(key,travelYataRestockEvents(db,forecast));
+            const actual=(cache.get(key)||[]).find(event=>Number(event.at||0)>createdAt);
+            if(!actual)continue;
+
+            const predicted=Number(forecast.predictedRestockAt||0);
+            const errorMinutes=predicted>0?(Number(actual.at)-predicted)/60000:null;
+            const absoluteErrorMinutes=Number.isFinite(errorMinutes)?Math.abs(errorMinutes):null;
+
+            forecast.status='resolved';
+            forecast.actualRestockAt=Number(actual.at);
+            forecast.actualRestockSize=Number(actual.size||0);
+            forecast.actualRestockSource=String(actual.source||'YATA shared abroad stock');
+            forecast.errorMinutes=Number.isFinite(errorMinutes)?errorMinutes:null;
+            forecast.absoluteErrorMinutes=Number.isFinite(absoluteErrorMinutes)?absoluteErrorMinutes:null;
+            forecast.hitWithin15m=Number.isFinite(absoluteErrorMinutes)?absoluteErrorMinutes<=15:null;
+            forecast.hitWithin30m=Number.isFinite(absoluteErrorMinutes)?absoluteErrorMinutes<=30:null;
+            forecast.hitWithin60m=Number.isFinite(absoluteErrorMinutes)?absoluteErrorMinutes<=60:null;
+            forecast.hitWithin120m=Number.isFinite(absoluteErrorMinutes)?absoluteErrorMinutes<=120:null;
+            forecast.resolvedAt=Date.now();
+            resolved++;
+        }
+
+        db.travelIntel.forecastLedger=ledger.slice(-TRAVEL_FORECAST_LEDGER_MAX);
+        return resolved;
+    }
+
+    function recordTravelForecastPredictions(db) {
+        const ledger=Array.isArray(db.travelIntel.forecastLedger)?db.travelIntel.forecastLedger:[];
+        const allowedBasis=new Set(['shared-stockout-history','shared-restock-cadence','single-cycle-fallback']);
+        let added=0;
+
+        for(const row of db.travelIntel.rows||[]){
+            const profile=travelRestockProfile24h(db,row);
+            const predictedRestockAt=Number(profile.nextRestockAt||0);
+            const basis=String(profile.nextRestockBasis||'insufficient-history');
+            if(!(predictedRestockAt>Date.now())||!allowedBasis.has(basis))continue;
+
+            const latestRestock=profile.restockTimes?.length?Number(profile.restockTimes[profile.restockTimes.length-1]||0):0;
+            const anchorAt=Number(profile.activeOutageStartedAt||latestRestock||0);
+            if(!(anchorAt>0))continue;
+
+            const historyKey=travelHistoryKey(row);
+            const signature=[historyKey,basis,anchorAt,TRAVEL_FORECAST_MODEL_VERSION].join('|');
+            if(ledger.some(item=>String(item.signature||'')===signature))continue;
+
+            ledger.push({
+                id:makeId('travel-forecast'),
+                signature,
+                modelVersion:TRAVEL_FORECAST_MODEL_VERSION,
+                crmVersion:VERSION,
+                historyKey,
+                country:String(row.country||''),
+                itemId:asId(row.itemId),
+                itemName:String(row.itemName||''),
+                createdAt:Date.now(),
+                predictedRestockAt,
+                predictionBasis:basis,
+                anchorAt,
+                currentStock:Math.max(0,Number(row.stock||0)),
+                sampleCount:Number(profile.samples||0),
+                restockCycles:Number(profile.restockCount||0),
+                cadenceReliability:Number(profile.cadenceReliability||0),
+                medianRestockSize:Number(profile.medianRestock||0),
+                medianRestockInterval:Number(profile.medianInterval||0),
+                medianStockoutDuration:Number(profile.medianOutage||0),
+                depletionRate:Number(profile.depletionRate||0),
+                availabilityRate:Number(profile.availableRate||0),
+                sourceCounts:{...(profile.sourceCounts||{})},
+                yataObservationAt:Date.parse(db.travelIntel.lastYataObservationAt||'')||null,
+                yataFetchedAt:Date.parse(db.travelIntel.lastYataSyncAt||'')||Date.now(),
+                status:'open',
+                actualRestockAt:null,
+                actualRestockSize:null,
+                actualRestockSource:null,
+                errorMinutes:null,
+                absoluteErrorMinutes:null,
+                hitWithin15m:null,
+                hitWithin30m:null,
+                hitWithin60m:null,
+                hitWithin120m:null,
+                resolvedAt:null
+            });
+            added++;
+        }
+
+        db.travelIntel.forecastLedger=ledger.slice(-TRAVEL_FORECAST_LEDGER_MAX);
+        return added;
+    }
+
+    function travelForecastPerformance(db,country='',itemId='') {
+        const c=String(country||'');
+        const id=asId(itemId);
+        const records=(db.travelIntel.forecastLedger||[]).filter(row=>
+            (!c||String(row.country||'')===c)&&
+            (!id||asId(row.itemId)===id)
+        );
+        const resolved=records.filter(row=>String(row.status||'')==='resolved'&&Number.isFinite(Number(row.absoluteErrorMinutes)));
+        const absoluteErrors=resolved.map(row=>Number(row.absoluteErrorMinutes));
+        const mean=absoluteErrors.length?absoluteErrors.reduce((sum,value)=>sum+value,0)/absoluteErrors.length:0;
+        const hitRate=minutes=>resolved.length?resolved.filter(row=>Number(row.absoluteErrorMinutes)<=minutes).length/resolved.length:0;
+
+        const byBasis={};
+        for(const row of resolved){
+            const basis=String(row.predictionBasis||'unknown');
+            const group=byBasis[basis]||(byBasis[basis]={count:0,errors:[]});
+            group.count++;
+            group.errors.push(Number(row.absoluteErrorMinutes));
+        }
+        for(const group of Object.values(byBasis)){
+            group.medianAbsoluteErrorMinutes=medianNumber(group.errors);
+            group.meanAbsoluteErrorMinutes=group.errors.length?group.errors.reduce((sum,value)=>sum+value,0)/group.errors.length:0;
+            delete group.errors;
+        }
+
+        return {
+            predictions:records.length,
+            resolved:resolved.length,
+            open:records.filter(row=>String(row.status||'open')==='open').length,
+            medianAbsoluteErrorMinutes:medianNumber(absoluteErrors),
+            meanAbsoluteErrorMinutes:mean,
+            within15m:hitRate(15),
+            within30m:hitRate(30),
+            within60m:hitRate(60),
+            within120m:hitRate(120),
+            byBasis,
+            stage:resolved.length>=20?'meaningful-comparison':resolved.length>=10?'usable-calibration':resolved.length>=5?'preliminary':'collecting'
+        };
+    }
+
     function travelRestockProfile12h(db,row) {
         return travelRestockProfile24h(db,row);
     }
@@ -3619,6 +3789,19 @@
                     'Prediction basis: '+escapeHtml(basis)+' · 24h samples '+Number(r.prediction.samples||0)+' · Restock cycles '+Number(r.prediction.restockCount||0)+' · Cadence reliability '+Number(r.prediction.cadenceReliability||0)+'%<br>'+
                     'History: '+escapeHtml(Object.entries(r.prediction.historySources||{}).map(([k,v])=>k+' '+v).join(' · ')||'local only')+' · Median restock interval '+interval+' · Median stockout '+outage+' · Depletion '+dep+
                 '</div>';
+            const performance=travelForecastPerformance(db,r.country,r.itemId);
+            const perfStage=String(performance.stage||'collecting').replaceAll('-',' ');
+            const basisPerf=Object.entries(performance.byBasis||{}).map(([name,value])=>escapeHtml(name.replaceAll('-',' '))+': '+Number(value.count||0)+' resolved · median '+Math.round(Number(value.medianAbsoluteErrorMinutes||0))+'m').join('<br>');
+            selectedBody+=
+                '<details style="margin-top:7px;border-top:1px solid #303030;padding-top:6px;">'+
+                    '<summary style="cursor:pointer;font-size:11px;font-weight:bold;">Forecast Performance · '+performance.resolved+' resolved / '+performance.predictions+' captured</summary>'+
+                    '<div style="font-size:10px;color:#aaa;line-height:1.6;margin-top:5px;">'+
+                        'Calibration stage: <b>'+escapeHtml(perfStage)+'</b> · Open '+performance.open+'<br>'+
+                        'Median absolute error: <b>'+(performance.resolved?Math.round(performance.medianAbsoluteErrorMinutes)+'m':'—')+'</b> · Mean '+(performance.resolved?Math.round(performance.meanAbsoluteErrorMinutes)+'m':'—')+'<br>'+
+                        'Within ±15m '+(performance.within15m*100).toFixed(0)+'% · ±30m '+(performance.within30m*100).toFixed(0)+'% · ±60m '+(performance.within60m*100).toFixed(0)+'% · ±120m '+(performance.within120m*100).toFixed(0)+'%'+
+                        (basisPerf?'<br>'+basisPerf:'<br>Waiting for observed YATA restock outcomes.')+
+                    '</div>'+
+                '</details>';
         }
 
         const selectedCard=card('<b>Selected Country / Item Forecast</b>'+selectedBody);
@@ -8886,6 +9069,8 @@
             const row=(db.travelIntel.rows||[]).find(r=>String(r.country||'')===String(country||'')&&asId(r.itemId)===asId(itemId));
             return row?travelRestockProfile24h(db,row):null;
         },
+        travelForecastPerformance: (country='',itemId='') => travelForecastPerformance(dbLoad(),country,itemId),
+        travelForecastLedger: () => (dbLoad().travelIntel.forecastLedger||[]).slice(),
         travelOpportunityRows: () => travelOpportunityRows(dbLoad()),
         travelTimedForecastRows: () => travelTimedForecastRows(dbLoad()),
         selectedTravelForecast: () => selectedTravelForecast(dbLoad()),
