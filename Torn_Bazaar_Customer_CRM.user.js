@@ -3413,14 +3413,18 @@
         const rows=(Array.isArray(input)?input:[]).map(raw=>{
             const row=raw&&typeof raw==='object'?deepClone(raw):{};
             if(row.actualRestockAt!=null&&row.observedRestockAt==null)row.observedRestockAt=Number(row.actualRestockAt)||null;
+            if(row.actualRestockSize!=null&&row.observedRestockSize==null)row.observedRestockSize=Number(row.actualRestockSize)||0;
+            if(row.actualRestockSource!=null&&row.observedRestockSource==null)row.observedRestockSource=String(row.actualRestockSource||'');
             delete row.actualRestockAt;
+            delete row.actualRestockSize;
+            delete row.actualRestockSource;
             row.modelVersion=String(row.modelVersion||'legacy-unversioned');
             row.crmVersion=String(row.crmVersion||'');
             row.status=String(row.status||'open');
             row.sourceObservationAt=Number(row.sourceObservationAt||0)||null;
             row.previousObservationAt=Number(row.previousObservationAt||0)||null;
             row.observedRestockAt=Number(row.observedRestockAt||0)||null;
-            row.observationGapMinutes=Number.isFinite(Number(row.observationGapMinutes))?Number(row.observationGapMinutes):null;
+            row.observationGapMinutes=row.observationGapMinutes==null?null:(Number.isFinite(Number(row.observationGapMinutes))?Number(row.observationGapMinutes):null);
             row.resolutionQuality=row.resolutionQuality||null;
             if(row.status==='resolved'&&!row.resolutionQuality)row.resolutionQuality='legacy-unqualified';
             return row;
@@ -3527,8 +3531,8 @@
             forecast.observationGapMinutes=Number(observed.observationGapMinutes||0);
             forecast.resolutionQuality=String(observed.resolutionQuality||'indeterminate-gap');
             forecast.transitionType=String(observed.transitionType||'');
-            forecast.actualRestockSize=Number(observed.size||0);
-            forecast.actualRestockSource=String(observed.source||'YATA shared abroad stock');
+            forecast.observedRestockSize=Number(observed.size||0);
+            forecast.observedRestockSource=String(observed.source||'YATA shared abroad stock');
             forecast.errorMinutes=Number.isFinite(errorMinutes)?errorMinutes:null;
             forecast.absoluteErrorMinutes=Number.isFinite(absoluteErrorMinutes)?absoluteErrorMinutes:null;
             forecast.hitWithin15m=Number.isFinite(absoluteErrorMinutes)?absoluteErrorMinutes<=15:null;
@@ -3605,8 +3609,8 @@
                 observationGapMinutes:null,
                 resolutionQuality:null,
                 transitionType:null,
-                actualRestockSize:null,
-                actualRestockSource:null,
+                observedRestockSize:null,
+                observedRestockSource:null,
                 errorMinutes:null,
                 absoluteErrorMinutes:null,
                 hitWithin15m:null,
@@ -3634,6 +3638,7 @@
         const resolved=records.filter(row=>String(row.status||'')==='resolved');
         const scored=resolved.filter(row=>
             String(row.resolutionQuality||'')==='continuous'&&
+            row.absoluteErrorMinutes!=null&&
             Number.isFinite(Number(row.absoluteErrorMinutes))
         );
         const absoluteErrors=scored.map(row=>Number(row.absoluteErrorMinutes));
@@ -3659,7 +3664,7 @@
             const group=byModelVersion[version]||(byModelVersion[version]={predictions:0,resolved:0,scored:0,errors:[]});
             group.predictions++;
             if(String(row.status||'')==='resolved')group.resolved++;
-            if(String(row.status||'')==='resolved'&&String(row.resolutionQuality||'')==='continuous'&&Number.isFinite(Number(row.absoluteErrorMinutes))){
+            if(String(row.status||'')==='resolved'&&String(row.resolutionQuality||'')==='continuous'&&row.absoluteErrorMinutes!=null&&Number.isFinite(Number(row.absoluteErrorMinutes))){
                 group.scored++;
                 group.errors.push(Number(row.absoluteErrorMinutes));
             }
@@ -3748,6 +3753,15 @@
         const perf=travelForecastPerformance(perfDb,'Testland','1');
         assert('current model isolation',perf.predictions===2&&perf.scored===1);
         assert('indeterminate outcome excluded from scoring',perf.indeterminate===1&&perf.medianAbsoluteErrorMinutes===10);
+
+        const retentionInput=[];
+        for(let i=0;i<TRAVEL_FORECAST_LEDGER_MAX+5;i++){
+            retentionInput.push({id:'open-'+i,signature:'open-'+i,status:'open',createdAt:base+i});
+        }
+        retentionInput.push({id:'closed-old',signature:'closed-old',status:'resolved',createdAt:base-100,resolvedAt:base-50,resolutionQuality:'continuous',absoluteErrorMinutes:1});
+        const retained=trimTravelForecastLedger(retentionInput);
+        assert('ledger cap preserves newest open forecasts',retained.length===TRAVEL_FORECAST_LEDGER_MAX&&retained.every(row=>row.status==='open'));
+        assert('null error is never scored',!travelForecastPerformance({travelIntel:{forecastLedger:[{modelVersion:TRAVEL_FORECAST_MODEL_VERSION,status:'resolved',resolutionQuality:'continuous',absoluteErrorMinutes:null}]}}).scored);
 
         return {pass:true,modelVersion:TRAVEL_FORECAST_MODEL_VERSION,results};
     }
@@ -4017,23 +4031,39 @@
                     'Prediction basis: '+escapeHtml(basis)+' · 24h samples '+Number(r.prediction.samples||0)+' · Restock cycles '+Number(r.prediction.restockCount||0)+' · Cadence reliability '+Number(r.prediction.cadenceReliability||0)+'%<br>'+
                     'History: '+escapeHtml(Object.entries(r.prediction.historySources||{}).map(([k,v])=>k+' '+v).join(' · ')||'local only')+' · Median restock interval '+interval+' · Median stockout '+outage+' · Depletion '+dep+
                 '</div>';
-            const performance=travelForecastPerformance(db,r.country,r.itemId);
-            const perfStage=String(performance.stage||'collecting').replaceAll('-',' ');
-            const basisPerf=Object.entries(performance.byBasis||{}).map(([name,value])=>escapeHtml(name.replaceAll('-',' '))+': '+Number(value.count||0)+' scored · median '+Math.round(Number(value.medianAbsoluteErrorMinutes||0))+'m').join('<br>');
-            selectedBody+=
-                '<details style="margin-top:7px;border-top:1px solid #303030;padding-top:6px;">'+
-                    '<summary style="cursor:pointer;font-size:11px;font-weight:bold;">Forecast Performance · '+performance.scored+' scored / '+performance.predictions+' captured</summary>'+
-                    '<div style="font-size:10px;color:#aaa;line-height:1.6;margin-top:5px;">'+
-                        'Model: <b>'+escapeHtml(performance.modelVersion)+'</b> · Calibration stage: <b>'+escapeHtml(perfStage)+'</b><br>'+
-                        'Resolved '+performance.resolved+' · Scored '+performance.scored+' · Gap/indeterminate '+performance.indeterminate+' · Open '+performance.open+' · Unscorable '+performance.unscorable+'<br>'+
-                        'Median absolute error: <b>'+(performance.scored?Math.round(performance.medianAbsoluteErrorMinutes)+'m':'—')+'</b> · Mean '+(performance.scored?Math.round(performance.meanAbsoluteErrorMinutes)+'m':'—')+'<br>'+
-                        'Within ±15m '+(performance.within15m*100).toFixed(0)+'% · ±30m '+(performance.within30m*100).toFixed(0)+'% · ±60m '+(performance.within60m*100).toFixed(0)+'% · ±120m '+(performance.within120m*100).toFixed(0)+'%'+
-                        (basisPerf?'<br>'+basisPerf:'<br>Waiting for continuously observed YATA restock outcomes.')+
-                    '</div>'+
-                '</details>';
         }
 
         const selectedCard=card('<b>Selected Country / Item Forecast</b>'+selectedBody);
+
+        const performanceRow=selector.itemKey
+            ? selector.countryRows.find(r=>travelItemSelectorKey(r)===selector.itemKey)||null
+            : null;
+        const performance=travelForecastPerformance(db,selector.country,performanceRow?.itemId||'');
+        const perfStage=String(performance.stage||'collecting').replaceAll('-',' ');
+        const perfScope=performanceRow
+            ? selector.country+' · '+String(performanceRow.itemName||performanceRow.itemId||'item')
+            : selector.country||'All countries';
+        const basisPerf=Object.entries(performance.byBasis||{})
+            .map(([name,value])=>escapeHtml(name.replaceAll('-',' '))+': '+Number(value.count||0)+' scored · median '+Math.round(Number(value.medianAbsoluteErrorMinutes||0))+'m')
+            .join('<br>');
+        const versionPerf=Object.entries(performance.byModelVersion||{})
+            .map(([version,value])=>escapeHtml(version)+': '+Number(value.scored||0)+' scored / '+Number(value.predictions||0)+' captured'+(Number(value.scored||0)?' · median '+Math.round(Number(value.medianAbsoluteErrorMinutes||0))+'m':''))
+            .join('<br>');
+        const performanceCard=card(
+            '<b>Forecast Performance — '+escapeHtml(perfScope)+'</b>'+
+            '<div style="font-size:10px;color:#aaa;line-height:1.6;margin-top:5px;">'+
+                'Current model: <b>'+escapeHtml(performance.modelVersion)+'</b> · Calibration stage: <b>'+escapeHtml(perfStage)+'</b><br>'+
+                'Resolved '+performance.resolved+' · Scored '+performance.scored+' · Gap/indeterminate '+performance.indeterminate+' · Open '+performance.open+' · Unscorable '+performance.unscorable+'<br>'+
+                'Median absolute error: <b>'+(performance.scored?Math.round(performance.medianAbsoluteErrorMinutes)+'m':'—')+'</b> · Mean '+(performance.scored?Math.round(performance.meanAbsoluteErrorMinutes)+'m':'—')+'<br>'+
+                'Within ±15m '+(performance.within15m*100).toFixed(0)+'% · ±30m '+(performance.within30m*100).toFixed(0)+'% · ±60m '+(performance.within60m*100).toFixed(0)+'% · ±120m '+(performance.within120m*100).toFixed(0)+'%'+
+                '<details style="margin-top:5px;"><summary style="cursor:pointer;">Breakdown</summary>'+
+                    '<div style="margin-top:4px;">'+
+                        (basisPerf?'<b>By prediction basis</b><br>'+basisPerf:'Waiting for continuously observed YATA restock outcomes.')+
+                        (versionPerf?'<br><b>By model version</b><br>'+versionPerf:'')+
+                    '</div>'+
+                '</details>'+
+            '</div>'
+        );
 
         let forecastRows=timed;
         if(selector.country) forecastRows=forecastRows.filter(r=>String(r.country||'')===selector.country);
@@ -4064,7 +4094,7 @@
                 : '<div style="font-size:11px;color:#888;">No basket available for the selected country yet.</div>')
         );
 
-        return controls+selectedCard+forecast+basketsHtml;
+        return controls+selectedCard+performanceCard+forecast+basketsHtml;
     }
 
     function normalizeWeavMarketplaceItem(row) {
