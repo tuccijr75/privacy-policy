@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "version": "7.0.0",
+  "bundle": {
+    "url": "https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.runtime.js",
+    "sha256": "c52fa685b8ea5d9aef83d5a4d2423b5954e0d1451c5e2de3d518839e555618b5"
+  },
+  "releaseNotes": "Loader-managed runtime delivery, in-CRM updates, SHA-256 verification, and rollback support."
+}
