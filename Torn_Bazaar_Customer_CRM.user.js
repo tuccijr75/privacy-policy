@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.6.0
+// @version      6.6.1
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -23,7 +23,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.6.0';
+    const VERSION = '6.6.1';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -1160,7 +1160,13 @@
     }
 
     async function repairRecentSalesCoverage({ lookbackMs = CUSTOMER_REFRESH_LOOKBACK_MS, silent = false } = {}) {
-        if (!getApiKey()) return { imported: 0, checked: 0, repaired: false, rejected: 0 };
+        if (!getApiKey()) {
+            if (!silent) {
+                statusText = 'Torn API key missing. Open More → Settings, paste your Torn API key, and Save. Customer refresh cannot run without User → Log access.';
+                render();
+            }
+            return { imported: 0, checked: 0, repaired: false, rejected: 0, missingApiKey: true };
+        }
 
         if (!silent) {
             statusText = 'Refreshing customer sales from the last 72 hours…';
@@ -1469,7 +1475,12 @@
     }
 
     async function sync() {
-        if (syncRunning || !getApiKey()) return;
+        if (syncRunning) return;
+        if (!getApiKey()) {
+            statusText = 'Torn API key missing. Sales sync is paused. Open More → Settings, paste your Torn API key, and Save.';
+            render();
+            return;
+        }
         syncRunning = true;
         statusText = 'Syncing Bazaar sales…';
         render();
@@ -6594,7 +6605,7 @@
         const eligible = Object.values(db.coupons || {}).filter(c => couponQualification(db,c).qualified);
         const top = topBySpend.slice(0,10);
         const summary = `<div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;">${['VIP','LOYAL','REGULAR','NEW','AT RISK','DORMANT'].map(s=>simpleMetric(s,String(counts[s]||0))).join('')}</div>`;
-        const actions = card(`<b>Customer Actions</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;"><button data-open-advanced="customers" style="${btn(true)}">View Customers</button><button data-open-advanced="subscribers" style="${btn()}">Restock Alerts ${pending.length?`(${pending.length})`:''}</button><button data-open-advanced="coupons" style="${btn()}">Coupons ${eligible.length?`(${eligible.length} eligible)`:''}</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button></div>`);
+        const actions = card(`<b>Customer Actions</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;"><button id="mm-refresh-customers" style="${btn(true)}">Refresh Customers</button><button data-open-advanced="customers" style="${btn()}">View Customers</button><button data-open-advanced="subscribers" style="${btn()}">Restock Alerts ${pending.length?`(${pending.length})`:''}</button><button data-open-advanced="coupons" style="${btn()}">Coupons ${eligible.length?`(${eligible.length} eligible)`:''}</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button></div>`);
         const values = card(`<b>Top Customer Value</b>${top.map(c=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(c.name)} [${escapeHtml(c.id)}]</b> · ${escapeHtml(c.segment)} · Spend ${money(c.monetary)}<details style="margin-top:3px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Recency ${c.recencyDays.toFixed(1)}d · Purchases ${c.frequency} · Affinity ${c.topProducts.map(x=>`${escapeHtml(x[0])}×${x[1]}`).join(', ')||'—'}</div></details></div>`).join('')||'<div style="font-size:11px;color:#888;">No customer history yet.</div>'}`);
         return summary + actions + values;
     }
@@ -6615,6 +6626,7 @@
 
         return card(`
             <b>Torn API</b>
+            <div style="font-size:12px;color:${hasKey ? '#9fe3a8' : '#ff9b9b'};margin:4px 0 8px;font-weight:700;">${hasKey ? 'API STATUS: CONNECTED' : 'API STATUS: NOT CONFIGURED — sales and customer sync are stopped'}</div>
             <div style="font-size:12px;color:#bbb;margin:4px 0 8px;">
                 v4 uses Torn directly: <b>User → Basic</b>, <b>User → Log</b> (Bazaar Sell 1226, Bazaar Buy 1225, Item Market Buy 1112),
                 <b>User → Bazaar</b>, <b>User → Item Market</b>, <b>Torn → Items</b>,
@@ -7300,6 +7312,9 @@
                 setTimeout(() => repairRecentSalesCoverage({ lookbackMs: FIRST_SYNC_LOOKBACK_MS, silent: true }).catch(error => console.warn('[MM CRM] Recent sales repair failed', error)), 1800);
                 setTimeout(syncProcurement, 2500);
             }, 1000);
+        } else {
+            statusText = 'Torn API key missing. Sales/customer sync is paused. Open More → Settings, paste your Torn API key, and Save.';
+            render();
         }
         setInterval(() => {
             if (getApiKey()) sync();
