@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      6.7.0
+// @version      6.7.1
 // @description  Bazaar operations CRM with task-first UI, IndexedDB primary storage, hourly GitHub backup sync, guided restocking, analytics, customer intelligence, and TornW3B market intelligence.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @match        https://www.torn.com/*
+// @match        https://weav3r.dev/travel-stock*
+// @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-end
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -23,7 +25,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '6.7.0';
+    const VERSION = '6.7.1';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -76,6 +78,7 @@
     const CONTACT_LEDGER_KEY = 'mm_bazaar_crm_contact_ledger_v1';
     const DB_CHANNEL_NAME = 'mm_bazaar_crm_cross_tab_v1';
     const TRAVEL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
+    const TRAVEL_FEED_KEY = 'mm_bazaar_crm_travel_feed_v1';
 
     const CASHBACK_TIERS = [
         { minimum: 1_000_000, cashback: 20_000 },
@@ -107,7 +110,7 @@
     let dbWriteChain = Promise.resolve();
     let githubSyncRunning = false;
     let githubSyncTimer = null;
-    const tabInstanceId = makeId('tab');
+    const tabInstanceId = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     let dbChannel = null;
     let dbChannelRefreshTimer = null;
 
@@ -235,6 +238,14 @@
                 lastGlobalSyncAt: null,
                 lastDollarSyncAt: null,
                 lastRankedSyncAt: null,
+                diagnostics: []
+            },
+            travelIntel: {
+                rows: [],
+                history: {},
+                lastSyncAt: null,
+                source: 'TornW3B Travel Stock',
+                settings: { method: 'standard', carry: 21, cash: 0, historyDays: 7 },
                 diagnostics: []
             },
             meta: { createdAt: nowIso(), migratedAt: null }
@@ -368,6 +379,17 @@
         db.marketIntel.settings.freshnessWarnSeconds = Number(db.marketIntel.settings.freshnessWarnSeconds ?? 180);
         db.marketIntel.settings.bazaarExitHaircutPct = Number(db.marketIntel.settings.bazaarExitHaircutPct ?? 1);
         db.marketIntel.diagnostics = Array.isArray(db.marketIntel.diagnostics) ? db.marketIntel.diagnostics : [];
+        db.travelIntel = db.travelIntel && typeof db.travelIntel === 'object' ? db.travelIntel : {};
+        db.travelIntel.rows = Array.isArray(db.travelIntel.rows) ? db.travelIntel.rows : [];
+        db.travelIntel.history = db.travelIntel.history && typeof db.travelIntel.history === 'object' ? db.travelIntel.history : {};
+        db.travelIntel.lastSyncAt = db.travelIntel.lastSyncAt || null;
+        db.travelIntel.source = String(db.travelIntel.source || 'TornW3B Travel Stock');
+        db.travelIntel.settings = db.travelIntel.settings && typeof db.travelIntel.settings === 'object' ? db.travelIntel.settings : {};
+        db.travelIntel.settings.method = ['standard','airstrip','wlt','business'].includes(String(db.travelIntel.settings.method || '').toLowerCase()) ? String(db.travelIntel.settings.method).toLowerCase() : 'standard';
+        db.travelIntel.settings.carry = Math.max(1, Number(db.travelIntel.settings.carry || 21));
+        db.travelIntel.settings.cash = Math.max(0, Number(db.travelIntel.settings.cash || 0));
+        db.travelIntel.settings.historyDays = Math.max(1, Math.min(30, Number(db.travelIntel.settings.historyDays || 7)));
+        db.travelIntel.diagnostics = Array.isArray(db.travelIntel.diagnostics) ? db.travelIntel.diagnostics : [];
         db.meta = db.meta && typeof db.meta === 'object' ? db.meta : {};
         db.meta.salesRebuiltAt = db.meta.salesRebuiltAt || null;
         db.meta.lastSalesAudit = db.meta.lastSalesAudit || null;
@@ -473,7 +495,9 @@
                         const latest = await idbGet(IDB_MAIN_KEY);
                         if (latest && typeof latest === 'object') {
                             dbCache = normalizeDb(latest);
-                            render();
+                            // Do not tear down/rebuild a minimized panel in background tabs.
+                            // It will render from fresh dbCache when reopened.
+                            if (!getUI().minimized) render();
                         }
                     } catch (error) {
                         console.warn('[MM CRM] Cross-tab refresh failed', error);
@@ -578,10 +602,36 @@
         merged.subscribers = { ...(latest.subscribers || {}), ...(merged.subscribers || {}) };
         merged.removedCustomers = { ...(latest.removedCustomers || {}), ...(merged.removedCustomers || {}) };
 
-        // Customer purchase/unit/spend fields are derived data. Rebuild them from the
-        // append-only sales ledger at the persistence boundary so stale/older Torn tabs
-        // can never reintroduce integrity mismatches.
-        recalculateCustomerSalesTotals(merged);
+        // Preserve fresher Travel Command data/history committed by another Torn tab.
+        const latestTravel = latest.travelIntel;
+        if (latestTravel && typeof latestTravel === 'object') {
+            const oldTravelAt = Date.parse(latestTravel.lastSyncAt || '') || 0;
+            const newTravelAt = Date.parse(merged.travelIntel?.lastSyncAt || '') || 0;
+            if (oldTravelAt > newTravelAt) {
+                merged.travelIntel.rows = deepClone(latestTravel.rows || []);
+                merged.travelIntel.lastSyncAt = latestTravel.lastSyncAt;
+                merged.travelIntel.source = latestTravel.source || merged.travelIntel.source;
+            }
+            for (const [key, oldList] of Object.entries(latestTravel.history || {})) {
+                if (!Array.isArray(oldList) || !oldList.length) continue;
+                const currentList = Array.isArray(merged.travelIntel.history[key]) ? merged.travelIntel.history[key] : [];
+                const oldLastAt = Number(oldList[oldList.length - 1]?.at || 0);
+                const newLastAt = Number(currentList[currentList.length - 1]?.at || 0);
+                if (!currentList.length) {
+                    merged.travelIntel.history[key] = deepClone(oldList);
+                } else if (oldLastAt > newLastAt) {
+                    const byAt = new Map();
+                    for (const point of [...currentList, ...oldList]) byAt.set(Number(point.at || 0), point);
+                    merged.travelIntel.history[key] = [...byAt.values()]
+                        .sort((a,b) => Number(a.at||0) - Number(b.at||0))
+                        .slice(-800);
+                }
+            }
+        }
+
+        // Rebuild sale-derived customer totals only when another Torn tab
+        // contributed sale records absent from this snapshot. Normal saves stay fast.
+        if (latestOnlySaleFound) recalculateCustomerSalesTotals(merged);
 
         mergeDurableContactState(merged);
         return normalizeDb(merged);
@@ -1437,12 +1487,30 @@
 
     function reconcileSalesIntegrity(db) {
         let audit = auditSalesData(db);
+        let repaired = false;
         if (!audit.ok) {
             recalculateCustomerSalesTotals(db);
             audit = auditSalesData(db);
+            repaired = true;
             db.meta.lastSalesSelfRepairAt = nowIso();
             db.meta.lastSalesSelfRepairOk = audit.ok;
         }
+        return { ...audit, repaired };
+    }
+
+    async function repairSalesIntegrityNow() {
+        const db = dbLoad();
+        recalculateCustomerSalesTotals(db);
+        const audit = auditSalesData(db);
+        db.meta.lastSalesAudit = { at: nowIso(), ...audit };
+        db.meta.lastSalesSelfRepairAt = nowIso();
+        db.meta.lastSalesSelfRepairOk = audit.ok;
+        dbSave(db);
+        await flushDbWrites();
+        statusText = audit.ok
+            ? `Sales integrity repaired: ${audit.sales} sales across ${audit.customersWithSales} customers. PASS.`
+            : `Sales integrity repair still found ${audit.problems.length} problem(s): ${audit.problems.slice(0,3).join('; ')}`;
+        render();
         return audit;
     }
 
@@ -1534,16 +1602,20 @@
         }
     }
 
-    async function sync() {
+    async function sync({ silent = false } = {}) {
         if (syncRunning) return;
         if (!getApiKey()) {
-            statusText = 'Torn API key missing. Sales sync is paused. Open More → Settings, paste your Torn API key, and Save.';
-            render();
+            if (!silent) {
+                statusText = 'Torn API key missing. Sales sync is paused. Open More → Settings, paste your Torn API key, and Save.';
+                render();
+            }
             return;
         }
         syncRunning = true;
-        statusText = 'Syncing Bazaar sales…';
-        render();
+        if (!silent) {
+            statusText = 'Syncing Bazaar sales…';
+            render();
+        }
 
         try {
             const state = getSyncState();
@@ -1557,6 +1629,8 @@
             let alreadyKnown = 0;
             let repairedProcessedGap = 0;
             let rejected = 0;
+            let processedChanged = false;
+            let deepReconcileRan = false;
 
             rows.sort((a, b) => numeric(a.timestamp, 0) - numeric(b.timestamp, 0));
 
@@ -1566,12 +1640,16 @@
                     rejected++;
                     continue;
                 }
-                if (processed.has(id) && knownSales.has(id)) {
+                if (knownSales.has(id)) {
+                    if (!processed.has(id)) {
+                        processed.add(id);
+                        processedChanged = true;
+                    }
                     alreadyKnown++;
                     continue;
                 }
 
-                const wasProcessedWithoutSale = processed.has(id) && !knownSales.has(id);
+                const wasProcessedWithoutSale = processed.has(id);
                 const sale = extractBazaarSale(entry);
                 if (!sale) {
                     // Never mark an unparseable sale as processed.
@@ -1582,6 +1660,7 @@
 
                 if (importBazaarSaleIntoDb(db, sale)) {
                     processed.add(id);
+                    processedChanged = true;
                     knownSales.add(id);
                     imported++;
                     if (wasProcessedWithoutSale) repairedProcessedGap++;
@@ -1593,6 +1672,7 @@
 
             const lastDeep = Date.parse(db.meta?.lastDeepSalesReconcileAt || '') || 0;
             if (Date.now() - lastDeep >= DEEP_SALES_RECONCILE_MS) {
+                deepReconcileRan = true;
                 const deepRows = await fetchBazaarLogs((Date.now() - FIRST_SYNC_LOOKBACK_MS) / 1000, 25);
                 let deepImported = 0;
 
@@ -1609,6 +1689,7 @@
 
                     if (importBazaarSaleIntoDb(db, sale)) {
                         processed.add(id);
+                        processedChanged = true;
                         knownSales.add(id);
                         deepImported++;
                     }
@@ -1621,18 +1702,23 @@
             if (imported > 0) recalculateCustomerSalesTotals(db);
 
             const audit = reconcileSalesIntegrity(db);
-            db.meta.lastSalesAudit = { at: nowIso(), ...audit };
-            dbSave(db);
-            saveProcessed([...processed]);
+            const databaseChanged = imported > 0 || deepReconcileRan || audit.repaired;
+            if (databaseChanged) {
+                db.meta.lastSalesAudit = { at: nowIso(), ...audit };
+                dbSave(db);
+            }
+            if (processedChanged) saveProcessed([...processed]);
             saveSyncState({ lastSuccess: Date.now() });
 
             fatal = false;
-            statusText = imported
-                ? `Sync complete: ${imported} Bazaar sale${imported === 1 ? '' : 's'} imported${repairedProcessedGap ? ` (${repairedProcessedGap} missing ledger record${repairedProcessedGap === 1 ? '' : 's'} repaired)` : ''}${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`
-                : `Sync complete: no new Bazaar sales${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`;
-            render();
+            if (!silent || imported > 0 || rejected > 0) {
+                statusText = imported
+                    ? `Sync complete: ${imported} Bazaar sale${imported === 1 ? '' : 's'} imported${repairedProcessedGap ? ` (${repairedProcessedGap} missing ledger record${repairedProcessedGap === 1 ? '' : 's'} repaired)` : ''}${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`
+                    : `Sync complete: no new Bazaar sales${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`;
+                render();
+            }
 
-            await flushDbWrites();
+            if (databaseChanged) await flushDbWrites();
 
             if (!audit.ok) {
                 throw new Error(`Sales integrity audit failed: ${audit.problems.slice(0, 3).join('; ')}`);
@@ -1650,9 +1736,10 @@
             // disable future syncs. A corrected key can recover immediately.
             fatal = [2, 16].includes(code);
             statusText = `Sync failed: ${error?.message || String(error)}`;
+            render();
         } finally {
             syncRunning = false;
-            render();
+            if (!silent) render();
         }
     }
 
@@ -2593,6 +2680,219 @@
                 onerror: () => reject(new Error('TornW3B network request failed.'))
             });
         });
+    }
+
+
+    const TRAVEL_ONE_WAY_MINUTES = Object.freeze({
+        'Mexico':{standard:24,airstrip:17,wlt:12,business:7},
+        'Cayman Islands':{standard:33,airstrip:23,wlt:17,business:10},
+        'Canada':{standard:39,airstrip:27,wlt:19,business:12},
+        'Hawaii':{standard:127,airstrip:89,wlt:63,business:38},
+        'United Kingdom':{standard:151,airstrip:106,wlt:75,business:45},
+        'Argentina':{standard:158,airstrip:111,wlt:79,business:47},
+        'Switzerland':{standard:166,airstrip:116,wlt:83,business:50},
+        'Japan':{standard:213,airstrip:149,wlt:107,business:64},
+        'China':{standard:229,airstrip:160,wlt:114,business:69},
+        'UAE':{standard:257,airstrip:180,wlt:128,business:77},
+        'South Africa':{standard:282,airstrip:197,wlt:141,business:85}
+    });
+
+    function parseTravelNumber(v){
+        const raw=String(v??'').trim().replaceAll(',','').replaceAll('$','').replaceAll('+','');
+        if(!raw||raw==='—'||raw==='-')return 0;
+        const m=raw.match(/(-?\d+(?:\.\d+)?)\s*([kmb])?/i); if(!m)return 0;
+        const n=Number(m[1]),mult=!m[2]?1:m[2].toLowerCase()==='k'?1e3:m[2].toLowerCase()==='m'?1e6:1e9;
+        return Number.isFinite(n)?n*mult:0;
+    }
+
+    function parseWeav3rTravelStockHtml(html){
+        const doc=new DOMParser().parseFromString(String(html||''),'text/html');
+        const table=[...doc.querySelectorAll('table')].find(t=>{const x=String(t.textContent||'').toLowerCase();return x.includes('country')&&x.includes('item')&&x.includes('stock')&&x.includes('profit');});
+        if(!table)throw new Error('TornW3B Travel Stock table was not found.');
+        let headers=[...table.querySelectorAll('thead th')].map(x=>String(x.textContent||'').trim().toLowerCase());
+        if(!headers.length)headers=[...table.querySelectorAll('tr:first-child th')].map(x=>String(x.textContent||'').trim().toLowerCase());
+        const find=tests=>headers.findIndex(h=>tests.some(re=>re.test(h)));
+        const ci=find([/country/]),ii=find([/^item/,/item/]),si=find([/stock/]),hi=find([/profit.*hr/,/\$\/hr/,/per hour/]);
+        const pi=headers.findIndex((h,i)=>/profit/.test(h)&&i!==hi),co=find([/shop.*cost/,/^cost$/,/buy.*price/]),mi=find([/home.*market/,/market.*price/,/^market$/]);
+        const out=[];
+        for(const tr of [...table.querySelectorAll('tbody tr')]){
+            const c=[...tr.querySelectorAll('td')]; if(c.length<4)continue;
+            const txt=i=>String(c[i]?.textContent||'').replace(/\s+/g,' ').trim();
+            const country=txt(ci>=0?ci:0),itemName=txt(ii>=0?ii:1); if(!country||!itemName)continue;
+            const href=c[ii>=0?ii:1]?.querySelector('a[href]')?.getAttribute('href')||'';
+            const idm=href.match(/(?:item(?:s)?[\/=]|item_id=)(\d+)/i);
+            out.push({
+                country,itemId:idm?idm[1]:'',itemName,
+                stock:Math.max(0,Math.round(parseTravelNumber(txt(si>=0?si:2)))),
+                profit:parseTravelNumber(txt(pi>=0?pi:3)),
+                sourceProfitPerHour:parseTravelNumber(txt(hi>=0?hi:4)),
+                shopCost:co>=0?Math.max(0,parseTravelNumber(txt(co))):0,
+                homeMarket:mi>=0?Math.max(0,parseTravelNumber(txt(mi))):0
+            });
+        }
+        if(!out.length)throw new Error('TornW3B Travel Stock returned no readable item rows.');
+        return out;
+    }
+
+    function travelHistoryKey(r){return String(r.country||'')+'|'+(asId(r.itemId)||normalizeItemName(r.itemName));}
+
+    function recordTravelSnapshots(db,rows,observedAt=Date.now()){
+        const at=Number(observedAt)||Date.now(),cutoff=at-Number(db.travelIntel.settings.historyDays||7)*86400000;
+        for(const r of rows){
+            const k=travelHistoryKey(r),list=Array.isArray(db.travelIntel.history[k])?db.travelIntel.history[k]:[],last=list[list.length-1];
+            if(!last||Number(last.stock)!==Number(r.stock)||at-Number(last.at||0)>=300000)list.push({at,stock:Number(r.stock||0),profit:Number(r.profit||0),sourceProfitPerHour:Number(r.sourceProfitPerHour||0),shopCost:Number(r.shopCost||0),homeMarket:Number(r.homeMarket||0)});
+            db.travelIntel.history[k]=list.filter(x=>Number(x.at||0)>=cutoff).slice(-800);
+        }
+    }
+
+    function captureWeav3rTravelStockPage() {
+        try {
+            const rows = parseWeav3rTravelStockHtml(document.documentElement.outerHTML);
+            const payload = { capturedAt: Date.now(), rows };
+            GM_setValue(TRAVEL_FEED_KEY, payload);
+            return rows.length;
+        } catch {
+            return 0;
+        }
+    }
+
+    function installWeav3rTravelCollector() {
+        if (location.hostname !== 'weav3r.dev' || !location.pathname.startsWith('/travel-stock')) return;
+        let attempts = 0;
+        const capture = () => {
+            attempts++;
+            const count = captureWeav3rTravelStockPage();
+            if (!count && attempts < 12) setTimeout(capture, 1000);
+        };
+        setTimeout(capture, 500);
+        setInterval(capture, 60_000);
+    }
+
+    async function syncTravelStock({silent=false,force=false}={}){
+        const db=dbLoad(),last=Date.parse(db.travelIntel.lastSyncAt||'')||0;
+        const feed=GM_getValue(TRAVEL_FEED_KEY,null);
+        const capturedAt=Number(feed?.capturedAt||0);
+        const rows=Array.isArray(feed?.rows)?feed.rows:[];
+        const feedAge=capturedAt?Date.now()-capturedAt:Infinity;
+
+        if(!force&&last&&Date.now()-last<60000&&db.travelIntel.rows.length)return db.travelIntel.rows;
+
+        if(!rows.length){
+            if(!silent){
+                statusText='No captured TornW3B Travel Stock data yet. Click Open TornW3B, let the page load, then return to Torn and Refresh Travel Stock.';
+                render();
+            }
+            return db.travelIntel.rows;
+        }
+
+        if(capturedAt<=last && db.travelIntel.rows.length){
+            if(!silent){
+                statusText=feedAge<=10*60*1000
+                    ? 'Travel Stock is already using the latest captured TornW3B snapshot.'
+                    : 'Travel Stock snapshot is stale. Open TornW3B Travel Stock to capture a newer snapshot.';
+                render();
+            }
+            return db.travelIntel.rows;
+        }
+
+        const fresh=dbLoad();
+        fresh.travelIntel.rows=rows;
+        fresh.travelIntel.lastSyncAt=new Date(capturedAt).toISOString();
+        fresh.travelIntel.source='TornW3B Travel Stock browser capture';
+        fresh.travelIntel.diagnostics.unshift({at:nowIso(),text:`Travel Stock import: ${rows.length} rows; capture age ${Math.round(feedAge/1000)}s.`});
+        fresh.travelIntel.diagnostics=fresh.travelIntel.diagnostics.slice(0,30);
+        recordTravelSnapshots(fresh,rows,capturedAt);
+        dbSave(fresh);
+
+        if(!silent){
+            statusText=`Travel Stock imported: ${rows.length} item routes from TornW3B (${Math.round(feedAge/1000)}s old).`;
+            render();
+        }
+        return rows;
+    }
+
+
+    function travelPrediction(db,row,arrivalMinutes,carry){
+        const h=(db.travelIntel.history?.[travelHistoryKey(row)]||[]).slice().sort((a,b)=>Number(a.at||0)-Number(b.at||0));
+        const current=Math.max(0,Number(row.stock||0)),fresh=freshnessInfo(db.travelIntel.lastSyncAt,600);
+        const result={samples:h.length,model:'TornW3B live snapshot',predictedStock:null,arrivalChance:null,confidence:Math.round(fresh.score*.75),depletionPerMinute:0,medianRestockSize:0,medianRestockMinutes:0};
+        if(h.length<8)return result;
+        const dep=[],restocks=[],rt=[];
+        for(let i=1;i<h.length;i++){
+            const a=h[i-1],b=h[i],mins=(Number(b.at)-Number(a.at))/60000;if(!(mins>0))continue;
+            const d=Number(b.stock||0)-Number(a.stock||0);
+            if(d<0)dep.push((-d)/mins);
+            if(d>Math.max(5,Number(a.stock||0)*.20)){restocks.push(d);rt.push(Number(b.at||0));}
+        }
+        if(dep.length<3 && restocks.length<1)return result;
+        const rate=medianNumber(dep),size=medianNumber(restocks),ints=[];
+        for(let i=1;i<rt.length;i++)ints.push((rt[i]-rt[i-1])/60000);
+        const interval=medianNumber(ints);
+        let expectedRestock=0;
+        if(interval>0&&rt.length){
+            const since=Math.max(0,(Date.now()-rt[rt.length-1])/60000),until=Math.max(0,interval-since);
+            if(until<=arrivalMinutes){const pr=Math.max(.20,Math.min(.75,(arrivalMinutes-until+15)/(arrivalMinutes+15)));expectedRestock=size*pr;}
+        }
+        const predicted=Math.max(0,current-rate*arrivalMinutes+expectedRestock),sample=Math.min(1,h.length/24),data=Math.max(0,Math.min(1,fresh.score/100)),ratio=Math.min(1.5,predicted/Math.max(1,carry));
+        result.model='Local history estimate';result.predictedStock=Math.round(predicted);
+        result.arrivalChance=Math.max(.03,Math.min(.98,ratio*.60+sample*.20+data*.20));
+        result.confidence=Math.round((sample*.55+data*.45)*100);result.depletionPerMinute=rate;result.medianRestockSize=size;result.medianRestockMinutes=interval;
+        return result;
+    }
+
+    function travelOpportunityRows(db){
+        const st=db.travelIntel.settings,method=st.method,carry=Math.max(1,Number(st.carry||21));
+        return (db.travelIntel.rows||[]).map(row=>{
+            const mins=Number(TRAVEL_ONE_WAY_MINUTES[row.country]?.[method]||0),pred=travelPrediction(db,row,mins,carry);
+            const basis=pred.predictedStock==null?Number(row.stock||0):pred.predictedStock,possible=Math.max(0,Math.min(carry,Math.floor(basis)));
+            const liveFactor=Number(row.stock||0)>=carry?.85:Number(row.stock||0)>0?.55:.10,chance=pred.arrivalChance==null?liveFactor:pred.arrivalChance;
+            const expectedUnits=Math.max(0,Math.min(carry,Math.floor(possible*chance))),expectedProfit=expectedUnits*Math.max(0,Number(row.profit||0)),tripHours=mins>0?(mins*2)/60:0,pph=tripHours>0?expectedProfit/tripHours:0;
+            let recommendation='AVOID';
+            if(Number(row.profit||0)>0){if(Number(row.stock||0)===0)recommendation='WAIT';else if(possible>=carry&&chance>=.65)recommendation='GO';else if(possible>0&&chance>=.40)recommendation='GO — PARTIAL';else recommendation='HIGH RISK';}
+            return {...row,method,carry,arrivalMinutes:mins,prediction:pred,possibleUnits:possible,expectedUnits,expectedProfit,arrivalChance:chance,riskAdjustedProfitPerHour:pph,recommendation};
+        }).sort((a,b)=>b.riskAdjustedProfitPerHour-a.riskAdjustedProfitPerHour||b.profit-a.profit);
+    }
+
+    function travelBasketRows(db){
+        const carry=Math.max(1,Number(db.travelIntel.settings.carry||21)),cashLimit=Math.max(0,Number(db.travelIntel.settings.cash||0)),g={};
+        for(const r of travelOpportunityRows(db)){if(r.profit<=0||r.possibleUnits<=0)continue;(g[r.country]||(g[r.country]=[])).push(r);}
+        const out=[];
+        for(const [country,items] of Object.entries(g)){
+            items.sort((a,b)=>b.profit-a.profit);
+            let slots=carry,cash=cashLimit,profit=0,cost=0,weighted=0,units=0;const basket=[];
+            for(const r of items){
+                if(slots<=0)break;let qty=Math.min(slots,r.possibleUnits);
+                if(cashLimit>0&&r.shopCost>0)qty=Math.min(qty,Math.floor(cash/r.shopCost));if(qty<=0)continue;
+                basket.push({itemName:r.itemName,qty,profitEach:r.profit,shopCost:r.shopCost});slots-=qty;units+=qty;profit+=qty*r.profit;weighted+=qty*r.arrivalChance;
+                if(r.shopCost>0){const c=qty*r.shopCost;cost+=c;if(cashLimit>0)cash=Math.max(0,cash-c);}
+            }
+            const mins=Number(TRAVEL_ONE_WAY_MINUTES[country]?.[db.travelIntel.settings.method]||0),avg=units?weighted/units:0,adjusted=profit*avg,pph=mins>0?adjusted/((mins*2)/60):0;
+            if(units)out.push({country,basket,units,slots,profit,cost,avgChance:avg,riskAdjustedProfit:adjusted,riskAdjustedProfitPerHour:pph,arrivalMinutes:mins});
+        }
+        return out.sort((a,b)=>b.riskAdjustedProfitPerHour-a.riskAdjustedProfitPerHour);
+    }
+
+    function saveTravelSettings(root){
+        const db=dbLoad(),method=String(root.querySelector('#mm-travel-method')?.value||'standard').toLowerCase();
+        db.travelIntel.settings.method=['standard','airstrip','wlt','business'].includes(method)?method:'standard';
+        db.travelIntel.settings.carry=Math.max(1,Number(root.querySelector('#mm-travel-carry')?.value||21));
+        db.travelIntel.settings.cash=Math.max(0,Number(root.querySelector('#mm-travel-cash')?.value||0));
+        dbSave(db);statusText='Travel settings saved.';render();
+    }
+
+    function travelRecommendationBadge(v){
+        const c={'GO':'background:#1f4a29;color:#c9f4d0;','GO — PARTIAL':'background:#31503a;color:#d9f4df;','WAIT':'background:#5a4319;color:#ffe4a8;','HIGH RISK':'background:#5b3517;color:#ffd0a0;','AVOID':'background:#512323;color:#ffb4b4;'};
+        return `<span style="${c[v]||c.AVOID}padding:2px 6px;border-radius:9px;font-size:10px;font-weight:bold;">${escapeHtml(v)}</span>`;
+    }
+
+    function travelCommandHtml(db){
+        const st=db.travelIntel.settings,rows=travelOpportunityRows(db),baskets=travelBasketRows(db).slice(0,5),fresh=freshnessInfo(db.travelIntel.lastSyncAt,600),top=rows.filter(r=>r.profit>0).slice(0,18);
+        const controls=card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">Travel Command Center</b><div style="font-size:10px;color:#888;">TornW3B live signal + CRM local history</div></div><div style="display:flex;gap:5px;"><button id="mm-travel-sync" style="${btn(true)}">Refresh Travel Stock</button><button id="mm-travel-open" style="${btn()}">Open TornW3B</button></div></div>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:7px;"><label style="font-size:10px;color:#aaa;">Flight method<select id="mm-travel-method" style="${inputCss()}width:100%;"><option value="standard" ${st.method==='standard'?'selected':''}>Standard</option><option value="airstrip" ${st.method==='airstrip'?'selected':''}>Airstrip</option><option value="wlt" ${st.method==='wlt'?'selected':''}>WLT</option><option value="business" ${st.method==='business'?'selected':''}>Business</option></select></label><label style="font-size:10px;color:#aaa;">Carry capacity<input id="mm-travel-carry" type="number" min="1" value="${Number(st.carry||21)}" style="${inputCss()}width:100%;"></label><label style="font-size:10px;color:#aaa;">Travel cash (0 = unlimited)<input id="mm-travel-cash" type="number" min="0" value="${Number(st.cash||0)}" style="${inputCss()}width:100%;"></label></div>
+        <div style="margin-top:6px;"><button id="mm-travel-save" style="${btn()}">Save Travel Settings</button></div><div style="font-size:10px;color:#888;margin-top:6px;">Source ${escapeHtml(fresh.label)}${Number.isFinite(fresh.ageSeconds)?' · '+Math.round(fresh.ageSeconds)+'s old':''}. TornW3B says quantities are snapshots, not guarantees. Until enough local stock changes are observed, the CRM shows live sufficiency rather than a fabricated forecast.</div>`);
+        const basketsHtml=card(`<b>Trip Basket Optimizer</b>${baskets.length?baskets.map((b,i)=>`<div style="border-top:${i?'1px solid #303030':'0'};padding:6px 0;font-size:11px;"><b>#${i+1} ${escapeHtml(b.country)}</b> · ${b.units}/${Number(st.carry||21)} slots · Risk-adjusted ${money(b.riskAdjustedProfit)} · <b>${money(b.riskAdjustedProfitPerHour)}/hr</b> · Arrival signal ${(b.avgChance*100).toFixed(0)}%<br>${b.basket.map(x=>`${escapeHtml(x.itemName)} × ${x.qty}`).join(' · ')}${st.cash>0&&!b.cost?'<br><span style="color:#d7ad4b;">Shop cost was not exposed in the parsed source; cash limit is partial.</span>':''}</div>`).join(''):'<div style="font-size:11px;color:#888;">Refresh Travel Stock to build country baskets.</div>'}`);
+        const opp=card(`<b>Fly / Wait / Avoid</b>${top.length?top.map(r=>`<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>${escapeHtml(r.country)} · ${escapeHtml(r.itemName)}</b> ${travelRecommendationBadge(r.recommendation)}<br>Live stock ${Number(r.stock||0).toLocaleString()} · Profit/item ${money(r.profit)} · TornW3B $/hr ${money(r.sourceProfitPerHour)} · One-way ${r.arrivalMinutes||'—'}m<br>${r.prediction.predictedStock==null?`Arrival estimate: <b>not enough local history</b> · Live sufficiency ${(r.arrivalChance*100).toFixed(0)}%`:`Predicted arrival stock <b>${Number(r.prediction.predictedStock).toLocaleString()}</b> · Availability estimate ${(r.arrivalChance*100).toFixed(0)}% · Confidence ${r.prediction.confidence}%`} · Risk-adjusted $/hr <b>${money(r.riskAdjustedProfitPerHour)}</b></div>`).join(''):'<div style="font-size:11px;color:#888;">No positive-profit travel rows loaded yet.</div>'}`);
+        return controls+basketsHtml+opp;
     }
 
     function normalizeWeavMarketplaceItem(row) {
@@ -5944,8 +6244,11 @@
 
     function capitalCommandHtml(db){
         const rows=capitalRotationRows(db).slice(0,12);
-        return card('<b>Capital Command Center - Profit Velocity</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Ranks capital by expected profit/day, capital efficiency, ROI and liquidity. Inventory shortage does not control this ranking.</div>'+
-            (rows.length?rows.map((r,i)=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>#'+(i+1)+' '+escapeHtml(r.name)+'</b> · Score <b>'+r.rotationScore.toFixed(0)+'</b><br>Deploy '+money(r.rotationSpend)+' · Expected '+money(r.rotationExpectedProfit)+' · <b>'+money(r.profitPerDay)+'/day</b> · '+r.capitalEfficiencyPctDay.toFixed(2)+'%/day · '+r.rotationSellDays.toFixed(1)+'d · ROI '+r.bestDealMarginPct.toFixed(1)+'%</div>').join(''):'<div style="font-size:11px;color:#888;">Sync procurement and market data to rank capital opportunities.</div>'));
+        const travel=travelOpportunityRows(db).filter(r=>r.profit>0).slice(0,5);
+        return card('<b>Capital Command Center - Profit Velocity</b><div style="font-size:11px;color:#999;margin:4px 0 6px;">Ranks market capital by expected profit/day and compares Travel as a separate fast-rotation channel using TornW3B live stock plus the CRM arrival model.</div>'+
+            (rows.length?rows.map((r,i)=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>#'+(i+1)+' '+escapeHtml(r.name)+'</b> · Score <b>'+r.rotationScore.toFixed(0)+'</b><br>Deploy '+money(r.rotationSpend)+' · Expected '+money(r.rotationExpectedProfit)+' · <b>'+money(r.profitPerDay)+'/day</b> · '+r.capitalEfficiencyPctDay.toFixed(2)+'%/day · '+r.rotationSellDays.toFixed(1)+'d · ROI '+r.bestDealMarginPct.toFixed(1)+'%</div>').join(''):'<div style="font-size:11px;color:#888;">Sync procurement and market data to rank capital opportunities.</div>')+
+            '<div style="border-top:2px solid #444;margin-top:7px;padding-top:6px;font-size:11px;"><b>Travel alternatives</b></div>'+
+            (travel.length?travel.map((r,i)=>'<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>#'+(i+1)+' '+escapeHtml(r.country)+' · '+escapeHtml(r.itemName)+'</b> '+travelRecommendationBadge(r.recommendation)+'<br>Risk-adjusted '+money(r.riskAdjustedProfitPerHour)+'/hr · Profit/item '+money(r.profit)+' · Live stock '+Number(r.stock||0).toLocaleString()+'</div>').join(''):'<div style="font-size:11px;color:#888;">Refresh Travel Stock to compare travel against market sourcing.</div>'));
     }
 
     function salesForCustomer(db,id){
@@ -6111,8 +6414,8 @@
         const settings = card(`
             <b>Procurement Control</b>
             <div style="font-size:12px;color:#bbb;margin:5px 0 8px;">
-                Everything on this page is calculated inside the CRM from Torn API data plus your own locally stored ledger.
-                No FLIPR, Profit Finder, Price Filler, Weav3r, or travel-site data is required.
+                Core procurement is calculated inside the CRM from Torn API data and your local ledger.
+                Travel Command additionally uses the public TornW3B Travel Stock page for live abroad stock, profit and profit/hour signals, then layers local CRM history on top.
             </div>
             <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;">
                 <label style="font-size:10px;color:#aaa;">Budget
@@ -6227,7 +6530,7 @@
             ? card(`<b>Diagnostics</b><div style="font-size:11px;color:#aaa;margin-top:5px;">${proc.diagnostics.slice(0,12).map(d => `${escapeHtml(fmtDate(d.at))}: ${escapeHtml(d.text)}`).join('<br>')}</div>`)
             : '';
 
-        return capitalCommandHtml(db) + opportunityAlertsHtml(db) + settings + capitalHtml + scanner + acquisitionForm + travel + diagnostics;
+        return capitalCommandHtml(db) + travelCommandHtml(db) + opportunityAlertsHtml(db) + settings + capitalHtml + scanner + acquisitionForm + travel + diagnostics;
     }
 
 
@@ -6644,6 +6947,7 @@
     function dealsSimpleHtml(db) {
         const deals = globalOpportunityRows(db);
         const instant = instantArbitrageRows(db);
+        const travel = travelOpportunityRows(db).filter(r => r.profit > 0).slice(0,5);
         const top = deals.slice(0,10);
         const freshness = freshnessInfo(db.marketIntel.marketplaceGeneratedAt, db.marketIntel.settings.freshnessWarnSeconds);
 
@@ -6653,8 +6957,9 @@
             <details style="margin-top:4px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Score ${r.score.toFixed(0)} · Sellers ${r.sellerCount} · Bazaar avg ${r.bazaarAverage?money(r.bazaarAverage):'—'} · Torn market ${r.marketPrice?money(r.marketPrice):'—'} · History ${r.history.samples}</div></details></div>
             <div style="display:flex;gap:4px;align-items:flex-start;"><button data-intel-action="enrich" data-item="${r.id}" style="${btn(true)}">${r.enriched?'Refresh':'Analyze'}</button><details><summary style="${btn()}list-style:none;">•••</summary><div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;">${r.sellerId?`<button data-intel-action="profile" data-seller="${r.sellerId}" style="${btn()}">Seller</button>`:''}<button data-open-advanced="intel" style="${btn()}">Full Market Intel</button></div></details></div></div>`).join('') : `<div style="font-size:11px;color:#888;">Refresh the global market to load opportunities.</div>`}</div>`);
 
+        const travelHtml = card(`<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><b>Best Travel Opportunities</b><button data-open-advanced="procurement" style="${btn()}">Travel Command</button></div>${travel.length?travel.map(r=>`<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>${escapeHtml(r.country)} · ${escapeHtml(r.itemName)}</b> ${travelRecommendationBadge(r.recommendation)}<br>Live stock ${Number(r.stock||0).toLocaleString()} · Profit/item ${money(r.profit)} · Risk-adjusted <b>${money(r.riskAdjustedProfitPerHour)}/hr</b></div>`).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">Travel Stock has not loaded yet.</div>'}`);
         const scanners = card(`<details><summary style="cursor:pointer;font-weight:700;">More Scanners</summary><div style="margin-top:7px;"><div style="font-size:11px;"><b>Instant Trader Arbitrage:</b> ${instant.length} verified positive spread(s)</div>${instant.slice(0,5).map(r=>`<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">${escapeHtml(r.name)} · Buy ${money(r.buyPrice)} → Trader ${money(r.traderExit)} · ROI ${r.instantRoiPct.toFixed(1)}%</div>`).join('')}<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;"><button id="mm-intel-dollar" style="${btn()}">$1 Bazaar</button><button id="mm-intel-ranked" style="${btn()}">Ranked/Auction</button><button data-open-advanced="intel" style="${btn()}">Supplier Baskets + Full Scanners</button></div></div></details>`);
-        return controls + topHtml + scanners;
+        return controls + topHtml + travelHtml + scanners;
     }
 
     function customersSimpleHtml(db) {
@@ -6710,6 +7015,7 @@
                 <button id="mm-rebuild-sales" style="${btn(true)}">Rebuild Sales History</button>
                 <button id="mm-rebuild-acquisitions" style="${btn()}">Rebuild Cost Basis</button>
                 <button id="mm-repair-names" style="${btn()}">Repair Usernames</button>
+                <button id="mm-repair-sales-integrity" style="${btn()}">Repair Sales Integrity</button>
             </div>
             <div style="font-size:12px;color:#aaa;margin-top:8px;">
                 Sales integrity: ${auditText}<br>
@@ -6929,6 +7235,10 @@
             }
         }));
 
+        root.querySelector('#mm-travel-sync')?.addEventListener('click', () => syncTravelStock({ silent:false, force:true }).catch(()=>{}));
+        root.querySelector('#mm-travel-save')?.addEventListener('click', () => saveTravelSettings(root));
+        root.querySelector('#mm-travel-open')?.addEventListener('click', () => navigateFromCRM('https://weav3r.dev/travel-stock'));
+
         root.querySelector('#mm-add-customer')?.addEventListener('click', () => addManualCustomer(root.querySelector('#mm-add-id')?.value));
         root.querySelector('#mm-refresh-customers')?.addEventListener('click', async () => {
             try {
@@ -6978,6 +7288,7 @@
             const count = await repairUsernames(25);
             statusText = `Username repair complete: ${count} repaired.`; render();
         });
+        root.querySelector('#mm-repair-sales-integrity')?.addEventListener('click', repairSalesIntegrityNow);
 
         root.querySelector('#mm-intel-global-sync')?.addEventListener('click', () => syncMarketIntelligence(false));
         root.querySelector('#mm-intel-full-sync')?.addEventListener('click', () => syncMarketIntelligence(true));
@@ -7373,7 +7684,7 @@
             setTimeout(async () => {
                 await repairUsernames(8);
                 render();
-                sync();
+                sync({ silent: true });
                 setTimeout(() => repairRecentSalesCoverage({ lookbackMs: FIRST_SYNC_LOOKBACK_MS, silent: true }).catch(error => console.warn('[MM CRM] Recent sales repair failed', error)), 1800);
                 setTimeout(syncProcurement, 2500);
             }, 1000);
@@ -7382,8 +7693,13 @@
             render();
         }
         setInterval(() => {
-            if (getApiKey()) sync();
+            if (getApiKey()) sync({ silent: true });
         }, POLL_MS);
+
+        setTimeout(() => syncTravelStock({ silent:true }).catch(error => console.warn('[MM CRM] Travel Stock startup sync failed', error)), 3500);
+        setInterval(() => {
+            syncTravelStock({ silent:true }).catch(error => console.warn('[MM CRM] Travel Stock background sync failed', error));
+        }, TRAVEL_SYNC_INTERVAL_MS);
     }
 
     // Manual utility surface. No automatic messaging or money transfer actions are exposed.
@@ -7392,6 +7708,7 @@
         open: showCRM,
         sync,
         rebuildSalesHistory,
+        repairSalesIntegrityNow,
         restoreRemovedCustomer,
         auditSales: () => auditSalesData(dbLoad()),
         repairUsernames,
@@ -7427,6 +7744,9 @@
         deadCapitalRows: () => deadCapitalRows(dbLoad()),
         salesFunnelMetrics: () => salesFunnelMetrics(dbLoad()),
         competitorIntelligenceRows: () => competitorIntelligenceRows(dbLoad()),
+        syncTravelStock,
+        travelOpportunityRows: () => travelOpportunityRows(dbLoad()),
+        travelBasketRows: () => travelBasketRows(dbLoad()),
         buildRepricingPlan: () => {
             const db=dbLoad(); const plan=buildRepricingPlan(db); dbSave(db); return plan;
         },
@@ -7443,6 +7763,11 @@
         repairRecentSalesCoverage,
         recalculateCustomerSalesTotals
     });
+
+    if (location.hostname === 'weav3r.dev' || location.hostname === 'www.weav3r.dev') {
+        installWeav3rTravelCollector();
+        return;
+    }
 
     initialize().catch(error => {
         console.error('[MM CRM] Initialization failed', error);
