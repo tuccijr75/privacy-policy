@@ -9552,6 +9552,8 @@
             db.operations.settings.listingHours = p.listingHours;
             db.operations.settings.deadStockDays = p.deadStockDays;
             db.operations.settings.overstockMultiplier = p.overstockMultiplier;
+            db.businessRules.minRoiPct = p.minRoiPct;
+            db.businessRules.minSellerCount = p.minBazaarSellers;
             db.marketIntel.settings.minRoiPct = p.minRoiPct;
             db.marketIntel.settings.minBazaarSellers = p.minBazaarSellers;
         }
@@ -10234,6 +10236,27 @@
             render();
             if (simpleMode) ensureDataForTab(activeTab);
         }));
+        root.querySelector('#mm-refresh-business')?.addEventListener('click', () => {
+            syncBusinessData({ silent:false, force:true }).catch(error => {
+                statusText = 'Smart refresh failed: ' + (error?.message || String(error));
+                render();
+            });
+        });
+        root.querySelector('#mm-save-business-rules')?.addEventListener('click', () => {
+            saveBusinessRules({
+                minRoiPct: root.querySelector('#mm-rule-min-roi')?.value,
+                minDemandPerDay: root.querySelector('#mm-rule-min-demand')?.value,
+                minPrice: root.querySelector('#mm-rule-min-price')?.value,
+                maxPrice: root.querySelector('#mm-rule-max-price')?.value,
+                minAbsoluteProfit: root.querySelector('#mm-rule-min-profit')?.value,
+                minSellerCount: root.querySelector('#mm-rule-min-sellers')?.value,
+                maxListingAgeSec: root.querySelector('#mm-rule-max-age')?.value,
+                marketRefreshLimit: root.querySelector('#mm-rule-refresh-limit')?.value
+            });
+            statusText = 'CRM-wide business rules saved.';
+            render();
+        });
+
         root.querySelector('#mm-start-restock-session')?.addEventListener('click', () => {
             try { startRestockSession(); statusText='Restock session started.'; render(); }
             catch(error){statusText=`Could not start restock session: ${error?.message||String(error)}`;render();}
@@ -10255,7 +10278,10 @@
         });
         root.querySelectorAll('[data-ops-action]').forEach(button=>button.addEventListener('click',()=>{
             const action=button.dataset.opsAction;
-            if(action==='seller'&&button.dataset.seller)return navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(button.dataset.seller)}`);
+            if(action==='seller'&&button.dataset.seller){
+                if(button.dataset.item)return verifyAndOpenBazaarSeller(button.dataset.item,button.dataset.seller);
+                return navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(button.dataset.seller)}`);
+            }
             if(action==='remove-event')return removeDemandEvent(button.dataset.event);
             if(action==='listing-plan'){
                 const db=dbLoad(),plan=db.operations.listingPlans[button.dataset.item];
@@ -10419,15 +10445,21 @@
             render();
         });
         root.querySelector('#mm-save-intel-settings')?.addEventListener('click', () => {
-            saveIntelSettings({
+            saveBusinessRules({
                 minRoiPct: root.querySelector('#mm-intel-min-roi')?.value,
+                minDemandPerDay: root.querySelector('#mm-intel-min-demand')?.value,
+                minPrice: root.querySelector('#mm-intel-min-market')?.value,
+                maxPrice: root.querySelector('#mm-intel-max-market')?.value,
                 minAbsoluteProfit: root.querySelector('#mm-intel-min-profit')?.value,
-                minMarketPrice: root.querySelector('#mm-intel-min-market')?.value,
-                minBazaarSellers: root.querySelector('#mm-intel-min-sellers')?.value,
-                maxEnrich: root.querySelector('#mm-intel-max-enrich')?.value,
-                bazaarExitHaircutPct: root.querySelector('#mm-intel-haircut')?.value
+                minSellerCount: root.querySelector('#mm-intel-min-sellers')?.value
             });
-            statusText = 'Market scanner rules saved.';
+            const db = dbLoad();
+            const maxEnrich = Number(root.querySelector('#mm-intel-max-enrich')?.value);
+            const haircut = Number(root.querySelector('#mm-intel-haircut')?.value);
+            if (Number.isFinite(maxEnrich) && maxEnrich > 0) db.marketIntel.settings.maxEnrich = Math.min(WEAV3R_MAX_ENRICH, Math.round(maxEnrich));
+            if (Number.isFinite(haircut) && haircut >= 0) db.marketIntel.settings.bazaarExitHaircutPct = haircut;
+            dbSave(db);
+            statusText = 'CRM-wide deal rules saved.';
             render();
         });
 
@@ -10436,6 +10468,12 @@
             if (action === 'profile') {
                 const seller = button.dataset.seller;
                 if (seller) navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(seller)}`);
+                return;
+            }
+            if (action === 'verify-seller') {
+                const seller = button.dataset.seller;
+                const item = button.dataset.item;
+                if (seller && item) await verifyAndOpenBazaarSeller(item, seller);
                 return;
             }
             if (action === 'enrich') {
