@@ -349,6 +349,17 @@
         db.refunds = db.refunds && typeof db.refunds === 'object' ? db.refunds : {};
         db.subscribers = db.subscribers && typeof db.subscribers === 'object' ? db.subscribers : {};
         db.removedCustomers = db.removedCustomers && typeof db.removedCustomers === 'object' ? db.removedCustomers : {};
+        for (const [id, record] of Object.entries(db.removedCustomers)) {
+            if (!record || typeof record !== 'object') {
+                delete db.removedCustomers[id];
+                continue;
+            }
+            record.playerId = asId(record.playerId || id);
+            record.playerName = String(record.playerName || db.customers?.[id]?.name || id);
+            record.removedAt = record.removedAt || null;
+            record.reactivatedAt = record.reactivatedAt || null;
+            record.reactivatedReason = record.reactivatedReason || null;
+        }
         db.notificationHistory = Array.isArray(db.notificationHistory) ? db.notificationHistory : [];
         db.procurement = db.procurement && typeof db.procurement === 'object' ? db.procurement : {};
         db.procurement.catalog = db.procurement.catalog && typeof db.procurement.catalog === 'object' ? db.procurement.catalog : {};
@@ -688,7 +699,10 @@
             merged.coupons[id] = coupon;
         }
         merged.subscribers = { ...(latest.subscribers || {}), ...(merged.subscribers || {}) };
-        merged.removedCustomers = { ...(latest.removedCustomers || {}), ...(merged.removedCustomers || {}) };
+        merged.removedCustomers = mergeRemovedCustomerStates(
+            latest.removedCustomers,
+            merged.removedCustomers
+        );
 
         // Preserve fresher Travel Command data/history/evaluation state committed by another Torn tab.
         const latestTravel = latest.travelIntel;
@@ -1060,6 +1074,87 @@
         return db.customers[id];
     }
 
+    function customerRemovalTimes(record) {
+        const removedAt = Date.parse(record?.removedAt || '') || 0;
+        const reactivatedAt = Date.parse(record?.reactivatedAt || '') || 0;
+        return { removedAt, reactivatedAt };
+    }
+
+    function isRemovalRecordActive(record) {
+        const { removedAt, reactivatedAt } = customerRemovalTimes(record);
+        return removedAt > 0 && removedAt > reactivatedAt;
+    }
+
+    function isCustomerRemoved(db, playerId) {
+        const id = asId(playerId);
+        return isRemovalRecordActive(db?.removedCustomers?.[id]);
+    }
+
+    function markCustomerReactivated(db, playerId, at = Date.now(), reason = 'reactivated') {
+        const id = asId(playerId);
+        const prior = db.removedCustomers?.[id];
+        if (!prior) return false;
+
+        let ms = Number(at || 0);
+        if (!(ms > 0)) ms = Date.now();
+        if (ms < 100_000_000_000) ms *= 1000;
+
+        const removedAt = Date.parse(prior.removedAt || '') || 0;
+        if (ms <= removedAt) return false;
+
+        prior.reactivatedAt = new Date(ms).toISOString();
+        prior.reactivatedReason = String(reason || 'reactivated');
+        db.removedCustomers[id] = prior;
+        return true;
+    }
+
+    function mergeRemovedCustomerStates(latestState, incomingState) {
+        const latest = latestState && typeof latestState === 'object' ? latestState : {};
+        const incoming = incomingState && typeof incomingState === 'object' ? incomingState : {};
+        const ids = new Set([...Object.keys(latest), ...Object.keys(incoming)]);
+        const merged = {};
+
+        for (const id of ids) {
+            const oldRecord = latest[id];
+            const newRecord = incoming[id];
+            if (!oldRecord) {
+                merged[id] = deepClone(newRecord);
+                continue;
+            }
+            if (!newRecord) {
+                merged[id] = deepClone(oldRecord);
+                continue;
+            }
+
+            const oldTimes = customerRemovalTimes(oldRecord);
+            const newTimes = customerRemovalTimes(newRecord);
+            const removedAt = Math.max(oldTimes.removedAt, newTimes.removedAt);
+            const reactivatedAt = Math.max(oldTimes.reactivatedAt, newTimes.reactivatedAt);
+            const newestOld = Math.max(oldTimes.removedAt, oldTimes.reactivatedAt);
+            const newestNew = Math.max(newTimes.removedAt, newTimes.reactivatedAt);
+            const base = newestNew >= newestOld ? deepClone(newRecord) : deepClone(oldRecord);
+
+            merged[id] = {
+                ...base,
+                playerId: asId(base.playerId || id),
+                playerName: String(
+                    newRecord.playerName ||
+                    oldRecord.playerName ||
+                    base.playerName ||
+                    id
+                ),
+                removedAt: removedAt ? new Date(removedAt).toISOString() : null,
+                reactivatedAt: reactivatedAt ? new Date(reactivatedAt).toISOString() : null,
+                reactivatedReason:
+                    reactivatedAt === newTimes.reactivatedAt && newTimes.reactivatedAt >= oldTimes.reactivatedAt
+                        ? newRecord.reactivatedReason || oldRecord.reactivatedReason || null
+                        : oldRecord.reactivatedReason || newRecord.reactivatedReason || null
+            };
+        }
+
+        return merged;
+    }
+
     function ensureCoupon(db, customer) {
         const id = asId(customer.id);
         if (!db.coupons[id]) {
@@ -1315,13 +1410,12 @@
     function maybeReactivateCustomerForSale(db, sale) {
         const id = asId(sale?.playerId);
         const removed = db.removedCustomers?.[id];
-        if (!removed) return false;
+        if (!removed || !isRemovalRecordActive(removed)) return false;
 
         const removedAt = Date.parse(removed.removedAt || '') || 0;
         const saleAt = Number(sale?.timestamp || 0);
 
-        if (saleAt > removedAt) {
-            delete db.removedCustomers[id];
+        if (saleAt > removedAt && markCustomerReactivated(db, id, saleAt, 'new-bazaar-sale')) {
             ensureCustomer(db, id, sale.playerName || removed.playerName || id);
             return true;
         }
@@ -1344,7 +1438,7 @@
         for (const sale of sales) {
             if (!sale?.playerId) continue;
             maybeReactivateCustomerForSale(db, sale);
-            if (db.removedCustomers?.[asId(sale.playerId)]) continue;
+            if (isCustomerRemoved(db, sale.playerId)) continue;
             applySaleToCustomer(db, sale, sale.playerName || '');
         }
         return db;
@@ -1360,7 +1454,7 @@
         sale.playerName = name;
         db.sales[saleId] = sale;
         maybeReactivateCustomerForSale(db, sale);
-        if (!db.removedCustomers?.[asId(sale.playerId)]) {
+        if (!isCustomerRemoved(db, sale.playerId)) {
             applySaleToCustomer(db, sale, name);
         }
         return true;
@@ -1579,10 +1673,10 @@
         for (const [id, a] of byCustomer) {
             // Removed customers remain in the immutable sales ledger by design.
             // They are intentionally excluded from active-customer totals/audits.
-            if (db.removedCustomers?.[id]) continue;
+            if (isCustomerRemoved(db, id)) continue;
             const c = db.customers[id];
             if (!c) {
-                if (db.removedCustomers[id]) continue;
+                if (isCustomerRemoved(db, id)) continue;
                 problems.push(`Missing customer ${id} for imported sales`);
                 continue;
             }
@@ -1702,7 +1796,7 @@
                 sale.playerName = name;
                 db.sales[String(sale.id)] = sale;
                 // Rebuild the ledger, but never resurrect an intentionally removed customer.
-                if (!db.removedCustomers[sale.playerId]) {
+                if (!isCustomerRemoved(db, sale.playerId)) {
                     applySaleToCustomer(db, sale, name);
                 }
             }
@@ -7234,12 +7328,17 @@
         const id = asId(playerId);
         if (!/^\d+$/.test(id)) { alert('Enter a valid Torn player ID.'); return; }
         const db = dbLoad();
+        if (isCustomerRemoved(db, id)) {
+            markCustomerReactivated(db, id, Date.now(), 'manual-add');
+        }
         if (!db.customers[id]) {
             const customer = ensureCustomer(db, id, id);
             customer.manual = true;
             ensureCoupon(db, customer);
-            dbSave(db);
+        } else {
+            ensureCoupon(db, db.customers[id]);
         }
+        dbSave(db);
         try {
             await refreshCustomerUsername(id, true);
             statusText = `Customer [${id}] added/refreshed.`;
@@ -7262,10 +7361,14 @@
             `but Rebuild Sales History will keep this customer filtered from the active list.`
         )) return;
 
+        const priorRemoval = db.removedCustomers[id] || {};
         db.removedCustomers[id] = {
+            ...priorRemoval,
             playerId: id,
-            playerName: displayUsername(customer) || customer.name || id,
-            removedAt: nowIso()
+            playerName: displayUsername(customer) || customer.name || priorRemoval.playerName || id,
+            removedAt: nowIso(),
+            reactivatedAt: priorRemoval.reactivatedAt || null,
+            reactivatedReason: priorRemoval.reactivatedReason || null
         };
         delete db.customers[id];
         delete db.subscribers[id];
@@ -7279,9 +7382,9 @@
         const id = asId(playerId);
         const db = dbLoad();
         const removed = db.removedCustomers[id];
-        if (!removed) return false;
+        if (!removed || !isRemovalRecordActive(removed)) return false;
 
-        delete db.removedCustomers[id];
+        markCustomerReactivated(db, id, Date.now(), 'manual-restore');
         const customer = ensureCustomer(db, id, removed.playerName || id);
         customer.purchases = 0;
         customer.units = 0;
@@ -7351,7 +7454,7 @@
     }
 
     function customersHtml(db) {
-        const allCustomers = Object.values(db.customers).filter(c => !db.removedCustomers[asId(c.id || c.playerId)]).sort((a,b) => Number(new Date(b.lastPurchase || 0)) - Number(new Date(a.lastPurchase || 0)));
+        const allCustomers = Object.values(db.customers).filter(c => !isCustomerRemoved(db, c.id || c.playerId)).sort((a,b) => Number(new Date(b.lastPurchase || 0)) - Number(new Date(a.lastPurchase || 0)));
         const customers = allCustomers.filter(c => customerMatchesFilters(db, c));
         const add = `<div style="display:flex;gap:6px;"><input id="mm-add-id" placeholder="Torn player ID" style="${inputCss()}flex:1"><button id="mm-add-customer" style="${btn(true)}">Add</button><button id="mm-refresh-customers" style="${btn()}">Refresh Customers</button></div>`;
         const filters = customerFiltersHtml(allCustomers.length, customers.length);
@@ -8425,7 +8528,7 @@
                 Last full sales rebuild: ${escapeHtml(fmtDate(db.meta?.salesRebuiltAt))}<br>
                 Last acquisition rebuild: ${escapeHtml(fmtDate(db.procurement?.lastAcquisitionRebuildAt))}<br>
                 Acquisition lots: ${Number(db.procurement?.acquisitions?.length || 0).toLocaleString()}<br>
-                Filtered customers: ${Object.keys(db.removedCustomers || {}).length}
+                Filtered customers: ${Object.values(db.removedCustomers || {}).filter(isRemovalRecordActive).length}
             </div>
             <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;">
                 <b>Operations</b>
