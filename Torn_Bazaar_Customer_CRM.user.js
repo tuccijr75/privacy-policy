@@ -1221,6 +1221,36 @@
         return merged;
     }
 
+    function customerLifecycleSelfTest() {
+        const db = defaultDb();
+        db.removedCustomers['123'] = {
+            playerId:'123',
+            playerName:'Test Buyer',
+            removedAt:'2026-09-29T12:00:00.000Z',
+            reactivatedAt:null,
+            reactivatedReason:null
+        };
+        ensureCustomer(db,'123','Test Buyer');
+        const sale = {
+            id:'test-sale',
+            playerId:'123',
+            playerName:'Test Buyer',
+            timestamp:Date.parse('2026-09-29T13:00:00.000Z'),
+            total:100,
+            units:1,
+            items:[]
+        };
+        const reactivated = maybeReactivateCustomerForSale(db,sale);
+        const merged = mergeRemovedCustomerStates(
+            {'123':{playerId:'123',playerName:'Test Buyer',removedAt:'2026-09-29T12:00:00.000Z',reactivatedAt:null}},
+            db.removedCustomers
+        );
+        return {
+            pass: reactivated === true && !isCustomerRemoved(db,'123') && !isRemovalRecordActive(merged['123']),
+            reactivatedAt: merged['123']?.reactivatedAt || null
+        };
+    }
+
     function ensureCoupon(db, customer) {
         const id = asId(customer.id);
         if (!db.coupons[id]) {
@@ -1593,10 +1623,10 @@
             statusText = imported
                 ? `Customers refreshed: ${imported} missing sale${imported === 1 ? '' : 's'} imported from ${checked} checked${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`
                 : `Customers refreshed: ${checked} recent Bazaar sale log${checked === 1 ? '' : 's'} checked${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`;
-            render();
         }
 
         await flushDbWrites();
+        if (!silent) render();
 
         if (!audit.ok) {
             throw new Error(`Sales repair audit failed: ${audit.problems.slice(0, 3).join('; ')}`);
@@ -2001,10 +2031,10 @@
                 statusText = imported
                     ? `Sync complete: ${imported} Bazaar sale${imported === 1 ? '' : 's'} imported${repairedProcessedGap ? ` (${repairedProcessedGap} missing ledger record${repairedProcessedGap === 1 ? '' : 's'} repaired)` : ''}${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`
                     : `Sync complete: no new Bazaar sales${rejected ? `; ${rejected} row${rejected === 1 ? '' : 's'} deferred for retry` : ''}.`;
-                render();
             }
 
             if (databaseChanged) await flushDbWrites();
+            if (!silent || imported > 0 || rejected > 0) render();
 
             if (!audit.ok) {
                 throw new Error(`Sales integrity audit failed: ${audit.problems.slice(0, 3).join('; ')}`);
@@ -7761,8 +7791,8 @@
         }
 
         const existing = dbLoad();
-        const lastSync = Date.parse(existing.factionInventory?.lastSyncAt || '') || 0;
-        if (!force && lastSync && Date.now() - lastSync < FACTION_INVENTORY_SYNC_INTERVAL_MS - 60_000) {
+        const nextUsefulRefreshAt = Date.parse(existing.factionInventory?.nextUsefulRefreshAt || '') || 0;
+        if (!force && nextUsefulRefreshAt > Date.now()) {
             return { skipped: true, reason: 'cache-window' };
         }
 
@@ -7778,7 +7808,15 @@
                 groups.push(await fetchFactionInventoryCategory(category));
             }
 
-            const sourceAt = Math.max(...groups.map(group => Number(group.inventoryTimestamp || 0)), 0);
+            const sourceTimes = [...new Set(groups.map(group => Number(group.inventoryTimestamp || 0)).filter(value => value > 0))];
+            if (sourceTimes.length !== 1) {
+                throw new Error(
+                    sourceTimes.length
+                        ? 'Faction inventory categories returned mixed Torn cache timestamps; no mixed snapshot was committed.'
+                        : 'Faction inventory response did not include a usable inventory_timestamp.'
+                );
+            }
+            const sourceAt = sourceTimes[0];
             const fetchedAt = Date.now();
             const current = normalizeFactionInventoryResults(groups, fetchedAt);
             const db = dbLoad();
@@ -7788,7 +7826,7 @@
             state.current = current;
             state.inventoryTimestamp = sourceAt ? new Date(sourceAt).toISOString() : null;
             state.lastSyncAt = new Date(fetchedAt).toISOString();
-            state.nextUsefulRefreshAt = new Date(fetchedAt + FACTION_INVENTORY_SYNC_INTERVAL_MS).toISOString();
+            state.nextUsefulRefreshAt = new Date(Math.max(fetchedAt, sourceAt + FACTION_INVENTORY_SYNC_INTERVAL_MS)).toISOString();
             addFactionInventoryDiagnostic(
                 state,
                 'Faction inventory sync: ' + Object.keys(current).length + ' item/category rows; ' +
@@ -8007,7 +8045,7 @@
         );
 
         const readiness = card(
-            '<b>War Readiness / Restock Queue</b>'+
+            '<b>War Readiness / Restock Queue / Alerts</b>'+
             (configured.length
                 ? '<div style="font-size:11px;color:#bbb;margin-top:5px;">Configured reserves: '+configured.length+' · Ready '+configured.filter(r=>r.threshold.status==='GREEN').length+' · Low '+configured.filter(r=>r.threshold.status==='LOW').length+' · Critical '+critical.length+'</div>'
                 : '<div style="font-size:11px;color:#888;margin-top:5px;">No reserve targets configured yet. Set targets on critical armory items to activate readiness alerts.</div>')+
@@ -10231,6 +10269,7 @@
         deadCapitalRows: () => deadCapitalRows(dbLoad()),
         salesFunnelMetrics: () => salesFunnelMetrics(dbLoad()),
         competitorIntelligenceRows: () => competitorIntelligenceRows(dbLoad()),
+        customerLifecycleSelfTest,
         syncFactionInventory,
         factionInventoryRows: () => factionInventoryRows(dbLoad()),
         factionInventoryLoans: () => factionLoanMemberRows(dbLoad()),
