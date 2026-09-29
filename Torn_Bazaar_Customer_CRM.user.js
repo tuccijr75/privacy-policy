@@ -5523,7 +5523,17 @@
             }
             realizedCogs += cogs;
             matchedUnits += matched;
-            saleRows.push({ ...sale, cogs, matchedUnits: matched, grossProfit: sale.total - cogs });
+            const matchedRevenue = sale.quantity > 0
+                ? Number(sale.total || 0) * matched / Number(sale.quantity || 1)
+                : 0;
+            saleRows.push({
+                ...sale,
+                cogs,
+                matchedUnits: matched,
+                unmatchedUnits: Math.max(0, Number(sale.quantity || 0) - matched),
+                matchedRevenue,
+                grossProfit: matchedRevenue - cogs
+            });
         }
 
         const remainingLots = lots.filter(l => l.remaining > 0);
@@ -5543,17 +5553,34 @@
         const ledger = fifoLedger(db, itemId);
         const cutoff = Date.now() - days * 86400000;
         const sales = ledger.saleRows.filter(s => s.timestamp >= cutoff);
-        const revenue = sales.reduce((s,r)=>s + Number(r.total || 0),0);
-        const cogs = sales.reduce((s,r)=>s + Number(r.cogs || 0),0);
-        const grossProfit = revenue - cogs;
-        const units = sales.reduce((s,r)=>s + Number(r.quantity || 0),0);
+        const revenue = sales.reduce((sum,row)=>sum + Number(row.total || 0), 0);
+        const matchedRevenue = sales.reduce((sum,row)=>sum + Number(row.matchedRevenue || 0), 0);
+        const cogs = sales.reduce((sum,row)=>sum + Number(row.cogs || 0), 0);
+        const grossProfit = matchedRevenue - cogs;
+        const units = sales.reduce((sum,row)=>sum + Number(row.quantity || 0), 0);
+        const matchedUnits = sales.reduce((sum,row)=>sum + Number(row.matchedUnits || 0), 0);
+        const unmatchedUnits = Math.max(0, units - matchedUnits);
+        const costCoveragePct = units > 0 ? matchedUnits / units * 100 : 100;
         const avgInventoryCost = ledger.remainingCost || cogs / Math.max(1, days / 30);
         const gmroi = avgInventoryCost > 0 ? grossProfit / avgInventoryCost : 0;
         const avgAge = ledger.remainingLots.length
-            ? ledger.remainingLots.reduce((s,l)=>s + l.ageDays * l.remaining,0) / Math.max(1,ledger.remainingQty)
+            ? ledger.remainingLots.reduce((sum,lot)=>sum + lot.ageDays * lot.remaining,0) / Math.max(1,ledger.remainingQty)
             : 0;
         const cashVelocity = cogs > 0 ? (grossProfit / cogs) / Math.max(1, avgAge || 1) : 0;
-        return { revenue, cogs, grossProfit, units, gmroi, cashVelocity, avgAge, ledger };
+        return {
+            revenue,
+            matchedRevenue,
+            cogs,
+            grossProfit,
+            units,
+            matchedUnits,
+            unmatchedUnits,
+            costCoveragePct,
+            gmroi,
+            cashVelocity,
+            avgAge,
+            ledger
+        };
     }
 
     function priceElasticityMetrics(db, itemId) {
@@ -6096,6 +6123,8 @@
         const revenue=rows.reduce((s,r)=>s+r.realized.revenue,0);
         const grossProfit=rows.reduce((s,r)=>s+r.realized.grossProfit,0);
         const units=rows.reduce((s,r)=>s+r.realized.units,0);
+        const matchedUnits=rows.reduce((s,r)=>s+Number(r.realized.matchedUnits||0),0);
+        const costCoveragePct=units>0?matchedUnits/units*100:100;
         const inventoryValue=rows.reduce((s,r)=>s+r.realized.ledger.remainingCost,0);
         const stockouts=rows.filter(r=>r.state==='OUT OF STOCK').length;
         const lostProfit=rows.reduce((s,r)=>s+r.lostProfit,0);
@@ -6103,7 +6132,7 @@
         const deadCapital=rows.reduce((s,r)=>s+r.deadCapital,0);
         const best=rows.slice().sort((a,b)=>b.realized.grossProfit-a.realized.grossProfit)[0]||null;
         const worst=rows.slice().filter(r=>r.realized.revenue>0||r.deadCapital>0).sort((a,b)=>a.realized.grossProfit-b.realized.grossProfit)[0]||null;
-        return {revenue,grossProfit,units,inventoryValue,stockouts,lostProfit,critical,deadCapital,best,worst};
+        return {revenue,grossProfit,units,matchedUnits,costCoveragePct,inventoryValue,stockouts,lostProfit,critical,deadCapital,best,worst};
     }
 
     function inventoryWhatIf(db,targetDays){
@@ -9556,7 +9585,7 @@
         const dead=rows.filter(r=>r.deadCapital>0).sort((a,b)=>b.deadCapital-a.deadCapital).slice(0,20);
         const profit=rows.slice().sort((a,b)=>b.realized.grossProfit-a.realized.grossProfit).slice(0,30);
 
-        const profitHtml=card(`<b>Profit / Capital Efficiency</b>${profit.map(r=>`<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>${escapeHtml(r.name)}</b> · Revenue ${money(r.realized.revenue)} · COGS ${money(r.realized.cogs)} · Gross ${money(r.realized.grossProfit)} · GMROI ${(r.realized.gmroi*100).toFixed(1)}% · Cash velocity ${(r.realized.cashVelocity*100).toFixed(2)}%/day · Avg age ${r.realized.avgAge.toFixed(1)}d · ABC ${r.abc} · ${escapeHtml(r.inventoryClass)}</div>`).join('')}`);
+        const profitHtml=card(`<b>Profit / Capital Efficiency</b>${profit.map(r=>`<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>${escapeHtml(r.name)}</b> · Revenue ${money(r.realized.revenue)} · COGS ${money(r.realized.cogs)} · Tracked Gross ${money(r.realized.grossProfit)} · Cost coverage ${r.realized.costCoveragePct.toFixed(0)}% · GMROI ${(r.realized.gmroi*100).toFixed(1)}% · Cash velocity ${(r.realized.cashVelocity*100).toFixed(2)}%/day · Avg age ${r.realized.avgAge.toFixed(1)}d · ABC ${r.abc} · ${escapeHtml(r.inventoryClass)}</div>`).join('')}`);
 
         const deadHtml=card(`<b>Inventory Aging / Dead Capital</b>${dead.length?dead.map(r=>`<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>${escapeHtml(r.name)}</b> · Dead capital ${money(r.deadCapital)} · Oldest ${r.maxAge.toFixed(1)}d · Forecast ${r.forecastDaily.toFixed(2)}/day · ${opsStateBadge(r.state)}</div>`).join(''):'<div style="font-size:11px;color:#888;">No dead-capital lots detected from tracked FIFO acquisitions.</div>'}`);
 
@@ -9692,7 +9721,7 @@
 
         const metrics = `<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">
             ${simpleMetric('30d Revenue', money(brief.revenue))}
-            ${simpleMetric('30d Profit', money(brief.grossProfit))}
+            ${simpleMetric('Tracked Profit', money(brief.grossProfit), brief.costCoveragePct.toFixed(0)+'% cost coverage')}
             ${simpleMetric('Restock', String(needRestock), 'items need stock')}
             ${simpleMetric('Need Listing', String(needListing), 'ready for Bazaar')}
         </div>`;
@@ -9892,8 +9921,9 @@
             { Metric:'Report generated', Value:nowIso() },
             { Metric:'30d revenue', Value:grossRevenue },
             { Metric:'30d COGS', Value:grossCogs },
-            { Metric:'30d gross profit', Value:brief.grossProfit },
-            { Metric:'30d gross margin %', Value:grossRevenue > 0 ? brief.grossProfit / grossRevenue * 100 : 0 },
+            { Metric:'Tracked gross profit', Value:brief.grossProfit },
+            { Metric:'Cost-basis coverage %', Value:brief.costCoveragePct },
+            { Metric:'Tracked gross margin %', Value:grossRevenue > 0 ? brief.grossProfit / grossRevenue * 100 : 0 },
             { Metric:'Inventory cost basis', Value:inventoryCost },
             { Metric:'Dead capital', Value:brief.deadCapital },
             { Metric:'Estimated lost profit', Value:brief.lostProfit },
@@ -9961,6 +9991,8 @@
             '30d Revenue': Number(r.realized?.revenue || 0),
             '30d COGS': Number(r.realized?.cogs || 0),
             '30d Gross Profit': Number(r.realized?.grossProfit || 0),
+            'Cost Coverage %': Number(r.realized?.costCoveragePct || 0),
+            'Unmatched Sold Units': Number(r.realized?.unmatchedUnits || 0),
             'Realized ROI %': Number(r.realized?.cogs || 0) > 0 ? Number(r.realized.grossProfit || 0) / Number(r.realized.cogs) * 100 : 0,
             'GMROI %': Number(r.realized?.gmroi || 0) * 100,
             'Dead Capital': Number(r.deadCapital || 0),
@@ -10033,7 +10065,7 @@
             },
             inventory: {
                 filename: 'inventory-profitability.csv',
-                headers: ['Item ID','Item','Type','State','On Hand','Bazaar Listed','Item Market Listed','Total Stock','Sold 7d','Sold 30d','Demand / Day','Forecast / Day','Average Cost','Trusted Exit','Planned Listing Price','Pricing Confidence %','Pricing Basis','30d Revenue','30d COGS','30d Gross Profit','Realized ROI %','GMROI %','Dead Capital','Market Snapshot Fresh'],
+                headers: ['Item ID','Item','Type','State','On Hand','Bazaar Listed','Item Market Listed','Total Stock','Sold 7d','Sold 30d','Demand / Day','Forecast / Day','Average Cost','Trusted Exit','Planned Listing Price','Pricing Confidence %','Pricing Basis','30d Revenue','30d COGS','30d Gross Profit','Cost Coverage %','Unmatched Sold Units','Realized ROI %','GMROI %','Dead Capital','Market Snapshot Fresh'],
                 rows: inventoryProfitRows
             },
             refunds: {
@@ -10110,9 +10142,9 @@
         const summary =
             '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">' +
                 simpleMetric('30d Revenue', money(grossRevenue)) +
-                simpleMetric('30d COGS', money(grossCogs)) +
-                simpleMetric('30d Gross Profit', money(brief.grossProfit)) +
-                simpleMetric('Inventory Cost', money(inventoryCost)) +
+                simpleMetric('Tracked COGS', money(grossCogs)) +
+                simpleMetric('Tracked Gross Profit', money(brief.grossProfit)) +
+                simpleMetric('COGS Coverage', brief.costCoveragePct.toFixed(0) + '%') +
             '</div>';
 
         const demandHtml = card(
