@@ -2605,6 +2605,7 @@
 
     function procurementRows(db) {
         const proc = db.procurement;
+        const rules = businessRules(db);
         const metrics = salesItemMetrics(db);
         const keys = new Set([
             ...Object.keys(proc.bazaar),
@@ -2642,7 +2643,10 @@
 
             const realisticExit = Number(snap.realisticExit || bazaar.price || catalog.marketValue || 0);
             const bestBuyPrice = [snap?.bazaar?.lowest, snap?.itemMarket?.lowest].map(Number).filter(v => v > 0).sort((a,b) => a-b)[0] || 0;
-            const minMarginPct = Number(watch.minMarginPct ?? proc.settings.minMarginPct ?? 4);
+            const minMarginPct = Math.max(
+                Number(watch.minMarginPct ?? proc.settings.minMarginPct ?? 4),
+                rules.minRoiPct
+            );
             const calculatedBuyTarget = realisticExit ? Math.floor(realisticExit / (1 + minMarginPct / 100)) : 0;
             const buyTarget = Number(watch.maxBuyPrice || calculatedBuyTarget || 0);
 
@@ -2682,19 +2686,29 @@
             else if (acquisitionScore >= 50) { priority = 'FAST'; rank = 2; }
             else if (acquisitionScore >= 35) { priority = 'WATCH'; rank = 3; }
 
+            const personalDemandQualified =
+                Number(m.sold30d || 0) >= 5 ||
+                Number(m.saleDays30d || 0) >= 3;
+            const demandQualified =
+                !personalDemandQualified ||
+                daily >= rules.minDemandPerDay;
+            const priceQualified =
+                bestBuyPrice <= 0 ||
+                (bestBuyPrice >= rules.minPrice && bestBuyPrice <= rules.maxPrice);
             const marginQualified =
                 bestBuyPrice > 0 &&
                 realisticExit > bestBuyPrice &&
-                bestDealMarginPct >= minMarginPct;
+                bestDealMarginPct >= minMarginPct &&
+                bestDealProfit >= rules.minAbsoluteProfit;
 
             const quickSaleQualified =
                 liquidity.score >= 45 ||
-                daily >= 0.25 ||
+                daily >= Math.max(0.25, rules.minDemandPerDay) ||
                 Number(m.sold24h || 0) > 0;
 
-            const action = marginQualified && quickSaleQualified
+            const action = marginQualified && quickSaleQualified && demandQualified && priceQualified
                 ? 'BUY'
-                : bestBuyPrice > 0 && realisticExit > bestBuyPrice
+                : bestBuyPrice > 0 && realisticExit > bestBuyPrice && priceQualified
                     ? 'WATCH'
                     : 'SKIP';
 
@@ -2743,6 +2757,9 @@
                 acquisitionScore,
                 turnoverDays,
                 opportunityQtyCap,
+                personalDemandQualified,
+                demandQualified,
+                priceQualified,
                 action
             });
         }
@@ -2835,9 +2852,26 @@
             }
 
             db = dbLoad();
+            const rules = businessRules(db);
+            const globalIds = new Set(globalOpportunityRows(db).slice(0, rules.marketRefreshLimit).map(r => r.id));
             const candidates = procurementRows(db)
-                .filter(r => /^\d+$/.test(r.id) && (r.watched || r.daily > 0 || r.shortage > 0))
-                .slice(0, Math.max(1, Math.min(30, Number(db.procurement.settings.marketRefreshLimit || PROCUREMENT_MARKET_REFRESH_LIMIT))));
+                .filter(r =>
+                    /^\d+$/.test(r.id) &&
+                    (
+                        r.watched ||
+                        r.daily > 0 ||
+                        r.shortage > 0 ||
+                        r.stock > 0 ||
+                        globalIds.has(r.id)
+                    )
+                )
+                .sort((a,b) =>
+                    Number(globalIds.has(b.id)) - Number(globalIds.has(a.id)) ||
+                    Number(b.personalDemandQualified) - Number(a.personalDemandQualified) ||
+                    b.acquisitionScore - a.acquisitionScore ||
+                    b.daily - a.daily
+                )
+                .slice(0, rules.marketRefreshLimit);
 
             let marketCount = 0;
             for (const row of candidates) {
