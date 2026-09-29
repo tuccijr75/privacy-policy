@@ -9646,6 +9646,9 @@
         const goodDeals = deals.filter(d => d.score >= 60).length;
         const pendingAlerts = Object.values(db.subscribers || {}).filter(s => s.pendingNotification).length;
 
+        const fresh = businessDataFreshness(db);
+        const refresh = card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b>Data Readiness</b><div style="font-size:10px;color:#888;margin-top:3px;">Sales ${freshnessAgeText(fresh.salesAt)} · Stock/Procurement ${freshnessAgeText(fresh.procurementAt)} · Market ${freshnessAgeText(fresh.marketAt)} · Travel ${freshnessAgeText(fresh.travelAt)}</div></div><button id="mm-refresh-business" style="${btn(true)}">Smart Refresh</button></div>`);
+
         const metrics = `<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">
             ${simpleMetric('30d Revenue', money(brief.revenue))}
             ${simpleMetric('30d Profit', money(brief.grossProfit))}
@@ -9671,8 +9674,8 @@
 
         const health = card(`<b>Business Health</b><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:6px;">
             ${simpleMetric('Lost Profit', money(brief.lostProfit))}${simpleMetric('Dead Capital', money(brief.deadCapital))}${simpleMetric('Stockouts', String(brief.stockouts))}${simpleMetric('Best SKU', brief.best?.name || '—')}
-        </div><div style="margin-top:7px;"><button data-open-advanced="analytics" style="${btn()}">View full analytics</button></div>`);
-        return metrics + actions + queue + health;
+        </div><div style="margin-top:7px;"><button data-simple-go="reports" style="${btn()}">Open Reports</button></div>`);
+        return refresh + metrics + actions + queue + health;
     }
 
     function stockSimpleHtml(db) {
