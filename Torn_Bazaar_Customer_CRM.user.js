@@ -911,7 +911,7 @@
 
             const url = new URL(pathOrUrl.startsWith('http') ? pathOrUrl : API_BASE + pathOrUrl);
             url.searchParams.set('key', key);
-            url.searchParams.set('comment', 'Torn Bazaar Customer CRM');
+            url.searchParams.set('comment', 'MM Bazaar CRM');
 
             GM_xmlhttpRequest({
                 method: 'GET',
@@ -971,7 +971,7 @@
             const url = new URL(`https://api.torn.com/user/${encodeURIComponent(id)}`);
             url.searchParams.set('selections', 'basic');
             url.searchParams.set('key', key);
-            url.searchParams.set('comment', 'Torn Bazaar Customer CRM');
+            url.searchParams.set('comment', 'MM Bazaar CRM');
 
             GM_xmlhttpRequest({
                 method: 'GET',
@@ -1009,7 +1009,7 @@
             const url = new URL('https://api.torn.com/user/');
             url.searchParams.set('selections', selection);
             url.searchParams.set('key', key);
-            url.searchParams.set('comment', 'Torn Bazaar Customer CRM');
+            url.searchParams.set('comment', 'MM Bazaar CRM');
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: url.toString(),
@@ -7624,6 +7624,8 @@
         if (!key) throw new Error('No Torn API key is available for faction inventory.');
 
         const rows = [];
+        const seenRows = new Set();
+        const sourceTimes = new Set();
         let offset = 0;
         let pages = 0;
         let inventoryTimestamp = 0;
@@ -7636,12 +7638,29 @@
 
             const data = await apiRequest(url.toString(), key);
             const pageRows = factionInventoryRowsFromResponse(data);
-            rows.push(...pageRows);
-            inventoryTimestamp = Math.max(inventoryTimestamp, factionEpochMs(data?.inventory_timestamp));
+            const pageSourceAt = factionEpochMs(data?.inventory_timestamp);
+            if (pageSourceAt > 0) sourceTimes.add(pageSourceAt);
+            if (sourceTimes.size > 1) {
+                throw new Error('Faction inventory cache changed during pagination for ' + cat + '; retry after the source stabilizes.');
+            }
+
+            for (const row of pageRows) {
+                const uids = (Array.isArray(row?.uids) ? row.uids : []).map(asId).filter(Boolean);
+                const signature = [
+                    asId(row?.id),
+                    asId(row?.loaned?.id),
+                    Number(row?.amount || 0),
+                    uids.join(',')
+                ].join('|');
+                if (seenRows.has(signature)) continue;
+                seenRows.add(signature);
+                rows.push(row);
+            }
+            inventoryTimestamp = Math.max(inventoryTimestamp, pageSourceAt);
             pages++;
 
             const total = factionInventoryTotalFromResponse(data);
-            if (!pageRows.length || pageRows.length < 100 || (total > 0 && rows.length >= total)) break;
+            if (!pageRows.length || pageRows.length < 100 || (total > 0 && offset + pageRows.length >= total)) break;
             offset += pageRows.length;
         }
 
@@ -7722,7 +7741,15 @@
                 name: item.name,
                 amountOwned: Number(item.amountOwned || 0),
                 availableCount: Number(item.availableCount || 0),
-                loanedCount: Number(item.loanedCount || 0)
+                loanedCount: Number(item.loanedCount || 0),
+                loans: ['weapons','armor'].includes(String(item.category || ''))
+                    ? (item.loans || []).map(loan => ({
+                        memberId: asId(loan.memberId),
+                        memberName: String(loan.memberName || loan.memberId || ''),
+                        amount: Number(loan.amount || 0),
+                        uids: Array.isArray(loan.uids) ? loan.uids.slice() : []
+                    }))
+                    : []
             };
         }
         return {
@@ -7957,6 +7984,47 @@
         return Object.values(members).sort((a,b) => b.amount - a.amount || a.memberName.localeCompare(b.memberName));
     }
 
+    function factionLoanPersistenceRows(db) {
+        const snapshots = Array.isArray(db.factionInventory?.snapshots) ? db.factionInventory.snapshots : [];
+        const latestSourceAt = snapshots.length
+            ? Number(snapshots[snapshots.length - 1].inventoryTimestamp || snapshots[snapshots.length - 1].at || 0)
+            : Date.parse(db.factionInventory?.inventoryTimestamp || '') || Date.now();
+        const rows = [];
+
+        for (const item of Object.values(db.factionInventory?.current || {})) {
+            if (!['weapons','armor'].includes(String(item.category || ''))) continue;
+            for (const loan of item.loans || []) {
+                const memberId = asId(loan.memberId);
+                let observedSince = latestSourceAt;
+
+                for (let i = snapshots.length - 1; i >= 0; i--) {
+                    const snap = snapshots[i];
+                    const snapItem = snap?.items?.[item.key];
+                    const present = (snapItem?.loans || []).some(x => asId(x.memberId) === memberId);
+                    if (!present) break;
+                    observedSince = Number(snap.inventoryTimestamp || snap.at || observedSince);
+                }
+
+                rows.push({
+                    key: item.key,
+                    itemId: item.itemId,
+                    name: item.name,
+                    category: item.category,
+                    memberId,
+                    memberName: String(loan.memberName || memberId),
+                    amount: Number(loan.amount || 0),
+                    uids: Array.isArray(loan.uids) ? loan.uids.slice() : [],
+                    observedSince,
+                    observedHours: observedSince && latestSourceAt >= observedSince
+                        ? (latestSourceAt - observedSince) / 3600000
+                        : 0
+                });
+            }
+        }
+
+        return rows.sort((a,b) => b.observedHours - a.observedHours || b.amount - a.amount);
+    }
+
     function factionInventoryReport(db, days = 7) {
         const cutoff = Date.now() - Math.max(1, Number(days || 7)) * 86400000;
         const events = (db.factionInventory?.events || []).filter(event => Number(event.observedAt || 0) >= cutoff);
@@ -8014,6 +8082,9 @@
         const selectedCategory = String(state.settings?.selectedCategory || 'all');
         const rows = selectedCategory === 'all' ? allRows : allRows.filter(row => row.category === selectedCategory);
         const loans = factionLoanMemberRows(db);
+        const loanPersistence = factionLoanPersistenceRows(db);
+        const persistentLoans = loanPersistence.filter(row => row.observedHours >= 24);
+        const loanAgeMap = new Map(loanPersistence.map(row => [row.key+'|'+row.memberId,row]));
         const configured = allRows.filter(row => row.threshold.target > 0);
         const restock = configured.filter(row => row.threshold.shortfall > 0);
         const critical = configured.filter(row => row.threshold.status === 'CRITICAL');
@@ -8055,7 +8126,14 @@
                     row.threshold.current.toLocaleString()+'/'+row.threshold.target.toLocaleString()+' '+escapeHtml(row.threshold.basis)+' · Need <b>'+row.threshold.shortfall.toLocaleString()+'</b>'+
                     (row.referencePrice ? ' · Est. '+money(row.estimatedRestockCost)+' @ '+money(row.referencePrice)+' ('+escapeHtml(row.priceSource)+')' : ' · Price unavailable')+
                 '</div>').join('')
-                : configured.length ? '<div style="font-size:11px;color:#9fe3a8;margin-top:5px;">All configured reserves meet target.</div>' : '')
+                : configured.length ? '<div style="font-size:11px;color:#9fe3a8;margin-top:5px;">All configured reserves meet target.</div>' : '')+
+            (persistentLoans.length
+                ? '<div style="border-top:1px solid #303030;margin-top:6px;padding-top:6px;font-size:11px;"><b>Persistent loan alerts</b><br>'+
+                    persistentLoans.slice(0,12).map(row =>
+                        escapeHtml(row.memberName)+' · '+escapeHtml(row.name)+' × '+row.amount+' · observed loaned '+Math.floor(row.observedHours)+'h'
+                    ).join('<br>')+
+                  '</div>'
+                : '')
         );
 
         const categoryFilter = '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:8px 0;">'+
@@ -8099,9 +8177,12 @@
             '<b>Member Loan View</b>'+
             (loans.length ? loans.slice(0,40).map(member =>
                 '<details style="border-top:1px solid #303030;padding:5px 0;"><summary style="cursor:pointer;font-size:11px;"><b>'+escapeHtml(member.memberName)+'</b> ['+escapeHtml(member.memberId)+'] · '+member.amount+' item'+(member.amount===1?'':'s')+'</summary>'+
-                '<div style="font-size:10px;color:#aaa;margin-top:4px;">'+member.items.map(item =>
-                    escapeHtml(item.name)+' × '+item.amount+(item.uids?.length?' · UID '+item.uids.slice(0,10).map(escapeHtml).join(', ')+(item.uids.length>10?'…':''):'')
-                ).join('<br>')+'</div></details>'
+                '<div style="font-size:10px;color:#aaa;margin-top:4px;">'+member.items.map(item => {
+                    const age=loanAgeMap.get(factionInventoryKey(item.category,item.itemId)+'|'+member.memberId);
+                    return escapeHtml(item.name)+' × '+item.amount+
+                        (item.uids?.length?' · UID '+item.uids.slice(0,10).map(escapeHtml).join(', ')+(item.uids.length>10?'…':''):'')+
+                        (age?.observedSince?' · first observed '+escapeHtml(fmtDate(age.observedSince)):'');
+                }).join('<br>')+'</div></details>'
             ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No currently loaned weapon/armor rows in the latest snapshot.</div>')
         );
 
@@ -9270,11 +9351,11 @@
             <b>Torn API</b>
             <div style="font-size:12px;color:${hasKey ? '#9fe3a8' : '#ff9b9b'};margin:4px 0 8px;font-weight:700;">${hasKey ? 'API STATUS: CONNECTED' : 'API STATUS: NOT CONFIGURED — sales and customer sync are stopped'}</div>
             <div style="font-size:12px;color:#bbb;margin:4px 0 8px;">
-                v4 uses Torn directly: <b>User → Basic</b>, <b>User → Log</b> (Bazaar Sell 1226, Bazaar Buy 1225, Item Market Buy 1112),
+                v7.3 uses Torn directly: <b>User → Basic</b>, <b>User → Log</b> (Bazaar Sell 1226, Bazaar Buy 1225, Item Market Buy 1112),
                 <b>User → Bazaar</b>, <b>User → Item Market</b>, <b>Torn → Items</b>,
-                <b>Market → Item Market</b>, and <b>Market → Bazaar</b>.
-                <b>User → Inventory</b> is optional but improves stock counts.
-                No third-party pricing/procurement service is required.
+                <b>Market → Item Market</b>, <b>Market → Bazaar</b>, and optional <b>Faction → Inventory</b>.
+                <b>User → Inventory</b> remains optional but improves personal stock counts.
+                No third-party service is required for faction armory state.
             </div>
             <div style="display:flex;gap:6px;">
                 <input id="mm-api-key" type="password" autocomplete="off"
@@ -10273,6 +10354,7 @@
         syncFactionInventory,
         factionInventoryRows: () => factionInventoryRows(dbLoad()),
         factionInventoryLoans: () => factionLoanMemberRows(dbLoad()),
+        factionLoanPersistence: () => factionLoanPersistenceRows(dbLoad()),
         factionInventoryReport: (days=7) => factionInventoryReport(dbLoad(),days),
         factionInventorySelfTest,
         syncTravelStock,
