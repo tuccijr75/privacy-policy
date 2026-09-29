@@ -9718,19 +9718,88 @@
     function dealsSimpleHtml(db) {
         const deals = globalOpportunityRows(db);
         const instant = instantArbitrageRows(db);
-        const travel = travelOpportunityRows(db).filter(r => r.profit > 0).slice(0,5);
-        const top = deals.slice(0,10);
-        const freshness = freshnessInfo(db.marketIntel.marketplaceGeneratedAt, db.marketIntel.settings.freshnessWarnSeconds);
+        const travel = travelOpportunityRows(db).filter(r => r.profit > 0).slice(0, 5);
+        const top = deals.slice(0, 25);
+        const dollars = (db.marketIntel.dollarItems || [])
+            .slice()
+            .sort((a,b) => Number(b.totalValue || 0) - Number(a.totalValue || 0))
+            .slice(0, 30);
+        const freshness = freshnessInfo(db.marketIntel.marketplaceGeneratedAt, businessRules(db).maxListingAgeSec);
 
-        const controls = card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">Best Deals Now</b><div style="font-size:11px;color:#999;margin-top:2px;">${deals.length} qualifying deal(s) · feed ${escapeHtml(freshness.label)}${Number.isFinite(freshness.ageSeconds)?` · ${Math.round(freshness.ageSeconds)}s old`:''}</div></div><button id="mm-intel-global-sync" style="${btn(true)}">Refresh Deals</button></div>`);
+        const controls = card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">' +
+                '<div><b style="font-size:15px;">Best Deals Now</b><div style="font-size:11px;color:#999;margin-top:2px;">' +
+                    deals.length + ' qualifying deal(s) · showing top ' + top.length + ' · feed ' + escapeHtml(freshness.label) +
+                    (Number.isFinite(freshness.ageSeconds) ? ' · ' + Math.round(freshness.ageSeconds) + 's old' : '') +
+                '</div></div>' +
+                '<button id="mm-refresh-business" style="' + btn(true) + '">Smart Refresh</button>' +
+            '</div>'
+        );
 
-        const topHtml = card(`${top.length ? top.map((r,i)=>`<div style="display:flex;justify-content:space-between;gap:8px;border-top:${i?'1px solid #303030':'0'};padding:7px 0;"><div style="font-size:11px;min-width:0;"><b>#${i+1} ${escapeHtml(r.name)}</b> · ROI <b>${r.roiPct.toFixed(1)}%</b> · Profit ${money(r.profit)} · Confidence ${r.confidence.toFixed(0)}%<br>Buy ${money(r.buyPrice)} → ${money(r.bestExit)} via ${escapeHtml(r.bestExitRoute)}
-            <details style="margin-top:4px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Score ${r.score.toFixed(0)} · Sellers ${r.sellerCount} · Bazaar avg ${r.bazaarAverage?money(r.bazaarAverage):'—'} · Torn market ${r.marketPrice?money(r.marketPrice):'—'} · History ${r.history.samples}</div></details></div>
-            <div style="display:flex;gap:4px;align-items:flex-start;"><button data-intel-action="enrich" data-item="${r.id}" style="${btn(true)}">${r.enriched?'Refresh':'Analyze'}</button><details><summary style="${btn()}list-style:none;">•••</summary><div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;">${r.sellerId?`<button data-intel-action="profile" data-seller="${r.sellerId}" style="${btn()}">Seller</button>`:''}<button data-open-advanced="intel" style="${btn()}">Full Market Intel</button></div></details></div></div>`).join('') : `<div style="font-size:11px;color:#888;">Refresh the global market to load opportunities.</div>`}</div>`);
+        const topHtml = card(
+            top.length
+                ? top.map((r,i) => {
+                    const sellerAction = r.sellerId
+                        ? '<button data-intel-action="verify-seller" data-item="' + escapeHtml(r.id) + '" data-seller="' + escapeHtml(r.sellerId) + '" style="' + btn() + '">Verify Seller</button>'
+                        : '';
+                    const verifiedText = r.listingVerified
+                        ? ' · Seller listing verified fresh (' + Math.round(Number(r.listingAgeSeconds || 0)) + 's)'
+                        : ' · Aggregate opportunity — analyze before buying';
+                    return '<div style="display:flex;justify-content:space-between;gap:8px;border-top:' + (i ? '1px solid #303030' : '0') + ';padding:7px 0;">' +
+                        '<div style="font-size:11px;min-width:0;"><b>#' + (i+1) + ' ' + escapeHtml(r.name) + '</b> · ROI <b>' + r.roiPct.toFixed(1) + '%</b> · Profit ' + money(r.profit) + ' · Confidence ' + r.confidence.toFixed(0) + '%<br>' +
+                        'Buy ' + money(r.buyPrice) + ' → ' + money(r.bestExit) + ' via ' + escapeHtml(r.bestExitRoute) + verifiedText +
+                        '<details style="margin-top:4px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Score ' + r.score.toFixed(0) +
+                        ' · Sellers ' + r.sellerCount + ' · Personal demand ' + Number(r.personalDemandDaily || 0).toFixed(2) + '/day' +
+                        ' · Bazaar aggregate ' + (r.bazaarAverage ? money(r.bazaarAverage) : '—') +
+                        ' · Torn market ' + (r.marketPrice ? money(r.marketPrice) : '—') + ' · History ' + r.history.samples + '</div></details></div>' +
+                        '<div style="display:flex;gap:4px;align-items:flex-start;"><button data-intel-action="enrich" data-item="' + escapeHtml(r.id) + '" style="' + btn(true) + '">' + (r.enriched ? 'Refresh' : 'Analyze') + '</button>' +
+                        '<details><summary style="' + btn() + 'list-style:none;">•••</summary><div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;">' +
+                        sellerAction + '<button data-open-advanced="intel" style="' + btn() + '">Full Market Intel</button></div></details></div>' +
+                    '</div>';
+                }).join('')
+                : '<div style="font-size:11px;color:#888;">Smart Refresh to load opportunities.</div>'
+        );
 
-        const travelHtml = card(`<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><b>Best Travel Opportunities</b><button data-open-advanced="procurement" style="${btn()}">Travel Command</button></div>${travel.length?travel.map(r=>`<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>${escapeHtml(r.country)} · ${escapeHtml(r.itemName)}</b> ${travelRecommendationBadge(r.recommendation)}<br>Live stock ${Number(r.stock||0).toLocaleString()} · Profit/item ${money(r.profit)} · Risk-adjusted <b>${money(r.riskAdjustedProfitPerHour)}/hr</b></div>`).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">Travel Stock has not loaded yet.</div>'}`);
-        const scanners = card(`<details><summary style="cursor:pointer;font-weight:700;">More Scanners</summary><div style="margin-top:7px;"><div style="font-size:11px;"><b>Instant Trader Arbitrage:</b> ${instant.length} verified positive spread(s)</div>${instant.slice(0,5).map(r=>`<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">${escapeHtml(r.name)} · Buy ${money(r.buyPrice)} → Trader ${money(r.traderExit)} · ROI ${r.instantRoiPct.toFixed(1)}%</div>`).join('')}<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;"><button id="mm-intel-dollar" style="${btn()}">$1 Bazaar</button><button id="mm-intel-ranked" style="${btn()}">Ranked/Auction</button><button data-open-advanced="intel" style="${btn()}">Supplier Baskets + Full Scanners</button></div></div></details>`);
-        return controls + topHtml + travelHtml + scanners;
+        const dollarHtml = card(
+            '<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;flex-wrap:wrap;">' +
+                '<div><b>$1 Bazaar Watch</b><div style="font-size:10px;color:#888;">Showing up to 30 latest scanner rows. Verify the seller in Torn before opening; $1 eligibility/availability can change immediately.</div></div>' +
+                '<button id="mm-intel-dollar" style="' + btn() + '">Refresh $1 Feed</button>' +
+            '</div>' +
+            (dollars.length
+                ? dollars.map(d =>
+                    '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;font-size:10px;">' +
+                        '<div><b>' + escapeHtml(d.itemName) + '</b> × ' + Number(d.quantity || 0).toLocaleString() +
+                        ' · Market ' + money(d.marketPrice || 0) + ' · Value ' + money(d.totalValue || 0) +
+                        ' · ' + escapeHtml(freshnessAgeText(d.lastUpdated)) + '<br>' +
+                        escapeHtml(d.sellerName) + ' [' + escapeHtml(d.sellerId) + ']</div>' +
+                        '<button data-intel-action="verify-seller" data-item="' + escapeHtml(d.itemId) + '" data-seller="' + escapeHtml(d.sellerId) + '" style="' + btn() + '">Verify & Open</button>' +
+                    '</div>'
+                ).join('')
+                : '<div style="font-size:11px;color:#888;margin-top:6px;">No $1 scanner rows loaded.</div>')
+        );
+
+        const travelHtml = card(
+            '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><b>Best Travel Opportunities</b><button data-open-advanced="procurement" style="' + btn() + '">Travel Command</button></div>' +
+            (travel.length
+                ? travel.map(r =>
+                    '<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>' + escapeHtml(r.country) + ' · ' + escapeHtml(r.itemName) + '</b> ' + travelRecommendationBadge(r.recommendation) + '<br>' +
+                    'Live stock ' + Number(r.stock || 0).toLocaleString() + ' · Profit/item ' + money(r.profit) + ' · Risk-adjusted <b>' + money(r.riskAdjustedProfitPerHour) + '/hr</b></div>'
+                ).join('')
+                : '<div style="font-size:11px;color:#888;margin-top:5px;">Travel Stock has not loaded yet.</div>')
+        );
+
+        const scanners = card(
+            '<details><summary style="cursor:pointer;font-weight:700;">More Scanners</summary><div style="margin-top:7px;">' +
+            '<div style="font-size:11px;"><b>Instant Trader Arbitrage:</b> ' + instant.length + ' verified positive spread(s)</div>' +
+            instant.slice(0,8).map(r =>
+                '<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">' + escapeHtml(r.name) +
+                ' · Buy ' + money(r.buyPrice) + ' → Trader ' + money(r.traderExit) + ' · ROI ' + r.instantRoiPct.toFixed(1) + '%</div>'
+            ).join('') +
+            '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;"><button id="mm-intel-ranked" style="' + btn() + '">Ranked/Auction</button><button data-open-advanced="intel" style="' + btn() + '">Supplier Baskets + Full Scanners</button></div>' +
+            '</div></details>'
+        );
+
+        return controls + businessRulesCard(db, true) + topHtml + dollarHtml + travelHtml + scanners;
     }
 
     function reportsSimpleHtml(db) {
