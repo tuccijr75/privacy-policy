@@ -5205,17 +5205,19 @@
                 catch (error) { result.errors.push('Sales: ' + (error?.message || String(error))); }
 
                 let db = dbLoad();
-                if (force || isDataStale(db.procurement?.lastSyncAt, 10 * 60 * 1000)) {
-                    const r = await syncProcurement({ silent:true });
-                    result.procurement = Boolean(r?.ok);
-                    if (r?.error) result.errors.push('Procurement: ' + r.error);
-                }
-
-                db = dbLoad();
+                // Refresh global market candidates first so the procurement pass can
+                // spend its per-item market budget on the newest opportunity set.
                 if (force || isDataStale(db.marketIntel?.lastGlobalSyncAt, 3 * 60 * 1000)) {
                     const r = await syncMarketIntelligence(full, { silent:true });
                     result.market = Boolean(r?.ok);
                     if (r?.error) result.errors.push('Market: ' + r.error);
+                }
+
+                db = dbLoad();
+                if (force || isDataStale(db.procurement?.lastSyncAt, 10 * 60 * 1000)) {
+                    const r = await syncProcurement({ silent:true });
+                    result.procurement = Boolean(r?.ok);
+                    if (r?.error) result.errors.push('Procurement: ' + r.error);
                 }
             }
 
