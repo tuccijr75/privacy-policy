@@ -203,7 +203,7 @@
 
     function defaultDb() {
         return {
-            schema: 10,
+            schema: 11,
             customers: {},
             sales: {},
             coupons: {},
@@ -211,6 +211,20 @@
             subscribers: {},
             removedCustomers: {},
             notificationHistory: [],
+            businessRules: {
+                minRoiPct: 3,
+                minDemandPerDay: 0.15,
+                minPrice: 1000,
+                maxPrice: 1000000000,
+                minAbsoluteProfit: 5000,
+                minSellerCount: 2,
+                maxListingAgeSec: 180,
+                marketRefreshLimit: 30
+            },
+            syncState: {
+                lastUnifiedSyncAt: null,
+                lastUnifiedSyncError: null
+            },
             procurement: {
                 catalog: {},
                 bazaar: {},
@@ -226,7 +240,7 @@
                     targetDays: 5,
                     safetyDays: 2,
                     minMarginPct: 4,
-                    marketRefreshLimit: PROCUREMENT_MARKET_REFRESH_LIMIT,
+                    marketRefreshLimit: 30,
                     procurementBudget: 0,
                     acquisitionLookbackDays: PROCUREMENT_FIRST_ACQUISITION_LOOKBACK_DAYS
                 },
@@ -377,7 +391,7 @@
 
     function normalizeDb(input) {
         const db = input && typeof input === 'object' ? input : defaultDb();
-        db.schema = 10;
+        db.schema = 11;
         db.customers = db.customers && typeof db.customers === 'object' ? db.customers : {};
         db.sales = db.sales && typeof db.sales === 'object' ? db.sales : {};
         db.coupons = db.coupons && typeof db.coupons === 'object' ? db.coupons : {};
@@ -396,6 +410,32 @@
             record.reactivatedReason = record.reactivatedReason || null;
         }
         db.notificationHistory = Array.isArray(db.notificationHistory) ? db.notificationHistory : [];
+
+        const legacyProcurementSettings = db.procurement?.settings && typeof db.procurement.settings === 'object'
+            ? db.procurement.settings
+            : {};
+        const legacyMarketSettings = db.marketIntel?.settings && typeof db.marketIntel.settings === 'object'
+            ? db.marketIntel.settings
+            : {};
+        db.businessRules = db.businessRules && typeof db.businessRules === 'object' ? db.businessRules : {};
+        db.businessRules.minRoiPct = Math.max(0, Number(db.businessRules.minRoiPct ?? legacyMarketSettings.minRoiPct ?? 3));
+        db.businessRules.minDemandPerDay = Math.max(0, Number(db.businessRules.minDemandPerDay ?? 0.15));
+        db.businessRules.minPrice = Math.max(0, Number(db.businessRules.minPrice ?? legacyMarketSettings.minMarketPrice ?? 1000));
+        db.businessRules.maxPrice = Math.max(
+            db.businessRules.minPrice,
+            Number(db.businessRules.maxPrice ?? legacyMarketSettings.maxCandidatePrice ?? 1000000000)
+        );
+        db.businessRules.minAbsoluteProfit = Math.max(0, Number(db.businessRules.minAbsoluteProfit ?? legacyMarketSettings.minAbsoluteProfit ?? 5000));
+        db.businessRules.minSellerCount = Math.max(0, Math.round(Number(db.businessRules.minSellerCount ?? legacyMarketSettings.minBazaarSellers ?? 2)));
+        db.businessRules.maxListingAgeSec = Math.max(30, Math.round(Number(db.businessRules.maxListingAgeSec ?? legacyMarketSettings.freshnessWarnSeconds ?? 180)));
+        db.businessRules.marketRefreshLimit = Math.max(5, Math.min(100, Math.round(Number(
+            db.businessRules.marketRefreshLimit ?? legacyProcurementSettings.marketRefreshLimit ?? 30
+        ))));
+
+        db.syncState = db.syncState && typeof db.syncState === 'object' ? db.syncState : {};
+        db.syncState.lastUnifiedSyncAt = db.syncState.lastUnifiedSyncAt || null;
+        db.syncState.lastUnifiedSyncError = db.syncState.lastUnifiedSyncError || null;
+
         db.procurement = db.procurement && typeof db.procurement === 'object' ? db.procurement : {};
         db.procurement.catalog = db.procurement.catalog && typeof db.procurement.catalog === 'object' ? db.procurement.catalog : {};
         db.procurement.bazaar = db.procurement.bazaar && typeof db.procurement.bazaar === 'object' ? db.procurement.bazaar : {};
@@ -411,7 +451,7 @@
         db.procurement.settings.targetDays = Number(db.procurement.settings.targetDays || 5);
         db.procurement.settings.safetyDays = Number(db.procurement.settings.safetyDays || 2);
         db.procurement.settings.minMarginPct = Number(db.procurement.settings.minMarginPct || 4);
-        db.procurement.settings.marketRefreshLimit = Number(db.procurement.settings.marketRefreshLimit || PROCUREMENT_MARKET_REFRESH_LIMIT);
+        db.procurement.settings.marketRefreshLimit = db.businessRules.marketRefreshLimit;
         db.procurement.settings.procurementBudget = Number(db.procurement.settings.procurementBudget || 0);
         db.procurement.settings.acquisitionLookbackDays = Number(db.procurement.settings.acquisitionLookbackDays || PROCUREMENT_FIRST_ACQUISITION_LOOKBACK_DAYS);
         db.procurement.diagnostics = Array.isArray(db.procurement.diagnostics) ? db.procurement.diagnostics : [];
@@ -445,13 +485,13 @@
         db.marketIntel.suppliers = db.marketIntel.suppliers && typeof db.marketIntel.suppliers === 'object' ? db.marketIntel.suppliers : {};
         db.marketIntel.history = db.marketIntel.history && typeof db.marketIntel.history === 'object' ? db.marketIntel.history : {};
         db.marketIntel.settings = db.marketIntel.settings && typeof db.marketIntel.settings === 'object' ? db.marketIntel.settings : {};
-        db.marketIntel.settings.minRoiPct = Number(db.marketIntel.settings.minRoiPct ?? 3);
-        db.marketIntel.settings.minAbsoluteProfit = Number(db.marketIntel.settings.minAbsoluteProfit ?? 5000);
-        db.marketIntel.settings.minMarketPrice = Number(db.marketIntel.settings.minMarketPrice ?? 1000);
-        db.marketIntel.settings.maxCandidatePrice = Number(db.marketIntel.settings.maxCandidatePrice ?? 1000000000);
-        db.marketIntel.settings.minBazaarSellers = Number(db.marketIntel.settings.minBazaarSellers ?? 2);
+        db.marketIntel.settings.minRoiPct = db.businessRules.minRoiPct;
+        db.marketIntel.settings.minAbsoluteProfit = db.businessRules.minAbsoluteProfit;
+        db.marketIntel.settings.minMarketPrice = db.businessRules.minPrice;
+        db.marketIntel.settings.maxCandidatePrice = db.businessRules.maxPrice;
+        db.marketIntel.settings.minBazaarSellers = db.businessRules.minSellerCount;
         db.marketIntel.settings.maxEnrich = Number(db.marketIntel.settings.maxEnrich ?? WEAV3R_MAX_ENRICH);
-        db.marketIntel.settings.freshnessWarnSeconds = Number(db.marketIntel.settings.freshnessWarnSeconds ?? 180);
+        db.marketIntel.settings.freshnessWarnSeconds = db.businessRules.maxListingAgeSec;
         db.marketIntel.settings.bazaarExitHaircutPct = Number(db.marketIntel.settings.bazaarExitHaircutPct ?? 1);
         db.marketIntel.diagnostics = Array.isArray(db.marketIntel.diagnostics) ? db.marketIntel.diagnostics : [];
         db.travelIntel = db.travelIntel && typeof db.travelIntel === 'object' ? db.travelIntel : {};
@@ -4953,6 +4993,48 @@
         render();
     }
 
+
+    function businessRules(db = dbLoad()) {
+        const rules = db?.businessRules || {};
+        return {
+            minRoiPct: Math.max(0, Number(rules.minRoiPct || 0)),
+            minDemandPerDay: Math.max(0, Number(rules.minDemandPerDay || 0)),
+            minPrice: Math.max(0, Number(rules.minPrice || 0)),
+            maxPrice: Math.max(Math.max(0, Number(rules.minPrice || 0)), Number(rules.maxPrice || Number.MAX_SAFE_INTEGER)),
+            minAbsoluteProfit: Math.max(0, Number(rules.minAbsoluteProfit || 0)),
+            minSellerCount: Math.max(0, Math.round(Number(rules.minSellerCount || 0))),
+            maxListingAgeSec: Math.max(30, Math.round(Number(rules.maxListingAgeSec || 180))),
+            marketRefreshLimit: Math.max(5, Math.min(100, Math.round(Number(rules.marketRefreshLimit || 30))))
+        };
+    }
+
+    function saveBusinessRules(values) {
+        const db = dbLoad();
+        const next = { ...db.businessRules };
+        for (const [key, raw] of Object.entries(values || {})) {
+            const value = Number(raw);
+            if (Number.isFinite(value) && value >= 0) next[key] = value;
+        }
+        next.minPrice = Math.max(0, Number(next.minPrice || 0));
+        next.maxPrice = Math.max(next.minPrice, Number(next.maxPrice || Number.MAX_SAFE_INTEGER));
+        next.minSellerCount = Math.max(0, Math.round(Number(next.minSellerCount || 0)));
+        next.maxListingAgeSec = Math.max(30, Math.round(Number(next.maxListingAgeSec || 180)));
+        next.marketRefreshLimit = Math.max(5, Math.min(100, Math.round(Number(next.marketRefreshLimit || 30))));
+        db.businessRules = next;
+
+        // Compatibility mirrors: old modules remain functional while v7.4 moves all
+        // ranking/filtering logic to the CRM-wide business rules.
+        db.procurement.settings.marketRefreshLimit = next.marketRefreshLimit;
+        db.marketIntel.settings.minRoiPct = next.minRoiPct;
+        db.marketIntel.settings.minAbsoluteProfit = next.minAbsoluteProfit;
+        db.marketIntel.settings.minMarketPrice = next.minPrice;
+        db.marketIntel.settings.maxCandidatePrice = next.maxPrice;
+        db.marketIntel.settings.minBazaarSellers = next.minSellerCount;
+        db.marketIntel.settings.freshnessWarnSeconds = next.maxListingAgeSec;
+        db.operations.settings.strategyPreset = 'CUSTOM';
+        dbSave(db);
+        render();
+    }
 
     // ============================================================
     // OPERATIONS + ADVANCED ANALYTICS v6
