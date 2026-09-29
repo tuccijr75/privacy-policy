@@ -4863,7 +4863,7 @@
         const grouped = {};
 
         for (const [itemId, detail] of Object.entries(db.marketIntel.details)) {
-            for (const listing of detail?.organicListings || []) {
+            for (const listing of freshOrganicListings(db, detail?.organicListings || [])) {
                 if (!listing.sellerId) continue;
                 if (!grouped[listing.sellerId]) {
                     grouped[listing.sellerId] = {
@@ -9492,7 +9492,7 @@
                 Need ${q.need} · Available ${q.sourceQty||'—'} · Buy ${q.buyPrice?money(q.buyPrice):'—'} · Max ${q.buyTarget?money(q.buyTarget):'—'} · Exit ${q.exit?money(q.exit):'—'} · ROI ${Number(q.roiPct||0).toFixed(1)}%
                 ${q.sellerName?`<br>Seller ${escapeHtml(q.sellerName)} [${escapeHtml(q.sellerId)}]`:''}</div>
                 <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">
-                    ${q.sellerId?`<button data-ops-action="seller" data-seller="${q.sellerId}" style="${btn()}">Open Seller</button>`:''}
+                    ${q.sellerId?`<button data-ops-action="seller" data-item="${q.itemId}" data-seller="${q.sellerId}" style="${btn()}">Verify Seller</button>`:''}
                     <button id="mm-restock-log-purchase" style="${btn(true)}">Log Purchase</button>
                     <button id="mm-restock-skip" style="${btn()}">Skip / Next</button>
                 </div>`:'Session complete.'}
@@ -9703,11 +9703,10 @@
         const plans = buildListingPlan(db);
         const restockRows = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state));
         const listingRows = rows.filter(r => r.addToBazaar > 0);
-        const preset = String(db.operations.settings.strategyPreset || 'BALANCED');
+        const priceReviewRows = listingRows.filter(r => r.state === 'PRICE REVIEW');
+        const trustedPlans = Object.values(plans);
 
-        const presetBar = card(`<b>Strategy</b><div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">
-            ${[['BALANCED','Balanced'],['FAST_TURNOVER','Fast Turnover'],['HIGH_MARGIN','High Margin'],['LOW_RISK','Low Risk'],['CUSTOM','Custom']].map(([id,label]) => `<button data-strategy-preset="${id}" style="${btn(preset===id)}">${label}</button>`).join('')}
-        </div><div style="font-size:10px;color:#888;margin-top:5px;">Presets adjust existing thresholds only; Advanced mode still exposes every setting.</div>`);
+        const presetBar = businessRulesCard(db, true);
 
         const quickRestock = card(`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
             <div><b style="font-size:15px;">Quick Restock</b><div style="font-size:11px;color:#999;margin-top:2px;">${restockRows.length} item(s) need sourcing · Budget ${money(db.procurement.settings.procurementBudget || 0)}</div></div>
@@ -9717,7 +9716,7 @@
             const q = session.queue[session.activeIndex];
             return q ? `<div style="border-top:1px solid #333;margin-top:7px;padding-top:7px;font-size:12px;"><b>${escapeHtml(q.itemName)}</b><br>
                 Need ${q.need} · Buy ${q.buyPrice ? money(q.buyPrice) : '—'} · Max ${q.buyTarget ? money(q.buyTarget) : '—'} · Exit ${q.exit ? money(q.exit) : '—'} · ROI ${Number(q.roiPct||0).toFixed(1)}%
-                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">${q.sellerId?`<button data-ops-action="seller" data-seller="${q.sellerId}" style="${btn()}">Open Seller</button>`:''}<button id="mm-restock-log-purchase" style="${btn(true)}">Log Purchase</button><button id="mm-restock-skip" style="${btn()}">Skip</button></div>
+                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">${q.sellerId?`<button data-ops-action="seller" data-item="${q.itemId}" data-seller="${q.sellerId}" style="${btn()}">Verify Seller</button>`:''}<button id="mm-restock-log-purchase" style="${btn(true)}">Log Purchase</button><button id="mm-restock-skip" style="${btn()}">Skip</button></div>
             </div>` : '';
         })() : ''}
         ${restockRows.length ? restockRows.slice(0,12).map(r => `<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;">
@@ -9725,9 +9724,10 @@
             <details><summary style="${btn()}list-style:none;">•••</summary><div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;"><button data-proc-action="market" data-item="${r.id}" style="${btn()}">Refresh Market</button><button data-proc-action="log-buy" data-item="${r.id}" data-name="${escapeHtml(r.name)}" style="${btn()}">Log Buy</button><button data-open-advanced="inventory" style="${btn()}">Full Inventory</button></div></details>
         </div>`).join('') : `<div style="font-size:11px;color:#888;margin-top:7px;">No restock action required.</div>`}`);
 
-        const listing = card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">List Bazaar</b><div style="font-size:11px;color:#999;margin-top:2px;">${listingRows.length} SKU(s) ready to replenish listings</div></div><button id="mm-open-bazaar-add" style="${btn(true)}">Open Bazaar Add</button></div>
-            ${Object.values(plans).slice(0,15).map(p=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(p.itemName)}</b> · Add ${p.quantity} @ <b>${money(p.price)}</b> · Margin ${p.expectedMarginPct.toFixed(1)}%</div>`).join('') || `<div style="font-size:11px;color:#888;margin-top:7px;">No listing replenishment needed.</div>`}
-            <div style="font-size:10px;color:#777;margin-top:6px;">Fill Recommended Listings fills quantity and price only; you still submit manually.</div>`);
+        const listing = card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">List Bazaar</b><div style="font-size:11px;color:#999;margin-top:2px;">${trustedPlans.length} trusted recommendation(s) · ${priceReviewRows.length} price review(s)</div></div><button id="mm-open-bazaar-add" style="${btn(true)}">Open Bazaar Add</button></div>
+            ${trustedPlans.slice(0,20).map(p=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(p.itemName)}</b> · Add ${p.quantity} @ <b>${money(p.price)}</b> · Margin ${p.expectedMarginPct.toFixed(1)}%</div>`).join('') || `<div style="font-size:11px;color:#888;margin-top:7px;">No trusted listing recommendation currently available.</div>`}
+            ${priceReviewRows.slice(0,15).map(r=>`<div style="font-size:10px;border-top:1px solid #303030;padding:5px 0;color:#ffd18a;"><b>${escapeHtml(r.name)}</b> · PRICE REVIEW · ${escapeHtml(r.pricingDecision?.source || 'No trusted market evidence')} · confidence ${Number(r.pricingDecision?.confidence||0).toFixed(0)}%</div>`).join('')}
+            <div style="font-size:10px;color:#777;margin-top:6px;">Only TRUSTED price decisions enter the listing plan. Anything else stays in Price Review until stronger evidence is available.</div>`);
 
         return presetBar + quickRestock + listing + `<div style="display:flex;gap:5px;flex-wrap:wrap;"><button data-open-advanced="ops" style="${btn()}">Full Operations</button><button data-open-advanced="inventory" style="${btn()}">Inventory Detail</button><button data-open-advanced="procurement" style="${btn()}">Procurement Detail</button></div>`;
     }
