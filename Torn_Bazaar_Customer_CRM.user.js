@@ -137,6 +137,7 @@
     let statusText = 'Ready.';
     let syncRunning = false;
     let procurementRunning = false;
+    let unifiedSyncRunning = false;
     let factionInventoryRunning = false;
     let fatal = false;
     let lastHref = location.href;
@@ -2822,11 +2823,13 @@
         return { budget, remaining, plan };
     }
 
-    async function syncProcurement() {
-        if (procurementRunning || !getApiKey()) return;
+    async function syncProcurement({ silent = false } = {}) {
+        if (procurementRunning || !getApiKey()) return { skipped: true };
         procurementRunning = true;
-        statusText = 'Syncing native procurement data…';
-        render();
+        if (!silent) {
+            statusText = 'Syncing native procurement data…';
+            render();
+        }
 
         try {
             await refreshProcurementCatalog(false);
@@ -2895,16 +2898,20 @@
             }
 
             db = dbLoad();
-            statusText =
-                `Procurement sync complete: ${Object.keys(db.procurement.bazaar).length} Bazaar SKUs, ` +
-                `${marketCount} market snapshots, ${db.procurement.acquisitions.length} acquisition lots.`;
+            if (!silent) {
+                statusText =
+                    `Procurement sync complete: ${Object.keys(db.procurement.bazaar).length} Bazaar SKUs, ` +
+                    `${marketCount} market snapshots, ${db.procurement.acquisitions.length} acquisition lots.`;
+            }
             try { evaluateOpportunityAlerts(db, true); dbSave(db); } catch {}
             try { notifyOperationalAlerts(db); } catch {}
+            return { ok: true, marketCount, acquisitionLots: db.procurement.acquisitions.length };
         } catch (error) {
-            statusText = `Procurement sync failed: ${error?.message || String(error)}`;
+            if (!silent) statusText = `Procurement sync failed: ${error?.message || String(error)}`;
+            return { ok: false, error: error?.message || String(error) };
         } finally {
             procurementRunning = false;
-            render();
+            if (!silent) render();
         }
     }
 
@@ -5115,11 +5122,13 @@
         return { requested: rows.length, ok };
     }
 
-    async function syncMarketIntelligence(full = false) {
-        if (procurementRunning) return;
+    async function syncMarketIntelligence(full = false, { silent = false } = {}) {
+        if (procurementRunning) return { skipped: true };
         procurementRunning = true;
-        statusText = full ? 'Running full global market-intelligence sync…' : 'Refreshing TornW3B global marketplace…';
-        render();
+        if (!silent) {
+            statusText = full ? 'Running full global market-intelligence sync…' : 'Refreshing TornW3B global marketplace…';
+            render();
+        }
         try {
             await syncWeavMarketplace(true);
             const enrichment = await enrichTopGlobalOpportunities();
@@ -5127,16 +5136,114 @@
                 await syncWeavDollarBazaars();
                 await syncWeavRanked();
             }
-            statusText = full
-                ? `Market intelligence complete: ${Object.keys(dbLoad().marketIntel.marketplace).length.toLocaleString()} items, ${enrichment.ok}/${enrichment.requested} enriched.`
-                : `Global market refreshed: ${Object.keys(dbLoad().marketIntel.marketplace).length.toLocaleString()} items, ${enrichment.ok}/${enrichment.requested} enriched.`;
+            if (!silent) {
+                statusText = full
+                    ? `Market intelligence complete: ${Object.keys(dbLoad().marketIntel.marketplace).length.toLocaleString()} items, ${enrichment.ok}/${enrichment.requested} enriched.`
+                    : `Global market refreshed: ${Object.keys(dbLoad().marketIntel.marketplace).length.toLocaleString()} items, ${enrichment.ok}/${enrichment.requested} enriched.`;
+            }
+            return { ok: true, enriched: enrichment.ok, requested: enrichment.requested };
         } catch (error) {
-            statusText = `Market intelligence failed: ${error?.message || String(error)}`;
+            if (!silent) statusText = `Market intelligence failed: ${error?.message || String(error)}`;
+            return { ok: false, error: error?.message || String(error) };
         } finally {
             procurementRunning = false;
-            render();
+            if (!silent) render();
         }
     }
+
+    function isDataStale(value, maxAgeMs) {
+        const at = Date.parse(value || '') || 0;
+        return !at || Date.now() - at > maxAgeMs;
+    }
+
+    function businessDataFreshness(db = dbLoad()) {
+        return {
+            salesAt: getSyncState().lastSuccess ? new Date(getSyncState().lastSuccess).toISOString() : null,
+            procurementAt: db.procurement?.lastSyncAt || null,
+            marketAt: db.marketIntel?.lastGlobalSyncAt || null,
+            travelAt: db.travelIntel?.lastSyncAt || null,
+            factionAt: db.factionInventory?.lastSyncAt || null
+        };
+    }
+
+    async function syncBusinessData({ silent = false, force = false, full = false } = {}) {
+        if (unifiedSyncRunning) return { skipped: true, reason: 'running' };
+        unifiedSyncRunning = true;
+        if (!silent) {
+            statusText = 'Refreshing business data…';
+            render();
+        }
+
+        const result = { sales:false, procurement:false, market:false, travel:false, faction:false, errors:[] };
+        try {
+            if (getApiKey()) {
+                try { await sync({ silent:true }); result.sales = true; }
+                catch (error) { result.errors.push('Sales: ' + (error?.message || String(error))); }
+
+                let db = dbLoad();
+                if (force || isDataStale(db.procurement?.lastSyncAt, 10 * 60 * 1000)) {
+                    const r = await syncProcurement({ silent:true });
+                    result.procurement = Boolean(r?.ok);
+                    if (r?.error) result.errors.push('Procurement: ' + r.error);
+                }
+
+                db = dbLoad();
+                if (force || isDataStale(db.marketIntel?.lastGlobalSyncAt, 3 * 60 * 1000)) {
+                    const r = await syncMarketIntelligence(full, { silent:true });
+                    result.market = Boolean(r?.ok);
+                    if (r?.error) result.errors.push('Market: ' + r.error);
+                }
+            }
+
+            try {
+                const db = dbLoad();
+                if (force || isDataStale(db.travelIntel?.lastSyncAt, 10 * 60 * 1000)) {
+                    await syncTravelStock({ silent:true, force:false });
+                    result.travel = true;
+                }
+            } catch (error) {
+                result.errors.push('Travel: ' + (error?.message || String(error)));
+            }
+
+            if (getFactionApiKey()) {
+                try {
+                    const db = dbLoad();
+                    if (force || isDataStale(db.factionInventory?.lastSyncAt, FACTION_INVENTORY_SYNC_INTERVAL_MS)) {
+                        const r = await syncFactionInventory({ silent:true, force });
+                        result.faction = !r?.skipped;
+                    }
+                } catch (error) {
+                    result.errors.push('Faction: ' + (error?.message || String(error)));
+                }
+            }
+
+            const db = dbLoad();
+            db.syncState.lastUnifiedSyncAt = nowIso();
+            db.syncState.lastUnifiedSyncError = result.errors.length ? result.errors.join('; ') : null;
+            dbSave(db);
+
+            if (!silent) {
+                const refreshed = ['sales','procurement','market','travel','faction'].filter(key => result[key]);
+                statusText = result.errors.length
+                    ? `Refresh complete with ${result.errors.length} warning(s): ${result.errors.join('; ')}`
+                    : `Business data ready: ${refreshed.length ? refreshed.join(', ') : 'cached data still fresh'}.`;
+                render();
+            }
+            return result;
+        } finally {
+            unifiedSyncRunning = false;
+        }
+    }
+
+    function ensureDataForTab(tab) {
+        if (!['home','stock','deals','reports'].includes(String(tab || ''))) return;
+        setTimeout(() => {
+            syncBusinessData({ silent:true, force:false }).then(() => render()).catch(error => {
+                console.warn('[MM CRM] Smart refresh failed', error);
+            });
+        }, 0);
+    }
+
 
     function saveIntelSettings(values) {
         const db = dbLoad();
@@ -9914,6 +10021,7 @@
             GM_setValue(UI_MODE_KEY, 'simple');
             activeTab = button.dataset.simpleGo || 'home';
             render();
+            ensureDataForTab(activeTab);
         }));
 
         root.querySelectorAll('[data-open-advanced]').forEach(button => button.addEventListener('click', () => {
@@ -9929,7 +10037,11 @@
 
         root.querySelector('#mm-minimize')?.addEventListener('click', minimizeCRM);
         root.querySelector('#mm-close')?.addEventListener('click', minimizeCRM);
-        root.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => { activeTab = b.dataset.tab; render(); }));
+        root.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click', () => {
+            activeTab = b.dataset.tab;
+            render();
+            if (simpleMode) ensureDataForTab(activeTab);
+        }));
         root.querySelector('#mm-start-restock-session')?.addEventListener('click', () => {
             try { startRestockSession(); statusText='Restock session started.'; render(); }
             catch(error){statusText=`Could not start restock session: ${error?.message||String(error)}`;render();}
@@ -10614,7 +10726,7 @@
                 render();
                 sync({ silent: true });
                 setTimeout(() => repairRecentSalesCoverage({ lookbackMs: FIRST_SYNC_LOOKBACK_MS, silent: true }).catch(error => console.warn('[MM CRM] Recent sales repair failed', error)), 1800);
-                setTimeout(syncProcurement, 2500);
+                setTimeout(() => syncBusinessData({ silent:true, force:false }).catch(error => console.warn('[MM CRM] Smart startup refresh failed', error)), 2500);
             }, 1000);
         } else {
             statusText = 'Torn API key missing. Sales/customer sync is paused. Open More → Settings, paste your Torn API key, and Save.';
