@@ -5274,6 +5274,7 @@
         const db = dbLoad();
         const next = { ...db.businessRules };
         for (const [key, raw] of Object.entries(values || {})) {
+            if (raw == null || String(raw).trim() === '') continue;
             const value = Number(raw);
             if (Number.isFinite(value) && value >= 0) next[key] = value;
         }
@@ -9264,16 +9265,17 @@
     function marketIntelHtml(db) {
         const intel = db.marketIntel;
         const settings = intel.settings;
+        const rules = businessRules(db);
         const global = globalOpportunityRows(db);
         const restocks = restockCommandRows(db);
         const instant = instantArbitrageRows(db);
         const baskets = sellerBasketRows(db).slice(0, 15);
         const suppliers = supplierIntelRows(db).slice(0, 15);
-        const dollars = intel.dollarItems.slice().sort((a,b) => b.totalValue - a.totalValue).slice(0, 30);
+        const dollars = intel.dollarItems.slice().sort((a,b) => b.totalValue - a.totalValue).slice(0, 100);
         const ranked = intel.ranked.slice().sort((a,b) => a.price - b.price).slice(0, 20);
         const auctions = intel.auctions.slice().sort((a,b) => (a.endsAtUnix || Infinity) - (b.endsAtUnix || Infinity)).slice(0, 20);
         const capital = globalCapitalPlan(db);
-        const freshness = freshnessInfo(intel.marketplaceGeneratedAt, settings.freshnessWarnSeconds);
+        const freshness = freshnessInfo(intel.marketplaceGeneratedAt, rules.maxListingAgeSec);
 
         const controls = card(`
             <b>Global Market Intelligence</b>
@@ -9282,18 +9284,24 @@
                 freshness ${escapeHtml(freshness.label)} · API cap documented at 100 calls/min.
                 Sponsored rows are retained for visibility but organic listings/traders are independently ranked.
             </div>
-            <div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;">
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;">
                 <label style="font-size:10px;color:#aaa;">Min ROI %
-                    <input id="mm-intel-min-roi" type="number" step="0.1" min="0" value="${settings.minRoiPct}" style="${inputCss()}width:100%;">
+                    <input id="mm-intel-min-roi" type="number" step="0.1" min="0" value="${rules.minRoiPct}" style="${inputCss()}width:100%;">
                 </label>
-                <label style="font-size:10px;color:#aaa;">Min Profit
-                    <input id="mm-intel-min-profit" type="number" min="0" value="${settings.minAbsoluteProfit}" style="${inputCss()}width:100%;">
+                <label style="font-size:10px;color:#aaa;">Min Demand / day
+                    <input id="mm-intel-min-demand" type="number" step="0.01" min="0" value="${rules.minDemandPerDay}" style="${inputCss()}width:100%;">
                 </label>
-                <label style="font-size:10px;color:#aaa;">Min Market $
-                    <input id="mm-intel-min-market" type="number" min="0" value="${settings.minMarketPrice}" style="${inputCss()}width:100%;">
+                <label style="font-size:10px;color:#aaa;">Min Buy $
+                    <input id="mm-intel-min-market" type="number" min="0" value="${rules.minPrice}" style="${inputCss()}width:100%;">
+                </label>
+                <label style="font-size:10px;color:#aaa;">Max Buy $
+                    <input id="mm-intel-max-market" type="number" min="0" value="${rules.maxPrice}" style="${inputCss()}width:100%;">
+                </label>
+                <label style="font-size:10px;color:#aaa;">Min Profit / unit
+                    <input id="mm-intel-min-profit" type="number" min="0" value="${rules.minAbsoluteProfit}" style="${inputCss()}width:100%;">
                 </label>
                 <label style="font-size:10px;color:#aaa;">Min Sellers
-                    <input id="mm-intel-min-sellers" type="number" min="0" value="${settings.minBazaarSellers}" style="${inputCss()}width:100%;">
+                    <input id="mm-intel-min-sellers" type="number" min="0" value="${rules.minSellerCount}" style="${inputCss()}width:100%;">
                 </label>
                 <label style="font-size:10px;color:#aaa;">Enrich Top
                     <input id="mm-intel-max-enrich" type="number" min="1" max="15" value="${settings.maxEnrich}" style="${inputCss()}width:100%;">
@@ -9325,7 +9333,7 @@
                     </div>
                     <div style="display:flex;gap:4px;align-items:flex-start;flex-wrap:wrap;">
                         <button data-intel-action="enrich" data-item="${r.id}" style="${btn()}">Verify</button>
-                        ${r.sellerId ? `<button data-intel-action="profile" data-seller="${r.sellerId}" style="${btn()}">Seller</button>` : ''}
+                        ${r.sellerId ? `<button data-intel-action="verify-seller" data-item="${r.id}" data-seller="${r.sellerId}" style="${btn()}">Verify Seller</button>` : ''}
                         <button data-proc-action="log-buy" data-item="${r.id}" data-name="${escapeHtml(r.name)}" style="${btn()}">Log Buy</button>
                     </div>
                 </div>
@@ -9347,7 +9355,7 @@
                     </div>
                     <div style="display:flex;gap:4px;align-items:flex-start;flex-wrap:wrap;">
                         <button data-intel-action="enrich" data-item="${r.id}" style="${btn(r.enriched)}">${r.enriched ? 'Refresh' : 'Analyze'}</button>
-                        ${r.sellerId ? `<button data-intel-action="profile" data-seller="${r.sellerId}" style="${btn()}">Seller</button>` : ''}
+                        ${r.sellerId ? `<button data-intel-action="verify-seller" data-item="${r.id}" data-seller="${r.sellerId}" style="${btn()}">Verify Seller</button>` : ''}
                     </div>
                 </div>
             `).join('') : `<div style="font-size:11px;color:#888;">Run Refresh Global Market to populate opportunities.</div>`}
@@ -9406,7 +9414,7 @@
                 return `<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;font-size:11px;">
                     <div><b>${escapeHtml(d.itemName)}</b> × ${d.quantity} · Market ${money(d.marketPrice)} · Total ${money(d.totalValue)} · Age ${Number.isFinite(f.ageSeconds) ? Math.round(f.ageSeconds) + 's' : '—'}<br>
                     ${escapeHtml(d.sellerName)} [${escapeHtml(d.sellerId)}]</div>
-                    <button data-intel-action="profile" data-seller="${d.sellerId}" style="${btn()}">Seller</button>
+                    <button data-intel-action="verify-seller" data-item="${d.itemId}" data-seller="${d.sellerId}" style="${btn()}">Verify & Open</button>
                 </div>`;
             }).join('') : `<div style="font-size:11px;color:#888;">Run $1 Scanner or Full Intelligence Sync.</div>`}
         `);
