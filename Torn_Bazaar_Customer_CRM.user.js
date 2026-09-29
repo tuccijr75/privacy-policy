@@ -2332,8 +2332,17 @@
         }
 
         try {
-            const data = await apiRequest(`/market/${encodeURIComponent(id)}/bazaar?limit=25`);
-            bazaarRows = genericMarketListings(data, 'bazaar');
+            // Torn /market/{id}/bazaar is a seller directory, not a priced listing feed.
+            // Bazaar price/quantity therefore comes only from fresh seller-level TornW3B
+            // observations; Torn is used separately to verify seller presence.
+            const localDb = dbLoad();
+            bazaarRows = freshOrganicListings(
+                localDb,
+                localDb.marketIntel?.details?.[id]?.organicListings || []
+            ).slice(0, 25).map(row => ({
+                price: Number(row.price || 0),
+                quantity: Math.max(1, Number(row.quantity || 1))
+            }));
         } catch (error) {
             bazaarError = error;
         }
@@ -4952,29 +4961,84 @@
         return { budget, remaining, plan };
     }
 
+    async function verifyBazaarSellerForItem(itemId, sellerId) {
+        const id = asId(itemId);
+        const seller = asId(sellerId);
+        if (!/^\d+$/.test(id) || !/^\d+$/.test(seller)) {
+            return { verified:false, reason:'invalid-id' };
+        }
+        const url = new URL(API_BASE + '/market/' + encodeURIComponent(id) + '/bazaar');
+        // Unique timestamp avoids a stale request-specific service-cache response.
+        url.searchParams.set('timestamp', String(Math.floor(Date.now() / 1000)));
+        const data = await apiRequest(url.toString());
+        const rows = Array.isArray(data?.bazaar?.specialized) ? data.bazaar.specialized : [];
+        const found = rows.find(row => asId(row?.id) === seller && row?.is_open !== false);
+        return {
+            verified: Boolean(found),
+            reason: found ? 'present' : 'not-present',
+            sellerName: String(found?.name || '')
+        };
+    }
+
+    async function verifyAndOpenBazaarSeller(itemId, sellerId) {
+        statusText = 'Verifying seller against Torn…';
+        render();
+        try {
+            const result = await verifyBazaarSellerForItem(itemId, sellerId);
+            if (!result.verified) {
+                statusText = 'Listing is no longer verifiable in Torn. It was not opened.';
+                render();
+                return false;
+            }
+            statusText = 'Seller verified in Torn. Opening profile…';
+            render();
+            navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(sellerId)}`);
+            return true;
+        } catch (error) {
+            statusText = 'Seller verification failed: ' + (error?.message || String(error));
+            render();
+            return false;
+        }
+    }
+
+    async function fetchWeavPaged(path, key, maxPages = 5, limit = 100) {
+        const rows = [];
+        for (let page = 1; page <= maxPages; page++) {
+            const data = await weav3rRequest(path, { page, limit });
+            const batch = Array.isArray(data?.[key]) ? data[key] : [];
+            rows.push(...batch);
+            if (batch.length < limit) break;
+        }
+        return rows;
+    }
+
+
     async function syncWeavDollarBazaars() {
-        const [itemsData, bazaarsData] = await Promise.all([
-            weav3rRequest('/dollar-bazaars/items', { page: 1, limit: 100 }),
-            weav3rRequest('/dollar-bazaars/bazaars', { page: 1, limit: 100 })
+        const [itemRows, bazaarRows] = await Promise.all([
+            fetchWeavPaged('/dollar-bazaars/items', 'items', 5, 100),
+            fetchWeavPaged('/dollar-bazaars/bazaars', 'bazaars', 5, 100)
         ]);
         const db = dbLoad();
-        db.marketIntel.dollarItems = (Array.isArray(itemsData?.items) ? itemsData.items : []).map(row => ({
-            itemId: asId(row?.itemId),
-            itemName: String(row?.itemName || ''),
-            itemType: String(row?.itemType || ''),
-            sellerId: asId(row?.playerId),
-            sellerName: String(row?.sellerName || ''),
-            quantity: Number(row?.quantity || 0),
-            marketPrice: Number(row?.marketPrice || 0),
-            totalValue: Number(row?.totalValue || 0),
-            lastUpdated: row?.lastUpdated || null
-        }));
-        db.marketIntel.dollarBazaars = (Array.isArray(bazaarsData?.bazaars) ? bazaarsData.bazaars : []).map(row => ({
-            sellerId: asId(row?.playerId),
-            sellerName: String(row?.name || ''),
-            itemCount: Number(row?.itemCount || 0),
-            totalMarketValue: Number(row?.totalMarketValue || 0)
-        }));
+        db.marketIntel.dollarItems = itemRows.map(row => ({
+            itemId: asId(row?.itemId ?? row?.item_id),
+            itemName: String(row?.itemName ?? row?.item_name ?? ''),
+            itemType: String(row?.itemType ?? row?.item_type ?? ''),
+            sellerId: asId(row?.playerId ?? row?.player_id ?? row?.sellerId ?? row?.seller_id),
+            sellerName: String(row?.sellerName ?? row?.seller_name ?? row?.playerName ?? row?.player_name ?? ''),
+            quantity: Math.max(0, Number(row?.quantity ?? row?.qty ?? 0)),
+            marketPrice: Math.max(0, Number(row?.marketPrice ?? row?.market_price ?? 0)),
+            totalValue: Math.max(0, Number(row?.totalValue ?? row?.total_value ?? 0)),
+            lastUpdated: row?.lastUpdated ?? row?.last_updated ?? row?.last_checked ?? null
+        })).filter(row => row.itemId && row.sellerId && row.quantity > 0)
+          .sort((a,b) => b.totalValue - a.totalValue || b.marketPrice - a.marketPrice);
+
+        db.marketIntel.dollarBazaars = bazaarRows.map(row => ({
+            sellerId: asId(row?.playerId ?? row?.player_id ?? row?.sellerId ?? row?.seller_id),
+            sellerName: String(row?.name ?? row?.sellerName ?? row?.seller_name ?? row?.playerName ?? row?.player_name ?? ''),
+            itemCount: Math.max(0, Number(row?.itemCount ?? row?.item_count ?? 0)),
+            totalMarketValue: Math.max(0, Number(row?.totalMarketValue ?? row?.total_market_value ?? 0))
+        })).filter(row => row.sellerId);
+
         db.marketIntel.lastDollarSyncAt = nowIso();
         dbSave(db);
         return db.marketIntel.dollarItems;
