@@ -8720,7 +8720,11 @@
     }
 
     function tabsHtml() {
-        const simpleTabs = [['home','Home'],['stock','Stock'],['faction','Faction'],['deals','Deals'],['customers','Customers'],['more','More']];
+        const db = dbLoad();
+        const factionReady = Boolean(getFactionApiKey()) || Object.keys(db.factionInventory?.current || {}).length > 0;
+        const simpleTabs = [['home','Home'],['stock','Stock'],['deals','Deals'],['customers','Customers'],['reports','Reports']];
+        if (factionReady) simpleTabs.push(['faction','Faction']);
+        simpleTabs.push(['more','More']);
         const advancedTabs = [['ops','Operations'],['customers','Customers'],['inventory','Inventory'],['faction','Faction Inv'],['procurement','Procure'],['intel','Market Intel'],['analytics','Analytics'],['coupons','Coupons'],['subscribers','Restock'],['refunds','Refunds'],['sales','Sales'],['settings','Settings']];
         const tabs = simpleMode ? simpleTabs : advancedTabs;
         return `<div style="display:flex;gap:5px;flex-wrap:wrap;margin:8px 0;align-items:center;">
