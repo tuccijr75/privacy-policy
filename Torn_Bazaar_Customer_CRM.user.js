@@ -9733,6 +9733,71 @@
         return controls + topHtml + travelHtml + scanners;
     }
 
+    function reportsSimpleHtml(db) {
+        const rows = advancedInventoryRows(db);
+        const brief = ownerBriefing(db, rows);
+        const grossCogs = rows.reduce((sum, r) => sum + Number(r.realized?.cogs || 0), 0);
+        const grossRevenue = rows.reduce((sum, r) => sum + Number(r.realized?.revenue || 0), 0);
+        const inventoryCost = rows.reduce((sum, r) => sum + Number(r.realized?.ledger?.remainingCost || 0), 0);
+        const refunds = Object.values(db.refunds || {}).reduce((sum, r) => sum + Number(r.amount || 0), 0);
+
+        const demand = rows.slice()
+            .filter(r => Number(r.sold30d || 0) > 0)
+            .sort((a,b) => Number(b.daily || 0) - Number(a.daily || 0))
+            .slice(0, 12);
+
+        const roi = rows.slice()
+            .filter(r => Number(r.realized?.cogs || 0) > 0)
+            .map(r => ({ ...r, realizedRoiPct: Number(r.realized.grossProfit || 0) / Math.max(1, Number(r.realized.cogs || 0)) * 100 }))
+            .sort((a,b) => b.realizedRoiPct - a.realizedRoiPct)
+            .slice(0, 12);
+
+        const summary =
+            '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">' +
+                simpleMetric('30d Revenue', money(grossRevenue)) +
+                simpleMetric('30d COGS', money(grossCogs)) +
+                simpleMetric('30d Gross Profit', money(brief.grossProfit)) +
+                simpleMetric('Inventory Cost', money(inventoryCost)) +
+            '</div>';
+
+        const demandHtml = card(
+            '<b>Highest Personal Demand</b>' +
+            '<div style="font-size:10px;color:#888;margin:3px 0 5px;">Ranked from your own Bazaar sales. These observations increasingly drive procurement as your sample grows.</div>' +
+            (demand.length
+                ? demand.map((r,i) =>
+                    '<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>#' + (i+1) + ' ' + escapeHtml(r.name) + '</b> · ' +
+                    Number(r.daily || 0).toFixed(2) + '/day · 7d ' + Number(r.sold7d || 0) + ' · 30d ' + Number(r.sold30d || 0) +
+                    ' · Gross ' + money(r.realized?.grossProfit || 0) + '</div>'
+                ).join('')
+                : '<div style="font-size:11px;color:#888;">More sales history is needed.</div>')
+        );
+
+        const roiHtml = card(
+            '<b>Highest Realized ROI</b>' +
+            '<div style="font-size:10px;color:#888;margin:3px 0 5px;">Uses matched FIFO purchase cost against your realized 30-day Bazaar sales.</div>' +
+            (roi.length
+                ? roi.map((r,i) =>
+                    '<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>#' + (i+1) + ' ' + escapeHtml(r.name) + '</b> · ROI <b>' +
+                    r.realizedRoiPct.toFixed(1) + '%</b> · Revenue ' + money(r.realized?.revenue || 0) +
+                    ' · Gross ' + money(r.realized?.grossProfit || 0) + '</div>'
+                ).join('')
+                : '<div style="font-size:11px;color:#888;">Matched purchase-cost history is needed.</div>')
+        );
+
+        const health = card(
+            '<b>Financial Health</b>' +
+            '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:6px;">' +
+                simpleMetric('Dead Capital', money(brief.deadCapital)) +
+                simpleMetric('Lost Profit Est.', money(brief.lostProfit)) +
+                simpleMetric('Refunds/Cashback', money(refunds)) +
+                simpleMetric('Stockouts', String(brief.stockouts)) +
+            '</div>' +
+            '<div style="margin-top:7px;"><button data-open-advanced="analytics" style="' + btn() + '">Deep Analytics</button></div>'
+        );
+
+        return summary + businessRulesCard(db, false) + demandHtml + roiHtml + health;
+    }
+
     function customersSimpleHtml(db) {
         const rfm = customerRfmRows(db);
         // Keep the simple Customers tab fast: rank by tracked spend here instead of
@@ -9752,7 +9817,7 @@
     function moreSimpleHtml(db) {
         const brief = ownerBriefing(db);
         const preset = String(db.operations.settings.strategyPreset || 'BALANCED').replaceAll('_',' ');
-        return card(`<b>More</b><div style="font-size:11px;color:#999;margin:4px 0 8px;">Advanced reports and configuration remain fully available. Current strategy: <b>${escapeHtml(preset)}</b>.</div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;"><button data-open-advanced="analytics" style="${btn()}">Analytics & Reports</button><button data-open-advanced="sales" style="${btn()}">Sales Ledger</button><button data-open-advanced="inventory" style="${btn()}">Full Inventory</button><button data-open-advanced="procurement" style="${btn()}">Full Procurement</button><button data-open-advanced="intel" style="${btn()}">Full Market Intel</button><button data-open-advanced="subscribers" style="${btn()}">Restock Subscribers</button><button data-open-advanced="coupons" style="${btn()}">Coupons</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button><button data-open-advanced="ops" style="${btn()}">Operations Detail</button><button data-open-advanced="settings" style="${btn(true)}">Settings & Diagnostics</button></div><div style="border-top:1px solid #333;margin-top:9px;padding-top:7px;font-size:11px;color:#aaa;">Revenue ${money(brief.revenue)} · Gross profit ${money(brief.grossProfit)} · Dead capital ${money(brief.deadCapital)} · Lost profit ${money(brief.lostProfit)}</div>`);
+        return card(`<b>More</b><div style="font-size:11px;color:#999;margin:4px 0 8px;">Advanced reports and configuration remain fully available. Current strategy: <b>${escapeHtml(preset)}</b>.</div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;"><button data-simple-go="reports" style="${btn()}">Reports & Business Rules</button><button data-open-advanced="faction" style="${btn()}">Faction Inventory</button><button data-open-advanced="analytics" style="${btn()}">Analytics & Reports</button><button data-open-advanced="sales" style="${btn()}">Sales Ledger</button><button data-open-advanced="inventory" style="${btn()}">Full Inventory</button><button data-open-advanced="procurement" style="${btn()}">Full Procurement</button><button data-open-advanced="intel" style="${btn()}">Full Market Intel</button><button data-open-advanced="subscribers" style="${btn()}">Restock Subscribers</button><button data-open-advanced="coupons" style="${btn()}">Coupons</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button><button data-open-advanced="ops" style="${btn()}">Operations Detail</button><button data-open-advanced="settings" style="${btn(true)}">Settings & Diagnostics</button></div><div style="border-top:1px solid #333;margin-top:9px;padding-top:7px;font-size:11px;color:#aaa;">Revenue ${money(brief.revenue)} · Gross profit ${money(brief.grossProfit)} · Dead capital ${money(brief.deadCapital)} · Lost profit ${money(brief.lostProfit)}</div>`);
     }
 
 
@@ -9967,6 +10032,7 @@
             if (activeTab === 'faction') return factionInventoryHtml(db);
             if (activeTab === 'deals') return dealsSimpleHtml(db);
             if (activeTab === 'customers') return customersSimpleHtml(db);
+            if (activeTab === 'reports') return reportsSimpleHtml(db);
             if (activeTab === 'more') return moreSimpleHtml(db);
         }
         if (activeTab === 'ops') return operationsHtml(db);
