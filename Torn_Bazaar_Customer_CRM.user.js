@@ -220,7 +220,8 @@
                 minAbsoluteProfit: 5000,
                 minSellerCount: 2,
                 maxListingAgeSec: 180,
-                marketRefreshLimit: 30
+                marketRefreshLimit: 30,
+                updatedAt: null
             },
             syncState: {
                 lastUnifiedSyncAt: null,
@@ -432,6 +433,7 @@
         db.businessRules.marketRefreshLimit = Math.max(5, Math.min(100, Math.round(Number(
             db.businessRules.marketRefreshLimit ?? legacyProcurementSettings.marketRefreshLimit ?? 30
         ))));
+        db.businessRules.updatedAt = db.businessRules.updatedAt || null;
 
         db.syncState = db.syncState && typeof db.syncState === 'object' ? db.syncState : {};
         db.syncState.lastUnifiedSyncAt = db.syncState.lastUnifiedSyncAt || null;
@@ -852,6 +854,23 @@
                 merged.travelIntel.forecastLedger
             );
         }
+
+        // CRM-wide business rules are user-authored configuration. Preserve the
+        // most recently edited rules when stale Torn tabs save in parallel.
+        const latestRulesAt = Date.parse(latest.businessRules?.updatedAt || '') || 0;
+        const incomingRulesAt = Date.parse(merged.businessRules?.updatedAt || '') || 0;
+        if (latestRulesAt > incomingRulesAt) {
+            merged.businessRules = deepClone(latest.businessRules || merged.businessRules);
+        }
+
+        // Unified refresh metadata is operational state. Keep the newest completed
+        // refresh rather than allowing a stale tab to move it backward.
+        const latestUnifiedAt = Date.parse(latest.syncState?.lastUnifiedSyncAt || '') || 0;
+        const incomingUnifiedAt = Date.parse(merged.syncState?.lastUnifiedSyncAt || '') || 0;
+        if (latestUnifiedAt > incomingUnifiedAt) {
+            merged.syncState = deepClone(latest.syncState || merged.syncState);
+        }
+
 
         merged.factionInventory = mergeFactionInventoryStates(
             latest.factionInventory,
@@ -5288,6 +5307,7 @@
         next.minSellerCount = Math.max(0, Math.round(Number(next.minSellerCount || 0)));
         next.maxListingAgeSec = Math.max(30, Math.round(Number(next.maxListingAgeSec || 180)));
         next.marketRefreshLimit = Math.max(5, Math.min(100, Math.round(Number(next.marketRefreshLimit || 30))));
+        next.updatedAt = nowIso();
         db.businessRules = next;
 
         // Compatibility mirrors: old modules remain functional while v7.4 moves all
@@ -6332,6 +6352,7 @@
             version: VERSION,
             schema: db.schema,
             syncedAt: nowIso(),
+            businessRules: db.businessRules,
             marketIntel: {
                 marketplace: db.marketIntel.marketplace,
                 marketplaceGeneratedAt: db.marketIntel.marketplaceGeneratedAt,
@@ -6362,6 +6383,7 @@
 
     function mergeSanitizedGithubSnapshot(db, snapshot) {
         if (!snapshot || snapshot.format !== 'MMCRM-SANITIZED-1') throw new Error('Unsupported sanitized GitHub snapshot.');
+        db.businessRules = { ...db.businessRules, ...(snapshot.businessRules || {}) };
         db.marketIntel = { ...db.marketIntel, ...(snapshot.marketIntel || {}) };
         db.procurement.catalog = snapshot.procurement?.catalog || db.procurement.catalog;
         db.procurement.marketSnapshots = snapshot.procurement?.marketSnapshots || db.procurement.marketSnapshots;
