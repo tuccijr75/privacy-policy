@@ -4363,6 +4363,33 @@
         };
     }
 
+    function ageSeconds(value) {
+        const ms = typeof value === 'number' ? Number(value) : Date.parse(value || '');
+        return ms > 0 ? Math.max(0, (Date.now() - ms) / 1000) : Infinity;
+    }
+
+    function listingAgeSeconds(listing) {
+        const checked = Number(listing?.lastChecked || 0);
+        const updated = Number(listing?.contentUpdated || 0);
+        const best = checked > 0 ? checked : updated;
+        return best > 0 ? Math.max(0, (Date.now() - best) / 1000) : Infinity;
+    }
+
+    function freshOrganicListings(db, listings) {
+        const maxAge = businessRules(db).maxListingAgeSec;
+        return (Array.isArray(listings) ? listings : [])
+            .filter(x => !x.sponsored && x.price > 0 && x.quantity > 0 && listingAgeSeconds(x) <= maxAge)
+            .sort((a,b) => a.price - b.price);
+    }
+
+    function medianNumber(values) {
+        const rows = (values || []).map(Number).filter(v => Number.isFinite(v) && v > 0).sort((a,b)=>a-b);
+        if (!rows.length) return 0;
+        const mid = Math.floor(rows.length / 2);
+        return rows.length % 2 ? rows[mid] : (rows[mid - 1] + rows[mid]) / 2;
+    }
+
+
     function normalizeWeavTrader(row) {
         const rating = row?.rating || {};
         return {
@@ -4550,9 +4577,10 @@
         const detail = intel.details[id] || {};
         const traderData = intel.traders[id] || {};
         const listings = Array.isArray(detail.organicListings) ? detail.organicListings : [];
+        const freshListings = freshOrganicListings(db, listings);
         const traders = Array.isArray(traderData.organicTraders) ? traderData.organicTraders : [];
 
-        const cheapest = listings[0] || null;
+        const cheapest = freshListings[0] || null;
         const topTrader = traders[0] || null;
         const bazaarAverage = Number(detail.bazaarAverage || base.bazaarAverage || 0);
         const marketPrice = Number(detail.marketPrice || base.marketPrice || 0);
@@ -4574,7 +4602,11 @@
         const roiPct = buyPrice > 0 ? profit / buyPrice * 100 : 0;
         const instantProfit = buyPrice > 0 && traderExit > buyPrice ? traderExit - buyPrice : 0;
         const instantRoiPct = buyPrice > 0 ? instantProfit / buyPrice * 100 : 0;
-        const fresh = freshnessInfo(detail.generatedAt || intel.marketplaceGeneratedAt, intel.settings.freshnessWarnSeconds);
+        const listingTimestamp = cheapest?.lastChecked || cheapest?.contentUpdated || 0;
+        const fresh = freshnessInfo(
+            listingTimestamp ? new Date(listingTimestamp).toISOString() : (detail.generatedAt || intel.marketplaceGeneratedAt),
+            businessRules(db).maxListingAgeSec
+        );
         const hist = intelHistoryStats(intel, id);
 
         return {
@@ -4600,6 +4632,9 @@
             freshness: fresh,
             history: hist,
             listings,
+            freshListings,
+            listingVerified: Boolean(cheapest),
+            listingAgeSeconds: cheapest ? listingAgeSeconds(cheapest) : Infinity,
             traders
         };
     }
@@ -4607,8 +4642,10 @@
     function globalOpportunityRows(db) {
         const intel = db.marketIntel;
         const settings = intel.settings;
+        const rules = businessRules(db);
         const generated = intel.marketplaceGeneratedAt;
-        const fresh = freshnessInfo(generated, settings.freshnessWarnSeconds);
+        const fresh = freshnessInfo(generated, rules.maxListingAgeSec);
+        const localMetrics = salesItemMetrics(db);
         const rows = [];
 
         for (const base of Object.values(intel.marketplace)) {
@@ -4616,9 +4653,9 @@
             const bazaarAverage = Number(base.bazaarAverage || 0);
             const marketPrice = Number(base.marketPrice || 0);
             if (!(buy > 1)) continue;
-            if (marketPrice < Number(settings.minMarketPrice || 0)) continue;
-            if (buy > Number(settings.maxCandidatePrice || Number.MAX_SAFE_INTEGER)) continue;
-            if (Number(base.totalBazaars || 0) < Number(settings.minBazaarSellers || 0)) continue;
+            if (marketPrice < rules.minPrice) continue;
+            if (buy > rules.maxPrice) continue;
+            if (Number(base.totalBazaars || 0) < rules.minSellerCount) continue;
 
             const bazaarExit = bazaarAverage
                 ? Math.floor(bazaarAverage * (1 - Number(settings.bazaarExitHaircutPct || 0) / 100))
@@ -4628,7 +4665,8 @@
             const detail = intel.details[base.itemId];
             const trader = intel.traders[base.itemId];
             const organicTrader = trader?.organicTraders?.[0];
-            const organicListing = detail?.organicListings?.[0];
+            const freshListings = freshOrganicListings(db, detail?.organicListings || []);
+            const organicListing = freshListings[0] || null;
 
             const liveBuy = Number(organicListing?.price || buy);
             const traderExit = Number(organicTrader?.price || 0);
@@ -4641,8 +4679,17 @@
             const exit = exits[0] || { route: 'Unknown', value: 0 };
             const profit = liveBuy > 0 && exit.value > 0 ? exit.value - liveBuy : 0;
             const roiPct = liveBuy > 0 ? profit / liveBuy * 100 : 0;
-            if (roiPct < Number(settings.minRoiPct || 0)) continue;
-            if (profit < Number(settings.minAbsoluteProfit || 0)) continue;
+            if (roiPct < rules.minRoiPct) continue;
+            if (profit < rules.minAbsoluteProfit) continue;
+
+            const personal = localMetrics[base.itemId] || {};
+            const personalDaily = Number(personal.sold7d || 0) > 0
+                ? Number(personal.sold7d || 0) / 7
+                : Number(personal.sold30d || 0) / 30;
+            const personalDemandQualified =
+                Number(personal.sold30d || 0) >= 5 ||
+                Number(personal.saleDays30d || 0) >= 3;
+            if (personalDemandQualified && personalDaily < rules.minDemandPerDay) continue;
 
             const sellerCount = Number(base.totalBazaars || 0);
             const sellerConfidence = Math.min(100, 25 + Math.log10(sellerCount + 1) * 35);
@@ -4654,9 +4701,13 @@
                 sellerConfidence * 0.35 +
                 Math.min(100, history.samples * 5) * 0.30
             ));
+            const demandScore = personalDemandQualified
+                ? Math.min(100, Math.log10(1 + personalDaily * 12) * 55)
+                : Math.min(100, sellerCount * 3);
             const score = Math.max(0, Math.min(100,
-                roiScore * 0.55 +
-                confidence * 0.35 +
+                roiScore * 0.45 +
+                confidence * 0.25 +
+                demandScore * 0.20 +
                 Math.min(100, sellerCount * 3) * 0.10 -
                 volatilityPenalty
             ));
@@ -4680,13 +4731,19 @@
                 enriched: Boolean(detail),
                 listingQty: Number(organicListing?.quantity || 0),
                 sellerId: organicListing?.sellerId || '',
-                sellerName: organicListing?.sellerName || ''
+                sellerName: organicListing?.sellerName || '',
+                listingVerified: Boolean(organicListing),
+                listingAgeSeconds: organicListing ? listingAgeSeconds(organicListing) : Infinity,
+                personalDemandDaily: personalDaily,
+                personalDemandQualified
             });
         }
 
         return rows.sort((a,b) =>
+            Number(b.personalDemandQualified) - Number(a.personalDemandQualified) ||
             b.score - a.score ||
             b.roiPct - a.roiPct ||
+            b.personalDemandDaily - a.personalDemandDaily ||
             b.profit - a.profit
         );
     }
@@ -5326,7 +5383,8 @@
             const overstock = r.stock > targetStock * Number(db.operations.settings.overstockMultiplier || 1.5);
             const growth = itemGrowthRate(db,r.id);
             const elasticity = priceElasticityMetrics(db,r.id);
-            const plannedPrice = recommendedListingPrice(db,r.id,r,elasticity);
+            const pricingDecision = trustedListingPriceDecision(db,r.id,r,elasticity);
+            const plannedPrice = pricingDecision.price;
             const lostProfit = stockout.lostUnits * Math.max(0,(r.realisticExit||plannedPrice)-r.avgCost);
 
             let state = 'LISTED';
@@ -5355,6 +5413,7 @@
                 growth,
                 elasticity,
                 plannedPrice,
+                pricingDecision,
                 lostProfit,
                 state
             };
@@ -5384,18 +5443,92 @@
         });
     }
 
-    function recommendedListingPrice(db, itemId, row = null, elasticity = null) {
-        const id=asId(itemId);
-        row = row || procurementRows(db).find(r=>r.id===id) || {};
-        elasticity = elasticity || priceElasticityMetrics(db,id);
-        const intel = db.marketIntel.marketplace[id] || {};
-        const marketReference = Number(intel.bazaarAverage || row.realisticExit || row.bazaarPrice || intel.marketPrice || 0);
+    function trustedListingPriceDecision(db, itemId, row = null, elasticity = null) {
+        const id = asId(itemId);
+        row = row || procurementRows(db).find(r => r.id === id) || {};
+        elasticity = elasticity || priceElasticityMetrics(db, id);
+        const rules = businessRules(db);
+        const proc = db.procurement || {};
+        const snapshot = proc.marketSnapshots?.[id] || {};
+        const detail = db.marketIntel?.details?.[id] || {};
+        const freshListings = freshOrganicListings(db, detail.organicListings || []);
+        const sales = salesByItemDetailed(db, id)
+            .filter(x => Date.now() - Number(x.timestamp || 0) <= 30 * 86400000 && Number(x.unitPrice || 0) > 0);
+        const ownSaleMedian = sales.length >= 3 ? medianNumber(sales.map(x => x.unitPrice)) : 0;
+        const officialFresh = snapshot.fetchedAt && ageSeconds(snapshot.fetchedAt) <= Math.max(300, rules.maxListingAgeSec * 2);
+
+        const signals = [];
+        if (officialFresh) {
+            const bazaarThird = Number(snapshot?.bazaar?.third || snapshot?.bazaar?.median || snapshot?.bazaar?.lowest || 0);
+            const imThirdNet = Math.floor(Number(snapshot?.itemMarket?.third || snapshot?.itemMarket?.median || snapshot?.itemMarket?.lowest || 0) * (1 - ITEM_MARKET_FEE_RATE));
+            if (bazaarThird > 0) signals.push({ source:'Torn Bazaar', value:bazaarThird, weight:3 });
+            if (imThirdNet > 0) signals.push({ source:'Torn Item Market net', value:imThirdNet, weight:3 });
+        }
+
+        if (freshListings.length) {
+            const prices = freshListings.slice(0,5).map(x => Number(x.price || 0)).filter(v => v > 0);
+            const bazaarMedian = medianNumber(prices);
+            if (bazaarMedian > 0) signals.push({ source:'Fresh seller listings', value:bazaarMedian, weight:4 });
+        }
+        if (ownSaleMedian > 0) signals.push({ source:'Own 30d sales median', value:ownSaleMedian, weight:4 });
+        if (elasticity?.best?.price > 0 && elasticity?.best?.units >= 2) {
+            signals.push({ source:'Observed own price performance', value:Number(elasticity.best.price), weight:2 });
+        }
+
+        const expanded = [];
+        for (const signal of signals) {
+            for (let i=0;i<signal.weight;i++) expanded.push(signal.value);
+        }
+        const anchor = medianNumber(expanded);
+        const current = Number(row.bazaarPrice || 0);
         const cost = Number(row.avgCost || fifoCostBasis(db,id,'').avgCost || 0);
-        const minMargin = Number(db.procurement.settings.minMarginPct || 4) / 100;
-        const floor = cost > 0 ? Math.ceil(cost * (1+minMargin)) : 0;
-        let candidate = elasticity.best?.price || marketReference;
-        if (marketReference > 0) candidate = candidate ? Math.min(candidate,Math.floor(marketReference-1)) : Math.floor(marketReference-1);
-        return Math.max(floor,Math.floor(candidate||0));
+        const minMargin = Math.max(Number(db.procurement?.settings?.minMarginPct || 4), rules.minRoiPct) / 100;
+        const floor = cost > 0 ? Math.ceil(cost * (1 + minMargin)) : 0;
+
+        if (!(anchor > 0)) {
+            return {
+                price: current > 0 ? Math.max(floor, current) : 0,
+                floor,
+                anchor: 0,
+                confidence: current > 0 ? 20 : 0,
+                state: 'NEEDS MARKET REFRESH',
+                source: current > 0 ? 'Current listing only' : 'No trusted live price',
+                signalCount: 0,
+                marketLow: 0
+            };
+        }
+
+        const low = freshListings[0]?.price || Number(snapshot?.bazaar?.lowest || snapshot?.itemMarket?.lowest || 0) || 0;
+        let candidate = Math.floor(anchor);
+        if (low > 0 && low <= anchor * 1.20) candidate = Math.min(candidate, Math.max(1, Math.floor(low - 1)));
+
+        const price = Math.max(floor, candidate);
+        const dispersion = signals.length > 1
+            ? (Math.max(...signals.map(x=>x.value)) - Math.min(...signals.map(x=>x.value))) / anchor
+            : 0.50;
+        const confidence = Math.max(0, Math.min(100,
+            Math.min(100, signals.length * 22) +
+            (officialFresh ? 20 : 0) +
+            (freshListings.length ? 20 : 0) +
+            (ownSaleMedian > 0 ? 20 : 0) -
+            Math.min(40, dispersion * 100)
+        ));
+
+        return {
+            price,
+            floor,
+            anchor,
+            confidence,
+            state: confidence >= 55 ? 'TRUSTED' : 'LOW CONFIDENCE',
+            source: signals.map(x=>x.source).join(' + '),
+            signalCount: signals.length,
+            marketLow: Number(low || 0)
+        };
+    }
+
+
+    function recommendedListingPrice(db, itemId, row = null, elasticity = null) {
+        return trustedListingPriceDecision(db, itemId, row, elasticity).price;
     }
 
 
@@ -5404,15 +5537,15 @@
 
         return rows.map(r => {
             const id = asId(r.id);
-            const intel = db.marketIntel.marketplace[id] || {};
             const detail = db.marketIntel.details[id] || {};
-            const organic = Array.isArray(detail.organicListings) ? detail.organicListings : [];
+            const organic = freshOrganicListings(db, detail.organicListings || []);
             const competitorPrices = organic
                 .map(x => Number(x.price || 0))
                 .filter(v => v > 0 && v !== Number(r.bazaarPrice || 0))
                 .sort((a, b) => a - b);
+            const priceDecision = trustedListingPriceDecision(db, id, r, r.elasticity);
 
-            const liveLow = competitorPrices[0] || Number(intel.lowestPrice || 0) || Number(r.realisticExit || 0);
+            const liveLow = competitorPrices[0] || Number(priceDecision.marketLow || 0);
             const median7d = Number(r.median7d || 0);
             const current = Number(r.bazaarPrice || 0);
             const cost = Number(r.avgCost || 0);
@@ -5478,10 +5611,11 @@
                 currentPrice: current,
                 recommendedPrice: Math.max(0, Math.floor(recommended)),
                 pricingState: state,
-                pricingConfidence: confidence,
+                pricingConfidence: Math.min(confidence, Number(priceDecision.confidence || 0)),
                 pricingDelta: delta,
                 pricingDeltaPct: deltaPct,
                 liveMarketLow: liveLow,
+                pricingDecision,
                 floorPrice: floor,
                 marketShock,
                 marketShockPct: shockPct,
