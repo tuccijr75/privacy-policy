@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.2.0
+// @version      7.3.0
 // @description  Bazaar operations CRM with in-CRM update checking, TornW3B travel intelligence, customer automation, procurement, analytics, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.2.0';
+    const VERSION = '7.3.0';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -106,6 +106,13 @@
     const DB_KEY = 'mm_bazaar_crm_v1';
     const OLD_API_KEY = 'mm_bazaar_crm_api_v1';
     const API_KEY = 'mm_bazaar_crm_api_v3';
+    const FACTION_API_KEY = 'mm_bazaar_crm_faction_api_v1';
+    const FACTION_INVENTORY_SYNC_INTERVAL_MS = 60 * 60 * 1000;
+    const FACTION_INVENTORY_SNAPSHOT_MAX = 192;
+    const FACTION_INVENTORY_EVENT_MAX = 2500;
+    const FACTION_INVENTORY_CATEGORIES = Object.freeze([
+        'weapons','armor','temporary','medical','consumables','drugs','boosters','utilities','loot'
+    ]);
     const SYNC_KEY = 'mm_bazaar_crm_logstate_v1';
     const PROCESSED_KEY = 'mm_bazaar_crm_processed_v1';
     const UI_KEY = 'mm_bazaar_crm_ui_v1';
@@ -119,6 +126,7 @@
     let statusText = 'Ready.';
     let syncRunning = false;
     let procurementRunning = false;
+    let factionInventoryRunning = false;
     let fatal = false;
     let lastHref = location.href;
     let routeTimer = null;
@@ -184,7 +192,7 @@
 
     function defaultDb() {
         return {
-            schema: 9,
+            schema: 10,
             customers: {},
             sales: {},
             coupons: {},
@@ -277,6 +285,22 @@
                 settings: { method: 'standard', carry: 21, cash: 0, historyDays: 7 },
                 diagnostics: []
             },
+            factionInventory: {
+                current: {},
+                snapshots: [],
+                events: [],
+                thresholds: {},
+                inventoryTimestamp: null,
+                lastSyncAt: null,
+                nextUsefulRefreshAt: null,
+                diagnostics: [],
+                settings: {
+                    autoSync: true,
+                    selectedCategory: 'all',
+                    criticalRatio: 0.5,
+                    updatedAt: null
+                }
+            },
             meta: { createdAt: nowIso(), migratedAt: null }
         };
     }
@@ -342,7 +366,7 @@
 
     function normalizeDb(input) {
         const db = input && typeof input === 'object' ? input : defaultDb();
-        db.schema = 9;
+        db.schema = 10;
         db.customers = db.customers && typeof db.customers === 'object' ? db.customers : {};
         db.sales = db.sales && typeof db.sales === 'object' ? db.sales : {};
         db.coupons = db.coupons && typeof db.coupons === 'object' ? db.coupons : {};
@@ -438,6 +462,29 @@
         db.travelIntel.settings.showLocalTime = db.travelIntel.settings.showLocalTime !== false;
         db.travelIntel.settings.historyDays = Math.max(1, Math.min(30, Number(db.travelIntel.settings.historyDays || 7)));
         db.travelIntel.diagnostics = Array.isArray(db.travelIntel.diagnostics) ? db.travelIntel.diagnostics : [];
+        db.factionInventory = db.factionInventory && typeof db.factionInventory === 'object' ? db.factionInventory : {};
+        db.factionInventory.current = db.factionInventory.current && typeof db.factionInventory.current === 'object' ? db.factionInventory.current : {};
+        db.factionInventory.snapshots = Array.isArray(db.factionInventory.snapshots) ? db.factionInventory.snapshots.slice(-FACTION_INVENTORY_SNAPSHOT_MAX) : [];
+        db.factionInventory.events = Array.isArray(db.factionInventory.events) ? db.factionInventory.events.slice(-FACTION_INVENTORY_EVENT_MAX) : [];
+        db.factionInventory.thresholds = db.factionInventory.thresholds && typeof db.factionInventory.thresholds === 'object' ? db.factionInventory.thresholds : {};
+        for (const [itemId, threshold] of Object.entries(db.factionInventory.thresholds)) {
+            if (!threshold || typeof threshold !== 'object') {
+                db.factionInventory.thresholds[itemId] = { target: Math.max(0, Number(threshold || 0)), basis: 'auto', updatedAt: null };
+                continue;
+            }
+            threshold.target = Math.max(0, Math.round(Number(threshold.target || 0)));
+            threshold.basis = ['auto','owned','available'].includes(String(threshold.basis || 'auto')) ? String(threshold.basis || 'auto') : 'auto';
+            threshold.updatedAt = threshold.updatedAt || null;
+        }
+        db.factionInventory.inventoryTimestamp = db.factionInventory.inventoryTimestamp || null;
+        db.factionInventory.lastSyncAt = db.factionInventory.lastSyncAt || null;
+        db.factionInventory.nextUsefulRefreshAt = db.factionInventory.nextUsefulRefreshAt || null;
+        db.factionInventory.diagnostics = Array.isArray(db.factionInventory.diagnostics) ? db.factionInventory.diagnostics.slice(0,40) : [];
+        db.factionInventory.settings = db.factionInventory.settings && typeof db.factionInventory.settings === 'object' ? db.factionInventory.settings : {};
+        db.factionInventory.settings.autoSync = db.factionInventory.settings.autoSync !== false;
+        db.factionInventory.settings.selectedCategory = ['all',...FACTION_INVENTORY_CATEGORIES].includes(String(db.factionInventory.settings.selectedCategory || 'all')) ? String(db.factionInventory.settings.selectedCategory || 'all') : 'all';
+        db.factionInventory.settings.criticalRatio = Math.max(0.1, Math.min(0.95, Number(db.factionInventory.settings.criticalRatio || 0.5)));
+        db.factionInventory.settings.updatedAt = db.factionInventory.settings.updatedAt || null;
         db.meta = db.meta && typeof db.meta === 'object' ? db.meta : {};
         db.meta.salesRebuiltAt = db.meta.salesRebuiltAt || null;
         db.meta.lastSalesAudit = db.meta.lastSalesAudit || null;
@@ -754,6 +801,11 @@
             );
         }
 
+        merged.factionInventory = mergeFactionInventoryStates(
+            latest.factionInventory,
+            merged.factionInventory
+        );
+
         // Sale-derived totals are not authoritative state. Audit every persisted merge
         // and rebuild only if drift is detected (including stale cross-tab snapshots).
         reconcileSalesIntegrity(merged);
@@ -824,6 +876,20 @@
         return String(GM_getValue(API_KEY, '') || '').trim();
     }
 
+    function getFactionApiKey() {
+        return String(GM_getValue(FACTION_API_KEY, '') || '').trim();
+    }
+
+    function factionInventoryApiKey() {
+        return getFactionApiKey() || getApiKey();
+    }
+
+    function setFactionApiKey(value) {
+        const key = String(value || '').trim();
+        if (key) GM_setValue(FACTION_API_KEY, key);
+        else GM_deleteValue(FACTION_API_KEY);
+    }
+
     function setApiKey(value) {
         const key = String(value || '').trim();
         if (key) GM_setValue(API_KEY, key);
@@ -835,9 +901,9 @@
     // TORN API
     // ============================================================
 
-    function apiRequest(pathOrUrl) {
+    function apiRequest(pathOrUrl, keyOverride = '') {
         return new Promise((resolve, reject) => {
-            const key = getApiKey();
+            const key = String(keyOverride || getApiKey()).trim();
             if (!key) {
                 reject(new Error('No Torn API key saved.'));
                 return;
@@ -7405,6 +7471,669 @@
 
 
     // ============================================================
+    // FACTION INVENTORY MANAGER — v7.3
+    // ============================================================
+
+    function factionEpochMs(value) {
+        let n = Number(value || 0);
+        if (!(n > 0)) return 0;
+        if (n < 100_000_000_000) n *= 1000;
+        return n;
+    }
+
+    function factionInventoryKey(category, itemId) {
+        return String(category || '') + '|' + asId(itemId);
+    }
+
+    function addFactionInventoryDiagnostic(state, text) {
+        state.diagnostics = Array.isArray(state.diagnostics) ? state.diagnostics : [];
+        state.diagnostics.unshift({ at: nowIso(), text: String(text || '') });
+        state.diagnostics = state.diagnostics.slice(0, 40);
+    }
+
+    function mergeFactionInventoryStates(latestState, incomingState) {
+        const oldState = latestState && typeof latestState === 'object' ? deepClone(latestState) : {};
+        const newState = incomingState && typeof incomingState === 'object' ? deepClone(incomingState) : {};
+        const out = {
+            current: newState.current && typeof newState.current === 'object' ? newState.current : {},
+            snapshots: Array.isArray(newState.snapshots) ? newState.snapshots : [],
+            events: Array.isArray(newState.events) ? newState.events : [],
+            thresholds: newState.thresholds && typeof newState.thresholds === 'object' ? newState.thresholds : {},
+            inventoryTimestamp: newState.inventoryTimestamp || null,
+            lastSyncAt: newState.lastSyncAt || null,
+            nextUsefulRefreshAt: newState.nextUsefulRefreshAt || null,
+            diagnostics: Array.isArray(newState.diagnostics) ? newState.diagnostics : [],
+            settings: newState.settings && typeof newState.settings === 'object' ? newState.settings : {}
+        };
+
+        const oldSourceAt = Date.parse(oldState.inventoryTimestamp || '') || 0;
+        const newSourceAt = Date.parse(out.inventoryTimestamp || '') || 0;
+        const oldFetchAt = Date.parse(oldState.lastSyncAt || '') || 0;
+        const newFetchAt = Date.parse(out.lastSyncAt || '') || 0;
+        if (oldSourceAt > newSourceAt || (oldSourceAt === newSourceAt && oldFetchAt > newFetchAt)) {
+            out.current = deepClone(oldState.current || {});
+            out.inventoryTimestamp = oldState.inventoryTimestamp || out.inventoryTimestamp;
+            out.lastSyncAt = oldState.lastSyncAt || out.lastSyncAt;
+            out.nextUsefulRefreshAt = oldState.nextUsefulRefreshAt || out.nextUsefulRefreshAt;
+        }
+
+        const thresholds = {};
+        const ids = new Set([...Object.keys(oldState.thresholds || {}), ...Object.keys(out.thresholds || {})]);
+        for (const id of ids) {
+            const a = oldState.thresholds?.[id];
+            const b = out.thresholds?.[id];
+            if (!a) { thresholds[id] = deepClone(b); continue; }
+            if (!b) { thresholds[id] = deepClone(a); continue; }
+            const at = Date.parse(a.updatedAt || '') || 0;
+            const bt = Date.parse(b.updatedAt || '') || 0;
+            thresholds[id] = deepClone(bt >= at ? b : a);
+        }
+        out.thresholds = thresholds;
+
+        const oldSettingsAt = Date.parse(oldState.settings?.updatedAt || '') || 0;
+        const newSettingsAt = Date.parse(out.settings?.updatedAt || '') || 0;
+        if (oldSettingsAt > newSettingsAt) out.settings = deepClone(oldState.settings || {});
+
+        const snapshotMap = new Map();
+        for (const snap of [...(oldState.snapshots || []), ...(out.snapshots || [])]) {
+            if (!snap || typeof snap !== 'object') continue;
+            const key = String(snap.inventoryTimestamp || snap.at || '');
+            if (!key) continue;
+            const prior = snapshotMap.get(key);
+            if (!prior || Number(snap.at || 0) >= Number(prior.at || 0)) snapshotMap.set(key, deepClone(snap));
+        }
+        out.snapshots = [...snapshotMap.values()]
+            .sort((a,b) => Number(a.at||0) - Number(b.at||0))
+            .slice(-FACTION_INVENTORY_SNAPSHOT_MAX);
+
+        const eventMap = new Map();
+        for (const event of [...(oldState.events || []), ...(out.events || [])]) {
+            if (!event || typeof event !== 'object') continue;
+            const key = String(event.signature || [event.observedAt,event.key].join('|'));
+            if (!key) continue;
+            eventMap.set(key, deepClone(event));
+        }
+        out.events = [...eventMap.values()]
+            .sort((a,b) => Number(a.observedAt||0) - Number(b.observedAt||0))
+            .slice(-FACTION_INVENTORY_EVENT_MAX);
+
+        const diagnosticMap = new Map();
+        for (const d of [...(oldState.diagnostics || []), ...(out.diagnostics || [])]) {
+            if (!d || typeof d !== 'object') continue;
+            const key = String(d.at || '') + '|' + String(d.text || '');
+            diagnosticMap.set(key, deepClone(d));
+        }
+        out.diagnostics = [...diagnosticMap.values()]
+            .sort((a,b) => (Date.parse(b.at||'')||0) - (Date.parse(a.at||'')||0))
+            .slice(0,40);
+
+        return out;
+    }
+
+    function factionInventoryRowsFromResponse(data) {
+        const rows = data?.inventory ?? data?.data?.inventory ?? [];
+        return Array.isArray(rows) ? rows : [];
+    }
+
+    function factionInventoryTotalFromResponse(data) {
+        return Math.max(
+            0,
+            Number(
+                data?._metadata?.total ??
+                data?._metadata?.pagination?.total ??
+                data?.metadata?.total ??
+                0
+            ) || 0
+        );
+    }
+
+    async function fetchFactionInventoryCategory(category) {
+        const cat = String(category || '');
+        if (!FACTION_INVENTORY_CATEGORIES.includes(cat)) throw new Error('Invalid faction inventory category: ' + cat);
+        const key = factionInventoryApiKey();
+        if (!key) throw new Error('No Torn API key is available for faction inventory.');
+
+        const rows = [];
+        let offset = 0;
+        let pages = 0;
+        let inventoryTimestamp = 0;
+
+        while (pages < 25) {
+            const url = new URL(API_BASE + '/faction/inventory');
+            url.searchParams.set('cat', cat);
+            url.searchParams.set('limit', '100');
+            if (offset > 0) url.searchParams.set('offset', String(offset));
+
+            const data = await apiRequest(url.toString(), key);
+            const pageRows = factionInventoryRowsFromResponse(data);
+            rows.push(...pageRows);
+            inventoryTimestamp = Math.max(inventoryTimestamp, factionEpochMs(data?.inventory_timestamp));
+            pages++;
+
+            const total = factionInventoryTotalFromResponse(data);
+            if (!pageRows.length || pageRows.length < 100 || (total > 0 && rows.length >= total)) break;
+            offset += pageRows.length;
+        }
+
+        if (pages >= 25) throw new Error('Faction inventory pagination exceeded safety limit for ' + cat + '.');
+        return { category: cat, rows, inventoryTimestamp };
+    }
+
+    function normalizeFactionInventoryResults(categoryResults, fetchedAt = Date.now()) {
+        const current = {};
+
+        for (const group of categoryResults || []) {
+            const category = String(group?.category || '');
+            if (!FACTION_INVENTORY_CATEGORIES.includes(category)) continue;
+
+            for (const raw of group.rows || []) {
+                const itemId = asId(raw?.id);
+                if (!itemId) continue;
+                const key = factionInventoryKey(category, itemId);
+                if (!current[key]) {
+                    current[key] = {
+                        key,
+                        category,
+                        itemId,
+                        name: String(raw?.name || ('Item ' + itemId)),
+                        type: String(raw?.type || ''),
+                        amountOwned: 0,
+                        availableCount: 0,
+                        loanedCount: 0,
+                        availableUids: [],
+                        loans: [],
+                        uidCount: 0,
+                        fetchedAt
+                    };
+                }
+
+                const item = current[key];
+                const amount = Math.max(0, Math.round(Number(raw?.amount || 0)));
+                const uids = [...new Set((Array.isArray(raw?.uids) ? raw.uids : []).map(asId).filter(Boolean))];
+                item.amountOwned += amount;
+                item.uidCount += uids.length;
+
+                const loaned = raw?.loaned && typeof raw.loaned === 'object' ? raw.loaned : null;
+                if (loaned?.id != null) {
+                    item.loanedCount += amount;
+                    const memberId = asId(loaned.id);
+                    let loan = item.loans.find(x => x.memberId === memberId);
+                    if (!loan) {
+                        loan = {
+                            memberId,
+                            memberName: String(loaned.name || memberId),
+                            amount: 0,
+                            uids: []
+                        };
+                        item.loans.push(loan);
+                    }
+                    loan.amount += amount;
+                    loan.uids = [...new Set([...loan.uids, ...uids])];
+                } else {
+                    item.availableCount += amount;
+                    item.availableUids = [...new Set([...item.availableUids, ...uids])];
+                }
+            }
+        }
+
+        for (const item of Object.values(current)) {
+            item.loans.sort((a,b) => String(a.memberName).localeCompare(String(b.memberName)));
+        }
+        return current;
+    }
+
+    function compactFactionInventorySnapshot(current, inventoryTimestamp, fetchedAt = Date.now()) {
+        const items = {};
+        for (const [key, item] of Object.entries(current || {})) {
+            items[key] = {
+                key,
+                category: item.category,
+                itemId: item.itemId,
+                name: item.name,
+                amountOwned: Number(item.amountOwned || 0),
+                availableCount: Number(item.availableCount || 0),
+                loanedCount: Number(item.loanedCount || 0)
+            };
+        }
+        return {
+            at: Number(fetchedAt || Date.now()),
+            inventoryTimestamp: Number(inventoryTimestamp || 0),
+            items
+        };
+    }
+
+    function recordFactionInventorySnapshot(state, current, inventoryTimestamp, fetchedAt = Date.now()) {
+        state.snapshots = Array.isArray(state.snapshots) ? state.snapshots : [];
+        state.events = Array.isArray(state.events) ? state.events : [];
+
+        const sourceAt = Number(inventoryTimestamp || 0);
+        const previous = state.snapshots[state.snapshots.length - 1] || null;
+        if (previous && Number(previous.inventoryTimestamp || 0) === sourceAt) {
+            return { snapshotAdded: false, eventsAdded: 0 };
+        }
+
+        const snapshot = compactFactionInventorySnapshot(current, sourceAt, fetchedAt);
+        let eventsAdded = 0;
+
+        if (previous) {
+            const keys = new Set([...Object.keys(previous.items || {}), ...Object.keys(snapshot.items || {})]);
+            for (const key of keys) {
+                const oldItem = previous.items?.[key] || {};
+                const newItem = snapshot.items?.[key] || {};
+                const deltaOwned = Number(newItem.amountOwned || 0) - Number(oldItem.amountOwned || 0);
+                const deltaAvailable = Number(newItem.availableCount || 0) - Number(oldItem.availableCount || 0);
+                const deltaLoaned = Number(newItem.loanedCount || 0) - Number(oldItem.loanedCount || 0);
+                if (!deltaOwned && !deltaAvailable && !deltaLoaned) continue;
+
+                state.events.push({
+                    signature: String(sourceAt) + '|' + key,
+                    observedAt: sourceAt || Number(fetchedAt || Date.now()),
+                    fetchedAt: Number(fetchedAt || Date.now()),
+                    key,
+                    category: newItem.category || oldItem.category || '',
+                    itemId: newItem.itemId || oldItem.itemId || '',
+                    name: newItem.name || oldItem.name || key,
+                    deltaOwned,
+                    deltaAvailable,
+                    deltaLoaned,
+                    amountOwned: Number(newItem.amountOwned || 0),
+                    availableCount: Number(newItem.availableCount || 0),
+                    loanedCount: Number(newItem.loanedCount || 0)
+                });
+                eventsAdded++;
+            }
+        }
+
+        state.snapshots.push(snapshot);
+        state.snapshots = state.snapshots.slice(-FACTION_INVENTORY_SNAPSHOT_MAX);
+        state.events = state.events.slice(-FACTION_INVENTORY_EVENT_MAX);
+        return { snapshotAdded: true, eventsAdded };
+    }
+
+    async function syncFactionInventory({ silent = false, force = false } = {}) {
+        if (factionInventoryRunning) return { skipped: true, reason: 'running' };
+        if (!factionInventoryApiKey()) {
+            if (!silent) {
+                statusText = 'Faction Inventory needs a Limited-access Torn key. Add a dedicated faction key in Settings, or use a compatible primary key.';
+                render();
+            }
+            return { skipped: true, reason: 'missing-key' };
+        }
+
+        const existing = dbLoad();
+        const lastSync = Date.parse(existing.factionInventory?.lastSyncAt || '') || 0;
+        if (!force && lastSync && Date.now() - lastSync < FACTION_INVENTORY_SYNC_INTERVAL_MS - 60_000) {
+            return { skipped: true, reason: 'cache-window' };
+        }
+
+        factionInventoryRunning = true;
+        if (!silent) {
+            statusText = 'Syncing faction armory categories from Torn…';
+            render();
+        }
+
+        try {
+            const groups = [];
+            for (const category of FACTION_INVENTORY_CATEGORIES) {
+                groups.push(await fetchFactionInventoryCategory(category));
+            }
+
+            const sourceAt = Math.max(...groups.map(group => Number(group.inventoryTimestamp || 0)), 0);
+            const fetchedAt = Date.now();
+            const current = normalizeFactionInventoryResults(groups, fetchedAt);
+            const db = dbLoad();
+            const state = db.factionInventory;
+            const ledger = recordFactionInventorySnapshot(state, current, sourceAt, fetchedAt);
+
+            state.current = current;
+            state.inventoryTimestamp = sourceAt ? new Date(sourceAt).toISOString() : null;
+            state.lastSyncAt = new Date(fetchedAt).toISOString();
+            state.nextUsefulRefreshAt = new Date(fetchedAt + FACTION_INVENTORY_SYNC_INTERVAL_MS).toISOString();
+            addFactionInventoryDiagnostic(
+                state,
+                'Faction inventory sync: ' + Object.keys(current).length + ' item/category rows; ' +
+                ledger.eventsAdded + ' change event' + (ledger.eventsAdded === 1 ? '' : 's') +
+                (ledger.snapshotAdded ? '; new source snapshot.' : '; source cache unchanged.')
+            );
+
+            dbSave(db);
+            await flushDbWrites();
+
+            if (!silent) {
+                statusText =
+                    'Faction Inventory synced: ' + Object.keys(current).length + ' item/category rows · ' +
+                    ledger.eventsAdded + ' change event' + (ledger.eventsAdded === 1 ? '' : 's') + '.';
+                render();
+            }
+            return {
+                items: Object.keys(current).length,
+                eventsAdded: ledger.eventsAdded,
+                snapshotAdded: ledger.snapshotAdded,
+                inventoryTimestamp: sourceAt
+            };
+        } catch (error) {
+            const db = dbLoad();
+            addFactionInventoryDiagnostic(db.factionInventory, 'Sync failed: ' + (error?.message || String(error)));
+            dbSave(db);
+            if (!silent) {
+                statusText = 'Faction Inventory sync failed: ' + (error?.message || String(error));
+                render();
+            }
+            throw error;
+        } finally {
+            factionInventoryRunning = false;
+        }
+    }
+
+    function factionInventoryReferencePrice(db, itemId) {
+        const id = asId(itemId);
+        const snapshot = db.procurement?.marketSnapshots?.[id] || {};
+        const live = [
+            ['Bazaar', Number(snapshot?.bazaar?.lowest || 0)],
+            ['Item Market', Number(snapshot?.itemMarket?.lowest || 0)]
+        ].filter(([,price]) => price > 0).sort((a,b) => a[1] - b[1]);
+        if (live.length) return { price: live[0][1], source: live[0][0] };
+
+        const global = db.marketIntel?.marketplace?.[id] || {};
+        const candidates = [
+            ['TornW3B lowest', Number(global.lowestPrice || 0)],
+            ['TornW3B market', Number(global.marketPrice || 0)],
+            ['TornW3B bazaar avg', Number(global.bazaarAverage || 0)],
+            ['Torn catalog', Number(db.procurement?.catalog?.[id]?.marketValue || 0)]
+        ];
+        const found = candidates.find(([,price]) => price > 0);
+        return found ? { price: found[1], source: found[0] } : { price: 0, source: 'Unavailable' };
+    }
+
+    function factionInventoryThresholdState(db, item) {
+        const config = db.factionInventory?.thresholds?.[asId(item.itemId)] || {};
+        const target = Math.max(0, Math.round(Number(config.target || 0)));
+        const automaticBasis = ['weapons','armor'].includes(String(item.category || '')) ? 'available' : 'owned';
+        const basis = ['owned','available'].includes(String(config.basis || '')) ? String(config.basis) : automaticBasis;
+        const current = basis === 'available'
+            ? Number(item.availableCount || 0)
+            : Number(item.amountOwned || 0);
+        const criticalRatio = Math.max(0.1, Math.min(0.95, Number(db.factionInventory?.settings?.criticalRatio || 0.5)));
+        const shortfall = target > 0 ? Math.max(0, target - current) : 0;
+        let status = 'UNSET';
+        if (target > 0) {
+            if (current <= target * criticalRatio) status = 'CRITICAL';
+            else if (current < target) status = 'LOW';
+            else status = 'GREEN';
+        }
+        return { target, basis, current, shortfall, status };
+    }
+
+    function setFactionInventoryThreshold(itemId, target, basis = 'auto') {
+        const id = asId(itemId);
+        const db = dbLoad();
+        db.factionInventory.thresholds[id] = {
+            target: Math.max(0, Math.round(Number(target || 0))),
+            basis: ['auto','owned','available'].includes(String(basis || 'auto')) ? String(basis || 'auto') : 'auto',
+            updatedAt: nowIso()
+        };
+        dbSave(db);
+        render();
+    }
+
+    function factionInventoryRows(db) {
+        return Object.values(db.factionInventory?.current || {}).map(item => {
+            const threshold = factionInventoryThresholdState(db, item);
+            const price = factionInventoryReferencePrice(db, item.itemId);
+            return {
+                ...item,
+                threshold,
+                referencePrice: price.price,
+                priceSource: price.source,
+                estimatedRestockCost: threshold.shortfall * price.price
+            };
+        }).sort((a,b) => {
+            const priority = { CRITICAL:0, LOW:1, GREEN:2, UNSET:3 };
+            return (priority[a.threshold.status] ?? 4) - (priority[b.threshold.status] ?? 4) ||
+                String(a.category).localeCompare(String(b.category)) ||
+                String(a.name).localeCompare(String(b.name));
+        });
+    }
+
+    function factionLoanMemberRows(db) {
+        const members = {};
+        for (const item of Object.values(db.factionInventory?.current || {})) {
+            for (const loan of item.loans || []) {
+                const id = asId(loan.memberId);
+                if (!members[id]) members[id] = {
+                    memberId: id,
+                    memberName: String(loan.memberName || id),
+                    amount: 0,
+                    items: []
+                };
+                members[id].amount += Number(loan.amount || 0);
+                members[id].items.push({
+                    itemId: item.itemId,
+                    name: item.name,
+                    category: item.category,
+                    amount: Number(loan.amount || 0),
+                    uids: Array.isArray(loan.uids) ? loan.uids.slice() : []
+                });
+            }
+        }
+        return Object.values(members).sort((a,b) => b.amount - a.amount || a.memberName.localeCompare(b.memberName));
+    }
+
+    function factionInventoryReport(db, days = 7) {
+        const cutoff = Date.now() - Math.max(1, Number(days || 7)) * 86400000;
+        const events = (db.factionInventory?.events || []).filter(event => Number(event.observedAt || 0) >= cutoff);
+        const movement = {};
+        for (const event of events) {
+            const key = String(event.key || factionInventoryKey(event.category,event.itemId));
+            if (!movement[key]) movement[key] = {
+                key,
+                itemId: event.itemId,
+                name: event.name,
+                category: event.category,
+                depleted: 0,
+                added: 0,
+                availableOut: 0,
+                loanedOut: 0,
+                netOwned: 0
+            };
+            const row = movement[key];
+            const dOwned = Number(event.deltaOwned || 0);
+            const dAvailable = Number(event.deltaAvailable || 0);
+            const dLoaned = Number(event.deltaLoaned || 0);
+            if (dOwned < 0) row.depleted += -dOwned;
+            if (dOwned > 0) row.added += dOwned;
+            if (dAvailable < 0) row.availableOut += -dAvailable;
+            if (dLoaned > 0) row.loanedOut += dLoaned;
+            row.netOwned += dOwned;
+        }
+
+        const snapshots = (db.factionInventory?.snapshots || []).filter(s => Number(s.at || 0) >= cutoff);
+        const firstAt = snapshots.length ? Number(snapshots[0].inventoryTimestamp || snapshots[0].at || 0) : 0;
+        const lastAt = snapshots.length ? Number(snapshots[snapshots.length-1].inventoryTimestamp || snapshots[snapshots.length-1].at || 0) : 0;
+        const observedDays = firstAt && lastAt && lastAt > firstAt ? Math.max(1/24, (lastAt-firstAt)/86400000) : 0;
+
+        const rows = Object.values(movement).map(row => ({
+            ...row,
+            consumptionPerDay: observedDays > 0 ? row.depleted / observedDays : 0
+        })).sort((a,b) => b.depleted - a.depleted || b.loanedOut - a.loanedOut);
+
+        return { days, observedDays, events: events.length, rows };
+    }
+
+    function factionInventoryStatusBadge(status) {
+        const styles = {
+            CRITICAL: 'background:#6b1f1f;color:#ffd0d0;border:1px solid #a94a4a;',
+            LOW: 'background:#5b431a;color:#ffe0a3;border:1px solid #9b742f;',
+            GREEN: 'background:#203d29;color:#c9f0d3;border:1px solid #3f7550;',
+            UNSET: 'background:#2c2c2c;color:#bbb;border:1px solid #555;'
+        };
+        return '<span style="' + (styles[status] || styles.UNSET) + 'padding:2px 6px;border-radius:10px;font-size:10px;font-weight:bold;">' + escapeHtml(status) + '</span>';
+    }
+
+    function factionInventoryHtml(db) {
+        const state = db.factionInventory;
+        const allRows = factionInventoryRows(db);
+        const selectedCategory = String(state.settings?.selectedCategory || 'all');
+        const rows = selectedCategory === 'all' ? allRows : allRows.filter(row => row.category === selectedCategory);
+        const loans = factionLoanMemberRows(db);
+        const configured = allRows.filter(row => row.threshold.target > 0);
+        const restock = configured.filter(row => row.threshold.shortfall > 0);
+        const critical = configured.filter(row => row.threshold.status === 'CRITICAL');
+        const report = factionInventoryReport(db, 7);
+        const totalOwned = allRows.reduce((sum,row) => sum + Number(row.amountOwned || 0), 0);
+        const equipmentAvailable = allRows.filter(row => ['weapons','armor'].includes(row.category)).reduce((sum,row) => sum + Number(row.availableCount || 0), 0);
+        const equipmentLoaned = allRows.filter(row => ['weapons','armor'].includes(row.category)).reduce((sum,row) => sum + Number(row.loanedCount || 0), 0);
+        const keyMode = getFactionApiKey() ? 'Dedicated faction key' : getApiKey() ? 'Primary CRM key fallback' : 'No key';
+        const nextRefresh = state.nextUsefulRefreshAt ? fmtDate(state.nextUsefulRefreshAt) : '—';
+        const categories = ['all',...FACTION_INVENTORY_CATEGORIES];
+
+        const summary = card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+                '<div><b style="font-size:15px;">Faction Inventory Manager</b><div style="font-size:10px;color:#888;">Read-only armory command center · Torn faction/inventory</div></div>'+
+                '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-faction-sync" style="'+btn(true)+'">Sync Armory</button><button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button></div>'+
+            '</div>'+
+            '<div style="font-size:11px;color:#aaa;margin-top:7px;line-height:1.55;">'+
+                'API: <b>'+escapeHtml(keyMode)+'</b> · Torn source snapshot: <b>'+escapeHtml(fmtDate(state.inventoryTimestamp))+'</b> · Last fetch: '+escapeHtml(fmtDate(state.lastSyncAt))+'<br>'+
+                'Next useful refresh: ~'+escapeHtml(nextRefresh)+' because Torn caches the inventory selection for one hour. CRM snapshots remain local and historical.<br>'+
+                '<b>Read-only:</b> this module never gives, retrieves, moves, or consumes faction items.'+
+            '</div>'+
+            '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin-top:8px;">'+
+                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+allRows.length+'</b><br><span style="font-size:9px;color:#888;">ITEM TYPES</span></div>'+
+                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+totalOwned.toLocaleString()+'</b><br><span style="font-size:9px;color:#888;">OWNED UNITS</span></div>'+
+                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+equipmentAvailable.toLocaleString()+'</b><br><span style="font-size:9px;color:#888;">EQUIPMENT AVAILABLE</span></div>'+
+                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+equipmentLoaned.toLocaleString()+'</b><br><span style="font-size:9px;color:#888;">EQUIPMENT LOANED</span></div>'+
+                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+critical.length+'</b><br><span style="font-size:9px;color:#888;">CRITICAL RESERVES</span></div>'+
+            '</div>'
+        );
+
+        const readiness = card(
+            '<b>War Readiness / Restock Queue</b>'+
+            (configured.length
+                ? '<div style="font-size:11px;color:#bbb;margin-top:5px;">Configured reserves: '+configured.length+' · Ready '+configured.filter(r=>r.threshold.status==='GREEN').length+' · Low '+configured.filter(r=>r.threshold.status==='LOW').length+' · Critical '+critical.length+'</div>'
+                : '<div style="font-size:11px;color:#888;margin-top:5px;">No reserve targets configured yet. Set targets on critical armory items to activate readiness alerts.</div>')+
+            (restock.length
+                ? restock.slice(0,20).map(row => '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;">'+
+                    factionInventoryStatusBadge(row.threshold.status)+' <b>'+escapeHtml(row.name)+'</b> · '+escapeHtml(row.category)+' · '+
+                    row.threshold.current.toLocaleString()+'/'+row.threshold.target.toLocaleString()+' '+escapeHtml(row.threshold.basis)+' · Need <b>'+row.threshold.shortfall.toLocaleString()+'</b>'+
+                    (row.referencePrice ? ' · Est. '+money(row.estimatedRestockCost)+' @ '+money(row.referencePrice)+' ('+escapeHtml(row.priceSource)+')' : ' · Price unavailable')+
+                '</div>').join('')
+                : configured.length ? '<div style="font-size:11px;color:#9fe3a8;margin-top:5px;">All configured reserves meet target.</div>' : '')
+        );
+
+        const categoryFilter = '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:8px 0;">'+
+            '<label style="font-size:10px;color:#aaa;">Category <select id="mm-faction-category" style="'+inputCss()+'padding:5px 7px;">'+
+                categories.map(cat => '<option value="'+escapeHtml(cat)+'" '+(selectedCategory===cat?'selected':'')+'>'+escapeHtml(cat==='all'?'All categories':cat)+'</option>').join('')+
+            '</select></label>'+
+            '<span style="font-size:10px;color:#888;">Reserve basis defaults to available for weapons/armor and owned for stackable supplies.</span>'+
+        '</div>';
+
+        const armory = card(
+            '<b>Armory Dashboard</b>'+categoryFilter+
+            (rows.length ? rows.map(row => {
+                const t = row.threshold;
+                const loanSummary = row.loanedCount
+                    ? ' · Loaned '+Number(row.loanedCount).toLocaleString()+' to '+row.loans.length+' member'+(row.loans.length===1?'':'s')
+                    : '';
+                const uidText = ['weapons','armor'].includes(row.category)
+                    ? ' · UID coverage '+Number(row.uidCount||0).toLocaleString()
+                    : '';
+                return '<div style="border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+                    '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">'+
+                        '<div><b>'+escapeHtml(row.name)+'</b> <span style="color:#777">['+escapeHtml(row.itemId)+']</span> '+factionInventoryStatusBadge(t.status)+
+                        '<br><span style="color:#aaa;">'+escapeHtml(row.category)+' · '+escapeHtml(row.type||'')+'</span></div>'+
+                        '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><button data-faction-action="threshold" data-item="'+escapeHtml(row.itemId)+'" data-name="'+escapeHtml(row.name)+'" style="'+btn(t.target>0)+'">'+(t.target>0?'Reserve '+t.target:'Set Reserve')+'</button></div>'+
+                    '</div>'+
+                    '<div style="color:#bbb;margin-top:4px;">Owned <b>'+Number(row.amountOwned||0).toLocaleString()+'</b> · Available <b>'+Number(row.availableCount||0).toLocaleString()+'</b>'+loanSummary+uidText+'<br>'+
+                    'Reserve metric '+escapeHtml(t.basis)+': '+t.current.toLocaleString()+(t.target>0?' / '+t.target.toLocaleString()+' · Shortfall '+t.shortfall.toLocaleString():' · target not set')+'<br>'+
+                    'Reference buy: '+(row.referencePrice?money(row.referencePrice)+' · '+escapeHtml(row.priceSource):'—')+
+                    (t.shortfall&&row.referencePrice?' · Restock estimate <b>'+money(row.estimatedRestockCost)+'</b>':'')+
+                    '</div>'+
+                    (row.loans.length ? '<details style="margin-top:4px;"><summary style="cursor:pointer;color:#aaa;">Loan details</summary><div style="margin-top:3px;">'+
+                        row.loans.map(loan => escapeHtml(loan.memberName)+' ['+escapeHtml(loan.memberId)+'] × '+Number(loan.amount||0).toLocaleString()+
+                            (loan.uids?.length?' · UID '+loan.uids.slice(0,8).map(escapeHtml).join(', ')+(loan.uids.length>8?'…':''):'')
+                        ).join('<br>')+
+                    '</div></details>' : '')+
+                '</div>';
+            }).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No faction inventory snapshot yet. Sync Armory after configuring a Limited-access faction key.</div>')
+        );
+
+        const memberView = card(
+            '<b>Member Loan View</b>'+
+            (loans.length ? loans.slice(0,40).map(member =>
+                '<details style="border-top:1px solid #303030;padding:5px 0;"><summary style="cursor:pointer;font-size:11px;"><b>'+escapeHtml(member.memberName)+'</b> ['+escapeHtml(member.memberId)+'] · '+member.amount+' item'+(member.amount===1?'':'s')+'</summary>'+
+                '<div style="font-size:10px;color:#aaa;margin-top:4px;">'+member.items.map(item =>
+                    escapeHtml(item.name)+' × '+item.amount+(item.uids?.length?' · UID '+item.uids.slice(0,10).map(escapeHtml).join(', ')+(item.uids.length>10?'…':''):'')
+                ).join('<br>')+'</div></details>'
+            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No currently loaned weapon/armor rows in the latest snapshot.</div>')
+        );
+
+        const weekly = card(
+            '<b>7-Day Inventory Report</b>'+
+            '<div style="font-size:11px;color:#aaa;margin-top:5px;">Observed span '+(report.observedDays?report.observedDays.toFixed(1)+'d':'—')+' · '+report.events+' inventory change event'+(report.events===1?'':'s')+'. Negative owned deltas are treated as observed depletion, not attributed to a specific cause.</div>'+
+            (report.rows.length ? report.rows.slice(0,15).map(row =>
+                '<div style="border-top:1px solid #303030;padding:5px 0;font-size:10px;"><b>'+escapeHtml(row.name)+'</b> · '+escapeHtml(row.category)+
+                ' · Depleted '+row.depleted.toLocaleString()+' · Added '+row.added.toLocaleString()+' · Net '+(row.netOwned>=0?'+':'')+row.netOwned.toLocaleString()+
+                (row.consumptionPerDay>0?' · Gross depletion rate '+row.consumptionPerDay.toFixed(1)+'/day':'')+
+                (row.loanedOut>0?' · Loan increases '+row.loanedOut.toLocaleString():'')+
+                '</div>'
+            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">A second distinct Torn source snapshot is required before movement reporting begins.</div>')
+        );
+
+        const audit = card(
+            '<b>Inventory Audit Log</b>'+
+            ((state.events||[]).length ? state.events.slice().sort((a,b)=>Number(b.observedAt||0)-Number(a.observedAt||0)).slice(0,30).map(event =>
+                '<div style="border-top:1px solid #303030;padding:5px 0;font-size:10px;">'+
+                escapeHtml(fmtDate(event.observedAt))+' · <b>'+escapeHtml(event.name)+'</b> · Owned '+(event.deltaOwned>=0?'+':'')+Number(event.deltaOwned||0)+
+                ' · Available '+(event.deltaAvailable>=0?'+':'')+Number(event.deltaAvailable||0)+
+                ' · Loaned '+(event.deltaLoaned>=0?'+':'')+Number(event.deltaLoaned||0)+
+                '</div>'
+            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No inventory changes recorded yet.</div>')
+        );
+
+        return summary + readiness + armory + memberView + weekly + audit;
+    }
+
+    function factionInventorySelfTest() {
+        const sourceAt = 1_700_000_000_000;
+        const groups = [
+            {category:'weapons',inventoryTimestamp:sourceAt,rows:[
+                {id:1,name:'Test Rifle',type:'Primary',amount:2,uids:[11,12],loaned:null},
+                {id:1,name:'Test Rifle',type:'Primary',amount:1,uids:[13],loaned:{id:99,name:'Member'}}
+            ]},
+            {category:'medical',inventoryTimestamp:sourceAt,rows:[
+                {id:2,name:'First Aid Kit',type:'Medical',amount:100,uids:[500],loaned:null}
+            ]}
+        ];
+        const current = normalizeFactionInventoryResults(groups, sourceAt + 1000);
+        const weapon = current['weapons|1'];
+        const state = {snapshots:[],events:[]};
+        const first = recordFactionInventorySnapshot(state,current,sourceAt,sourceAt+1000);
+        const changed = deepClone(current);
+        changed['weapons|1'].availableCount = 1;
+        changed['weapons|1'].loanedCount = 2;
+        const second = recordFactionInventorySnapshot(state,changed,sourceAt+3600000,sourceAt+3601000);
+        const merged = mergeFactionInventoryStates(
+            {current,inventoryTimestamp:new Date(sourceAt+3600000).toISOString(),lastSyncAt:new Date(sourceAt+3601000).toISOString(),snapshots:state.snapshots,events:state.events,thresholds:{'1':{target:3,basis:'available',updatedAt:new Date(sourceAt+1).toISOString()}},settings:{updatedAt:new Date(sourceAt+1).toISOString()},diagnostics:[]},
+            {current:{},inventoryTimestamp:new Date(sourceAt).toISOString(),lastSyncAt:new Date(sourceAt+1000).toISOString(),snapshots:[],events:[],thresholds:{},settings:{},diagnostics:[]}
+        );
+        return {
+            pass:
+                weapon?.amountOwned===3 &&
+                weapon?.availableCount===2 &&
+                weapon?.loanedCount===1 &&
+                weapon?.loans?.[0]?.memberId==='99' &&
+                first.snapshotAdded===true &&
+                second.eventsAdded===1 &&
+                merged.current?.['weapons|1']?.amountOwned===3 &&
+                merged.thresholds?.['1']?.target===3,
+            weapon,
+            first,
+            second,
+            mergedCurrentCount:Object.keys(merged.current||{}).length
+        };
+    }
+
+    // ============================================================
     // UI
     // ============================================================
 
@@ -7421,8 +8150,8 @@
     }
 
     function tabsHtml() {
-        const simpleTabs = [['home','Home'],['stock','Stock'],['deals','Deals'],['customers','Customers'],['more','More']];
-        const advancedTabs = [['ops','Operations'],['customers','Customers'],['inventory','Inventory'],['procurement','Procure'],['intel','Market Intel'],['analytics','Analytics'],['coupons','Coupons'],['subscribers','Restock'],['refunds','Refunds'],['sales','Sales'],['settings','Settings']];
+        const simpleTabs = [['home','Home'],['stock','Stock'],['faction','Faction'],['deals','Deals'],['customers','Customers'],['more','More']];
+        const advancedTabs = [['ops','Operations'],['customers','Customers'],['inventory','Inventory'],['faction','Faction Inv'],['procurement','Procure'],['intel','Market Intel'],['analytics','Analytics'],['coupons','Coupons'],['subscribers','Restock'],['refunds','Refunds'],['sales','Sales'],['settings','Settings']];
         const tabs = simpleMode ? simpleTabs : advancedTabs;
         return `<div style="display:flex;gap:5px;flex-wrap:wrap;margin:8px 0;align-items:center;">
             ${tabs.map(([id,label]) => `<button data-tab="${id}" style="${btn(activeTab === id)}${activeTab === id ? 'border-color:#d7ad4b;' : ''}">${label}</button>`).join('')}
@@ -8492,6 +9221,7 @@
 
     function settingsHtml() {
         const hasKey = Boolean(getApiKey());
+        const hasFactionKey = Boolean(getFactionApiKey());
         const db = dbLoad();
         const audit = db.meta?.lastSalesAudit;
         const auditText = audit
@@ -8531,6 +9261,28 @@
                 Filtered customers: ${Object.values(db.removedCustomers || {}).filter(isRemovalRecordActive).length}
             </div>
             <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;">
+                <b>Faction Inventory API</b>
+                <div style="font-size:11px;color:#aaa;margin:4px 0 7px;">
+                    Optional dedicated key for <b>Faction → Inventory</b>. Requires Limited access or a custom key with that selection.
+                    Stored only in Tampermonkey GM storage and excluded from sanitized GitHub backups.
+                    If blank, manual armory sync can fall back to the primary CRM key.
+                </div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <input id="mm-faction-api-key" type="password" autocomplete="off"
+                        placeholder="${hasFactionKey ? 'Faction API key saved — enter to replace' : 'Dedicated faction inventory API key'}"
+                        style="${inputCss()}flex:1;min-width:260px;">
+                    <button id="mm-save-faction-api" style="${btn(true)}">Save Faction Key</button>
+                    <button id="mm-clear-faction-api" style="${btn()}">Clear</button>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:11px;">
+                    <label><input id="mm-faction-auto-sync" type="checkbox" ${db.factionInventory.settings.autoSync ? 'checked' : ''}> Hourly background sync when dedicated key is configured</label>
+                    <button id="mm-faction-sync-settings" style="${btn()}">Sync Armory Now</button>
+                </div>
+                <div style="font-size:10px;color:#888;margin-top:6px;">
+                    Source snapshot: ${escapeHtml(fmtDate(db.factionInventory.inventoryTimestamp))} · Last fetch: ${escapeHtml(fmtDate(db.factionInventory.lastSyncAt))}
+                </div>
+            </div>
+            <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;">
                 <b>Operations</b>
                 <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:5px;">
                     <label style="font-size:10px;color:#aaa;">Listing hours<input id="mm-ops-listing-hours" type="number" min="1" value="${Number(db.operations.settings.listingHours||DEFAULT_LISTING_HOURS)}" style="${inputCss()}width:100%;"></label>
@@ -8548,7 +9300,7 @@
                 </div>
                 <div style="font-size:11px;color:#aaa;margin:4px 0 7px;">
                     Primary database: <b>IndexedDB</b>. GitHub sync runs hourly when configured.
-                    Sanitized backup excludes customer records, API keys, refunds, coupons, private notes, acquisitions, and account-specific inventory.
+                    Sanitized backup excludes customer records, API keys, refunds, coupons, private notes, acquisitions, account-specific inventory, and faction armory data.
                     Optional encrypted full backup protects the complete CRM database.
                 </div>
                 <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;">
@@ -8585,6 +9337,7 @@
         if (simpleMode) {
             if (activeTab === 'home') return homeHtml(db);
             if (activeTab === 'stock') return stockSimpleHtml(db);
+            if (activeTab === 'faction') return factionInventoryHtml(db);
             if (activeTab === 'deals') return dealsSimpleHtml(db);
             if (activeTab === 'customers') return customersSimpleHtml(db);
             if (activeTab === 'more') return moreSimpleHtml(db);
@@ -8592,6 +9345,7 @@
         if (activeTab === 'ops') return operationsHtml(db);
         if (activeTab === 'customers') return customersHtml(db);
         if (activeTab === 'inventory') return inventoryHtml(db);
+        if (activeTab === 'faction') return factionInventoryHtml(db);
         if (activeTab === 'procurement') return procurementHtml(db);
         if (activeTab === 'intel') return marketIntelHtml(db);
         if (activeTab === 'analytics') return analyticsHtml(db);
@@ -8759,8 +9513,53 @@
             render();
         });
         root.querySelector('#mm-travel-save')?.addEventListener('click', () => saveTravelSettings(root));
+        root.querySelector('#mm-faction-sync')?.addEventListener('click', () => syncFactionInventory({silent:false,force:true}).catch(()=>{}));
+        root.querySelector('#mm-faction-market')?.addEventListener('click', () => syncMarketIntelligence(false));
+        root.querySelector('#mm-faction-category')?.addEventListener('change', e => {
+            const db=dbLoad();
+            db.factionInventory.settings.selectedCategory=String(e.currentTarget.value||'all');
+            db.factionInventory.settings.updatedAt=nowIso();
+            dbSave(db);
+            render();
+        });
+        root.querySelectorAll('[data-faction-action="threshold"]').forEach(button => button.addEventListener('click', () => {
+            const id=asId(button.dataset.item);
+            const db=dbLoad();
+            const existing=db.factionInventory.thresholds?.[id];
+            const value=prompt('Reserve target for '+String(button.dataset.name||('item '+id))+':', String(existing?.target||0));
+            if(value==null)return;
+            const target=Math.max(0,Math.round(Number(value)||0));
+            const row=Object.values(db.factionInventory.current||{}).find(item=>asId(item.itemId)===id);
+            const defaultBasis=['weapons','armor'].includes(String(row?.category||''))?'available':'owned';
+            setFactionInventoryThreshold(id,target,existing?.basis||defaultBasis);
+            statusText=target>0?'Faction reserve target saved.':'Faction reserve target cleared.';
+            render();
+        }));
         root.querySelector('#mm-opportunity-sync')?.addEventListener('click', () => syncProcurement());
         root.querySelector('#mm-opportunity-market')?.addEventListener('click', () => syncMarketIntelligence(false));
+
+        root.querySelector('#mm-save-faction-api')?.addEventListener('click', () => {
+            const value=String(root.querySelector('#mm-faction-api-key')?.value||'').trim();
+            if(value)setFactionApiKey(value);
+            const db=dbLoad();
+            db.factionInventory.settings.autoSync=Boolean(root.querySelector('#mm-faction-auto-sync')?.checked);
+            db.factionInventory.settings.updatedAt=nowIso();
+            dbSave(db);
+            statusText=value?'Faction inventory API key saved.':'Faction inventory settings saved.';
+            render();
+        });
+        root.querySelector('#mm-clear-faction-api')?.addEventListener('click', () => {
+            setFactionApiKey('');
+            statusText='Dedicated faction inventory API key cleared. Manual sync can still use a compatible primary CRM key.';
+            render();
+        });
+        root.querySelector('#mm-faction-auto-sync')?.addEventListener('change', e => {
+            const db=dbLoad();
+            db.factionInventory.settings.autoSync=Boolean(e.currentTarget.checked);
+            db.factionInventory.settings.updatedAt=nowIso();
+            dbSave(db);
+        });
+        root.querySelector('#mm-faction-sync-settings')?.addEventListener('click', () => syncFactionInventory({silent:false,force:true}).catch(()=>{}));
 
         root.querySelector('#mm-add-customer')?.addEventListener('click', () => addManualCustomer(root.querySelector('#mm-add-id')?.value));
         root.querySelector('#mm-refresh-customers')?.addEventListener('click', async () => {
@@ -9364,6 +10163,16 @@
 
         setTimeout(() => checkCrmUpdate({silent:true}).catch(()=>{}), 12_000);
 
+        if (getFactionApiKey() && dbLoad().factionInventory.settings.autoSync) {
+            setTimeout(() => syncFactionInventory({silent:true}).catch(error => console.warn('[MM CRM] Faction inventory startup sync failed', error)), 6500);
+        }
+        setInterval(() => {
+            const db=dbLoad();
+            if (getFactionApiKey() && db.factionInventory.settings.autoSync) {
+                syncFactionInventory({silent:true}).catch(error => console.warn('[MM CRM] Faction inventory background sync failed', error));
+            }
+        }, FACTION_INVENTORY_SYNC_INTERVAL_MS);
+
         setTimeout(() => syncYataTravelHistory({silent:true}).catch(error => console.warn('[MM CRM] YATA shared history startup sync failed', error)), 2400);
         setInterval(() => syncYataTravelHistory({silent:true}).catch(error => console.warn('[MM CRM] YATA shared history sync failed', error)), YATA_SAMPLE_INTERVAL_MS);
 
@@ -9422,6 +10231,11 @@
         deadCapitalRows: () => deadCapitalRows(dbLoad()),
         salesFunnelMetrics: () => salesFunnelMetrics(dbLoad()),
         competitorIntelligenceRows: () => competitorIntelligenceRows(dbLoad()),
+        syncFactionInventory,
+        factionInventoryRows: () => factionInventoryRows(dbLoad()),
+        factionInventoryLoans: () => factionLoanMemberRows(dbLoad()),
+        factionInventoryReport: (days=7) => factionInventoryReport(dbLoad(),days),
+        factionInventorySelfTest,
         syncTravelStock,
         updateTravelData,
         backgroundTravelSample,
