@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.3.0
+// @version      7.3.1
 // @description  Bazaar operations CRM with in-CRM update checking, TornW3B travel intelligence, customer automation, procurement, analytics, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.3.0';
+    const VERSION = '7.3.1';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -8092,19 +8092,25 @@
         const totalOwned = allRows.reduce((sum,row) => sum + Number(row.amountOwned || 0), 0);
         const equipmentAvailable = allRows.filter(row => ['weapons','armor'].includes(row.category)).reduce((sum,row) => sum + Number(row.availableCount || 0), 0);
         const equipmentLoaned = allRows.filter(row => ['weapons','armor'].includes(row.category)).reduce((sum,row) => sum + Number(row.loanedCount || 0), 0);
-        const keyMode = getFactionApiKey() ? 'Dedicated faction key' : getApiKey() ? 'Primary CRM key fallback' : 'No key';
+        const keyMode = getFactionApiKey() ? 'Dedicated faction key' : getApiKey() ? 'Primary CRM key fallback — may lack Faction → Inventory access' : 'No key';
         const nextRefresh = state.nextUsefulRefreshAt ? fmtDate(state.nextUsefulRefreshAt) : '—';
         const categories = ['all',...FACTION_INVENTORY_CATEGORIES];
 
         const summary = card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
                 '<div><b style="font-size:15px;">Faction Inventory Manager</b><div style="font-size:10px;color:#888;">Read-only armory command center · Torn faction/inventory</div></div>'+
-                '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-faction-sync" style="'+btn(true)+'">Sync Armory</button><button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button></div>'+
+                '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">'+
+                    '<label style="font-size:10px;color:#aaa;display:flex;align-items:center;gap:4px;">Category <select id="mm-faction-category" style="'+inputCss()+'padding:5px 7px;min-width:150px;">'+
+                        categories.map(cat => '<option value="'+escapeHtml(cat)+'" '+(selectedCategory===cat?'selected':'')+'>'+escapeHtml(cat==='all'?'All categories':cat)+'</option>').join('')+
+                    '</select></label>'+
+                    '<button id="mm-faction-sync" style="'+btn(true)+'">Sync Armory</button>'+
+                    '<button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button>'+
+                '</div>'+
             '</div>'+
             '<div style="font-size:11px;color:#aaa;margin-top:7px;line-height:1.55;">'+
                 'API: <b>'+escapeHtml(keyMode)+'</b> · Torn source snapshot: <b>'+escapeHtml(fmtDate(state.inventoryTimestamp))+'</b> · Last fetch: '+escapeHtml(fmtDate(state.lastSyncAt))+'<br>'+
                 'Next useful refresh: ~'+escapeHtml(nextRefresh)+' because Torn caches the inventory selection for one hour. CRM snapshots remain local and historical.<br>'+
-                '<b>Read-only:</b> this module never gives, retrieves, moves, or consumes faction items.'+
+                'Reserve basis: available for weapons/armor, owned for stackable supplies. <b>Read-only:</b> this module never gives, retrieves, moves, or consumes faction items.'+
             '</div>'+
             '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin-top:8px;">'+
                 '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+allRows.length+'</b><br><span style="font-size:9px;color:#888;">ITEM TYPES</span></div>'+
@@ -8136,15 +8142,8 @@
                 : '')
         );
 
-        const categoryFilter = '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:8px 0;">'+
-            '<label style="font-size:10px;color:#aaa;">Category <select id="mm-faction-category" style="'+inputCss()+'padding:5px 7px;">'+
-                categories.map(cat => '<option value="'+escapeHtml(cat)+'" '+(selectedCategory===cat?'selected':'')+'>'+escapeHtml(cat==='all'?'All categories':cat)+'</option>').join('')+
-            '</select></label>'+
-            '<span style="font-size:10px;color:#888;">Reserve basis defaults to available for weapons/armor and owned for stackable supplies.</span>'+
-        '</div>';
-
         const armory = card(
-            '<b>Armory Dashboard</b>'+categoryFilter+
+            '<b>Armory Dashboard</b>'+
             (rows.length ? rows.map(row => {
                 const t = row.threshold;
                 const loanSummary = row.loanedCount
