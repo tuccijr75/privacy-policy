@@ -111,8 +111,19 @@
     const FACTION_INVENTORY_SNAPSHOT_MAX = 192;
     const FACTION_INVENTORY_EVENT_MAX = 2500;
     const FACTION_INVENTORY_CATEGORIES = Object.freeze([
-        'weapons','armor','temporary','medical','consumables','drugs','boosters','utilities','loot'
+        'armor','temporary','medical','consumables'
     ]);
+    const FACTION_INVENTORY_LOAN_CATEGORIES = Object.freeze(['armor','temporary']);
+    const FACTION_INVENTORY_POLICY = Object.freeze({
+        scope: 'Armor, temporary weapons, medical supplies, and consumables.',
+        role: 'Regularly audit vault stock and keep the currently unlocked armories visible; source gear and weapon upgrades through travel only when leadership authorizes funds.',
+        sourcing: 'Faction member bazaars first; then trusted traders/private bazaars; then the Item Market. For medical supplies and temporary weapons, compare against the Item Market because leadership reports it is usually the most cost-effective source.',
+        pricing: 'No fixed maximum prices are established yet. Build sensible guidelines from observed market data; CRM prices are advisory references, not purchasing authorization.',
+        stock: 'No formal minimum or maximum stock levels are established yet. Track usage over time and use provisional targets only as planning aids, with Ranked War and chain levels agreed with leadership.',
+        loans: 'Members may borrow armor and temporary weapons for chains, Ranked Wars, and training. There is no fixed loan duration; prompt return is expected. Follow up on extended holdings, then flag lost or long-outstanding items to leadership. Leadership handles enforcement and borrowing privileges.',
+        highValue: 'High-value Ranked War equipment remains in the vault and is distributed by leadership immediately before war.',
+        purchasing: 'Purchases use pre-approved faction funds or reimbursement. Travel sourcing requires leadership authorization and available faction finances.'
+    });
     const SYNC_KEY = 'mm_bazaar_crm_logstate_v1';
     const PROCESSED_KEY = 'mm_bazaar_crm_processed_v1';
     const UI_KEY = 'mm_bazaar_crm_ui_v1';
@@ -7742,7 +7753,7 @@
                 amountOwned: Number(item.amountOwned || 0),
                 availableCount: Number(item.availableCount || 0),
                 loanedCount: Number(item.loanedCount || 0),
-                loans: ['weapons','armor'].includes(String(item.category || ''))
+                loans: FACTION_INVENTORY_LOAN_CATEGORIES.includes(String(item.category || ''))
                     ? (item.loans || []).map(loan => ({
                         memberId: asId(loan.memberId),
                         memberName: String(loan.memberName || loan.memberId || ''),
@@ -7811,7 +7822,7 @@
         if (factionInventoryRunning) return { skipped: true, reason: 'running' };
         if (!factionInventoryApiKey()) {
             if (!silent) {
-                statusText = 'Faction Inventory needs a Limited-access Torn key. Add a dedicated faction key in Settings, or use a compatible primary key.';
+                statusText = 'Faction Inventory needs Faction → Inventory API access. Leadership must enable Faction API Access for your faction position; then use your own Limited/custom key or a compatible primary key.';
                 render();
             }
             return { skipped: true, reason: 'missing-key' };
@@ -7913,7 +7924,7 @@
     function factionInventoryThresholdState(db, item) {
         const config = db.factionInventory?.thresholds?.[asId(item.itemId)] || {};
         const target = Math.max(0, Math.round(Number(config.target || 0)));
-        const automaticBasis = ['weapons','armor'].includes(String(item.category || '')) ? 'available' : 'owned';
+        const automaticBasis = FACTION_INVENTORY_LOAN_CATEGORIES.includes(String(item.category || '')) ? 'available' : 'owned';
         const basis = ['owned','available'].includes(String(config.basis || '')) ? String(config.basis) : automaticBasis;
         const current = basis === 'available'
             ? Number(item.availableCount || 0)
@@ -7992,7 +8003,7 @@
         const rows = [];
 
         for (const item of Object.values(db.factionInventory?.current || {})) {
-            if (!['weapons','armor'].includes(String(item.category || ''))) continue;
+            if (!FACTION_INVENTORY_LOAN_CATEGORIES.includes(String(item.category || ''))) continue;
             for (const loan of item.loans || []) {
                 const memberId = asId(loan.memberId);
                 let observedSince = latestSourceAt;
@@ -8027,7 +8038,10 @@
 
     function factionInventoryReport(db, days = 7) {
         const cutoff = Date.now() - Math.max(1, Number(days || 7)) * 86400000;
-        const events = (db.factionInventory?.events || []).filter(event => Number(event.observedAt || 0) >= cutoff);
+        const events = (db.factionInventory?.events || []).filter(event =>
+            Number(event.observedAt || 0) >= cutoff &&
+            FACTION_INVENTORY_CATEGORIES.includes(String(event.category || ''))
+        );
         const movement = {};
         for (const event of events) {
             const key = String(event.key || factionInventoryKey(event.category,event.itemId));
@@ -8082,23 +8096,23 @@
         const selectedCategory = String(state.settings?.selectedCategory || 'all');
         const rows = selectedCategory === 'all' ? allRows : allRows.filter(row => row.category === selectedCategory);
         const loans = factionLoanMemberRows(db);
-        const loanPersistence = factionLoanPersistenceRows(db);
-        const persistentLoans = loanPersistence.filter(row => row.observedHours >= 24);
-        const loanAgeMap = new Map(loanPersistence.map(row => [row.key+'|'+row.memberId,row]));
+        const loanReview = factionLoanPersistenceRows(db);
+        const loanAgeMap = new Map(loanReview.map(row => [row.key+'|'+row.memberId,row]));
         const configured = allRows.filter(row => row.threshold.target > 0);
         const restock = configured.filter(row => row.threshold.shortfall > 0);
         const critical = configured.filter(row => row.threshold.status === 'CRITICAL');
         const report = factionInventoryReport(db, 7);
         const totalOwned = allRows.reduce((sum,row) => sum + Number(row.amountOwned || 0), 0);
-        const equipmentAvailable = allRows.filter(row => ['weapons','armor'].includes(row.category)).reduce((sum,row) => sum + Number(row.availableCount || 0), 0);
-        const equipmentLoaned = allRows.filter(row => ['weapons','armor'].includes(row.category)).reduce((sum,row) => sum + Number(row.loanedCount || 0), 0);
+        const equipmentAvailable = allRows.filter(row => FACTION_INVENTORY_LOAN_CATEGORIES.includes(row.category)).reduce((sum,row) => sum + Number(row.availableCount || 0), 0);
+        const equipmentLoaned = allRows.filter(row => FACTION_INVENTORY_LOAN_CATEGORIES.includes(row.category)).reduce((sum,row) => sum + Number(row.loanedCount || 0), 0);
         const keyMode = getFactionApiKey() ? 'Dedicated faction key' : getApiKey() ? 'Primary CRM key fallback — may lack Faction → Inventory access' : 'No key';
         const nextRefresh = state.nextUsefulRefreshAt ? fmtDate(state.nextUsefulRefreshAt) : '—';
         const categories = ['all',...FACTION_INVENTORY_CATEGORIES];
+        const policy = FACTION_INVENTORY_POLICY;
 
         const summary = card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-                '<div><b style="font-size:15px;">Faction Inventory Manager</b><div style="font-size:10px;color:#888;">Read-only armory command center · Torn faction/inventory</div></div>'+
+                '<div><b style="font-size:15px;">Faction Inventory Manager</b><div style="font-size:10px;color:#888;">Read-only armory operations · confirmed scope: armor, temporary, medical, consumables</div></div>'+
                 '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">'+
                     '<label style="font-size:10px;color:#aaa;display:flex;align-items:center;gap:4px;">Category <select id="mm-faction-category" style="'+inputCss()+'padding:5px 7px;min-width:150px;">'+
                         categories.map(cat => '<option value="'+escapeHtml(cat)+'" '+(selectedCategory===cat?'selected':'')+'>'+escapeHtml(cat==='all'?'All categories':cat)+'</option>').join('')+
@@ -8110,33 +8124,47 @@
             '<div style="font-size:11px;color:#aaa;margin-top:7px;line-height:1.55;">'+
                 'API: <b>'+escapeHtml(keyMode)+'</b> · Torn source snapshot: <b>'+escapeHtml(fmtDate(state.inventoryTimestamp))+'</b> · Last fetch: '+escapeHtml(fmtDate(state.lastSyncAt))+'<br>'+
                 'Next useful refresh: ~'+escapeHtml(nextRefresh)+' because Torn caches the inventory selection for one hour. CRM snapshots remain local and historical.<br>'+
-                'Reserve basis: available for weapons/armor, owned for stackable supplies. <b>Read-only:</b> this module never gives, retrieves, moves, or consumes faction items.'+
+                'Planning basis: available for armor/temporary weapons, owned for medical/consumables. <b>Read-only:</b> this module never gives, retrieves, moves, buys, or consumes faction items.'+
             '</div>'+
             '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin-top:8px;">'+
                 '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+allRows.length+'</b><br><span style="font-size:9px;color:#888;">ITEM TYPES</span></div>'+
                 '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+totalOwned.toLocaleString()+'</b><br><span style="font-size:9px;color:#888;">OWNED UNITS</span></div>'+
-                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+equipmentAvailable.toLocaleString()+'</b><br><span style="font-size:9px;color:#888;">EQUIPMENT AVAILABLE</span></div>'+
-                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+equipmentLoaned.toLocaleString()+'</b><br><span style="font-size:9px;color:#888;">EQUIPMENT LOANED</span></div>'+
-                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+critical.length+'</b><br><span style="font-size:9px;color:#888;">CRITICAL RESERVES</span></div>'+
+                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+equipmentAvailable.toLocaleString()+'</b><br><span style="font-size:9px;color:#888;">LOANABLE AVAILABLE</span></div>'+
+                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+equipmentLoaned.toLocaleString()+'</b><br><span style="font-size:9px;color:#888;">LOANABLE OUT</span></div>'+
+                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+restock.length+'</b><br><span style="font-size:9px;color:#888;">PLANNING SHORTFALLS</span></div>'+
             '</div>'
         );
 
-        const readiness = card(
-            '<b>War Readiness / Restock Queue / Alerts</b>'+
+        const operatingPolicy = card(
+            '<b>Confirmed Operating Policy</b>'+
+            '<div style="font-size:11px;color:#bbb;margin-top:5px;line-height:1.55;">'+
+                '<b>Role:</b> '+escapeHtml(policy.role)+'<br>'+
+                '<b>Scope:</b> '+escapeHtml(policy.scope)+'<br>'+
+                '<b>Sourcing:</b> '+escapeHtml(policy.sourcing)+'<br>'+
+                '<b>Pricing:</b> '+escapeHtml(policy.pricing)+'<br>'+
+                '<b>Stock:</b> '+escapeHtml(policy.stock)+'<br>'+
+                '<b>Loans:</b> '+escapeHtml(policy.loans)+'<br>'+
+                '<b>High-value RW gear:</b> '+escapeHtml(policy.highValue)+'<br>'+
+                '<b>Purchasing:</b> '+escapeHtml(policy.purchasing)+
+            '</div>'
+        );
+
+        const planning = card(
+            '<b>Stock Planning / Restock Queue</b>'+
             (configured.length
-                ? '<div style="font-size:11px;color:#bbb;margin-top:5px;">Configured reserves: '+configured.length+' · Ready '+configured.filter(r=>r.threshold.status==='GREEN').length+' · Low '+configured.filter(r=>r.threshold.status==='LOW').length+' · Critical '+critical.length+'</div>'
-                : '<div style="font-size:11px;color:#888;margin-top:5px;">No reserve targets configured yet. Set targets on critical armory items to activate readiness alerts.</div>')+
+                ? '<div style="font-size:11px;color:#bbb;margin-top:5px;">Provisional targets: '+configured.length+' · At/above '+configured.filter(r=>r.threshold.status==='GREEN').length+' · Below '+configured.filter(r=>r.threshold.status==='LOW').length+' · Severe shortfall '+critical.length+'</div>'
+                : '<div style="font-size:11px;color:#888;margin-top:5px;">Leadership has not finalized minimum/maximum stock levels. Collect usage first; add provisional targets only when they are useful for planning.</div>')+
             (restock.length
                 ? restock.slice(0,20).map(row => '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;">'+
                     factionInventoryStatusBadge(row.threshold.status)+' <b>'+escapeHtml(row.name)+'</b> · '+escapeHtml(row.category)+' · '+
-                    row.threshold.current.toLocaleString()+'/'+row.threshold.target.toLocaleString()+' '+escapeHtml(row.threshold.basis)+' · Need <b>'+row.threshold.shortfall.toLocaleString()+'</b>'+
-                    (row.referencePrice ? ' · Est. '+money(row.estimatedRestockCost)+' @ '+money(row.referencePrice)+' ('+escapeHtml(row.priceSource)+')' : ' · Price unavailable')+
+                    row.threshold.current.toLocaleString()+'/'+row.threshold.target.toLocaleString()+' '+escapeHtml(row.threshold.basis)+' · Planning shortfall <b>'+row.threshold.shortfall.toLocaleString()+'</b>'+
+                    (row.referencePrice ? ' · Est. market cost '+money(row.estimatedRestockCost)+' @ '+money(row.referencePrice)+' ('+escapeHtml(row.priceSource)+')' : ' · Market price unavailable')+
                 '</div>').join('')
-                : configured.length ? '<div style="font-size:11px;color:#9fe3a8;margin-top:5px;">All configured reserves meet target.</div>' : '')+
-            (persistentLoans.length
-                ? '<div style="border-top:1px solid #303030;margin-top:6px;padding-top:6px;font-size:11px;"><b>Persistent loan alerts</b><br>'+
-                    persistentLoans.slice(0,12).map(row =>
-                        escapeHtml(row.memberName)+' · '+escapeHtml(row.name)+' × '+row.amount+' · observed loaned '+Math.floor(row.observedHours)+'h'
+                : configured.length ? '<div style="font-size:11px;color:#9fe3a8;margin-top:5px;">All provisional planning targets are currently met.</div>' : '')+
+            (loanReview.length
+                ? '<div style="border-top:1px solid #303030;margin-top:6px;padding-top:6px;font-size:11px;"><b>Loan age observations</b><div style="font-size:10px;color:#888;margin:2px 0 4px;">No automatic overdue threshold is applied. Observed age is informational; extended, lost, or long-outstanding items are reviewed manually and escalated to leadership as needed.</div>'+
+                    loanReview.slice(0,12).map(row =>
+                        escapeHtml(row.memberName)+' · '+escapeHtml(row.name)+' × '+row.amount+' · observed '+Math.floor(row.observedHours)+'h'
                     ).join('<br>')+
                   '</div>'
                 : '')
@@ -8149,19 +8177,19 @@
                 const loanSummary = row.loanedCount
                     ? ' · Loaned '+Number(row.loanedCount).toLocaleString()+' to '+row.loans.length+' member'+(row.loans.length===1?'':'s')
                     : '';
-                const uidText = ['weapons','armor'].includes(row.category)
+                const uidText = FACTION_INVENTORY_LOAN_CATEGORIES.includes(row.category)
                     ? ' · UID coverage '+Number(row.uidCount||0).toLocaleString()
                     : '';
                 return '<div style="border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
                     '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">'+
                         '<div><b>'+escapeHtml(row.name)+'</b> <span style="color:#777">['+escapeHtml(row.itemId)+']</span> '+factionInventoryStatusBadge(t.status)+
                         '<br><span style="color:#aaa;">'+escapeHtml(row.category)+' · '+escapeHtml(row.type||'')+'</span></div>'+
-                        '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><button data-faction-action="threshold" data-item="'+escapeHtml(row.itemId)+'" data-name="'+escapeHtml(row.name)+'" style="'+btn(t.target>0)+'">'+(t.target>0?'Reserve '+t.target:'Set Reserve')+'</button></div>'+
+                        '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><button data-faction-action="threshold" data-item="'+escapeHtml(row.itemId)+'" data-name="'+escapeHtml(row.name)+'" style="'+btn(t.target>0)+'">'+(t.target>0?'Target '+t.target:'Set Target')+'</button></div>'+
                     '</div>'+
                     '<div style="color:#bbb;margin-top:4px;">Owned <b>'+Number(row.amountOwned||0).toLocaleString()+'</b> · Available <b>'+Number(row.availableCount||0).toLocaleString()+'</b>'+loanSummary+uidText+'<br>'+
-                    'Reserve metric '+escapeHtml(t.basis)+': '+t.current.toLocaleString()+(t.target>0?' / '+t.target.toLocaleString()+' · Shortfall '+t.shortfall.toLocaleString():' · target not set')+'<br>'+
-                    'Reference buy: '+(row.referencePrice?money(row.referencePrice)+' · '+escapeHtml(row.priceSource):'—')+
-                    (t.shortfall&&row.referencePrice?' · Restock estimate <b>'+money(row.estimatedRestockCost)+'</b>':'')+
+                    'Planning metric '+escapeHtml(t.basis)+': '+t.current.toLocaleString()+(t.target>0?' / '+t.target.toLocaleString()+' · Shortfall '+t.shortfall.toLocaleString():' · target not set')+'<br>'+
+                    'Market reference (advisory): '+(row.referencePrice?money(row.referencePrice)+' · '+escapeHtml(row.priceSource):'—')+
+                    (t.shortfall&&row.referencePrice?' · Planning estimate <b>'+money(row.estimatedRestockCost)+'</b>':'')+
                     '</div>'+
                     (row.loans.length ? '<details style="margin-top:4px;"><summary style="cursor:pointer;color:#aaa;">Loan details</summary><div style="margin-top:3px;">'+
                         row.loans.map(loan => escapeHtml(loan.memberName)+' ['+escapeHtml(loan.memberId)+'] × '+Number(loan.amount||0).toLocaleString()+
@@ -8169,11 +8197,12 @@
                         ).join('<br>')+
                     '</div></details>' : '')+
                 '</div>';
-            }).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No faction inventory snapshot yet. Sync Armory after configuring a Limited-access faction key.</div>')
+            }).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No in-scope faction inventory snapshot yet. Ask leadership to enable Faction API Access for your position, then sync with your own Limited/custom key that includes Faction → Inventory.</div>')
         );
 
         const memberView = card(
             '<b>Member Loan View</b>'+
+            '<div style="font-size:10px;color:#888;margin-top:4px;">Armor and temporary weapons may be borrowed for chains, Ranked Wars, and training. No fixed loan duration is enforced here; follow-up and escalation remain a management judgment.</div>'+
             (loans.length ? loans.slice(0,40).map(member =>
                 '<details style="border-top:1px solid #303030;padding:5px 0;"><summary style="cursor:pointer;font-size:11px;"><b>'+escapeHtml(member.memberName)+'</b> ['+escapeHtml(member.memberId)+'] · '+member.amount+' item'+(member.amount===1?'':'s')+'</summary>'+
                 '<div style="font-size:10px;color:#aaa;margin-top:4px;">'+member.items.map(item => {
@@ -8182,12 +8211,12 @@
                         (item.uids?.length?' · UID '+item.uids.slice(0,10).map(escapeHtml).join(', ')+(item.uids.length>10?'…':''):'')+
                         (age?.observedSince?' · first observed '+escapeHtml(fmtDate(age.observedSince)):'');
                 }).join('<br>')+'</div></details>'
-            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No currently loaned weapon/armor rows in the latest snapshot.</div>')
+            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No currently loaned armor/temporary rows in the latest snapshot.</div>')
         );
 
         const weekly = card(
             '<b>7-Day Inventory Report</b>'+
-            '<div style="font-size:11px;color:#aaa;margin-top:5px;">Observed span '+(report.observedDays?report.observedDays.toFixed(1)+'d':'—')+' · '+report.events+' inventory change event'+(report.events===1?'':'s')+'. Negative owned deltas are treated as observed depletion, not attributed to a specific cause.</div>'+
+            '<div style="font-size:11px;color:#aaa;margin-top:5px;">Observed span '+(report.observedDays?report.observedDays.toFixed(1)+'d':'—')+' · '+report.events+' in-scope inventory change event'+(report.events===1?'':'s')+'. Use observed movement to build data-driven Ranked War/chain targets. Negative owned deltas are treated as observed depletion, not attributed to a specific cause.</div>'+
             (report.rows.length ? report.rows.slice(0,15).map(row =>
                 '<div style="border-top:1px solid #303030;padding:5px 0;font-size:10px;"><b>'+escapeHtml(row.name)+'</b> · '+escapeHtml(row.category)+
                 ' · Depleted '+row.depleted.toLocaleString()+' · Added '+row.added.toLocaleString()+' · Net '+(row.netOwned>=0?'+':'')+row.netOwned.toLocaleString()+
@@ -8199,36 +8228,38 @@
 
         const audit = card(
             '<b>Inventory Audit Log</b>'+
-            ((state.events||[]).length ? state.events.slice().sort((a,b)=>Number(b.observedAt||0)-Number(a.observedAt||0)).slice(0,30).map(event =>
-                '<div style="border-top:1px solid #303030;padding:5px 0;font-size:10px;">'+
-                escapeHtml(fmtDate(event.observedAt))+' · <b>'+escapeHtml(event.name)+'</b> · Owned '+(event.deltaOwned>=0?'+':'')+Number(event.deltaOwned||0)+
-                ' · Available '+(event.deltaAvailable>=0?'+':'')+Number(event.deltaAvailable||0)+
-                ' · Loaned '+(event.deltaLoaned>=0?'+':'')+Number(event.deltaLoaned||0)+
-                '</div>'
-            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No inventory changes recorded yet.</div>')
+            ((state.events||[]).filter(event => FACTION_INVENTORY_CATEGORIES.includes(String(event.category || ''))).length
+                ? (state.events||[]).filter(event => FACTION_INVENTORY_CATEGORIES.includes(String(event.category || ''))).slice().sort((a,b)=>Number(b.observedAt||0)-Number(a.observedAt||0)).slice(0,30).map(event =>
+                    '<div style="border-top:1px solid #303030;padding:5px 0;font-size:10px;">'+
+                    escapeHtml(fmtDate(event.observedAt))+' · <b>'+escapeHtml(event.name)+'</b> · Owned '+(event.deltaOwned>=0?'+':'')+Number(event.deltaOwned||0)+
+                    ' · Available '+(event.deltaAvailable>=0?'+':'')+Number(event.deltaAvailable||0)+
+                    ' · Loaned '+(event.deltaLoaned>=0?'+':'')+Number(event.deltaLoaned||0)+
+                    '</div>'
+                ).join('')
+                : '<div style="font-size:11px;color:#888;margin-top:5px;">No in-scope inventory changes recorded yet.</div>')
         );
 
-        return summary + readiness + armory + memberView + weekly + audit;
+        return summary + operatingPolicy + planning + armory + memberView + weekly + audit;
     }
 
     function factionInventorySelfTest() {
         const sourceAt = 1_700_000_000_000;
         const groups = [
-            {category:'weapons',inventoryTimestamp:sourceAt,rows:[
-                {id:1,name:'Test Rifle',type:'Primary',amount:2,uids:[11,12],loaned:null},
-                {id:1,name:'Test Rifle',type:'Primary',amount:1,uids:[13],loaned:{id:99,name:'Member'}}
+            {category:'armor',inventoryTimestamp:sourceAt,rows:[
+                {id:1,name:'Test Armor',type:'Armor',amount:2,uids:[11,12],loaned:null},
+                {id:1,name:'Test Armor',type:'Armor',amount:1,uids:[13],loaned:{id:99,name:'Member'}}
             ]},
             {category:'medical',inventoryTimestamp:sourceAt,rows:[
                 {id:2,name:'First Aid Kit',type:'Medical',amount:100,uids:[500],loaned:null}
             ]}
         ];
         const current = normalizeFactionInventoryResults(groups, sourceAt + 1000);
-        const weapon = current['weapons|1'];
+        const equipment = current['armor|1'];
         const state = {snapshots:[],events:[]};
         const first = recordFactionInventorySnapshot(state,current,sourceAt,sourceAt+1000);
         const changed = deepClone(current);
-        changed['weapons|1'].availableCount = 1;
-        changed['weapons|1'].loanedCount = 2;
+        changed['armor|1'].availableCount = 1;
+        changed['armor|1'].loanedCount = 2;
         const second = recordFactionInventorySnapshot(state,changed,sourceAt+3600000,sourceAt+3601000);
         const merged = mergeFactionInventoryStates(
             {current,inventoryTimestamp:new Date(sourceAt+3600000).toISOString(),lastSyncAt:new Date(sourceAt+3601000).toISOString(),snapshots:state.snapshots,events:state.events,thresholds:{'1':{target:3,basis:'available',updatedAt:new Date(sourceAt+1).toISOString()}},settings:{updatedAt:new Date(sourceAt+1).toISOString()},diagnostics:[]},
@@ -8236,15 +8267,15 @@
         );
         return {
             pass:
-                weapon?.amountOwned===3 &&
-                weapon?.availableCount===2 &&
-                weapon?.loanedCount===1 &&
-                weapon?.loans?.[0]?.memberId==='99' &&
+                equipment?.amountOwned===3 &&
+                equipment?.availableCount===2 &&
+                equipment?.loanedCount===1 &&
+                equipment?.loans?.[0]?.memberId==='99' &&
                 first.snapshotAdded===true &&
                 second.eventsAdded===1 &&
-                merged.current?.['weapons|1']?.amountOwned===3 &&
+                merged.current?.['armor|1']?.amountOwned===3 &&
                 merged.thresholds?.['1']?.target===3,
-            weapon,
+            equipment,
             first,
             second,
             mergedCurrentCount:Object.keys(merged.current||{}).length
@@ -9381,9 +9412,9 @@
             <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;">
                 <b>Faction Inventory API</b>
                 <div style="font-size:11px;color:#aaa;margin:4px 0 7px;">
-                    Optional dedicated key for <b>Faction → Inventory</b>. Requires Limited access or a custom key with that selection.
-                    Stored only in Tampermonkey GM storage and excluded from sanitized GitHub backups.
-                    If blank, manual armory sync can fall back to the primary CRM key.
+                    Recommended dedicated key for <b>Faction → Inventory</b>. Leadership must enable <b>Faction API Access</b> for your faction position; then use your own Limited key or a custom key containing that selection.
+                    Do not ask leadership to share another player's API key. This key is stored only in Tampermonkey GM storage and excluded from sanitized GitHub backups.
+                    If blank, manual armory sync can fall back to the primary CRM key when that key has the same faction permission.
                 </div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;">
                     <input id="mm-faction-api-key" type="password" autocomplete="off"
@@ -9644,13 +9675,13 @@
             const id=asId(button.dataset.item);
             const db=dbLoad();
             const existing=db.factionInventory.thresholds?.[id];
-            const value=prompt('Reserve target for '+String(button.dataset.name||('item '+id))+':', String(existing?.target||0));
+            const value=prompt('Provisional planning target for '+String(button.dataset.name||('item '+id))+':', String(existing?.target||0));
             if(value==null)return;
             const target=Math.max(0,Math.round(Number(value)||0));
             const row=Object.values(db.factionInventory.current||{}).find(item=>asId(item.itemId)===id);
-            const defaultBasis=['weapons','armor'].includes(String(row?.category||''))?'available':'owned';
+            const defaultBasis=FACTION_INVENTORY_LOAN_CATEGORIES.includes(String(row?.category||''))?'available':'owned';
             setFactionInventoryThreshold(id,target,existing?.basis||defaultBasis);
-            statusText=target>0?'Faction reserve target saved.':'Faction reserve target cleared.';
+            statusText=target>0?'Faction planning target saved.':'Faction planning target cleared.';
             render();
         }));
         root.querySelector('#mm-opportunity-sync')?.addEventListener('click', () => syncProcurement());
