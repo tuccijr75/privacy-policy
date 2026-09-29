@@ -9819,6 +9819,251 @@
         return controls + businessRulesCard(db, true) + topHtml + dollarHtml + travelHtml + scanners;
     }
 
+    function csvCell(value) {
+        if (value == null) return '';
+        let text = typeof value === 'number' && Number.isFinite(value)
+            ? String(value)
+            : String(value);
+        if (typeof value !== 'number' && /^[=+\-@]/.test(text)) text = "'" + text;
+        if (/[",\n\r]/.test(text)) text = '"' + text.replaceAll('"', '""') + '"';
+        return text;
+    }
+
+    function toCsv(headers, rows) {
+        const head = headers.map(csvCell).join(',');
+        const body = (rows || []).map(row =>
+            headers.map(header => csvCell(row?.[header])).join(',')
+        ).join('\r\n');
+        return '\uFEFF' + head + (body ? '\r\n' + body : '');
+    }
+
+    function downloadTextFile(filename, content, mime = 'text/csv;charset=utf-8') {
+        const blob = new Blob([content], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }
+
+    function exportDateStamp() {
+        return new Date().toISOString().replaceAll(':','-').replace('T','_').slice(0,19);
+    }
+
+    function financialExportDocuments(db) {
+        const inventoryRows = advancedInventoryRows(db);
+        const brief = ownerBriefing(db, inventoryRows);
+        const grossRevenue = inventoryRows.reduce((sum,r)=>sum+Number(r.realized?.revenue||0),0);
+        const grossCogs = inventoryRows.reduce((sum,r)=>sum+Number(r.realized?.cogs||0),0);
+        const inventoryCost = inventoryRows.reduce((sum,r)=>sum+Number(r.realized?.ledger?.remainingCost||0),0);
+        const completedRefunds = Object.values(db.refunds || {}).filter(r => ['completed','paid'].includes(String(r.status || '').toLowerCase()));
+        const cashbackPaid = completedRefunds.reduce((sum,r)=>sum+Number(r.amount||0),0);
+        const rules = businessRules(db);
+
+        const summaryRows = [
+            { Metric:'Report generated', Value:nowIso() },
+            { Metric:'30d revenue', Value:grossRevenue },
+            { Metric:'30d COGS', Value:grossCogs },
+            { Metric:'30d gross profit', Value:brief.grossProfit },
+            { Metric:'30d gross margin %', Value:grossRevenue > 0 ? brief.grossProfit / grossRevenue * 100 : 0 },
+            { Metric:'Inventory cost basis', Value:inventoryCost },
+            { Metric:'Dead capital', Value:brief.deadCapital },
+            { Metric:'Estimated lost profit', Value:brief.lostProfit },
+            { Metric:'Stockouts', Value:brief.stockouts },
+            { Metric:'Units sold 30d', Value:brief.units },
+            { Metric:'Cashback/refunds paid', Value:cashbackPaid },
+            { Metric:'CRM min ROI %', Value:rules.minRoiPct },
+            { Metric:'CRM min demand/day', Value:rules.minDemandPerDay },
+            { Metric:'CRM min buy price', Value:rules.minPrice },
+            { Metric:'CRM max buy price', Value:rules.maxPrice }
+        ];
+
+        const salesRows = [];
+        for (const sale of Object.values(db.sales || {})) {
+            const items = Array.isArray(sale.items) ? sale.items : [];
+            for (const item of items) {
+                salesRows.push({
+                    'Sale ID': String(sale.id || ''),
+                    'Date': sale.timestamp ? new Date(Number(sale.timestamp)).toISOString() : '',
+                    'Customer ID': asId(sale.playerId),
+                    'Customer': String(sale.playerName || ''),
+                    'Item ID': asId(item.id),
+                    'Item': String(item.name || item.itemName || ''),
+                    'Quantity': Number(item.quantity || 0),
+                    'Unit Price': Number(item.price || 0),
+                    'Line Total': Number(item.total || 0),
+                    'Sale Total': Number(sale.total || sale.totalValue || 0)
+                });
+            }
+        }
+        salesRows.sort((a,b)=>String(a.Date).localeCompare(String(b.Date)));
+
+        const acquisitionRows = (db.procurement?.acquisitions || []).map(a => ({
+            'Acquisition ID': String(a.id || ''),
+            'Date': String(a.acquiredAt || ''),
+            'Source': String(a.source || ''),
+            'Seller ID': asId(a.sellerId || ''),
+            'Seller': String(a.sellerName || ''),
+            'Item ID': asId(a.itemId),
+            'Item': String(a.itemName || ''),
+            'Quantity': Number(a.quantity || 0),
+            'Unit Cost': Number(a.unitCost || 0),
+            'Total Cost': Number(a.quantity || 0) * Number(a.unitCost || 0),
+            'Notes': String(a.notes || '')
+        }));
+
+        const inventoryProfitRows = inventoryRows.map(r => ({
+            'Item ID': r.id,
+            'Item': r.name,
+            'Type': r.type,
+            'State': r.state,
+            'On Hand': Number(r.onHand || 0),
+            'Bazaar Listed': Number(r.bazaarQty || 0),
+            'Item Market Listed': Number(r.itemMarketQty || 0),
+            'Total Stock': Number(r.stock || 0),
+            'Sold 7d': Number(r.sold7d || 0),
+            'Sold 30d': Number(r.sold30d || 0),
+            'Demand / Day': Number(r.daily || 0),
+            'Forecast / Day': Number(r.forecastDaily || 0),
+            'Average Cost': Number(r.avgCost || 0),
+            'Trusted Exit': Number(r.realisticExit || 0),
+            'Planned Listing Price': Number(r.plannedPrice || 0),
+            'Pricing Confidence %': Number(r.pricingDecision?.confidence || 0),
+            'Pricing Basis': String(r.pricingDecision?.source || ''),
+            '30d Revenue': Number(r.realized?.revenue || 0),
+            '30d COGS': Number(r.realized?.cogs || 0),
+            '30d Gross Profit': Number(r.realized?.grossProfit || 0),
+            'Realized ROI %': Number(r.realized?.cogs || 0) > 0 ? Number(r.realized.grossProfit || 0) / Number(r.realized.cogs) * 100 : 0,
+            'GMROI %': Number(r.realized?.gmroi || 0) * 100,
+            'Dead Capital': Number(r.deadCapital || 0),
+            'Market Snapshot Fresh': Boolean(r.marketSnapshotFresh)
+        }));
+
+        const refundRows = Object.values(db.refunds || {}).map(r => ({
+            'Refund ID': String(r.id || ''),
+            'Created': String(r.createdAt || ''),
+            'Completed': String(r.completedAt || ''),
+            'Cancelled': String(r.cancelledAt || ''),
+            'Status': String(r.status || ''),
+            'Customer ID': asId(r.playerId),
+            'Customer': String(r.playerName || ''),
+            'Coupon': String(r.couponCode || ''),
+            'Amount': Number(r.amount || 0),
+            'Purchase Total': Number(r.purchaseTotal || 0),
+            'Sale IDs': Array.isArray(r.saleIds) ? r.saleIds.join('|') : ''
+        }));
+
+        const customerRows = customerClvRows(db).map(c => ({
+            'Customer ID': asId(c.id),
+            'Customer': String(c.name || ''),
+            'Segment': String(c.segment || ''),
+            'Recency Days': Number(c.recencyDays || 0),
+            'Purchases': Number(c.frequency || 0),
+            'Units': Number(c.units || 0),
+            'Spend': Number(c.monetary || 0),
+            'Estimated Gross Profit': Number(c.estimatedGrossProfit || 0),
+            'Cashback Cost': Number(c.cashbackCost || 0),
+            'Estimated Net Value': Number(c.estimatedNetValue || 0),
+            'Top Products': (c.topProducts || []).map(x => String(x[0]) + '×' + Number(x[1] || 0)).join(' | ')
+        }));
+
+        const procurementRowsExport = procurementRows(db).map(r => ({
+            'Item ID': r.id,
+            'Item': r.name,
+            'Action': r.action,
+            'Priority': r.priority,
+            'Acquisition Score': Number(r.acquisitionScore || 0),
+            'Personal Demand Mature': Boolean(r.personalDemandQualified),
+            'Demand / Day': Number(r.daily || 0),
+            'Sold 7d': Number(r.sold7d || 0),
+            'Sold 30d': Number(r.sold30d || 0),
+            'Stock': Number(r.stock || 0),
+            'Shortage': Number(r.shortage || 0),
+            'Best Buy Price': Number(r.bestBuyPrice || 0),
+            'Trusted Exit': Number(r.realisticExit || 0),
+            'Profit / Unit': Number(r.bestDealProfit || 0),
+            'ROI %': Number(r.bestDealMarginPct || 0),
+            'Liquidity': Number(r.liquidityScore || 0),
+            'Market Fresh': Boolean(r.marketSnapshotFresh)
+        }));
+
+        return {
+            summary: {
+                filename: 'financial-summary.csv',
+                headers: ['Metric','Value'],
+                rows: summaryRows
+            },
+            sales: {
+                filename: 'sales-ledger.csv',
+                headers: ['Sale ID','Date','Customer ID','Customer','Item ID','Item','Quantity','Unit Price','Line Total','Sale Total'],
+                rows: salesRows
+            },
+            acquisitions: {
+                filename: 'acquisitions-cost-basis.csv',
+                headers: ['Acquisition ID','Date','Source','Seller ID','Seller','Item ID','Item','Quantity','Unit Cost','Total Cost','Notes'],
+                rows: acquisitionRows
+            },
+            inventory: {
+                filename: 'inventory-profitability.csv',
+                headers: ['Item ID','Item','Type','State','On Hand','Bazaar Listed','Item Market Listed','Total Stock','Sold 7d','Sold 30d','Demand / Day','Forecast / Day','Average Cost','Trusted Exit','Planned Listing Price','Pricing Confidence %','Pricing Basis','30d Revenue','30d COGS','30d Gross Profit','Realized ROI %','GMROI %','Dead Capital','Market Snapshot Fresh'],
+                rows: inventoryProfitRows
+            },
+            refunds: {
+                filename: 'refunds-cashback.csv',
+                headers: ['Refund ID','Created','Completed','Cancelled','Status','Customer ID','Customer','Coupon','Amount','Purchase Total','Sale IDs'],
+                rows: refundRows
+            },
+            customers: {
+                filename: 'customer-value.csv',
+                headers: ['Customer ID','Customer','Segment','Recency Days','Purchases','Units','Spend','Estimated Gross Profit','Cashback Cost','Estimated Net Value','Top Products'],
+                rows: customerRows
+            },
+            procurement: {
+                filename: 'procurement-opportunities.csv',
+                headers: ['Item ID','Item','Action','Priority','Acquisition Score','Personal Demand Mature','Demand / Day','Sold 7d','Sold 30d','Stock','Shortage','Best Buy Price','Trusted Exit','Profit / Unit','ROI %','Liquidity','Market Fresh'],
+                rows: procurementRowsExport
+            }
+        };
+    }
+
+    function exportFinancialDocument(kind) {
+        const docs = financialExportDocuments(dbLoad());
+        const doc = docs[kind];
+        if (!doc) throw new Error('Unknown financial export: ' + kind);
+        const stamp = exportDateStamp();
+        downloadTextFile('MM_Torn_CRM_' + stamp + '_' + doc.filename, toCsv(doc.headers, doc.rows));
+    }
+
+    function exportFinancialPack() {
+        const docs = financialExportDocuments(dbLoad());
+        const stamp = exportDateStamp();
+        for (const doc of Object.values(docs)) {
+            downloadTextFile('MM_Torn_CRM_' + stamp + '_' + doc.filename, toCsv(doc.headers, doc.rows));
+        }
+    }
+
+    function financialExportCard() {
+        return card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">' +
+                '<div><b>Financial Spreadsheet Export</b><div style="font-size:10px;color:#888;margin-top:3px;">Spreadsheet-compatible CSV documents generated from the current CRM ledger. Export does not modify CRM data.</div></div>' +
+                '<button data-financial-export="all" style="' + btn(true) + '">Export Financial Pack</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">' +
+                '<button data-financial-export="summary" style="' + btn() + '">Summary</button>' +
+                '<button data-financial-export="sales" style="' + btn() + '">Sales</button>' +
+                '<button data-financial-export="acquisitions" style="' + btn() + '">Acquisitions</button>' +
+                '<button data-financial-export="inventory" style="' + btn() + '">Inventory / Profit</button>' +
+                '<button data-financial-export="refunds" style="' + btn() + '">Refunds</button>' +
+                '<button data-financial-export="customers" style="' + btn() + '">Customer Value</button>' +
+                '<button data-financial-export="procurement" style="' + btn() + '">Procurement</button>' +
+            '</div>'
+        );
+    }
+
     function reportsSimpleHtml(db) {
         const rows = advancedInventoryRows(db);
         const brief = ownerBriefing(db, rows);
@@ -9881,7 +10126,7 @@
             '<div style="margin-top:7px;"><button data-open-advanced="analytics" style="' + btn() + '">Deep Analytics</button></div>'
         );
 
-        return summary + businessRulesCard(db, false) + demandHtml + roiHtml + health;
+        return summary + businessRulesCard(db, false) + financialExportCard() + demandHtml + roiHtml + health;
     }
 
     function customersSimpleHtml(db) {
@@ -10251,6 +10496,19 @@
             render();
             if (simpleMode) ensureDataForTab(activeTab);
         }));
+        root.querySelectorAll('[data-financial-export]').forEach(button => button.addEventListener('click', () => {
+            try {
+                const kind = String(button.dataset.financialExport || '');
+                if (kind === 'all') exportFinancialPack();
+                else exportFinancialDocument(kind);
+                statusText = kind === 'all' ? 'Financial export pack created.' : 'Financial spreadsheet exported: ' + kind + '.';
+                render();
+            } catch (error) {
+                statusText = 'Financial export failed: ' + (error?.message || String(error));
+                render();
+            }
+        }));
+
         root.querySelector('#mm-refresh-business')?.addEventListener('click', () => {
             syncBusinessData({ silent:false, force:true }).catch(error => {
                 statusText = 'Smart refresh failed: ' + (error?.message || String(error));
