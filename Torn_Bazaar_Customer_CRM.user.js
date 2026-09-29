@@ -9561,6 +9561,56 @@
         render();
     }
 
+    function freshnessAgeText(value) {
+        const at = Date.parse(value || '') || 0;
+        if (!at) return 'not synced';
+        const sec = Math.max(0, Math.floor((Date.now() - at) / 1000));
+        if (sec < 60) return sec + 's ago';
+        if (sec < 3600) return Math.floor(sec / 60) + 'm ago';
+        if (sec < 86400) return Math.floor(sec / 3600) + 'h ago';
+        return Math.floor(sec / 86400) + 'd ago';
+    }
+
+    function businessRulesSummaryHtml(db) {
+        const r = businessRules(db);
+        return '<div style="font-size:10px;color:#888;line-height:1.45;">' +
+            'CRM rules · ROI ≥ <b>' + r.minRoiPct.toFixed(1) + '%</b> · Demand ≥ <b>' + r.minDemandPerDay.toFixed(2) + '/day</b> when your sample is mature · ' +
+            'Buy price <b>' + money(r.minPrice) + '–' + money(r.maxPrice) + '</b> · Profit ≥ <b>' + money(r.minAbsoluteProfit) + '</b> · ' +
+            'Sellers ≥ <b>' + r.minSellerCount + '</b> · Listing freshness ≤ <b>' + r.maxListingAgeSec + 's</b>' +
+        '</div>';
+    }
+
+    function businessRulesCard(db, compact = false) {
+        const r = businessRules(db);
+        if (compact) {
+            return card(
+                '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">' +
+                    '<div><b>Business Rules</b>' + businessRulesSummaryHtml(db) + '</div>' +
+                    '<button data-simple-go="reports" style="' + btn() + '">Edit Rules</button>' +
+                '</div>'
+            );
+        }
+
+        return card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">' +
+                '<div><b style="font-size:14px;">CRM-wide Business Rules</b><div style="font-size:10px;color:#888;margin-top:2px;">One ruleset for Deals, Procurement, Stock decisions and market screening. Personal sales demand takes priority after enough observations exist.</div></div>' +
+                '<button id="mm-refresh-business" style="' + btn(true) + '">Smart Refresh</button>' +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:8px;">' +
+                '<label style="font-size:10px;color:#aaa;">Min ROI %<input id="mm-rule-min-roi" type="number" min="0" step="0.1" value="' + r.minRoiPct + '" style="' + inputCss() + 'width:100%;"></label>' +
+                '<label style="font-size:10px;color:#aaa;">Min Demand / day<input id="mm-rule-min-demand" type="number" min="0" step="0.01" value="' + r.minDemandPerDay + '" style="' + inputCss() + 'width:100%;"></label>' +
+                '<label style="font-size:10px;color:#aaa;">Min Buy Price<input id="mm-rule-min-price" type="number" min="0" step="1" value="' + r.minPrice + '" style="' + inputCss() + 'width:100%;"></label>' +
+                '<label style="font-size:10px;color:#aaa;">Max Buy Price<input id="mm-rule-max-price" type="number" min="0" step="1" value="' + r.maxPrice + '" style="' + inputCss() + 'width:100%;"></label>' +
+                '<label style="font-size:10px;color:#aaa;">Min Profit / unit<input id="mm-rule-min-profit" type="number" min="0" step="1" value="' + r.minAbsoluteProfit + '" style="' + inputCss() + 'width:100%;"></label>' +
+                '<label style="font-size:10px;color:#aaa;">Min Sellers<input id="mm-rule-min-sellers" type="number" min="0" step="1" value="' + r.minSellerCount + '" style="' + inputCss() + 'width:100%;"></label>' +
+                '<label style="font-size:10px;color:#aaa;">Max Listing Age (sec)<input id="mm-rule-max-age" type="number" min="30" step="10" value="' + r.maxListingAgeSec + '" style="' + inputCss() + 'width:100%;"></label>' +
+                '<label style="font-size:10px;color:#aaa;">Market Items / Refresh<input id="mm-rule-refresh-limit" type="number" min="5" max="100" step="1" value="' + r.marketRefreshLimit + '" style="' + inputCss() + 'width:100%;"></label>' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;"><button id="mm-save-business-rules" style="' + btn(true) + '">Save Business Rules</button></div>' +
+            '<div style="font-size:10px;color:#777;margin-top:6px;">Demand threshold is not used to punish new SKUs with little history. It activates after ≥5 sold units in 30 days or sales on ≥3 distinct days.</div>'
+        );
+    }
+
     function simpleMetric(label, value, note = '') {
         return `<div style="background:#151515;border:1px solid #333;border-radius:7px;padding:9px;min-width:0;">
             <div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.4px;">${escapeHtml(label)}</div>
