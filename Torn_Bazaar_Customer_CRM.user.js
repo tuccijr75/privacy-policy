@@ -2651,8 +2651,12 @@
             const shortage = Math.max(0, targetStock - stock);
             const daysStock = daily > 0 ? stock / daily : Infinity;
 
-            const realisticExit = Number(snap.realisticExit || bazaar.price || catalog.marketValue || 0);
-            const bestBuyPrice = [snap?.bazaar?.lowest, snap?.itemMarket?.lowest].map(Number).filter(v => v > 0).sort((a,b) => a-b)[0] || 0;
+            const marketSnapshotFresh = Boolean(snap.fetchedAt) &&
+                ageSeconds(snap.fetchedAt) <= Math.max(300, rules.maxListingAgeSec * 2);
+            const realisticExit = marketSnapshotFresh ? Number(snap.realisticExit || 0) : 0;
+            const bestBuyPrice = marketSnapshotFresh
+                ? ([snap?.bazaar?.lowest, snap?.itemMarket?.lowest].map(Number).filter(v => v > 0).sort((a,b) => a-b)[0] || 0)
+                : 0;
             const minMarginPct = Math.max(
                 Number(watch.minMarginPct ?? proc.settings.minMarginPct ?? 4),
                 rules.minRoiPct
@@ -2763,6 +2767,7 @@
                 historySamples: history.samples,
                 depth3Pct: Number(snap.totalDepth3Pct || 0),
                 marketFetchedAt: snap.fetchedAt || null,
+                marketSnapshotFresh,
                 velocityScore,
                 acquisitionScore,
                 turnoverDays,
@@ -5597,6 +5602,7 @@
             if (r.stock <= 0 && forecast.forecastDaily > 0) state='OUT OF STOCK';
             else if (deadCapital > 0 && maxAge >= deadDays && forecast.forecastDaily < 0.2) state='DEAD STOCK';
             else if (overstock) state='OVERSTOCKED';
+            else if (addToBazaar > 0 && (!(plannedPrice > 0) || pricingDecision.state !== 'TRUSTED')) state='PRICE REVIEW';
             else if (addToBazaar > 0) state='NEEDS LISTING';
             else if (shortage > 0 && r.bestBuyPrice > 0 && r.buyTarget > 0 && r.bestBuyPrice <= r.buyTarget) state='SOURCE NOW';
             else if (shortage > 0) state='WATCH PRICE';
@@ -5644,7 +5650,7 @@
             else r.inventoryClass='OPPORTUNISTIC';
         }
         return profitRows.sort((a,b) => {
-            const order={'OUT OF STOCK':0,'SOURCE NOW':1,'NEEDS LISTING':2,'WATCH PRICE':3,'DEAD STOCK':4,'OVERSTOCKED':5,'RECEIVED':6,'LISTED':7};
+            const order={'OUT OF STOCK':0,'SOURCE NOW':1,'PRICE REVIEW':2,'NEEDS LISTING':3,'WATCH PRICE':4,'DEAD STOCK':5,'OVERSTOCKED':6,'RECEIVED':7,'LISTED':8};
             return (order[a.state]??9)-(order[b.state]??9) || b.realized.grossProfit-a.realized.grossProfit;
         });
     }
@@ -5908,6 +5914,7 @@
         const plan={};
         for (const r of advancedInventoryRows(db)) {
             if (!(r.addToBazaar>0)) continue;
+            if (!(r.plannedPrice > 0) || r.pricingDecision?.state !== 'TRUSTED') continue;
             plan[r.id]={
                 itemId:r.id,itemName:r.name,quantity:r.addToBazaar,price:r.plannedPrice,
                 targetListed:r.targetListed,currentListed:r.bazaarQty,cost:r.avgCost,
