@@ -1720,16 +1720,6 @@
         return { imported, checked, repaired: imported > 0, rejected };
     }
 
-    async function storeBazaarSale(sale) {
-        const db = dbLoad();
-        if (!importBazaarSaleIntoDb(db, sale)) return false;
-        recalculateCustomerSalesTotals(db);
-        dbSave(db);
-        await flushDbWrites();
-        setTimeout(() => repairUsernames(5).then(() => render()).catch(() => {}), 50);
-        return true;
-    }
-
     function getProcessed() {
         const list = readJson(PROCESSED_KEY, []);
         return Array.isArray(list) ? list.map(String) : [];
@@ -1739,13 +1729,6 @@
         const unique = [...new Set((ids || []).map(String).filter(Boolean))];
         if (unique.length > MAX_PROCESSED) unique.splice(0, unique.length - MAX_PROCESSED);
         writeJson(PROCESSED_KEY, unique);
-    }
-
-    function markProcessed(id) {
-        const list = getProcessed();
-        const value = String(id);
-        if (!list.includes(value)) list.push(value);
-        saveProcessed(list);
     }
 
     function getSyncState() {
@@ -3731,10 +3714,6 @@
             .sort((a,b)=>Number(a.at||0)-Number(b.at||0));
     }
 
-    function travelHistory12h(db,row) {
-        return travelHistoryWindow(db,row,TRAVEL_HISTORY_WINDOW_HOURS);
-    }
-
     function travelRestockProfile24h(db,row) {
         const h=travelHistoryWindow(db,row,TRAVEL_HISTORY_WINDOW_HOURS);
         const depletion=[],restocks=[],restockTimes=[],outageDurations=[];
@@ -4240,10 +4219,6 @@
         assert('null error is never scored',!travelForecastPerformance({travelIntel:{forecastLedger:[{modelVersion:TRAVEL_FORECAST_MODEL_VERSION,status:'resolved',resolutionQuality:'continuous',absoluteErrorMinutes:null}]}}).scored);
 
         return {pass:true,modelVersion:TRAVEL_FORECAST_MODEL_VERSION,results};
-    }
-
-    function travelRestockProfile12h(db,row) {
-        return travelRestockProfile24h(db,row);
     }
 
     function travelPrediction(db,row,arrivalMinutes,carry,targetAt=null){
@@ -5767,17 +5742,6 @@
     }
 
 
-    function saveIntelSettings(values) {
-        const db = dbLoad();
-        for (const [key, raw] of Object.entries(values)) {
-            const value = Number(raw);
-            if (Number.isFinite(value) && value >= 0) db.marketIntel.settings[key] = value;
-        }
-        dbSave(db);
-        render();
-    }
-
-
     function businessRules(db = dbLoad()) {
         const rules = db?.businessRules || {};
         return {
@@ -6553,11 +6517,6 @@
             }
         };
     }
-
-    function recommendedListingPrice(db, itemId, row = null, elasticity = null) {
-        return trustedListingPriceDecision(db, itemId, row, elasticity).price;
-    }
-
 
     function pricingDirectorRows(db) {
         const rows = advancedInventoryRows(db).filter(r => r.bazaarQty > 0 && r.bazaarPrice > 0);
@@ -7407,12 +7366,6 @@
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
-    }
-
-    function messageListHtml(items) {
-        return `<div style="line-height:1.4;">${items.map(item =>
-            `<div style="margin:0 0 5px 0;">${escapeMessageHtml(item)}</div>`
-        ).join('')}</div>`;
     }
 
     function brandedMessageHtml({
