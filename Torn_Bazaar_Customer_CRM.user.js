@@ -10513,7 +10513,7 @@
 
         const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
             '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
-            '<numFmts count="2"><numFmt numFmtId="164" formatCode="$#,##0.00"/><numFmt numFmtId="165" formatCode="0.00\\%"/></numFmts>' +
+            '<numFmts count="2"><numFmt numFmtId="164" formatCode="$#,##0.00"/><numFmt numFmtId="165" formatCode="0.00"/></numFmts>' +
             '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts>' +
             '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/><bgColor indexed="64"/></patternFill></fill></fills>' +
             '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
@@ -10577,7 +10577,7 @@
     function financialExportCard() {
         return card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">' +
-                '<div><b>Financial Spreadsheet Export</b><div style="font-size:10px;color:#888;margin-top:3px;">Spreadsheet-compatible CSV documents generated from the current CRM ledger. Export does not modify CRM data.</div></div>' +
+                '<div><b>Financial Spreadsheet Export</b><div style="font-size:10px;color:#888;margin-top:3px;">One Excel workbook with separate financial sheets, plus optional CSV exports. Export is read-only and does not modify CRM data.</div></div>' +
                 '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button data-financial-export="xlsx" style="' + btn(true) + '">Export Excel Workbook</button><button data-financial-export="all" style="' + btn() + '">Export CSV Pack</button></div>' +
             '</div>' +
             '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">' +
@@ -11773,7 +11773,9 @@
             render();
         }
         setInterval(() => {
-            if (getApiKey()) sync({ silent: true });
+            syncBusinessData({ silent:true, force:false }).catch(error =>
+                console.warn('[MM CRM] Background business refresh failed', error)
+            );
         }, POLL_MS);
 
         setTimeout(() => checkCrmUpdate({silent:true}).catch(()=>{}), 12_000);
@@ -11791,12 +11793,6 @@
         setTimeout(() => syncYataTravelHistory({silent:true}).catch(error => console.warn('[MM CRM] YATA shared history startup sync failed', error)), 2400);
         setInterval(() => syncYataTravelHistory({silent:true}).catch(error => console.warn('[MM CRM] YATA shared history sync failed', error)), YATA_SAMPLE_INTERVAL_MS);
 
-        setTimeout(() => syncTravelStock({ silent:true, force:true }).then(rows => {
-            if (rows?.length && !getUI().minimized) {
-                statusText = `Travel Stock ready: ${rows.length} live item routes loaded.`;
-                render();
-            }
-        }).catch(error => console.warn('[MM CRM] Travel Stock startup sync failed', error)), 1800);
         setInterval(() => {
             backgroundTravelSample().then(count => {
                 if(!count) syncTravelStock({ silent:true }).catch(error => console.warn('[MM CRM] Travel Stock background sync failed', error));
