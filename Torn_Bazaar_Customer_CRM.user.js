@@ -1033,14 +1033,17 @@
         return '';
     }
 
-    function publicApiRequestV1(playerId) {
+    function apiRequestV1UserIdSelection(playerId, selection) {
         return new Promise((resolve, reject) => {
             const key = getApiKey();
             const id = asId(playerId);
+            const selected = String(selection || '').trim();
             if (!key) return reject(new Error('No Torn API key saved.'));
+            if (!id) return reject(new Error('Invalid Torn player ID.'));
+            if (!selected) return reject(new Error('Torn API v1 selection is required.'));
 
             const url = new URL(`https://api.torn.com/user/${encodeURIComponent(id)}`);
-            url.searchParams.set('selections', 'basic');
+            url.searchParams.set('selections', selected);
             url.searchParams.set('key', key);
             url.searchParams.set('comment', 'MM Bazaar CRM');
 
@@ -1072,6 +1075,9 @@
         });
     }
 
+    function publicApiRequestV1(playerId) {
+        return apiRequestV1UserIdSelection(playerId, 'basic');
+    }
 
     function apiRequestV1UserSelection(selection) {
         return new Promise((resolve, reject) => {
@@ -5041,42 +5047,7 @@
     }
 
     async function fetchPublicBazaarV1(playerId) {
-        const key = getApiKey();
-        const seller = asId(playerId);
-        if (!key) throw new Error('No Torn API key saved.');
-        if (!/^\d+$/.test(seller)) throw new Error('Invalid seller ID.');
-
-        const url = new URL('https://api.torn.com/user/' + encodeURIComponent(seller));
-        url.searchParams.set('selections', 'bazaar');
-        url.searchParams.set('key', key);
-        url.searchParams.set('comment', 'MM Bazaar CRM');
-
-        return new Promise((resolve, reject) => {
-            GM_xmlhttpRequest({
-                method:'GET',
-                url:url.toString(),
-                timeout:20_000,
-                headers:{Accept:'application/json'},
-                onload:response => {
-                    if (response.status < 200 || response.status >= 300) {
-                        return reject(new Error('HTTP ' + response.status + ' from Torn Bazaar verification.'));
-                    }
-                    let data;
-                    try { data = JSON.parse(response.responseText); }
-                    catch { return reject(new Error('Torn Bazaar verification returned invalid JSON.')); }
-                    if (data?.error) {
-                        const code = Number(data.error.code || 0);
-                        const message = data.error.error || data.error.message || 'Unknown Torn API error';
-                        const error = new Error('Torn API ' + code + ': ' + message);
-                        error.code = code;
-                        return reject(error);
-                    }
-                    resolve(data);
-                },
-                ontimeout:() => reject(new Error('Torn Bazaar verification timed out.')),
-                onerror:() => reject(new Error('Torn Bazaar verification network request failed.'))
-            });
-        });
+        return apiRequestV1UserIdSelection(playerId, 'bazaar');
     }
 
     async function verifyBazaarSellerForItem(itemId, sellerId, expectedPrice = 0) {
@@ -10777,11 +10748,10 @@
             <b>Torn API</b>
             <div style="font-size:12px;color:${hasKey ? '#9fe3a8' : '#ff9b9b'};margin:4px 0 8px;font-weight:700;">${hasKey ? 'API STATUS: CONNECTED' : 'API STATUS: NOT CONFIGURED — sales and customer sync are stopped'}</div>
             <div style="font-size:12px;color:#bbb;margin:4px 0 8px;">
-                v7.3 uses Torn directly: <b>User → Basic</b>, <b>User → Log</b> (Bazaar Sell 1226, Bazaar Buy 1225, Item Market Buy 1112),
-                <b>User → Bazaar</b>, <b>User → Item Market</b>, <b>Torn → Items</b>,
-                <b>Market → Item Market</b>, <b>Market → Bazaar</b>, and optional <b>Faction → Inventory</b>.
-                <b>User → Inventory</b> remains optional but improves personal stock counts.
-                No third-party service is required for faction armory state.
+                The CRM uses Torn directly for <b>User → Basic</b>, <b>User → Log</b> (Bazaar Sell 1226, Bazaar Buy 1225, Item Market Buy 1112),
+                your own <b>User → Bazaar</b> and <b>User → Item Market</b>, <b>Torn → Items</b>, and <b>Market → Item Market</b>.
+                Public seller Bazaar verification uses Torn API v1 <b>User → Bazaar</b> for the selected seller immediately before navigation.
+                <b>User → Inventory</b> remains optional but improves personal stock counts. Optional <b>Faction → Inventory</b> remains isolated from the normal business workflow.
             </div>
             <div style="display:flex;gap:6px;">
                 <input id="mm-api-key" type="password" autocomplete="off"
@@ -10791,13 +10761,19 @@
                 <button id="mm-clear-api" style="${btn()}">Clear</button>
             </div>
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
-                <button id="mm-sync-now" style="${btn(true)}">Sync Sales</button>
-                <button id="mm-proc-sync" style="${btn(true)}">Sync Procurement</button>
-                <button id="mm-rebuild-sales" style="${btn(true)}">Rebuild Sales History</button>
-                <button id="mm-rebuild-acquisitions" style="${btn()}">Rebuild Cost Basis</button>
-                <button id="mm-repair-names" style="${btn()}">Repair Usernames</button>
-                <button id="mm-repair-sales-integrity" style="${btn()}">Repair Sales Integrity</button>
+                <button id="mm-refresh-business" style="${btn(true)}">Smart Refresh Business Data</button>
             </div>
+            <details style="margin-top:7px;">
+                <summary style="cursor:pointer;font-size:11px;color:#aaa;">Maintenance & targeted syncs</summary>
+                <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+                    <button id="mm-sync-now" style="${btn()}">Sync Sales Only</button>
+                    <button id="mm-proc-sync" style="${btn()}">Sync Procurement Only</button>
+                    <button id="mm-rebuild-sales" style="${btn()}">Rebuild Sales History</button>
+                    <button id="mm-rebuild-acquisitions" style="${btn()}">Rebuild Cost Basis</button>
+                    <button id="mm-repair-names" style="${btn()}">Repair Usernames</button>
+                    <button id="mm-repair-sales-integrity" style="${btn()}">Repair Sales Integrity</button>
+                </div>
+            </details>
             <div style="font-size:12px;color:#aaa;margin-top:8px;">
                 Sales integrity: ${auditText}<br>
                 Last full sales rebuild: ${escapeHtml(fmtDate(db.meta?.salesRebuiltAt))}<br>
