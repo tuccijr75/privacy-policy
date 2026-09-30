@@ -5344,8 +5344,33 @@
             salesAt: getSyncState().lastSuccess ? new Date(getSyncState().lastSuccess).toISOString() : null,
             procurementAt: db.procurement?.lastSyncAt || null,
             marketAt: db.marketIntel?.lastGlobalSyncAt || null,
+            dollarAt: db.marketIntel?.lastDollarSyncAt || null,
             travelAt: db.travelIntel?.lastSyncAt || null,
-            factionAt: db.factionInventory?.lastSyncAt || null
+            factionAt: db.factionInventory?.lastSyncAt || null,
+            unifiedAt: db.syncState?.lastUnifiedSyncAt || null,
+            unifiedError: db.syncState?.lastUnifiedSyncError || null
+        };
+    }
+
+    function businessRefreshPlan(db = dbLoad(), {
+        force = false,
+        hasApi = Boolean(getApiKey()),
+        hasFactionApi = Boolean(getFactionApiKey())
+    } = {}) {
+        const fresh = businessDataFreshness(db);
+        const rules = businessRules(db);
+        const procurementMaxAgeMs = Math.max(
+            2 * 60 * 1000,
+            Math.min(5 * 60 * 1000, rules.maxListingAgeSec * 1000)
+        );
+        return {
+            sales: hasApi && (force || isDataStale(fresh.salesAt, 60 * 1000)),
+            market: force || isDataStale(fresh.marketAt, 3 * 60 * 1000),
+            dollar: force || isDataStale(fresh.dollarAt, 2 * 60 * 1000),
+            procurement: hasApi && (force || isDataStale(fresh.procurementAt, procurementMaxAgeMs)),
+            travel: force || isDataStale(fresh.travelAt, 10 * 60 * 1000),
+            faction: hasFactionApi && (force || isDataStale(fresh.factionAt, FACTION_INVENTORY_SYNC_INTERVAL_MS)),
+            procurementMaxAgeMs
         };
     }
 
@@ -5357,9 +5382,12 @@
             render();
         }
 
-        const result = { sales:false, procurement:false, market:false, dollar:false, travel:false, faction:false, errors:[] };
+        const result = { sales:false, procurement:false, market:false, dollar:false, travel:false, faction:false, errors:[], cached:[] };
         try {
-            if (getApiKey()) {
+            let workingDb = dbLoad();
+            let plan = businessRefreshPlan(workingDb, { force });
+
+            if (plan.sales) {
                 try {
                     const r = await sync({ silent:true });
                     result.sales = Boolean(r?.ok);
@@ -5367,20 +5395,24 @@
                 } catch (error) {
                     result.errors.push('Sales: ' + (error?.message || String(error)));
                 }
+            } else if (getApiKey()) {
+                result.cached.push('sales');
             }
 
-            let workingDb = dbLoad();
+            workingDb = dbLoad();
+            plan = businessRefreshPlan(workingDb, { force });
             // Public market intelligence remains usable without personal Torn API
             // access, but aggregate rows never become actionable without freshness
             // and seller-level/official corroboration.
-            if (force || isDataStale(workingDb.marketIntel?.lastGlobalSyncAt, 3 * 60 * 1000)) {
+            if (plan.market) {
                 const r = await syncMarketIntelligence(full, { silent:true });
                 result.market = Boolean(r?.ok);
                 if (r?.error) result.errors.push('Market: ' + r.error);
             }
 
             workingDb = dbLoad();
-            if (force || isDataStale(workingDb.marketIntel?.lastDollarSyncAt, 2 * 60 * 1000)) {
+            plan = businessRefreshPlan(workingDb, { force });
+            if (plan.dollar) {
                 try {
                     await syncWeavDollarBazaars();
                     result.dollar = true;
@@ -5391,7 +5423,8 @@
 
             if (getApiKey()) {
                 workingDb = dbLoad();
-                if (force || isDataStale(workingDb.procurement?.lastSyncAt, 10 * 60 * 1000)) {
+                plan = businessRefreshPlan(workingDb, { force });
+                if (plan.procurement) {
                     const r = await syncProcurement({ silent:true });
                     result.procurement = Boolean(r?.ok);
                     if (r?.error) result.errors.push('Procurement: ' + r.error);
@@ -5400,7 +5433,8 @@
 
             try {
                 const db = dbLoad();
-                if (force || isDataStale(db.travelIntel?.lastSyncAt, 10 * 60 * 1000)) {
+                plan = businessRefreshPlan(db, { force });
+                if (plan.travel) {
                     await syncTravelStock({ silent:true, force:false });
                     result.travel = true;
                 }
@@ -5411,7 +5445,8 @@
             if (getFactionApiKey()) {
                 try {
                     const db = dbLoad();
-                    if (force || isDataStale(db.factionInventory?.lastSyncAt, FACTION_INVENTORY_SYNC_INTERVAL_MS)) {
+                    plan = businessRefreshPlan(db, { force });
+                    if (plan.faction) {
                         const r = await syncFactionInventory({ silent:true, force });
                         result.faction = !r?.skipped;
                     }
