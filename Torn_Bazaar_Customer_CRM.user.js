@@ -5324,6 +5324,15 @@
         return Number.isFinite(n) ? Math.round(n * mult) : 0;
     }
 
+    function dollarPageValueBreakdown(stackValue, quantity) {
+        const qty = Math.max(1, Math.round(Number(quantity || 1)));
+        const totalValue = Math.max(0, Number(stackValue || 0));
+        return {
+            marketPrice: totalValue > 0 ? Math.round(totalValue / qty) : 0,
+            totalValue
+        };
+    }
+
     function fetchWeav3rDollarPage() {
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
@@ -5390,6 +5399,7 @@
                     ? String(firstCell.textContent || '').replace(itemName, '').replace(/\s+/g,' ').trim()
                     : '';
 
+                const valueBreakdown = dollarPageValueBreakdown(value, quantity);
                 items.push({
                     itemId,
                     itemName,
@@ -5397,8 +5407,8 @@
                     sellerId,
                     sellerName,
                     quantity,
-                    marketPrice:value,
-                    totalValue:value * quantity,
+                    marketPrice:valueBreakdown.marketPrice,
+                    totalValue:valueBreakdown.totalValue,
                     lastUpdated:nowIso(),
                     source:'TornW3B Dollar Bazaars public page'
                 });
@@ -6400,6 +6410,11 @@
             quantity:3,market_price:23456,total_value:70368,last_updated:nowIso()
         });
 
+        const dollarFallbackValue = dollarPageValueBreakdown(148100, 3);
+        const dollarFallbackValueOk =
+            dollarFallbackValue.totalValue === 148100 &&
+            dollarFallbackValue.marketPrice === 49367;
+
         let workbookOk = false;
         let workbookBytes = 0;
         let workbookStructureOk = false;
@@ -6577,6 +6592,7 @@
                 dollarCamel.sellerId === '99' &&
                 dollarSnake.itemId === '4' &&
                 dollarSnake.sellerId === '100' &&
+                dollarFallbackValueOk &&
                 workbookOk &&
                 migrationOk &&
                 refreshPlanOk &&
@@ -6609,6 +6625,8 @@
             } : null,
             dollarCamel,
             dollarSnake,
+            dollarFallbackValue,
+            dollarFallbackValueOk,
             workbookOk,
             workbookBytes,
             financialDocumentsOk,
