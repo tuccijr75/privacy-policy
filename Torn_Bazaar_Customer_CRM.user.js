@@ -4652,7 +4652,9 @@
         const traderData = intel.traders[id] || {};
         const listings = Array.isArray(detail.organicListings) ? detail.organicListings : [];
         const freshListings = freshOrganicListings(db, listings);
-        const traders = Array.isArray(traderData.organicTraders) ? traderData.organicTraders : [];
+        const traderFresh = Boolean(traderData.fetchedAt) &&
+            ageSeconds(traderData.fetchedAt) <= businessRules(db).maxListingAgeSec;
+        const traders = traderFresh && Array.isArray(traderData.organicTraders) ? traderData.organicTraders : [];
 
         const cheapest = freshListings[0] || null;
         const topTrader = traders[0] || null;
@@ -4670,7 +4672,8 @@
         ].filter(x => x.value > 0).sort((a, b) => b.value - a.value);
 
         const bestExit = exits[0] || { route: 'Unknown', value: 0 };
-        const buyPrice = Number(cheapest?.price || base.lowestPrice || 0);
+        const referenceBuyPrice = Number(base.lowestPrice || 0);
+        const buyPrice = Number(cheapest?.price || 0);
         const qty = Number(cheapest?.quantity || 0);
         const profit = buyPrice > 0 && bestExit.value > 0 ? bestExit.value - buyPrice : 0;
         const roiPct = buyPrice > 0 ? profit / buyPrice * 100 : 0;
@@ -4687,6 +4690,7 @@
             id,
             name: String(detail.itemName || base.itemName || `Item ${id}`),
             buyPrice,
+            referenceBuyPrice,
             quantity: qty,
             sellerId: cheapest?.sellerId || '',
             sellerName: cheapest?.sellerName || '',
@@ -4825,17 +4829,21 @@
     function restockCommandRows(db) {
         const localRows = procurementRows(db).filter(r => r.shortage > 0);
         return localRows.map(local => {
-            const global = db.marketIntel.marketplace[local.id] || {};
             const detail = detailedIntelForItem(db, local.id);
-            const buyPrice = detail.buyPrice || Number(global.lowestPrice || 0) || local.bestBuyPrice || 0;
-            const exit = detail.bestExit || local.realisticExit || 0;
+            const buyPrice = detail.buyPrice || (local.marketSnapshotFresh ? local.bestBuyPrice : 0) || 0;
+            const exit = local.marketSnapshotFresh
+                ? Number(local.realisticExit || 0)
+                : detail.listingVerified
+                    ? Number(detail.bestExit || 0)
+                    : 0;
             const profit = buyPrice && exit ? exit - buyPrice : 0;
             const roiPct = buyPrice ? profit / buyPrice * 100 : 0;
             const qty = Math.max(0, Math.min(
                 local.shortage,
-                Number(detail.quantity || local.shortage || 0)
+                Number(detail.quantity || (local.marketSnapshotFresh ? local.shortage : 0) || 0)
             ));
-            const status = buyPrice > 0 && local.buyTarget > 0 && buyPrice <= local.buyTarget
+            const actionableSource = Boolean(detail.listingVerified || local.marketSnapshotFresh);
+            const status = actionableSource && buyPrice > 0 && exit > 0 && local.buyTarget > 0 && buyPrice <= local.buyTarget
                 ? 'BUY NOW'
                 : buyPrice > 0
                     ? 'WATCH PRICE'
@@ -4849,7 +4857,8 @@
                 status,
                 sellerId: detail.sellerId || '',
                 sellerName: detail.sellerName || '',
-                freshness: detail.freshness
+                freshness: detail.freshness,
+                actionableSource
             };
         }).sort((a,b) =>
             (a.status === 'BUY NOW' ? 0 : a.status === 'WATCH PRICE' ? 1 : 2) -
@@ -4948,7 +4957,7 @@
         const restocks = restockCommandRows(db)
             .filter(r => r.status === 'BUY NOW' && r.globalBuyPrice > 0 && r.sourceQty > 0);
         const flips = globalOpportunityRows(db)
-            .filter(r => r.buyPrice > 0 && r.profit > 0);
+            .filter(r => r.listingVerified && r.sellerId && r.buyPrice > 0 && r.profit > 0);
 
         const plan = [];
         for (const r of restocks) {
@@ -9168,7 +9177,7 @@
     }
 
     function competitorIntelligenceRows(db){
-        const g={};Object.entries(db.marketIntel.details||{}).forEach(([iid,d])=>{const a=(d?.organicListings||[]).filter(x=>x.sellerId&&x.price>0);if(!a.length)return;const low=Math.min(...a.map(x=>Number(x.price||Infinity)));a.forEach(l=>{const id=asId(l.sellerId);if(!g[id])g[id]={sellerId:id,sellerName:l.sellerName||id,items:{},listings:0,totalQty:0,positionSum:0,lowMatches:0};const x=g[id];x.sellerName=l.sellerName||x.sellerName;x.items[iid]=true;x.listings++;x.totalQty+=Number(l.quantity||0);const p=low>0?(Number(l.price||0)-low)/low*100:0;x.positionSum+=p;if(p<=.1)x.lowMatches++;});});
+        const g={};Object.entries(db.marketIntel.details||{}).forEach(([iid,d])=>{const a=freshOrganicListings(db,d?.organicListings||[]).filter(x=>x.sellerId&&x.price>0);if(!a.length)return;const low=Math.min(...a.map(x=>Number(x.price||Infinity)));a.forEach(l=>{const id=asId(l.sellerId);if(!g[id])g[id]={sellerId:id,sellerName:l.sellerName||id,items:{},listings:0,totalQty:0,positionSum:0,lowMatches:0};const x=g[id];x.sellerName=l.sellerName||x.sellerName;x.items[iid]=true;x.listings++;x.totalQty+=Number(l.quantity||0);const p=low>0?(Number(l.price||0)-low)/low*100:0;x.positionSum+=p;if(p<=.1)x.lowMatches++;});});
         return Object.values(g).map(x=>{const sk=Object.keys(x.items).length,p=x.listings?x.positionSum/x.listings:0,lr=x.listings?x.lowMatches/x.listings:0;let b='SPECIALIST';if(sk>=6)b='BROAD SELLER';if(lr>=.6)b='AGGRESSIVE LOW';else if(p>=5)b='PREMIUM';return Object.assign({},x,{skuCount:sk,avgPremiumPct:p,lowRate:lr,behavior:b,competitorScore:Math.max(0,Math.min(100,lr*50+Math.min(30,sk*5)+Math.min(20,x.listings*2)))});}).sort((a,b)=>b.competitorScore-a.competitorScore);
     }
 
