@@ -10455,7 +10455,7 @@
             return card(
                 '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">' +
                     '<div><b>Business Rules</b>' + businessRulesSummaryHtml(db) + '</div>' +
-                    '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-refresh-business" style="' + btn(true) + '">Smart Refresh</button><button data-simple-go="reports" style="' + btn() + '">Edit Rules</button></div>' +
+                    '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button data-smart-refresh style="' + btn(true) + '">Smart Refresh</button><button data-simple-go="reports" style="' + btn() + '">Edit Rules</button></div>' +
                 '</div>'
             );
         }
@@ -10463,7 +10463,7 @@
         return card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">' +
                 '<div><b style="font-size:14px;">CRM-wide Business Rules</b><div style="font-size:10px;color:#888;margin-top:2px;">One ruleset for Deals, Procurement, Stock decisions and market screening. Personal sales demand takes priority after enough observations exist.</div></div>' +
-                '<button id="mm-refresh-business" style="' + btn(true) + '">Smart Refresh</button>' +
+                '<button data-smart-refresh style="' + btn(true) + '">Smart Refresh</button>' +
             '</div>' +
             '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:8px;">' +
                 '<label style="font-size:10px;color:#aaa;">Min ROI %<input id="mm-rule-min-roi" type="number" min="0" step="0.1" value="' + r.minRoiPct + '" style="' + inputCss() + 'width:100%;"></label>' +
@@ -10530,7 +10530,7 @@
                     '</div>' +
                     (fresh.unifiedError ? '<div style="font-size:10px;color:#ff9b9b;margin-top:5px;">Last refresh error: ' + escapeHtml(fresh.unifiedError) + '</div>' : '') +
                 '</div>' +
-                '<button id="mm-refresh-business" style="' + btn(true) + '">Smart Refresh</button>' +
+                '<button data-smart-refresh style="' + btn(true) + '">Smart Refresh</button>' +
             '</div>'
         );
 
@@ -10618,7 +10618,7 @@
                     actionable.length + ' seller-verifiable deal(s) · ' + discovery.length + ' research lead(s) · feed ' + escapeHtml(freshness.label) +
                     (Number.isFinite(freshness.ageSeconds) ? ' · ' + Math.round(freshness.ageSeconds) + 's old' : '') +
                 '</div></div>' +
-                '<button id="mm-refresh-business" style="' + btn(true) + '">Smart Refresh</button>' +
+                '<button data-smart-refresh style="' + btn(true) + '">Smart Refresh</button>' +
             '</div>'
         );
 
@@ -11440,7 +11440,7 @@
                 <button id="mm-clear-api" style="${btn()}">Clear</button>
             </div>
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
-                <button id="mm-refresh-business" style="${btn(true)}">Smart Refresh Business Data</button>
+                <button data-smart-refresh style="${btn(true)}">Smart Refresh Business Data</button>
             </div>
             <details style="margin-top:7px;">
                 <summary style="cursor:pointer;font-size:11px;color:#aaa;">Maintenance & targeted syncs</summary>
@@ -11691,12 +11691,12 @@
             }
         }));
 
-        root.querySelector('#mm-refresh-business')?.addEventListener('click', () => {
+        root.querySelectorAll('[data-smart-refresh]').forEach(button => button.addEventListener('click', () => {
             syncBusinessData({ silent:false, force:true }).catch(error => {
                 statusText = 'Smart refresh failed: ' + (error?.message || String(error));
                 render();
             });
-        });
+        }));
         root.querySelector('#mm-save-business-rules')?.addEventListener('click', () => {
             saveBusinessRules({
                 minRoiPct: root.querySelector('#mm-rule-min-roi')?.value,
