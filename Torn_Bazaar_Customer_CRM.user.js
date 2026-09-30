@@ -6424,7 +6424,7 @@
         `);
     }
 
-    function buildListingPlan(db) {
+    function listingPlanPreview(db) {
         const plan={};
         for (const r of advancedInventoryRows(db)) {
             if (!(r.addToBazaar>0)) continue;
@@ -6432,12 +6432,20 @@
             plan[r.id]={
                 itemId:r.id,itemName:r.name,quantity:r.addToBazaar,price:r.plannedPrice,
                 targetListed:r.targetListed,currentListed:r.bazaarQty,cost:r.avgCost,
-                expectedMarginPct:r.avgCost>0&&r.plannedPrice>0?(r.plannedPrice-r.avgCost)/r.avgCost*100:0,
-                createdAt:nowIso()
+                expectedMarginPct:r.avgCost>0&&r.plannedPrice>0?(r.plannedPrice-r.avgCost)/r.avgCost*100:0
             };
         }
-        db.operations.listingPlans=plan;
         return plan;
+    }
+
+    function buildListingPlan(db) {
+        const plan=listingPlanPreview(db);
+        const stamped={};
+        for (const [id,row] of Object.entries(plan)) {
+            stamped[id]={...row,createdAt:nowIso()};
+        }
+        db.operations.listingPlans=stamped;
+        return stamped;
     }
 
     function startRestockSession() {
@@ -9991,7 +9999,7 @@
         const rows=advancedInventoryRows(db);
         const brief=ownerBriefing(db);
         const session=getActiveRestockSession(db);
-        const plans=buildListingPlan(db); dbSave(db);
+        const plans=listingPlanPreview(db);
         const sessionHistory=db.operations.restockSessions.slice(0,8);
         const events=db.operations.events||[];
 
@@ -10217,9 +10225,9 @@
     function stockSimpleHtml(db) {
         const rows = advancedInventoryRows(db);
         const session = getActiveRestockSession(db);
-        // Rendering must be read-only. Persisting a listing plan on every tab render
-        // was creating unnecessary IndexedDB writes and cross-tab merge work.
-        const plans = buildListingPlan(db);
+        // Rendering is read-only. Persist plans only when the operator explicitly
+        // requests a plan or opens the Bazaar listing assistant.
+        const plans = listingPlanPreview(db);
         const restockRows = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state));
         const listingRows = rows.filter(r => r.addToBazaar > 0);
         const priceReviewRows = listingRows.filter(r => r.state === 'PRICE REVIEW');
@@ -11374,7 +11382,8 @@
             }
             if(action==='remove-event')return removeDemandEvent(button.dataset.event);
             if(action==='listing-plan'){
-                const db=dbLoad(),plan=db.operations.listingPlans[button.dataset.item];
+                const db=dbLoad();
+                const plan=listingPlanPreview(db)[button.dataset.item] || db.operations.listingPlans[button.dataset.item];
                 if(plan)alert(`${plan.itemName}\nAdd ${plan.quantity} to Bazaar\nRecommended price: ${money(plan.price)}\nExpected margin: ${plan.expectedMarginPct.toFixed(1)}%`);
             }
         }));
