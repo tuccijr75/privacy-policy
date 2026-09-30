@@ -430,7 +430,7 @@
         db.businessRules.minAbsoluteProfit = Math.max(0, Number(db.businessRules.minAbsoluteProfit ?? legacyMarketSettings.minAbsoluteProfit ?? 5000));
         db.businessRules.minSellerCount = Math.max(0, Math.round(Number(db.businessRules.minSellerCount ?? legacyMarketSettings.minBazaarSellers ?? 2)));
         db.businessRules.maxListingAgeSec = Math.max(30, Math.round(Number(db.businessRules.maxListingAgeSec ?? legacyMarketSettings.freshnessWarnSeconds ?? 180)));
-        db.businessRules.marketRefreshLimit = Math.max(5, Math.min(100, Math.round(Number(
+        db.businessRules.marketRefreshLimit = Math.max(5, Math.min(WEAV3R_MAX_ENRICH, Math.round(Number(
             db.businessRules.marketRefreshLimit ?? legacyProcurementSettings.marketRefreshLimit ?? 30
         ))));
         db.businessRules.updatedAt = db.businessRules.updatedAt || null;
