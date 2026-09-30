@@ -6658,6 +6658,12 @@
             temporalFifoWithFutureSale.matchedUnits === 5 &&
             temporalFifoWithFutureSale.cogs === 500;
 
+        const profitCoverageStatusOk =
+            profitCoverageStatus(0,0) === 'COMPLETE' &&
+            profitCoverageStatus(10,0) === 'UNAVAILABLE' &&
+            profitCoverageStatus(10,4) === 'PARTIAL' &&
+            profitCoverageStatus(10,10) === 'COMPLETE';
+
         const refreshDb = defaultDb();
         const freshAt = nowIso();
         const fullyFreshPlan = businessRefreshPlan(refreshDb, {
@@ -6790,7 +6796,8 @@
                 acquisitionCoverageGateOk &&
                 acquisitionCoverageCurrentOk &&
                 bazaarSnapshotFreshnessOk &&
-                fifoTemporalIntegrityOk,
+                fifoTemporalIntegrityOk &&
+                profitCoverageStatusOk,
             aggregateOnly,
             staleListing,
             trusted,
@@ -6841,6 +6848,7 @@
             acquisitionCoverageCurrentOk,
             bazaarSnapshotFreshnessOk,
             fifoTemporalIntegrityOk,
+            profitCoverageStatusOk,
             fifoTemporalPast: {
                 matchedUnits:temporalFifoPast.matchedUnits,
                 cogs:temporalFifoPast.cogs
@@ -7197,21 +7205,31 @@
         };
     }
 
+    function profitCoverageStatus(units, matchedUnits) {
+        const total = Math.max(0, Number(units || 0));
+        const matched = Math.max(0, Math.min(total, Number(matchedUnits || 0)));
+        if (total <= 0) return 'COMPLETE';
+        if (matched <= 0) return 'UNAVAILABLE';
+        return matched < total ? 'PARTIAL' : 'COMPLETE';
+    }
+
     function ownerBriefing(db, precomputedRows=null){
         const rows=precomputedRows||advancedInventoryRows(db);
         const revenue=rows.reduce((s,r)=>s+r.realized.revenue,0);
         const grossProfit=rows.reduce((s,r)=>s+r.realized.grossProfit,0);
         const units=rows.reduce((s,r)=>s+r.realized.units,0);
         const matchedUnits=rows.reduce((s,r)=>s+Number(r.realized.matchedUnits||0),0);
+        const unmatchedUnits=Math.max(0,units-matchedUnits);
         const costCoveragePct=units>0?matchedUnits/units*100:100;
+        const profitCoverage=profitCoverageStatus(units,matchedUnits);
         const inventoryValue=rows.reduce((s,r)=>s+r.realized.ledger.remainingCost,0);
         const stockouts=rows.filter(r=>r.state==='OUT OF STOCK').length;
         const lostProfit=rows.reduce((s,r)=>s+r.lostProfit,0);
         const critical=rows.filter(r=>['OUT OF STOCK','SOURCE NOW'].includes(r.state)).length;
         const deadCapital=rows.reduce((s,r)=>s+r.deadCapital,0);
-        const best=rows.slice().sort((a,b)=>b.realized.grossProfit-a.realized.grossProfit)[0]||null;
-        const worst=rows.slice().filter(r=>r.realized.revenue>0||r.deadCapital>0).sort((a,b)=>a.realized.grossProfit-b.realized.grossProfit)[0]||null;
-        return {revenue,grossProfit,units,matchedUnits,costCoveragePct,inventoryValue,stockouts,lostProfit,critical,deadCapital,best,worst};
+        const best=rows.slice().filter(r=>Number(r.realized.matchedUnits||0)>0).sort((a,b)=>b.realized.grossProfit-a.realized.grossProfit)[0]||null;
+        const worst=rows.slice().filter(r=>Number(r.realized.matchedUnits||0)>0||r.deadCapital>0).sort((a,b)=>a.realized.grossProfit-b.realized.grossProfit)[0]||null;
+        return {revenue,grossProfit,units,matchedUnits,unmatchedUnits,costCoveragePct,profitCoverage,inventoryValue,stockouts,lostProfit,critical,deadCapital,best,worst};
     }
 
     function inventoryWhatIf(db,targetDays){
@@ -10575,8 +10593,14 @@
         const sessionHistory=db.operations.restockSessions.slice(0,8);
         const events=db.operations.events||[];
 
+        const briefProfit = brief.profitCoverage === 'UNAVAILABLE' ? '—' : money(brief.grossProfit);
+        const briefProfitNote = brief.profitCoverage === 'COMPLETE'
+            ? 'complete FIFO cost basis'
+            : brief.profitCoverage === 'PARTIAL'
+                ? brief.costCoveragePct.toFixed(0) + '% FIFO coverage — partial'
+                : 'cost basis unavailable';
         const briefHtml=card(`<b>Daily Bazaar Briefing</b><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:7px;font-size:11px;">
-            <div>30d Revenue<br><b>${money(brief.revenue)}</b></div><div>30d Gross Profit<br><b>${money(brief.grossProfit)}</b></div>
+            <div>30d Revenue<br><b>${money(brief.revenue)}</b></div><div>Tracked Gross Profit<br><b>${briefProfit}</b><br><span style="font-size:9px;color:#888;">${escapeHtml(briefProfitNote)}</span></div>
             <div>Inventory Cost<br><b>${money(brief.inventoryValue)}</b></div><div>Units Sold<br><b>${brief.units.toLocaleString()}</b></div>
             <div>Critical Actions<br><b>${brief.critical}</b></div><div>Stockouts Now<br><b>${brief.stockouts}</b></div>
             <div>Est. Lost Profit<br><b>${money(brief.lostProfit)}</b></div><div>Dead Capital<br><b>${money(brief.deadCapital)}</b></div>
@@ -10801,7 +10825,15 @@
 
         const metrics = `<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">
             ${simpleMetric('30d Revenue', money(brief.revenue))}
-            ${simpleMetric('Tracked Profit', money(brief.grossProfit), brief.costCoveragePct.toFixed(0)+'% cost coverage')}
+            ${simpleMetric(
+                'Tracked Profit',
+                brief.profitCoverage === 'UNAVAILABLE' ? '—' : money(brief.grossProfit),
+                brief.profitCoverage === 'COMPLETE'
+                    ? 'complete FIFO cost basis'
+                    : brief.profitCoverage === 'PARTIAL'
+                        ? brief.costCoveragePct.toFixed(0)+'% cost coverage — partial'
+                        : 'cost basis unavailable'
+            )}
             ${simpleMetric('Restock', String(needRestock), 'items need stock')}
             ${simpleMetric('Need Listing', String(needListing), 'ready for Bazaar')}
         </div>`;
@@ -11015,8 +11047,11 @@
             { Metric:'Report generated', Value:nowIso() },
             { Metric:'30d revenue', Value:grossRevenue },
             { Metric:'30d COGS', Value:grossCogs },
-            { Metric:'Tracked gross profit', Value:brief.grossProfit },
+            { Metric:'Tracked gross profit (matched FIFO only)', Value:brief.profitCoverage === 'UNAVAILABLE' ? '' : brief.grossProfit },
+            { Metric:'Profit coverage status', Value:brief.profitCoverage },
             { Metric:'Cost-basis coverage %', Value:brief.costCoveragePct },
+            { Metric:'Matched sold units', Value:brief.matchedUnits },
+            { Metric:'Unmatched sold units', Value:brief.unmatchedUnits },
             { Metric:'Tracked gross margin %', Value:grossRevenue > 0 ? brief.grossProfit / grossRevenue * 100 : 0 },
             { Metric:'Inventory cost basis', Value:inventoryCost },
             { Metric:'Dead capital', Value:brief.deadCapital },
