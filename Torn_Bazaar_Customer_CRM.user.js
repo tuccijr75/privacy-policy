@@ -9631,6 +9631,7 @@
             db.operations.settings.overstockMultiplier = p.overstockMultiplier;
             db.businessRules.minRoiPct = p.minRoiPct;
             db.businessRules.minSellerCount = p.minBazaarSellers;
+            db.businessRules.updatedAt = nowIso();
             db.marketIntel.settings.minRoiPct = p.minRoiPct;
             db.marketIntel.settings.minBazaarSellers = p.minBazaarSellers;
         }
@@ -9665,7 +9666,7 @@
             return card(
                 '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">' +
                     '<div><b>Business Rules</b>' + businessRulesSummaryHtml(db) + '</div>' +
-                    '<button data-simple-go="reports" style="' + btn() + '">Edit Rules</button>' +
+                    '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-refresh-business" style="' + btn(true) + '">Smart Refresh</button><button data-simple-go="reports" style="' + btn() + '">Edit Rules</button></div>' +
                 '</div>'
             );
         }
