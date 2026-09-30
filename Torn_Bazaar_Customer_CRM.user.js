@@ -63,6 +63,8 @@
     const WEAV3R_GLOBAL_TTL_MS = 60_000;
     const WEAV3R_DETAIL_TTL_MS = 60_000;
     const WEAV3R_MAX_ENRICH = 30;
+    const MARKET_ENRICH_CONCURRENCY = 4;
+    const PROCUREMENT_MARKET_CONCURRENCY = 3;
     const BAZAAR_VERIFY_MAX_AGE_SEC = 120;
     const MARKET_INTEL_HISTORY_MAX = 120;
     const OPS_SNAPSHOT_MAX = 2500;
@@ -3109,7 +3111,6 @@
             try { await syncWatchedInventory(proc, proc.catalog); }
             catch (error) { addProcurementDiagnostic(proc, `Inventory: ${error?.message || String(error)}`); }
 
-            proc.lastSyncAt = nowIso();
             db = recordOperationalSnapshot(db);
             dbSave(db);
 
@@ -3148,19 +3149,29 @@
                 )
                 .slice(0, rules.marketRefreshLimit);
 
+            const marketResults = await mapWithConcurrency(
+                candidates,
+                PROCUREMENT_MARKET_CONCURRENCY,
+                row => refreshMarketSnapshot(row.id)
+            );
             let marketCount = 0;
-            for (const row of candidates) {
-                try {
-                    await refreshMarketSnapshot(row.id);
+            for (let index = 0; index < marketResults.length; index++) {
+                const result = marketResults[index];
+                if (result.status === 'fulfilled') {
                     marketCount++;
-                } catch (error) {
-                    const next = dbLoad();
-                    addProcurementDiagnostic(next.procurement, `Market ${row.name}: ${error?.message || String(error)}`);
-                    dbSave(next);
+                    continue;
                 }
+                const next = dbLoad();
+                addProcurementDiagnostic(
+                    next.procurement,
+                    `Market ${candidates[index]?.name || candidates[index]?.id || index + 1}: ${result.reason?.message || String(result.reason)}`
+                );
+                dbSave(next);
             }
 
             db = dbLoad();
+            db.procurement.lastSyncAt = nowIso();
+            dbSave(db);
             if (!silent) {
                 statusText =
                     `Procurement sync complete: ${Object.keys(db.procurement.bazaar).length} Bazaar SKUs, ` +
@@ -5629,6 +5640,28 @@
         return { ranked, auctions };
     }
 
+    async function mapWithConcurrency(items, concurrency, worker) {
+        const list = Array.isArray(items) ? items : [];
+        const limit = Math.max(1, Math.min(list.length || 1, Number(concurrency || 1)));
+        const results = new Array(list.length);
+        let nextIndex = 0;
+
+        async function runWorker() {
+            while (true) {
+                const index = nextIndex++;
+                if (index >= list.length) return;
+                try {
+                    results[index] = { status:'fulfilled', value:await worker(list[index], index) };
+                } catch (reason) {
+                    results[index] = { status:'rejected', reason };
+                }
+            }
+        }
+
+        await Promise.all(Array.from({ length: limit }, () => runWorker()));
+        return results;
+    }
+
     async function enrichTopGlobalOpportunities() {
         const db = dbLoad();
         const limit = Math.max(1, Math.min(
@@ -5636,16 +5669,24 @@
             businessRules(db).marketRefreshLimit
         ));
         const rows = globalOpportunityRows(db).slice(0, limit);
+        const results = await mapWithConcurrency(
+            rows,
+            MARKET_ENRICH_CONCURRENCY,
+            row => enrichWeavItem(row.id, { force: true })
+        );
         let ok = 0;
-        for (const row of rows) {
-            try {
-                await enrichWeavItem(row.id, { force: true });
+        for (let index = 0; index < results.length; index++) {
+            const result = results[index];
+            if (result.status === 'fulfilled') {
                 ok++;
-            } catch (error) {
-                const next = dbLoad();
-                addIntelDiagnostic(next.marketIntel, `Enrich ${row.name}: ${error?.message || String(error)}`);
-                dbSave(next);
+                continue;
             }
+            const next = dbLoad();
+            addIntelDiagnostic(
+                next.marketIntel,
+                `Enrich ${rows[index]?.name || rows[index]?.id || index + 1}: ${result.reason?.message || String(result.reason)}`
+            );
+            dbSave(next);
         }
         return { requested: rows.length, ok };
     }
@@ -5664,10 +5705,13 @@
                 await syncWeavDollarBazaars();
                 await syncWeavRanked();
             }
+            const completedDb = dbLoad();
+            completedDb.marketIntel.lastGlobalSyncAt = nowIso();
+            dbSave(completedDb);
             if (!silent) {
                 statusText = full
-                    ? `Market intelligence complete: ${Object.keys(dbLoad().marketIntel.marketplace).length.toLocaleString()} items, ${enrichment.ok}/${enrichment.requested} enriched.`
-                    : `Global market refreshed: ${Object.keys(dbLoad().marketIntel.marketplace).length.toLocaleString()} items, ${enrichment.ok}/${enrichment.requested} enriched.`;
+                    ? `Market intelligence complete: ${Object.keys(completedDb.marketIntel.marketplace).length.toLocaleString()} items, ${enrichment.ok}/${enrichment.requested} enriched.`
+                    : `Global market refreshed: ${Object.keys(completedDb.marketIntel.marketplace).length.toLocaleString()} items, ${enrichment.ok}/${enrichment.requested} enriched.`;
             }
             return { ok: true, enriched: enrichment.ok, requested: enrichment.requested };
         } catch (error) {
@@ -5760,10 +5804,12 @@
         }
 
         unifiedSyncRunning = true;
-        if (!silent) {
-            statusText = 'Refreshing business data…';
+        const setRefreshStage = stage => {
+            if (silent) return;
+            statusText = 'Refreshing business data — ' + stage + '…';
             render();
-        }
+        };
+        if (!silent) setRefreshStage('starting');
 
         const result = { sales:false, procurement:false, market:false, dollar:false, travel:false, faction:false, costBasis:false, costBasisAdded:0, errors:[], warnings:[], stale:[], cached:[] };
         try {
@@ -5771,6 +5817,7 @@
             let plan = initialPlan;
 
             if (plan.sales) {
+                setRefreshStage('sales');
                 try {
                     const r = await sync({ silent:true });
                     result.sales = Boolean(r?.ok);
@@ -5788,6 +5835,7 @@
             // access, but aggregate rows never become actionable without freshness
             // and seller-level/official corroboration.
             if (plan.market) {
+                setRefreshStage('market');
                 const r = await syncMarketIntelligence(full, { silent:true });
                 result.market = Boolean(r?.ok);
                 // A successful full intelligence sync already refreshed Dollar Bazaars.
@@ -5798,6 +5846,7 @@
             workingDb = dbLoad();
             plan = businessRefreshPlan(workingDb, { force: effectiveForce });
             if (plan.dollar && !result.dollar) {
+                setRefreshStage('$1 Bazaar');
                 try {
                     await syncWeavDollarBazaars();
                     result.dollar = true;
@@ -5810,12 +5859,14 @@
                 workingDb = dbLoad();
                 plan = businessRefreshPlan(workingDb, { force: effectiveForce });
                 if (plan.procurement) {
+                    setRefreshStage('procurement');
                     const r = await syncProcurement({ silent:true });
                     result.procurement = Boolean(r?.ok);
                     if (r?.error) result.errors.push('Procurement: ' + r.error);
                 }
 
                 if (costBasisDue) {
+                    setRefreshStage('cost basis');
                     try {
                         const coverage = await ensureAcquisitionCoverageBackfill();
                         result.costBasis = Boolean(coverage?.ok);
@@ -5833,6 +5884,7 @@
                 const db = dbLoad();
                 plan = businessRefreshPlan(db, { force: effectiveForce });
                 if (plan.travel) {
+                    setRefreshStage('travel');
                     const beforeTravelAt = db.travelIntel?.lastSyncAt || null;
                     await syncTravelStock({ silent:true, force:effectiveForce });
                     const afterTravelAt = dbLoad().travelIntel?.lastSyncAt || null;
@@ -5852,6 +5904,7 @@
                     const db = dbLoad();
                     plan = businessRefreshPlan(db, { force: effectiveForce });
                     if (plan.faction) {
+                        setRefreshStage('faction');
                         const r = await syncFactionInventory({ silent:true, force: effectiveForce });
                         result.faction = !r?.skipped;
                     }
@@ -6780,6 +6833,12 @@
             businessRules({ businessRules:{ marketRefreshLimit:99 } }).marketRefreshLimit === WEAV3R_MAX_ENRICH &&
             businessRules({ businessRules:{ marketRefreshLimit:1 } }).marketRefreshLimit === 5;
 
+        const boundedConcurrencyOk =
+            MARKET_ENRICH_CONCURRENCY > 1 &&
+            MARKET_ENRICH_CONCURRENCY <= WEAV3R_MAX_ENRICH &&
+            PROCUREMENT_MARKET_CONCURRENCY > 1 &&
+            PROCUREMENT_MARKET_CONCURRENCY <= WEAV3R_MAX_ENRICH;
+
         const acquisitionIndexDb = defaultDb();
         acquisitionIndexDb.procurement.acquisitions = [{
             id:'existing-auto-lot',
@@ -6840,6 +6899,7 @@
                 refreshPlanOk &&
                 businessRulePropagationOk &&
                 refreshBreadthClampOk &&
+                boundedConcurrencyOk &&
                 acquisitionCoverageGateOk &&
                 acquisitionCoverageCurrentOk &&
                 acquisitionCoverageWindowOk &&
@@ -6892,6 +6952,7 @@
             refreshPlanOk,
             businessRulePropagationOk,
             refreshBreadthClampOk,
+            boundedConcurrencyOk,
             acquisitionCoverageGateOk,
             acquisitionCoverageCurrentOk,
             acquisitionCoverageWindowOk,
