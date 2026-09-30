@@ -8474,38 +8474,6 @@
         return verifyRenderedBrandedMessage(html);
     }
 
-    function findComposeRichEditorBody() {
-        const iframes = [...document.querySelectorAll('iframe')].filter(visible);
-
-        for (const frame of iframes) {
-            try {
-                const doc = frame.contentDocument || frame.contentWindow?.document;
-                const body = doc?.body;
-                if (!body) continue;
-
-                const meta = [
-                    frame.id,
-                    frame.name,
-                    frame.className,
-                    frame.title,
-                    frame.getAttribute('aria-label'),
-                    body.className,
-                    body.getAttribute('contenteditable'),
-                    body.getAttribute('role')
-                ].filter(Boolean).join(' ').toLowerCase();
-
-                const looksLikeEditor =
-                    body.isContentEditable ||
-                    body.getAttribute('contenteditable') === 'true' ||
-                    /editor|wysiwyg|message|compose|sceditor|mail/.test(meta);
-
-                if (looksLikeEditor) return body;
-            } catch {}
-        }
-
-        return null;
-    }
-
     function dispatchEditorEvents(element) {
         const win = element?.ownerDocument?.defaultView || window;
         for (const type of ['input', 'change', 'keyup', 'blur']) {
