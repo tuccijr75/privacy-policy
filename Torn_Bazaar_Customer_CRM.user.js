@@ -10453,10 +10453,7 @@
         );
 
         const dollarHtml = card(
-            '<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;flex-wrap:wrap;">' +
-                '<div><b>$1 Bazaar Watch</b><div style="font-size:10px;color:#888;">Showing up to 30 latest scanner rows. Verify the seller in Torn before opening; $1 eligibility/availability can change immediately.</div></div>' +
-                '<button id="mm-intel-dollar" style="' + btn() + '">Refresh $1 Feed</button>' +
-            '</div>' +
+            '<div><b>$1 Bazaar Watch</b><div style="font-size:10px;color:#888;">Showing up to 30 latest scanner rows from Smart Refresh. Verify the seller in Torn before opening; $1 eligibility/availability can change immediately.</div></div>' +
             (dollars.length
                 ? dollars.map(d =>
                     '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;font-size:10px;">' +
@@ -11104,7 +11101,7 @@
         const eligible = Object.values(db.coupons || {}).filter(c => couponQualification(db,c).qualified);
         const top = topBySpend.slice(0,10);
         const summary = `<div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;">${['VIP','LOYAL','REGULAR','NEW','AT RISK','DORMANT'].map(s=>simpleMetric(s,String(counts[s]||0))).join('')}</div>`;
-        const actions = card(`<b>Customer Actions</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;"><button id="mm-refresh-customers" style="${btn()}">Refresh Customers Only</button><button data-open-advanced="customers" style="${btn()}">View Customers</button><button data-open-advanced="subscribers" style="${btn()}">Restock Alerts ${pending.length?`(${pending.length})`:''}</button><button data-open-advanced="coupons" style="${btn()}">Coupons ${eligible.length?`(${eligible.length} eligible)`:''}</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button></div>`);
+        const actions = card(`<b>Customer Actions</b><div style="font-size:10px;color:#888;margin:3px 0 7px;">Customer data refreshes through Smart Refresh when this tab opens.</div><div style="display:flex;gap:6px;flex-wrap:wrap;"><button data-open-advanced="customers" style="${btn()}">View Customers</button><button data-open-advanced="subscribers" style="${btn()}">Restock Alerts ${pending.length?`(${pending.length})`:''}</button><button data-open-advanced="coupons" style="${btn()}">Coupons ${eligible.length?`(${eligible.length} eligible)`:''}</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button></div>`);
         const values = card(`<b>Top Customer Value</b>${top.map(c=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(c.name)} [${escapeHtml(c.id)}]</b> · ${escapeHtml(c.segment)} · Spend ${money(c.monetary)}<details style="margin-top:3px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Recency ${c.recencyDays.toFixed(1)}d · Purchases ${c.frequency} · Affinity ${c.topProducts.map(x=>`${escapeHtml(x[0])}×${x[1]}`).join(', ')||'—'}</div></details></div>`).join('')||'<div style="font-size:11px;color:#888;">No customer history yet.</div>'}`);
         return summary + actions + values;
     }
