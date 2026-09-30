@@ -5772,7 +5772,7 @@
         };
     }
 
-    async function syncBusinessData({ silent = false, force = false, full = false } = {}) {
+    async function syncBusinessData({ silent = false, force = false, full = false, includeFaction = true } = {}) {
         if (unifiedSyncRunning) return { skipped: true, reason: 'running' };
 
         const effectiveForce = Boolean(force || full);
@@ -5784,7 +5784,7 @@
             market: true,
             dollar: true,
             travel: true,
-            faction: Boolean(getFactionApiKey())
+            faction: Boolean(getFactionApiKey() && includeFaction)
         };
         const dueKeys = ['sales','market','dollar','procurement','travel','faction']
             .filter(key => sourceAvailable[key] && initialPlan[key]);
@@ -12836,7 +12836,11 @@
         if (!db.syncState.backgroundRefreshEnabled) return;
         if (!claimBackgroundCoordinator()) return;
         try {
-            await syncBusinessData({ silent:true, force:false });
+            await syncBusinessData({
+                silent:true,
+                force:false,
+                includeFaction:Boolean(db.factionInventory?.settings?.autoSync)
+            });
             const latest = dbLoad();
             if (isDataStale(latest.travelIntel?.lastYataSyncAt, BACKGROUND_REFRESH_INTERVAL_MS)) {
                 await syncYataTravelHistory({ silent:true }).catch(() => {});
