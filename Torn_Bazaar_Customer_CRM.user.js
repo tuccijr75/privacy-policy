@@ -5091,19 +5091,51 @@
         render();
         try {
             const result = await verifyBazaarSellerForItem(itemId, sellerId, expectedPrice);
+            const db = dbLoad();
+            const id = asId(itemId);
+            const seller = asId(sellerId);
+            const detail = db.marketIntel?.details?.[id];
             if (!result.verified) {
+                if (detail) {
+                    const keep = row => asId(row?.sellerId) !== seller;
+                    detail.organicListings = (detail.organicListings || []).filter(keep);
+                    detail.listings = (detail.listings || []).filter(keep);
+                    detail.fetchedAt = nowIso();
+                    addIntelDiagnostic(db.marketIntel, 'Live Bazaar verification removed stale seller ' + seller + ' for item ' + id + ' (' + result.reason + ').');
+                    dbSave(db);
+                }
                 const reason = result.reason === 'bazaar-closed'
                     ? 'Seller Bazaar is closed.'
                     : result.reason === 'item-gone'
                         ? 'Item is no longer in that Bazaar.'
                         : 'Listing could not be verified.';
-                statusText = reason + ' The stale opportunity was not opened.';
+                statusText = reason + ' The stale opportunity was removed locally and was not opened.';
                 render();
                 return false;
             }
 
+            if (detail) {
+                const previous = (detail.organicListings || []).find(row => asId(row?.sellerId) === seller) || {};
+                const verifiedRow = {
+                    ...previous,
+                    itemId:id,
+                    sellerId:seller,
+                    sellerName:String(previous.sellerName || seller),
+                    price:result.actualPrice,
+                    quantity:result.quantity,
+                    sponsored:false,
+                    lastChecked:Date.now(),
+                    contentUpdated:Number(previous.contentUpdated || Date.now())
+                };
+                const keep = row => asId(row?.sellerId) !== seller;
+                detail.organicListings = [verifiedRow, ...(detail.organicListings || []).filter(keep)].sort((a,b)=>Number(a.price||0)-Number(b.price||0));
+                detail.listings = [verifiedRow, ...(detail.listings || []).filter(keep)].sort((a,b)=>Number(a.price||0)-Number(b.price||0));
+                detail.fetchedAt = nowIso();
+                dbSave(db);
+            }
+
             statusText = result.priceChanged
-                ? 'Listing still exists, but price changed from ' + money(result.expectedPrice) + ' to ' + money(result.actualPrice) + '. Opening current Bazaar.'
+                ? 'Listing still exists, but price changed from ' + money(result.expectedPrice) + ' to ' + money(result.actualPrice) + '. Local cache updated; opening current Bazaar.'
                 : 'Listing verified: ' + result.quantity.toLocaleString() + ' available @ ' + money(result.actualPrice) + '. Opening Bazaar.';
             render();
             navigateFromCRM('https://www.torn.com/bazaar.php?userId=' + encodeURIComponent(sellerId));
