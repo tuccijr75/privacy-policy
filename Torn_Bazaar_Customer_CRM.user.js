@@ -48,7 +48,6 @@
     const MAX_PROCESSED = 25_000;
     const MAX_LOG_PAGES = 250;
     const API_BASE = 'https://api.torn.com/v2';
-    const PROCUREMENT_MARKET_REFRESH_LIMIT = 10;
     const PROCUREMENT_CATALOG_MAX_AGE_MS = 6 * 60 * 60 * 1000;
     const ACQUISITION_LOG_IDS = Object.freeze({
         1112: 'Item Market',
@@ -61,7 +60,6 @@
     const WEAV3R_GLOBAL_TTL_MS = 60_000;
     const WEAV3R_DETAIL_TTL_MS = 60_000;
     const WEAV3R_MAX_ENRICH = 30;
-    const WEAV3R_PUBLIC_RATE_LIMIT_PER_MIN = 100;
     const MARKET_INTEL_HISTORY_MAX = 120;
     const OPS_SNAPSHOT_MAX = 2500;
     const PRICE_HISTORY_MAX_PER_ITEM = 500;
