@@ -5291,28 +5291,31 @@
                 } catch (error) {
                     result.errors.push('Sales: ' + (error?.message || String(error)));
                 }
+            }
 
-                let db = dbLoad();
-                // Refresh global market candidates first so the procurement pass can
-                // spend its per-item market budget on the newest opportunity set.
-                if (force || isDataStale(db.marketIntel?.lastGlobalSyncAt, 3 * 60 * 1000)) {
-                    const r = await syncMarketIntelligence(full, { silent:true });
-                    result.market = Boolean(r?.ok);
-                    if (r?.error) result.errors.push('Market: ' + r.error);
+            let workingDb = dbLoad();
+            // Public market intelligence remains usable without personal Torn API
+            // access, but aggregate rows never become actionable without freshness
+            // and seller-level/official corroboration.
+            if (force || isDataStale(workingDb.marketIntel?.lastGlobalSyncAt, 3 * 60 * 1000)) {
+                const r = await syncMarketIntelligence(full, { silent:true });
+                result.market = Boolean(r?.ok);
+                if (r?.error) result.errors.push('Market: ' + r.error);
+            }
+
+            workingDb = dbLoad();
+            if (force || isDataStale(workingDb.marketIntel?.lastDollarSyncAt, 2 * 60 * 1000)) {
+                try {
+                    await syncWeavDollarBazaars();
+                    result.dollar = true;
+                } catch (error) {
+                    result.errors.push('$1 Bazaar: ' + (error?.message || String(error)));
                 }
+            }
 
-                db = dbLoad();
-                if (force || isDataStale(db.marketIntel?.lastDollarSyncAt, 2 * 60 * 1000)) {
-                    try {
-                        await syncWeavDollarBazaars();
-                        result.dollar = true;
-                    } catch (error) {
-                        result.errors.push('$1 Bazaar: ' + (error?.message || String(error)));
-                    }
-                }
-
-                db = dbLoad();
-                if (force || isDataStale(db.procurement?.lastSyncAt, 10 * 60 * 1000)) {
+            if (getApiKey()) {
+                workingDb = dbLoad();
+                if (force || isDataStale(workingDb.procurement?.lastSyncAt, 10 * 60 * 1000)) {
                     const r = await syncProcurement({ silent:true });
                     result.procurement = Boolean(r?.ok);
                     if (r?.error) result.errors.push('Procurement: ' + r.error);
@@ -5360,7 +5363,7 @@
     }
 
     function ensureDataForTab(tab) {
-        if (!['home','stock','deals','reports'].includes(String(tab || ''))) return;
+        if (!['home','stock','deals','customers','reports'].includes(String(tab || ''))) return;
         setTimeout(() => {
             syncBusinessData({ silent:true, force:false }).then(() => render()).catch(error => {
                 console.warn('[MM CRM] Smart refresh failed', error);
