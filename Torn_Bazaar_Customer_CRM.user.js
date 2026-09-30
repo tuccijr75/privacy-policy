@@ -2801,12 +2801,21 @@
             const volatilityPenalty = Math.min(25, Math.max(0, history.volatilityPct) * 0.8);
 
             // Start with market evidence, then shift ranking authority toward the
-            // owner's own demand + realized ROI as the personal sample matures.
-            const ownAverageSalePrice = Number(m.sold30d || 0) > 0
-                ? Number(m.revenue30d || 0) / Number(m.sold30d || 1)
-                : 0;
-            const ownRealizedRoiPct = avgCost > 0 && ownAverageSalePrice > 0
-                ? (ownAverageSalePrice - avgCost) / avgCost * 100
+            // owner's own demand + matched FIFO realized ROI as the personal sample matures.
+            const personalDemandQualified =
+                Number(m.sold30d || 0) >= 5 ||
+                Number(m.saleDays30d || 0) >= 3;
+            const personalRealized = personalDemandQualified
+                ? realizedProfitMetrics(db, id, 30)
+                : null;
+            const personalRoiEvidence = Boolean(
+                personalRealized &&
+                Number(personalRealized.cogs || 0) > 0 &&
+                Number(personalRealized.matchedUnits || 0) >= 3 &&
+                Number(personalRealized.costCoveragePct || 0) >= 50
+            );
+            const ownRealizedRoiPct = personalRoiEvidence
+                ? Number(personalRealized.grossProfit || 0) / Number(personalRealized.cogs || 1) * 100
                 : 0;
             const personalDemandScore = Math.min(100,
                 Math.log10(1 + Math.max(0, daily) * 12) * 55 +
@@ -2827,9 +2836,12 @@
                 absoluteProfitScore * 0.10 -
                 volatilityPenalty
             ));
+            // Missing FIFO cost basis should not lower a mature SKU's personal
+            // score; in that case personal authority is demand-only.
             const personalScore = Math.max(0, Math.min(100,
-                personalDemandScore * 0.55 +
-                personalRoiScore * 0.45
+                personalRoiEvidence
+                    ? personalDemandScore * 0.55 + personalRoiScore * 0.45
+                    : personalDemandScore
             ));
             const personalWeight = personalMaturity * 0.70;
             const acquisitionScore = Math.max(0, Math.min(100,
@@ -2843,9 +2855,6 @@
             else if (acquisitionScore >= 50) { priority = 'FAST'; rank = 2; }
             else if (acquisitionScore >= 35) { priority = 'WATCH'; rank = 3; }
 
-            const personalDemandQualified =
-                Number(m.sold30d || 0) >= 5 ||
-                Number(m.saleDays30d || 0) >= 3;
             const marketBootstrapQualified =
                 !personalDemandQualified &&
                 marketSellerCount >= rules.minSellerCount &&
@@ -2931,6 +2940,9 @@
                 marketBootstrapQualified,
                 personalDemandScore,
                 ownRealizedRoiPct,
+                personalRoiEvidence,
+                personalCostCoveragePct:Number(personalRealized?.costCoveragePct || 0),
+                personalMatchedUnits:Number(personalRealized?.matchedUnits || 0),
                 personalMaturity,
                 personalWeight,
                 acquisitionScore,
@@ -6024,6 +6036,10 @@
             let matched = 0;
             while (need > 0 && cursor < lots.length) {
                 const lot = lots[cursor];
+                // A sale can only consume lots that existed at the time of sale.
+                // Since lots are acquisition-time sorted, a future lot means all
+                // later lots are also ineligible for this sale.
+                if (lot.acquiredAt > Number(sale.timestamp || 0)) break;
                 const take = Math.min(need, lot.remaining);
                 cogs += take * lot.unitCost;
                 matched += take;
@@ -6492,6 +6508,44 @@
             migrated.businessRules?.maxListingAgeSec === 240 &&
             migrated.businessRules?.marketRefreshLimit === 17;
 
+        const fifoDb = defaultDb();
+        const fifoId = '9001';
+        const fifoNow = Date.now();
+        fifoDb.procurement.acquisitions = [{
+            id:'future-lot',
+            itemId:fifoId,
+            itemName:'Temporal FIFO Item',
+            source:'Manual',
+            quantity:5,
+            unitCost:100,
+            acquiredAt:new Date(fifoNow).toISOString()
+        }];
+        fifoDb.sales = {
+            'past-sale': {
+                id:'past-sale',
+                playerId:'1',
+                playerName:'Buyer',
+                timestamp:fifoNow - 86400000,
+                total:1000,
+                items:[{ id:fifoId, name:'Temporal FIFO Item', quantity:5, price:200, total:1000 }]
+            }
+        };
+        const temporalFifoPast = realizedProfitMetrics(fifoDb, fifoId, 30);
+        fifoDb.sales['future-sale'] = {
+            id:'future-sale',
+            playerId:'2',
+            playerName:'Buyer 2',
+            timestamp:fifoNow + 1000,
+            total:1000,
+            items:[{ id:fifoId, name:'Temporal FIFO Item', quantity:5, price:200, total:1000 }]
+        };
+        const temporalFifoWithFutureSale = realizedProfitMetrics(fifoDb, fifoId, 30);
+        const fifoTemporalIntegrityOk =
+            temporalFifoPast.matchedUnits === 0 &&
+            temporalFifoPast.cogs === 0 &&
+            temporalFifoWithFutureSale.matchedUnits === 5 &&
+            temporalFifoWithFutureSale.cogs === 500;
+
         const refreshDb = defaultDb();
         const freshAt = nowIso();
         const fullyFreshPlan = businessRefreshPlan(refreshDb, {
@@ -6598,7 +6652,8 @@
                 refreshPlanOk &&
                 businessRulePropagationOk &&
                 refreshBreadthClampOk &&
-                bazaarSnapshotFreshnessOk,
+                bazaarSnapshotFreshnessOk &&
+                fifoTemporalIntegrityOk,
             aggregateOnly,
             staleListing,
             trusted,
@@ -6636,6 +6691,15 @@
             businessRulePropagationOk,
             refreshBreadthClampOk,
             bazaarSnapshotFreshnessOk,
+            fifoTemporalIntegrityOk,
+            fifoTemporalPast: {
+                matchedUnits:temporalFifoPast.matchedUnits,
+                cogs:temporalFifoPast.cogs
+            },
+            fifoTemporalWithFutureSale: {
+                matchedUnits:temporalFifoWithFutureSale.matchedUnits,
+                cogs:temporalFifoWithFutureSale.cogs
+            },
             appliedBusinessRules: appliedRules,
             refreshPlans: {
                 fullyFreshPlan,
