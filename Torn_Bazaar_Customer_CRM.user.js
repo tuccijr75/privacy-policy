@@ -235,7 +235,8 @@
             syncState: {
                 lastUnifiedSyncAt: null,
                 lastUnifiedSyncError: null,
-                backgroundRefreshEnabled: false
+                backgroundRefreshEnabled: false,
+                dashboardSnapshot: null
             },
             procurement: {
                 catalog: {},
@@ -449,6 +450,9 @@
         db.syncState.lastUnifiedSyncAt = db.syncState.lastUnifiedSyncAt || null;
         db.syncState.lastUnifiedSyncError = db.syncState.lastUnifiedSyncError || null;
         db.syncState.backgroundRefreshEnabled = db.syncState.backgroundRefreshEnabled === true;
+        db.syncState.dashboardSnapshot = db.syncState.dashboardSnapshot && typeof db.syncState.dashboardSnapshot === 'object'
+            ? db.syncState.dashboardSnapshot
+            : null;
 
         db.procurement = db.procurement && typeof db.procurement === 'object' ? db.procurement : {};
         db.procurement.catalog = db.procurement.catalog && typeof db.procurement.catalog === 'object' ? db.procurement.catalog : {};
@@ -5930,6 +5934,8 @@
             const db = dbLoad();
             db.syncState.lastUnifiedSyncAt = nowIso();
             db.syncState.lastUnifiedSyncError = result.errors.length ? result.errors.join('; ') : null;
+            try { refreshDashboardSnapshot(db); }
+            catch (error) { result.warnings.push('Dashboard snapshot: ' + (error?.message || String(error))); }
             dbSave(db);
 
             if (!silent) {
@@ -6005,6 +6011,7 @@
     function saveBusinessRules(values) {
         const db = dbLoad();
         applyBusinessRules(db, values);
+        try { refreshDashboardSnapshot(db); } catch {}
         dbSave(db);
         render();
     }
@@ -6850,6 +6857,7 @@
             SMART_REFRESH_ITEM_LIMIT > 0 &&
             SMART_REFRESH_ITEM_LIMIT < WEAV3R_MAX_ENRICH &&
             defaultDb().syncState.backgroundRefreshEnabled === false &&
+            defaultDb().syncState.dashboardSnapshot === null &&
             backgroundRefreshTimer === null;
 
         const acquisitionIndexDb = defaultDb();
@@ -10920,15 +10928,65 @@
         </details>`;
     }
 
-    function homeHtml(db) {
+    function lightweightSalesSummary(db, days = 30) {
+        const cutoff = Date.now() - Math.max(1, Number(days || 30)) * 86400000;
+        let revenue = 0;
+        let units = 0;
+        for (const sale of Object.values(db.sales || {})) {
+            if (Number(sale.timestamp || 0) < cutoff) continue;
+            revenue += Number(sale.total || 0);
+            for (const item of sale.items || []) units += Number(item.quantity || 0);
+        }
+        return { revenue, units };
+    }
+
+    function buildDashboardSnapshot(db) {
         const rows = advancedInventoryRows(db);
         const brief = ownerBriefing(db, rows);
         const deals = globalOpportunityRows(db);
-        const urgent = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','PRICE REVIEW','NEEDS LISTING','WATCH PRICE','DEAD STOCK'].includes(r.state));
-        const needRestock = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)).length;
-        const needListing = rows.filter(r => r.state === 'NEEDS LISTING').length;
-        const goodDeals = deals.filter(d => d.listingVerified && d.score >= 60).length;
-        const pendingAlerts = Object.values(db.subscribers || {}).filter(s => s.pendingNotification).length;
+        return {
+            at: nowIso(),
+            revenue: Number(brief.revenue || 0),
+            grossProfit: Number(brief.grossProfit || 0),
+            costCoveragePct: Number(brief.costCoveragePct || 0),
+            profitCoverage: String(brief.profitCoverage || 'UNAVAILABLE'),
+            needRestock: rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)).length,
+            needListing: rows.filter(r => r.state === 'NEEDS LISTING').length,
+            goodDeals: deals.filter(d => d.listingVerified && d.score >= 60).length,
+            pendingAlerts: Object.values(db.subscribers || {}).filter(s => s.pendingNotification).length,
+            lostProfit: Number(brief.lostProfit || 0),
+            deadCapital: Number(brief.deadCapital || 0),
+            stockouts: Number(brief.stockouts || 0),
+            bestName: String(brief.best?.name || '—'),
+            urgent: rows
+                .filter(r => ['OUT OF STOCK','SOURCE NOW','PRICE REVIEW','NEEDS LISTING','WATCH PRICE','DEAD STOCK'].includes(r.state))
+                .slice(0, 10)
+                .map(r => ({
+                    id: r.id,
+                    name: r.name,
+                    state: r.state,
+                    stock: Number(r.stock || 0),
+                    shortage: Number(r.adaptiveShortage || 0),
+                    addToBazaar: Number(r.addToBazaar || 0),
+                    plannedPrice: Number(r.plannedPrice || 0),
+                    buyTarget: Number(r.buyTarget || 0),
+                    forecastDaily: Number(r.forecastDaily || 0)
+                }))
+        };
+    }
+
+    function refreshDashboardSnapshot(db) {
+        db.syncState.dashboardSnapshot = buildDashboardSnapshot(db);
+        return db.syncState.dashboardSnapshot;
+    }
+
+    function homeHtml(db) {
+        const snapshot = db.syncState?.dashboardSnapshot || null;
+        const rawSales = snapshot ? null : lightweightSalesSummary(db, 30);
+        const urgent = Array.isArray(snapshot?.urgent) ? snapshot.urgent : [];
+        const pendingAlerts = snapshot
+            ? Number(snapshot.pendingAlerts || 0)
+            : Object.values(db.subscribers || {}).filter(s => s.pendingNotification).length;
 
         const fresh = businessDataFreshness(db);
         const readiness = businessRefreshPlan(db, { force:false });
@@ -10949,40 +11007,71 @@
             '</div>'
         );
 
-        const metrics = `<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">
-            ${simpleMetric('30d Revenue', money(brief.revenue))}
-            ${simpleMetric(
+        const metrics = '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">' +
+            simpleMetric('30d Revenue', money(snapshot ? snapshot.revenue : rawSales.revenue)) +
+            simpleMetric(
                 'Tracked Profit',
-                brief.profitCoverage === 'UNAVAILABLE' ? '—' : money(brief.grossProfit),
-                brief.profitCoverage === 'COMPLETE'
-                    ? 'complete FIFO cost basis'
-                    : brief.profitCoverage === 'PARTIAL'
-                        ? brief.costCoveragePct.toFixed(0)+'% cost coverage — partial'
-                        : 'cost basis unavailable'
-            )}
-            ${simpleMetric('Restock', String(needRestock), 'items need stock')}
-            ${simpleMetric('Need Listing', String(needListing), 'ready for Bazaar')}
-        </div>`;
+                !snapshot || snapshot.profitCoverage === 'UNAVAILABLE' ? '—' : money(snapshot.grossProfit),
+                !snapshot
+                    ? 'Smart Refresh to calculate'
+                    : snapshot.profitCoverage === 'COMPLETE'
+                        ? 'complete FIFO cost basis'
+                        : snapshot.profitCoverage === 'PARTIAL'
+                            ? Number(snapshot.costCoveragePct || 0).toFixed(0) + '% cost coverage — partial'
+                            : 'cost basis unavailable'
+            ) +
+            simpleMetric('Restock', snapshot ? String(snapshot.needRestock || 0) : '—', snapshot ? 'items need stock' : 'Smart Refresh to calculate') +
+            simpleMetric('Need Listing', snapshot ? String(snapshot.needListing || 0) : '—', snapshot ? 'ready for Bazaar' : 'Smart Refresh to calculate') +
+        '</div>';
 
-        const actions = card(`<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;">
-            <div><b style="font-size:15px;">What needs attention</b><div style="font-size:11px;color:#999;margin-top:3px;">${needRestock} restock · ${needListing} listing · ${goodDeals} seller-verifiable deal(s) · ${pendingAlerts} customer alert(s)</div></div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap;">${simpleActionButton('Restock','stock',true)}${simpleActionButton('List Bazaar','stock')}${simpleActionButton('Find Deals','deals')}${simpleActionButton('Customers','customers')}</div>
-        </div>`);
+        const attention = snapshot
+            ? Number(snapshot.needRestock || 0) + ' restock · ' +
+              Number(snapshot.needListing || 0) + ' listing · ' +
+              Number(snapshot.goodDeals || 0) + ' seller-verifiable deal(s)'
+            : 'Smart Refresh to calculate inventory actions';
 
-        const queue = card(`<b>Priority Actions</b>
-            ${urgent.length ? urgent.slice(0,10).map(r => {
-                const label = ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state) ? 'Restock' : r.state === 'NEEDS LISTING' ? 'List' : 'Review';
-                return `<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;align-items:flex-start;">
-                    <div style="min-width:0;font-size:11px;"><div><b>${escapeHtml(r.name)}</b> ${opsStateBadge(r.state)}</div>
-                    <div style="color:#aaa;margin-top:3px;">Stock ${r.stock} · Need ${r.adaptiveShortage} · ${r.state === 'NEEDS LISTING' ? `Add ${r.addToBazaar} @ ${r.plannedPrice ? money(r.plannedPrice) : '—'}` : `Buy target ${r.buyTarget ? money(r.buyTarget) : '—'}`}</div>${compactItemDetails(r)}</div>
-                    <button data-simple-go="stock" style="${btn(true)}white-space:nowrap;">${label}</button>
-                </div>`;
-            }).join('') : `<div style="font-size:11px;color:#888;margin-top:6px;">No urgent inventory actions right now.</div>`}
-        `);
+        const actions = card(
+            '<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;">' +
+                '<div><b style="font-size:15px;">What needs attention</b><div style="font-size:11px;color:#999;margin-top:3px;">' +
+                    escapeHtml(attention) + ' · ' + pendingAlerts + ' customer alert(s)</div></div>' +
+                '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                    simpleActionButton('Restock','stock',true) +
+                    simpleActionButton('List Bazaar','stock') +
+                    simpleActionButton('Find Deals','deals') +
+                    simpleActionButton('Customers','customers') +
+                '</div>' +
+            '</div>'
+        );
 
-        const health = card(`<b>Business Health</b><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:6px;">
-            ${simpleMetric('Lost Profit', money(brief.lostProfit))}${simpleMetric('Dead Capital', money(brief.deadCapital))}${simpleMetric('Stockouts', String(brief.stockouts))}${simpleMetric('Best SKU', brief.best?.name || '—')}
-        </div><div style="margin-top:7px;"><button data-simple-go="reports" style="${btn()}">Open Reports</button></div>`);
+        const queue = card(
+            '<b>Priority Actions</b>' +
+            (snapshot
+                ? (urgent.length
+                    ? urgent.map(r => {
+                        const label = ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)
+                            ? 'Restock'
+                            : r.state === 'NEEDS LISTING' ? 'List' : 'Review';
+                        const detail = r.state === 'NEEDS LISTING'
+                            ? 'Stock ' + r.stock + ' · Add ' + r.addToBazaar + ' @ ' + (r.plannedPrice ? money(r.plannedPrice) : '—')
+                            : 'Stock ' + r.stock + ' · Need ' + r.shortage + ' · Buy target ' + (r.buyTarget ? money(r.buyTarget) : '—');
+                        return '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;align-items:flex-start;">' +
+                            '<div style="min-width:0;font-size:11px;"><div><b>' + escapeHtml(r.name) + '</b> ' + opsStateBadge(r.state) + '</div>' +
+                            '<div style="color:#aaa;margin-top:3px;">' + escapeHtml(detail) + ' · Forecast ' + Number(r.forecastDaily || 0).toFixed(2) + '/day</div></div>' +
+                            '<button data-simple-go="stock" style="' + btn(true) + 'white-space:nowrap;">' + label + '</button></div>';
+                    }).join('')
+                    : '<div style="font-size:11px;color:#888;margin-top:6px;">No urgent inventory actions right now.</div>')
+                : '<div style="font-size:11px;color:#888;margin-top:6px;">Run Smart Refresh to build the priority queue.</div>')
+        );
+
+        const health = card(
+            '<b>Business Health</b><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:6px;">' +
+                simpleMetric('Lost Profit', snapshot ? money(snapshot.lostProfit) : '—') +
+                simpleMetric('Dead Capital', snapshot ? money(snapshot.deadCapital) : '—') +
+                simpleMetric('Stockouts', snapshot ? String(snapshot.stockouts || 0) : '—') +
+                simpleMetric('Best SKU', snapshot ? snapshot.bestName : '—') +
+            '</div><div style="margin-top:7px;"><button data-simple-go="reports" style="' + btn() + '">Open Reports</button></div>'
+        );
+
         return refresh + metrics + actions + queue + health;
     }
 
