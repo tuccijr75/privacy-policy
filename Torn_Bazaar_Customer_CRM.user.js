@@ -9736,7 +9736,7 @@
 
     function opsStateBadge(state){
         const map={
-            'OUT OF STOCK':'#7a1f1f','SOURCE NOW':'#5d2c15','NEEDS LISTING':'#4f4517','WATCH PRICE':'#374560',
+            'OUT OF STOCK':'#7a1f1f','SOURCE NOW':'#5d2c15','PRICE REVIEW':'#6a4f19','NEEDS LISTING':'#4f4517','WATCH PRICE':'#374560',
             'PURCHASED':'#26425c','RECEIVED':'#24493a','OVERSTOCKED':'#49345b','DEAD STOCK':'#5a2c39','LISTED':'#24422d'
         };
         return `<span style="background:${map[state]||'#333'};border:1px solid #777;color:#fff;border-radius:10px;padding:2px 6px;font-size:10px;font-weight:bold;">${escapeHtml(state)}</span>`;
@@ -9931,7 +9931,7 @@
         const rows = advancedInventoryRows(db);
         const brief = ownerBriefing(db, rows);
         const deals = globalOpportunityRows(db);
-        const urgent = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','NEEDS LISTING','WATCH PRICE','DEAD STOCK'].includes(r.state));
+        const urgent = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','PRICE REVIEW','NEEDS LISTING','WATCH PRICE','DEAD STOCK'].includes(r.state));
         const needRestock = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)).length;
         const needListing = rows.filter(r => r.state === 'NEEDS LISTING').length;
         const goodDeals = deals.filter(d => d.score >= 60).length;
