@@ -10422,6 +10422,24 @@
         return Math.floor(sec / 86400) + 'd ago';
     }
 
+    function sourceReadinessChip(label, at, due, available = true) {
+        const state = !available
+            ? 'NOT CONFIGURED'
+            : due
+                ? (at ? 'STALE' : 'NOT SYNCED')
+                : 'CURRENT';
+        const tone = !available
+            ? '#888'
+            : due
+                ? '#ffd18a'
+                : '#9fe3a8';
+        const age = available ? freshnessAgeText(at) : 'requires API access';
+        return '<span style="display:inline-flex;gap:4px;align-items:center;border:1px solid #444;border-radius:999px;padding:3px 6px;font-size:9px;white-space:nowrap;">' +
+            '<b>' + escapeHtml(label) + '</b> <span style="color:' + tone + ';font-weight:700;">' + state + '</span> <span style="color:#777;">' + escapeHtml(age) + '</span>' +
+        '</span>';
+    }
+
+
     function businessRulesSummaryHtml(db) {
         const r = businessRules(db);
         return '<div style="font-size:10px;color:#888;line-height:1.45;">' +
@@ -10498,7 +10516,23 @@
         const pendingAlerts = Object.values(db.subscribers || {}).filter(s => s.pendingNotification).length;
 
         const fresh = businessDataFreshness(db);
-        const refresh = card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b>Data Readiness</b><div style="font-size:10px;color:#888;margin-top:3px;">Sales ${freshnessAgeText(fresh.salesAt)} · Stock/Procurement ${freshnessAgeText(fresh.procurementAt)} · Market ${freshnessAgeText(fresh.marketAt)} · Travel ${freshnessAgeText(fresh.travelAt)}</div></div><button id="mm-refresh-business" style="${btn(true)}">Smart Refresh</button></div>`);
+        const readiness = businessRefreshPlan(db, { force:false });
+        const hasApi = Boolean(getApiKey());
+        const refresh = card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">' +
+                '<div><b>Data Readiness</b>' +
+                    '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px;">' +
+                        sourceReadinessChip('Sales', fresh.salesAt, readiness.sales, hasApi) +
+                        sourceReadinessChip('Market', fresh.marketAt, readiness.market, true) +
+                        sourceReadinessChip('$1', fresh.dollarAt, readiness.dollar, true) +
+                        sourceReadinessChip('Procure', fresh.procurementAt, readiness.procurement, hasApi) +
+                        sourceReadinessChip('Travel', fresh.travelAt, readiness.travel, true) +
+                    '</div>' +
+                    (fresh.unifiedError ? '<div style="font-size:10px;color:#ff9b9b;margin-top:5px;">Last refresh error: ' + escapeHtml(fresh.unifiedError) + '</div>' : '') +
+                '</div>' +
+                '<button id="mm-refresh-business" style="' + btn(true) + '">Smart Refresh</button>' +
+            '</div>'
+        );
 
         const metrics = `<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">
             ${simpleMetric('30d Revenue', money(brief.revenue))}
