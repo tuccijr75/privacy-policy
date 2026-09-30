@@ -10553,7 +10553,8 @@
         const deals = globalOpportunityRows(db);
         const instant = instantArbitrageRows(db);
         const travel = travelOpportunityRows(db).filter(r => r.profit > 0).slice(0, 5);
-        const top = deals.slice(0, 25);
+        const actionable = deals.filter(r => r.listingVerified).slice(0, 25);
+        const discovery = deals.filter(r => !r.listingVerified).slice(0, 25);
         const dollars = (db.marketIntel.dollarItems || [])
             .slice()
             .sort((a,b) => Number(b.totalValue || 0) - Number(a.totalValue || 0))
@@ -10563,22 +10564,21 @@
         const controls = card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">' +
                 '<div><b style="font-size:15px;">Best Deals Now</b><div style="font-size:11px;color:#999;margin-top:2px;">' +
-                    deals.length + ' qualifying deal(s) · showing top ' + top.length + ' · feed ' + escapeHtml(freshness.label) +
+                    actionable.length + ' seller-verifiable deal(s) · ' + discovery.length + ' research lead(s) · feed ' + escapeHtml(freshness.label) +
                     (Number.isFinite(freshness.ageSeconds) ? ' · ' + Math.round(freshness.ageSeconds) + 's old' : '') +
                 '</div></div>' +
                 '<button id="mm-refresh-business" style="' + btn(true) + '">Smart Refresh</button>' +
             '</div>'
         );
 
-        const topHtml = card(
-            top.length
-                ? top.map((r,i) => {
+        const actionableHtml = card(
+            '<div><b>Seller-Verifiable Deals</b><div style="font-size:10px;color:#888;margin-top:2px;">Only fresh seller-level opportunities appear here. Verify immediately before opening the Bazaar.</div></div>' +
+            (actionable.length
+                ? actionable.map((r,i) => {
                     const sellerAction = r.sellerId
                         ? '<button data-intel-action="verify-seller" data-item="' + escapeHtml(r.id) + '" data-seller="' + escapeHtml(r.sellerId) + '" data-price="' + Number(r.buyPrice||0) + '" style="' + btn() + '">Verify Seller</button>'
                         : '';
-                    const verifiedText = r.listingVerified
-                        ? ' · Seller listing verified fresh (' + Math.round(Number(r.listingAgeSeconds || 0)) + 's)'
-                        : ' · Aggregate opportunity — analyze before buying';
+                    const verifiedText = ' · Seller listing observed ' + Math.round(Number(r.listingAgeSeconds || 0)) + 's ago';
                     return '<div style="display:flex;justify-content:space-between;gap:8px;border-top:' + (i ? '1px solid #303030' : '0') + ';padding:7px 0;">' +
                         '<div style="font-size:11px;min-width:0;"><b>#' + (i+1) + ' ' + escapeHtml(r.name) + '</b> · ROI <b>' + r.roiPct.toFixed(1) + '%</b> · Profit ' + money(r.profit) + ' · Confidence ' + r.confidence.toFixed(0) + '%<br>' +
                         'Buy ' + money(r.buyPrice) + ' → ' + money(r.bestExit) + ' via ' + escapeHtml(r.bestExitRoute) + verifiedText +
@@ -10591,7 +10591,23 @@
                         sellerAction + '<button data-open-advanced="intel" style="' + btn() + '">Full Market Intel</button></div></details></div>' +
                     '</div>';
                 }).join('')
-                : '<div style="font-size:11px;color:#888;">Smart Refresh to load opportunities.</div>'
+                : '<div style="font-size:11px;color:#888;margin-top:6px;">No seller-verifiable deals currently meet your CRM-wide rules.</div>') 
+        );
+
+        const discoveryHtml = card(
+            '<details><summary style="cursor:pointer;font-weight:700;">Market Leads — Research Before Buying (' + discovery.length + ')</summary>' +
+            '<div style="font-size:10px;color:#888;margin:5px 0 3px;">These pass ROI/profit screening using aggregate market evidence but do not currently have a fresh seller-level listing. They are discovery leads, not buy recommendations.</div>' +
+            (discovery.length
+                ? discovery.map((r,i) =>
+                    '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:6px 0;">' +
+                        '<div style="font-size:10px;min-width:0;"><b>#' + (i+1) + ' ' + escapeHtml(r.name) + '</b> · Indicative ROI ' + r.roiPct.toFixed(1) + '% · Profit ' + money(r.profit) +
+                        '<br>Aggregate buy ' + money(r.buyPrice) + ' → ' + money(r.bestExit) + ' via ' + escapeHtml(r.bestExitRoute) +
+                        ' · Sellers ' + r.sellerCount + ' · Confidence ' + r.confidence.toFixed(0) + '%</div>' +
+                        '<button data-intel-action="enrich" data-item="' + escapeHtml(r.id) + '" style="' + btn(true) + '">Find Live Seller</button>' +
+                    '</div>'
+                ).join('')
+                : '<div style="font-size:11px;color:#888;margin-top:6px;">No aggregate research leads currently qualify.</div>') +
+            '</details>'
         );
 
         const dollarHtml = card(
@@ -10631,7 +10647,7 @@
             '</div></details>'
         );
 
-        return controls + businessRulesCard(db, true) + topHtml + dollarHtml + travelHtml + scanners;
+        return controls + businessRulesCard(db, true) + actionableHtml + discoveryHtml + dollarHtml + travelHtml + scanners;
     }
 
     function csvCell(value) {
