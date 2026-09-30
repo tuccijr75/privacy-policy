@@ -60,7 +60,7 @@
     const WEAV3R_BASE = 'https://weav3r.dev/api';
     const WEAV3R_GLOBAL_TTL_MS = 60_000;
     const WEAV3R_DETAIL_TTL_MS = 60_000;
-    const WEAV3R_MAX_ENRICH = 15;
+    const WEAV3R_MAX_ENRICH = 30;
     const WEAV3R_PUBLIC_RATE_LIMIT_PER_MIN = 100;
     const MARKET_INTEL_HISTORY_MAX = 120;
     const OPS_SNAPSHOT_MAX = 2500;
@@ -493,7 +493,10 @@
         db.marketIntel.settings.minMarketPrice = db.businessRules.minPrice;
         db.marketIntel.settings.maxCandidatePrice = db.businessRules.maxPrice;
         db.marketIntel.settings.minBazaarSellers = db.businessRules.minSellerCount;
-        db.marketIntel.settings.maxEnrich = Number(db.marketIntel.settings.maxEnrich ?? WEAV3R_MAX_ENRICH);
+        db.marketIntel.settings.maxEnrich = Math.max(
+            1,
+            Math.min(WEAV3R_MAX_ENRICH, Number(db.businessRules.marketRefreshLimit || WEAV3R_MAX_ENRICH))
+        );
         db.marketIntel.settings.freshnessWarnSeconds = db.businessRules.maxListingAgeSec;
         db.marketIntel.settings.bazaarExitHaircutPct = Number(db.marketIntel.settings.bazaarExitHaircutPct ?? 1);
         db.marketIntel.diagnostics = Array.isArray(db.marketIntel.diagnostics) ? db.marketIntel.diagnostics : [];
@@ -5521,7 +5524,7 @@
         const db = dbLoad();
         const limit = Math.max(1, Math.min(
             WEAV3R_MAX_ENRICH,
-            Number(db.marketIntel.settings.maxEnrich || WEAV3R_MAX_ENRICH)
+            businessRules(db).marketRefreshLimit
         ));
         const rows = globalOpportunityRows(db).slice(0, limit);
         let ok = 0;
@@ -5803,6 +5806,7 @@
         db.marketIntel.settings.maxCandidatePrice = next.maxPrice;
         db.marketIntel.settings.minBazaarSellers = next.minSellerCount;
         db.marketIntel.settings.freshnessWarnSeconds = next.maxListingAgeSec;
+        db.marketIntel.settings.maxEnrich = Math.min(WEAV3R_MAX_ENRICH, next.marketRefreshLimit);
         db.operations.settings.strategyPreset = 'CUSTOM';
         dbSave(db);
         render();
@@ -10127,7 +10131,7 @@
                     <input id="mm-intel-min-sellers" type="number" min="0" value="${rules.minSellerCount}" style="${inputCss()}width:100%;">
                 </label>
                 <label style="font-size:10px;color:#aaa;">Enrich Top
-                    <input id="mm-intel-max-enrich" type="number" min="1" max="15" value="${settings.maxEnrich}" style="${inputCss()}width:100%;">
+                    <input id="mm-intel-max-enrich" type="number" min="1" max="30" value="${settings.maxEnrich}" style="${inputCss()}width:100%;">
                 </label>
                 <label style="font-size:10px;color:#aaa;">Exit haircut %
                     <input id="mm-intel-haircut" type="number" min="0" step="0.1" value="${settings.bazaarExitHaircutPct}" style="${inputCss()}width:100%;">
