@@ -6417,6 +6417,61 @@
             Number(movementProcurement?.marketMovementConfidence || 0) > 0 &&
             Number(movementProcurement?.marketDepletionPerHour || 0) > 0;
 
+        const personalDb = defaultDb();
+        const personalId = '5';
+        const personalNow = Date.now();
+        personalDb.procurement.catalog[personalId] = { id:personalId, name:'Personal ROI Item', type:'Supply', marketValue:220 };
+        personalDb.procurement.inventory[personalId] = { id:personalId, name:'Personal ROI Item', quantity:0 };
+        personalDb.procurement.acquisitions = [{
+            id:'personal-lot',
+            itemId:personalId,
+            itemName:'Personal ROI Item',
+            source:'Manual',
+            quantity:5,
+            unitCost:100,
+            acquiredAt:new Date(personalNow - 10 * 86400000).toISOString()
+        }];
+        personalDb.sales = {
+            'personal-sale-1': {
+                id:'personal-sale-1', playerId:'1', playerName:'Buyer 1',
+                timestamp:personalNow - 3 * 86400000, total:400,
+                items:[{ id:personalId, name:'Personal ROI Item', quantity:2, price:200, total:400 }]
+            },
+            'personal-sale-2': {
+                id:'personal-sale-2', playerId:'2', playerName:'Buyer 2',
+                timestamp:personalNow - 2 * 86400000, total:400,
+                items:[{ id:personalId, name:'Personal ROI Item', quantity:2, price:200, total:400 }]
+            },
+            'personal-sale-3': {
+                id:'personal-sale-3', playerId:'3', playerName:'Buyer 3',
+                timestamp:personalNow - 1 * 86400000, total:200,
+                items:[{ id:personalId, name:'Personal ROI Item', quantity:1, price:200, total:200 }]
+            }
+        };
+        personalDb.marketIntel.marketplace[personalId] = {
+            itemId:personalId,
+            itemName:'Personal ROI Item',
+            lowestPrice:100,
+            bazaarAverage:200,
+            marketPrice:220,
+            totalBazaars:8
+        };
+        personalDb.procurement.marketSnapshots[personalId] = {
+            fetchedAt:nowIso(),
+            bazaar:{ lowest:100, third:205, median:200, listings:8, totalQty:50 },
+            itemMarket:{ lowest:105, third:215, median:205, listings:12, totalQty:75 },
+            realisticExit:200,
+            totalDepth3Pct:80
+        };
+        const personalProcurement = procurementRows(personalDb).find(r => r.id === personalId);
+        const personalRealizedRoiOk =
+            personalProcurement?.personalDemandQualified === true &&
+            personalProcurement?.personalRoiEvidence === true &&
+            personalProcurement?.personalMatchedUnits === 5 &&
+            personalProcurement?.personalCostCoveragePct === 100 &&
+            Math.abs(Number(personalProcurement?.ownRealizedRoiPct || 0) - 100) < 0.0001 &&
+            Number(personalProcurement?.personalWeight || 0) > 0;
+
         const dollarCamel = normalizeDollarBazaarItem({
             itemId:3,itemName:'Camel Item',itemType:'Other',playerId:99,sellerName:'Camel Seller',
             quantity:2,marketPrice:12345,totalValue:24690,lastUpdated:nowIso()
@@ -6642,6 +6697,7 @@
                 bootstrapProcurement?.personalDemandQualified === false &&
                 bootstrapProcurement?.marketBootstrapQualified === true &&
                 movementOk &&
+                personalRealizedRoiOk &&
                 dollarCamel.itemId === '3' &&
                 dollarCamel.sellerId === '99' &&
                 dollarSnake.itemId === '4' &&
@@ -6671,6 +6727,16 @@
                 acquisitionScore:bootstrapProcurement.acquisitionScore
             } : null,
             movementOk,
+            personalRealizedRoiOk,
+            personalProcurement: personalProcurement ? {
+                personalDemandQualified:personalProcurement.personalDemandQualified,
+                personalRoiEvidence:personalProcurement.personalRoiEvidence,
+                personalMatchedUnits:personalProcurement.personalMatchedUnits,
+                personalCostCoveragePct:personalProcurement.personalCostCoveragePct,
+                ownRealizedRoiPct:personalProcurement.ownRealizedRoiPct,
+                personalWeight:personalProcurement.personalWeight,
+                acquisitionScore:personalProcurement.acquisitionScore
+            } : null,
             movementProcurement: movementProcurement ? {
                 marketMovementScore:movementProcurement.marketMovementScore,
                 marketMovementConfidence:movementProcurement.marketMovementConfidence,
@@ -10980,6 +11046,10 @@
             'Acquisition Score': Number(r.acquisitionScore || 0),
             'Demand Basis': r.personalDemandQualified ? 'Personal sales' : 'Market bootstrap',
             'Personal Demand Mature': Boolean(r.personalDemandQualified),
+            'Personal Realized ROI %': Number(r.ownRealizedRoiPct || 0),
+            'Personal Cost Coverage %': Number(r.personalCostCoveragePct || 0),
+            'Personal Matched Units': Number(r.personalMatchedUnits || 0),
+            'Personal Authority %': Number(r.personalWeight || 0) * 100,
             'Market Demand Score': Number(r.marketDemandScore || 0),
             'Market Sellers': Number(r.marketSellerCount || 0),
             'Market Movement Score': Number(r.marketMovementScore || 0),
@@ -11030,7 +11100,7 @@
             },
             procurement: {
                 filename: 'procurement-opportunities.csv',
-                headers: ['Item ID','Item','Action','Priority','Acquisition Score','Demand Basis','Personal Demand Mature','Market Demand Score','Market Sellers','Market Movement Score','Observed Near-Market Depletion / Hr','Demand / Day','Sold 7d','Sold 30d','Stock','Shortage','Best Buy Price','Trusted Exit','Profit / Unit','ROI %','Liquidity','Market Fresh'],
+                headers: ['Item ID','Item','Action','Priority','Acquisition Score','Demand Basis','Personal Demand Mature','Personal Realized ROI %','Personal Cost Coverage %','Personal Matched Units','Personal Authority %','Market Demand Score','Market Sellers','Market Movement Score','Observed Near-Market Depletion / Hr','Demand / Day','Sold 7d','Sold 30d','Stock','Shortage','Best Buy Price','Trusted Exit','Profit / Unit','ROI %','Liquidity','Market Fresh'],
                 rows: procurementRowsExport
             }
         };
