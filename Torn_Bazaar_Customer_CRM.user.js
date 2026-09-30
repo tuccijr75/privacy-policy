@@ -9719,15 +9719,15 @@
             return card(
                 `<b>Inventory Director</b><div style="font-size:12px;color:#bbb;margin-top:5px;">` +
                 `No inventory or sales SKUs are available yet. Run Sync Procurement and Rebuild Sales History.</div>` +
-                `<button id="mm-proc-sync" style="${btn(true)}margin-top:8px;">Sync Procurement</button>`
+                `<button data-proc-sync style="${btn(true)}margin-top:8px;">Sync Procurement</button>`
             );
         }
 
         return `
             ${pricingDirectorHtml(db)}
             <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:8px 0 7px;">
-                <button id="mm-proc-sync" style="${btn(true)}">Sync Procurement</button>
-                <button id="mm-proc-refresh-markets" style="${btn()}">Refresh Priority Markets</button>
+                <button data-proc-sync style="${btn(true)}">Sync Procurement</button>
+                <button data-proc-refresh-markets style="${btn()}">Refresh Priority Markets</button>
                 <span style="font-size:11px;color:#999;">${escapeHtml(syncLine)}</span>
             </div>
             ${rows.map(r => card(`
@@ -9992,9 +9992,9 @@
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;">
                 <button id="mm-save-proc-settings" style="${btn(true)}">Save Targets</button>
-                <button id="mm-proc-sync" style="${btn(true)}">Sync All Procurement</button>
-                <button id="mm-rebuild-acquisitions" style="${btn()}">Rebuild Cost Basis</button>
-                <button id="mm-proc-refresh-markets" style="${btn()}">Refresh Priority Markets</button>
+                <button data-proc-sync style="${btn(true)}">Sync All Procurement</button>
+                <button data-rebuild-acquisitions style="${btn()}">Rebuild Cost Basis</button>
+                <button data-proc-refresh-markets style="${btn()}">Refresh Priority Markets</button>
             </div>
         `);
 
@@ -10156,7 +10156,7 @@
                 <button id="mm-intel-full-sync" style="${btn(true)}">Full Intelligence Sync</button>
                 <button id="mm-intel-enrich" style="${btn()}">Enrich Top Deals</button>
                 <button id="mm-intel-dollar" style="${btn()}">$1 Scanner</button>
-                <button id="mm-intel-ranked" style="${btn()}">Ranked/Auction</button>
+                <button data-intel-ranked style="${btn()}">Ranked/Auction</button>
             </div>
         `);
 
@@ -10326,14 +10326,14 @@
                 ${q.sellerName?`<br>Seller ${escapeHtml(q.sellerName)} [${escapeHtml(q.sellerId)}]`:''}</div>
                 <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">
                     ${q.sellerId?`<button data-ops-action="seller" data-item="${q.itemId}" data-seller="${q.sellerId}" data-price="${Number(q.buyPrice||0)}" style="${btn()}">Verify Seller</button>`:''}
-                    <button id="mm-restock-log-purchase" style="${btn(true)}">Log Purchase</button>
-                    <button id="mm-restock-skip" style="${btn()}">Skip / Next</button>
+                    <button data-restock-log-purchase style="${btn(true)}">Log Purchase</button>
+                    <button data-restock-skip style="${btn()}">Skip / Next</button>
                 </div>`:'Session complete.'}
             `);
         } else {
             const shortages=rows.filter(r=>['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)).length;
             sessionHtml=card(`<b>Guided Restock Session</b><div style="font-size:11px;color:#aaa;margin:5px 0;">${shortages} SKU(s) currently need sourcing. Budget ${money(db.procurement.settings.procurementBudget||0)}.</div>
-                <button id="mm-start-restock-session" style="${btn(true)}">Start Restock Session</button>`);
+                <button data-start-restock-session style="${btn(true)}">Start Restock Session</button>`);
         }
 
         const actionQueue=card(`<b>Action Queue</b>${rows.slice(0,35).map(r=>`<div style="display:flex;justify-content:space-between;gap:7px;border-top:1px solid #303030;padding:5px 0;font-size:11px;">
@@ -10344,7 +10344,7 @@
         </div>`).join('')}`);
 
         const listingHtml=card(`<b>Bazaar Listing Assistant</b><div style="font-size:11px;color:#aaa;margin:4px 0;">${Object.keys(plans).length} SKU(s) currently need replenishment on your Bazaar. On Torn's Bazaar page, the helper fills quantity/price only; you manually submit.</div>
-            <button id="mm-open-bazaar-add" style="${btn(true)}">Open Bazaar Add Page</button>
+            <button data-open-bazaar-add style="${btn(true)}">Open Bazaar Add Page</button>
             <details style="margin-top:7px;"><summary>Current listing plan</summary>${Object.values(plans).map(p=>`<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">${escapeHtml(p.itemName)} × ${p.quantity} @ ${money(p.price)} · Cost ${p.cost?money(p.cost):'—'} · Margin ${p.expectedMarginPct.toFixed(1)}%</div>`).join('')||'No listing replenishment needed.'}</details>`);
 
         const historyHtml=card(`<b>Restock Session History</b>${sessionHistory.length?sessionHistory.map(s=>`<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">${escapeHtml(fmtDate(s.createdAt))} · ${s.queue.length} SKU(s) · Spent ${money(s.spent)} · Expected profit ${money(s.expectedProfit)} · ${s.completedAt?'Completed':'Active'}</div>`).join(''):'<div style="font-size:11px;color:#888;">No sessions yet.</div>'}`);
@@ -10578,13 +10578,13 @@
 
         const quickRestock = card(`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
             <div><b style="font-size:15px;">Quick Restock</b><div style="font-size:11px;color:#999;margin-top:2px;">${restockRows.length} item(s) need sourcing · Budget ${money(db.procurement.settings.procurementBudget || 0)}</div></div>
-            ${session ? `<span style="font-size:11px;color:#e7c46d;">Session active</span>` : `<button id="mm-start-restock-session" style="${btn(true)}">Start Restock Session</button>`}
+            ${session ? `<span style="font-size:11px;color:#e7c46d;">Session active</span>` : `<button data-start-restock-session style="${btn(true)}">Start Restock Session</button>`}
         </div>
         ${session ? (() => {
             const q = session.queue[session.activeIndex];
             return q ? `<div style="border-top:1px solid #333;margin-top:7px;padding-top:7px;font-size:12px;"><b>${escapeHtml(q.itemName)}</b><br>
                 Need ${q.need} · Buy ${q.buyPrice ? money(q.buyPrice) : '—'} · Max ${q.buyTarget ? money(q.buyTarget) : '—'} · Exit ${q.exit ? money(q.exit) : '—'} · ROI ${Number(q.roiPct||0).toFixed(1)}%
-                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">${q.sellerId?`<button data-ops-action="seller" data-item="${q.itemId}" data-seller="${q.sellerId}" data-price="${Number(q.buyPrice||0)}" style="${btn()}">Verify Seller</button>`:''}<button id="mm-restock-log-purchase" style="${btn(true)}">Log Purchase</button><button id="mm-restock-skip" style="${btn()}">Skip</button></div>
+                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">${q.sellerId?`<button data-ops-action="seller" data-item="${q.itemId}" data-seller="${q.sellerId}" data-price="${Number(q.buyPrice||0)}" style="${btn()}">Verify Seller</button>`:''}<button data-restock-log-purchase style="${btn(true)}">Log Purchase</button><button data-restock-skip style="${btn()}">Skip</button></div>
             </div>` : '';
         })() : ''}
         ${restockRows.length ? restockRows.slice(0,12).map(r => `<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;">
@@ -10592,7 +10592,7 @@
             <details><summary style="${btn()}list-style:none;">•••</summary><div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;"><button data-proc-action="market" data-item="${r.id}" style="${btn()}">Refresh Market</button><button data-proc-action="log-buy" data-item="${r.id}" data-name="${escapeHtml(r.name)}" style="${btn()}">Log Buy</button><button data-open-advanced="inventory" style="${btn()}">Full Inventory</button></div></details>
         </div>`).join('') : `<div style="font-size:11px;color:#888;margin-top:7px;">No restock action required.</div>`}`);
 
-        const listing = card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">List Bazaar</b><div style="font-size:11px;color:#999;margin-top:2px;">${trustedPlans.length} trusted recommendation(s) · ${priceReviewRows.length} price review(s)</div></div><button id="mm-open-bazaar-add" style="${btn(true)}">Open Bazaar Add</button></div>
+        const listing = card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">List Bazaar</b><div style="font-size:11px;color:#999;margin-top:2px;">${trustedPlans.length} trusted recommendation(s) · ${priceReviewRows.length} price review(s)</div></div><button data-open-bazaar-add style="${btn(true)}">Open Bazaar Add</button></div>
             ${trustedPlans.slice(0,20).map(p=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(p.itemName)}</b> · Add ${p.quantity} @ <b>${money(p.price)}</b> · Margin ${p.expectedMarginPct.toFixed(1)}%</div>`).join('') || `<div style="font-size:11px;color:#888;margin-top:7px;">No trusted listing recommendation currently available.</div>`}
             ${priceReviewRows.slice(0,15).map(r=>`<div style="font-size:10px;border-top:1px solid #303030;padding:5px 0;color:#ffd18a;"><b>${escapeHtml(r.name)}</b> · PRICE REVIEW · ${escapeHtml(r.pricingDecision?.source || 'No trusted market evidence')} · confidence ${Number(r.pricingDecision?.confidence||0).toFixed(0)}%</div>`).join('')}
             <div style="font-size:10px;color:#777;margin-top:6px;">Only TRUSTED price decisions enter the listing plan. Anything else stays in Price Review until stronger evidence is available.</div>`);
@@ -10694,7 +10694,7 @@
                 '<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">' + escapeHtml(r.name) +
                 ' · Buy ' + money(r.buyPrice) + ' → Trader ' + money(r.traderExit) + ' · ROI ' + r.instantRoiPct.toFixed(1) + '%</div>'
             ).join('') +
-            '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;"><button id="mm-intel-ranked" style="' + btn() + '">Ranked/Auction</button><button data-open-advanced="intel" style="' + btn() + '">Supplier Baskets + Full Scanners</button></div>' +
+            '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;"><button data-intel-ranked style="' + btn() + '">Ranked/Auction</button><button data-open-advanced="intel" style="' + btn() + '">Supplier Baskets + Full Scanners</button></div>' +
             '</div></details>'
         );
 
@@ -11446,9 +11446,9 @@
                 <summary style="cursor:pointer;font-size:11px;color:#aaa;">Maintenance & targeted syncs</summary>
                 <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
                     <button id="mm-sync-now" style="${btn()}">Sync Sales Only</button>
-                    <button id="mm-proc-sync" style="${btn()}">Sync Procurement Only</button>
+                    <button data-proc-sync style="${btn()}">Sync Procurement Only</button>
                     <button id="mm-rebuild-sales" style="${btn()}">Rebuild Sales History</button>
-                    <button id="mm-rebuild-acquisitions" style="${btn()}">Rebuild Cost Basis</button>
+                    <button data-rebuild-acquisitions style="${btn()}">Rebuild Cost Basis</button>
                     <button id="mm-repair-names" style="${btn()}">Repair Usernames</button>
                     <button id="mm-repair-sales-integrity" style="${btn()}">Repair Sales Integrity</button>
                 </div>
@@ -11712,19 +11712,19 @@
             render();
         });
 
-        root.querySelector('#mm-start-restock-session')?.addEventListener('click', () => {
+        root.querySelectorAll('[data-start-restock-session]').forEach(button => button.addEventListener('click', () => {
             try { startRestockSession(); statusText='Restock session started.'; render(); }
             catch(error){statusText=`Could not start restock session: ${error?.message||String(error)}`;render();}
-        });
-        root.querySelector('#mm-restock-skip')?.addEventListener('click',()=>advanceRestockSession('skipped'));
-        root.querySelector('#mm-restock-log-purchase')?.addEventListener('click',()=>{
+        }));
+        root.querySelectorAll('[data-restock-skip]').forEach(button => button.addEventListener('click',()=>advanceRestockSession('skipped')));
+        root.querySelectorAll('[data-restock-log-purchase]').forEach(button => button.addEventListener('click',()=>{
             const db=dbLoad(),s=getActiveRestockSession(db),q=s?.queue?.[s.activeIndex];if(!q)return;
             const qty=prompt(`Quantity purchased for ${q.itemName}:`,String(q.sourceQty||q.need||1));if(qty==null)return;
             const cost=prompt('Actual unit cost:',String(q.buyPrice||''));if(cost==null)return;
             try{logRestockPurchase(qty,cost);statusText='Purchase logged and restock session advanced.';}
             catch(error){statusText=`Purchase not logged: ${error?.message||String(error)}`;render();}
-        });
-        root.querySelector('#mm-open-bazaar-add')?.addEventListener('click',()=>navigateFromCRM('https://www.torn.com/bazaar.php#/p=add'));
+        }));
+        root.querySelectorAll('[data-open-bazaar-add]').forEach(button => button.addEventListener('click',()=>navigateFromCRM('https://www.torn.com/bazaar.php#/p=add')));
         root.querySelector('#mm-add-event')?.addEventListener('click',()=>{
             try{
                 addDemandEvent(root.querySelector('#mm-event-name')?.value,root.querySelector('#mm-event-start')?.value,root.querySelector('#mm-event-end')?.value,root.querySelector('#mm-event-mult')?.value);
@@ -11890,7 +11890,7 @@
             }
             render();
         });
-        root.querySelector('#mm-intel-ranked')?.addEventListener('click', async () => {
+        root.querySelectorAll('[data-intel-ranked]').forEach(button => button.addEventListener('click', async () => {
             statusText = 'Refreshing ranked and auction intelligence…'; render();
             try {
                 const r = await syncWeavRanked();
@@ -11899,7 +11899,7 @@
                 statusText = `Ranked intelligence failed: ${error?.message || String(error)}`;
             }
             render();
-        });
+        }));
         root.querySelector('#mm-save-intel-settings')?.addEventListener('click', () => {
             saveBusinessRules({
                 minRoiPct: root.querySelector('#mm-intel-min-roi')?.value,
@@ -12024,8 +12024,8 @@
             render();
         });
 
-        root.querySelector('#mm-proc-sync')?.addEventListener('click', syncProcurement);
-        root.querySelector('#mm-rebuild-acquisitions')?.addEventListener('click', rebuildAcquisitionHistory);
+        root.querySelectorAll('[data-proc-sync]').forEach(button => button.addEventListener('click', syncProcurement));
+        root.querySelectorAll('[data-rebuild-acquisitions]').forEach(button => button.addEventListener('click', rebuildAcquisitionHistory));
         root.querySelector('#mm-save-proc-settings')?.addEventListener('click', () => {
             saveProcurementSettings({
                 procurementBudget: root.querySelector('#mm-proc-budget')?.value,
@@ -12037,7 +12037,7 @@
             render();
         });
 
-        root.querySelector('#mm-proc-refresh-markets')?.addEventListener('click', async () => {
+        root.querySelectorAll('[data-proc-refresh-markets]').forEach(button => button.addEventListener('click', async () => {
             const db = dbLoad();
             const rows = procurementRows(db)
                 .filter(r => /^\d+$/.test(r.id) && (r.watched || r.rank <= 2 || r.shortage > 0))
@@ -12055,7 +12055,7 @@
             }
             statusText = `Market refresh complete: ${ok}/${rows.length}.`;
             render();
-        });
+        }));
 
         root.querySelector('#mm-add-acquisition')?.addEventListener('click', () => {
             try {
