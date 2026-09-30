@@ -2705,6 +2705,20 @@
 
             const liquidity = liquidityForRow(m, snap);
             const history = historyStats(proc, id);
+            const globalDemand = db.marketIntel?.marketplace?.[id] || {};
+            const marketSellerCount = Math.max(
+                Number(globalDemand.totalBazaars || 0),
+                Number(snap?.bazaar?.listings || 0)
+            );
+            const marketListingCount =
+                Number(snap?.bazaar?.listings || 0) +
+                Number(snap?.itemMarket?.listings || 0);
+            const marketDemandScore = Math.max(0, Math.min(100,
+                Math.min(45, Math.log10(1 + marketSellerCount) * 28) +
+                Math.min(30, Math.log10(1 + Number(snap.totalDepth3Pct || 0)) * 15) +
+                Math.min(15, marketListingCount * 1.5) +
+                Math.min(10, history.samples)
+            ));
 
             const velocityScore = Math.min(100,
                 Math.log10(1 + Math.max(0, daily) * 10) * 42 +
@@ -2736,9 +2750,10 @@
                 )
             ));
             const marketScore = Math.max(0, Math.min(100,
-                roiScore * 0.50 +
-                liquidity.score * 0.25 +
-                velocityScore * 0.15 +
+                roiScore * 0.45 +
+                liquidity.score * 0.20 +
+                marketDemandScore * 0.20 +
+                velocityScore * 0.05 +
                 absoluteProfitScore * 0.10 -
                 volatilityPenalty
             ));
@@ -2761,9 +2776,14 @@
             const personalDemandQualified =
                 Number(m.sold30d || 0) >= 5 ||
                 Number(m.saleDays30d || 0) >= 3;
+            const marketBootstrapQualified =
+                !personalDemandQualified &&
+                marketSellerCount >= rules.minSellerCount &&
+                marketDemandScore >= 40;
             const demandQualified =
-                !personalDemandQualified ||
-                daily >= rules.minDemandPerDay;
+                personalDemandQualified
+                    ? daily >= rules.minDemandPerDay
+                    : marketBootstrapQualified;
             const priceQualified =
                 bestBuyPrice <= 0 ||
                 (bestBuyPrice >= rules.minPrice && bestBuyPrice <= rules.maxPrice);
@@ -2773,10 +2793,13 @@
                 bestDealMarginPct >= minMarginPct &&
                 bestDealProfit >= rules.minAbsoluteProfit;
 
-            const quickSaleQualified =
-                liquidity.score >= 45 ||
-                daily >= Math.max(0.25, rules.minDemandPerDay) ||
-                Number(m.sold24h || 0) > 0;
+            const quickSaleQualified = personalDemandQualified
+                ? (
+                    liquidity.score >= 45 ||
+                    daily >= Math.max(0.25, rules.minDemandPerDay) ||
+                    Number(m.sold24h || 0) > 0
+                )
+                : marketBootstrapQualified;
 
             const action = marginQualified && quickSaleQualified && demandQualified && priceQualified
                 ? 'BUY'
@@ -2787,7 +2810,7 @@
             const turnoverDays = daily > 0 ? Math.max(0.25, 1 / daily) : Infinity;
             const opportunityQtyCap = daily > 0
                 ? Math.max(1, Math.ceil(daily * Math.min(5, targetDays)))
-                : (liquidity.score >= 70 && marginQualified ? 1 : 0);
+                : (marketBootstrapQualified && marginQualified ? 1 : 0);
 
             rows.push({
                 id,
@@ -2829,6 +2852,9 @@
                 marketSnapshotFresh,
                 velocityScore,
                 marketScore,
+                marketDemandScore,
+                marketSellerCount,
+                marketBootstrapQualified,
                 personalDemandScore,
                 ownRealizedRoiPct,
                 personalMaturity,
@@ -10254,7 +10280,10 @@
             'Action': r.action,
             'Priority': r.priority,
             'Acquisition Score': Number(r.acquisitionScore || 0),
+            'Demand Basis': r.personalDemandQualified ? 'Personal sales' : 'Market bootstrap',
             'Personal Demand Mature': Boolean(r.personalDemandQualified),
+            'Market Demand Score': Number(r.marketDemandScore || 0),
+            'Market Sellers': Number(r.marketSellerCount || 0),
             'Demand / Day': Number(r.daily || 0),
             'Sold 7d': Number(r.sold7d || 0),
             'Sold 30d': Number(r.sold30d || 0),
@@ -10301,7 +10330,7 @@
             },
             procurement: {
                 filename: 'procurement-opportunities.csv',
-                headers: ['Item ID','Item','Action','Priority','Acquisition Score','Personal Demand Mature','Demand / Day','Sold 7d','Sold 30d','Stock','Shortage','Best Buy Price','Trusted Exit','Profit / Unit','ROI %','Liquidity','Market Fresh'],
+                headers: ['Item ID','Item','Action','Priority','Acquisition Score','Demand Basis','Personal Demand Mature','Market Demand Score','Market Sellers','Demand / Day','Sold 7d','Sold 30d','Stock','Shortage','Best Buy Price','Trusted Exit','Profit / Unit','ROI %','Liquidity','Market Fresh'],
                 rows: procurementRowsExport
             }
         };
