@@ -37,6 +37,7 @@
     const BAZAAR_SELL_LOG_ID = 1226;
     const PENDING_COMPOSE_KEY = 'mm_bazaar_crm_pending_compose_v1';
     const PENDING_FIRST_SEND_KEY = 'mm_bazaar_crm_pending_first_send_v1';
+    const PENDING_BAZAAR_ASSIST_KEY = 'mm_bazaar_crm_pending_bazaar_assist_v1';
     const FIRST_SYNC_LOOKBACK_MS = 24 * 60 * 60 * 1000;
     const CUSTOMER_REFRESH_LOOKBACK_MS = 72 * 60 * 60 * 1000;
     const NORMAL_LOOKBACK_MS = 6 * 60 * 60 * 1000;
@@ -155,6 +156,9 @@
     const tabInstanceId = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     let dbChannel = null;
     let dbChannelRefreshTimer = null;
+    let crmInitialized = false;
+    let initializePromise = null;
+    let backgroundRefreshTimer = null;
 
     // ============================================================
     // BASIC HELPERS
@@ -545,7 +549,7 @@
         db.factionInventory.nextUsefulRefreshAt = db.factionInventory.nextUsefulRefreshAt || null;
         db.factionInventory.diagnostics = Array.isArray(db.factionInventory.diagnostics) ? db.factionInventory.diagnostics.slice(0,40) : [];
         db.factionInventory.settings = db.factionInventory.settings && typeof db.factionInventory.settings === 'object' ? db.factionInventory.settings : {};
-        db.factionInventory.settings.autoSync = db.factionInventory.settings.autoSync !== false;
+        db.factionInventory.settings.autoSync = db.factionInventory.settings.autoSync === true;
         db.factionInventory.settings.selectedCategory = ['all',...FACTION_INVENTORY_CATEGORIES].includes(String(db.factionInventory.settings.selectedCategory || 'all')) ? String(db.factionInventory.settings.selectedCategory || 'all') : 'all';
         db.factionInventory.settings.criticalRatio = Math.max(0.1, Math.min(0.95, Number(db.factionInventory.settings.criticalRatio || 0.5)));
         db.factionInventory.settings.updatedAt = db.factionInventory.settings.updatedAt || null;
@@ -6845,7 +6849,8 @@
             PROCUREMENT_MARKET_CONCURRENCY === 1 &&
             SMART_REFRESH_ITEM_LIMIT > 0 &&
             SMART_REFRESH_ITEM_LIMIT < WEAV3R_MAX_ENRICH &&
-            defaultDb().syncState.backgroundRefreshEnabled === false;
+            defaultDb().syncState.backgroundRefreshEnabled === false &&
+            backgroundRefreshTimer === null;
 
         const acquisitionIndexDb = defaultDb();
         acquisitionIndexDb.procurement.acquisitions = [{
@@ -7443,6 +7448,13 @@
 
     function installBazaarListingAssistant(){
         if(!/bazaar\.php/i.test(location.pathname+location.hash+location.search))return;
+        const pending = GM_getValue(PENDING_BAZAAR_ASSIST_KEY, null);
+        const createdAt = Number(pending?.createdAt || 0);
+        if (!createdAt || Date.now() - createdAt > 10 * 60 * 1000) {
+            if (pending) GM_deleteValue(PENDING_BAZAAR_ASSIST_KEY);
+            return;
+        }
+        GM_deleteValue(PENDING_BAZAAR_ASSIST_KEY);
         const db=dbLoad();
         buildListingPlan(db);
         buildRepricingPlan(db);
@@ -7483,7 +7495,7 @@
             repo: String(raw?.repo || '').trim(),
             branch: String(raw?.branch || 'main').trim() || 'main',
             folder: String(raw?.folder || 'crm-sync').trim().replace(/^\/+|\/+$/g, '') || 'crm-sync',
-            autoSync: raw?.autoSync !== false,
+            autoSync: raw?.autoSync === true,
             encryptedFullBackup: Boolean(raw?.encryptedFullBackup),
             lastStatus: String(raw?.lastStatus || ''),
             lastSyncAt: raw?.lastSyncAt || null
@@ -7830,7 +7842,7 @@
 
     function scheduleGithubSync() {
         if (githubSyncTimer) clearInterval(githubSyncTimer);
-        if (!getGithubSettings().autoSync) return;
+        if (!dbLoad().syncState.backgroundRefreshEnabled || !getGithubSettings().autoSync) return;
         githubSyncTimer = setInterval(() => {
             if (githubConfigured() && claimBackgroundCoordinator()) {
                 githubSyncNow({ silent: true });
@@ -11993,7 +12005,10 @@
         b.id = LAUNCHER_ID;
         b.textContent = 'CRM';
         b.style.cssText = `position:fixed;right:0;top:160px;z-index:2147483647;${btn(true)}border-radius:6px 0 0 6px;`;
-        b.onclick = showCRM;
+        b.onclick = () => openCRM().catch(error => {
+            console.error('[MM CRM] Open failed', error);
+            alert(`Torn Bazaar Customer CRM failed to open: ${error?.message || String(error)}`);
+        });
         document.body.appendChild(b);
     }
 
@@ -12146,7 +12161,10 @@
             try{logRestockPurchase(qty,cost);statusText='Purchase logged and restock session advanced.';}
             catch(error){statusText=`Purchase not logged: ${error?.message||String(error)}`;render();}
         }));
-        root.querySelectorAll('[data-open-bazaar-add]').forEach(button => button.addEventListener('click',()=>navigateFromCRM('https://www.torn.com/bazaar.php#/p=add')));
+        root.querySelectorAll('[data-open-bazaar-add]').forEach(button => button.addEventListener('click',()=>{
+            GM_setValue(PENDING_BAZAAR_ASSIST_KEY, { createdAt:Date.now() });
+            navigateFromCRM('https://www.torn.com/bazaar.php#/p=add');
+        }));
         root.querySelector('#mm-add-event')?.addEventListener('click',()=>{
             try{
                 addDemandEvent(root.querySelector('#mm-event-name')?.value,root.querySelector('#mm-event-start')?.value,root.querySelector('#mm-event-end')?.value,root.querySelector('#mm-event-mult')?.value);
@@ -12235,6 +12253,7 @@
             const db = dbLoad();
             db.syncState.backgroundRefreshEnabled = Boolean(e.currentTarget.checked);
             dbSave(db);
+            scheduleBackgroundRefresh();
             statusText = db.syncState.backgroundRefreshEnabled
                 ? 'Background refresh enabled for one visible CRM tab.'
                 : 'Background refresh disabled. Smart Refresh is manual.';
@@ -12809,6 +12828,34 @@
         saveUI({ left, top });
     }
 
+    function pendingWorkflowNeedsDatabase() {
+        const compose = GM_getValue(PENDING_COMPOSE_KEY, null);
+        const firstSend = GM_getValue(PENDING_FIRST_SEND_KEY, null);
+        const bazaar = GM_getValue(PENDING_BAZAAR_ASSIST_KEY, null);
+        const params = new URLSearchParams(location.search);
+        return Boolean(compose || firstSend || bazaar || params.get('mmcrm_refund'));
+    }
+
+    async function openCRM() {
+        await ensureInitialized({ workflow:false });
+        showCRM();
+    }
+
+    async function ensureInitialized({ workflow = false } = {}) {
+        if (crmInitialized) {
+            if (workflow) runPageHelpers();
+            return true;
+        }
+        if (!initializePromise) {
+            initializePromise = initialize({ workflow }).finally(() => {
+                initializePromise = null;
+            });
+        }
+        await initializePromise;
+        if (workflow) runPageHelpers();
+        return true;
+    }
+
     function claimBackgroundCoordinator() {
         if (document.visibilityState !== 'visible' || getUI().minimized) return false;
         const now = Date.now();
@@ -12831,6 +12878,23 @@
         return true;
     }
 
+    function scheduleBackgroundRefresh() {
+        if (backgroundRefreshTimer) {
+            clearInterval(backgroundRefreshTimer);
+            backgroundRefreshTimer = null;
+        }
+        if (githubSyncTimer) {
+            clearInterval(githubSyncTimer);
+            githubSyncTimer = null;
+        }
+        const db = dbLoad();
+        if (!db.syncState.backgroundRefreshEnabled) return;
+        backgroundRefreshTimer = setInterval(() => {
+            backgroundRefreshTick().catch(error => console.warn('[MM CRM] Background coordinator failed', error));
+        }, BACKGROUND_REFRESH_INTERVAL_MS);
+        scheduleGithubSync();
+    }
+
     async function backgroundRefreshTick() {
         const db = dbLoad();
         if (!db.syncState.backgroundRefreshEnabled) return;
@@ -12850,7 +12914,7 @@
         }
     }
 
-    async function initialize() {
+    async function initialize({ workflow = false } = {}) {
         migrateApiKey();
 
         const storage = await initializeStorage();
@@ -12868,12 +12932,13 @@
 
         createPanel();
         createLauncher();
-        const ui = getUI();
-        if (ui.minimized) minimizeCRM(); else showCRM();
-        installRouteHooks();
-        runPageHelpers();
+        minimizeCRM();
+        if (workflow) {
+            installRouteHooks();
+            runPageHelpers();
+        }
         window.addEventListener('resize', clampPanel);
-        scheduleGithubSync();
+        scheduleBackgroundRefresh();
 
         if (getApiKey()) {
             statusText = 'Ready. Smart Refresh is manual.';
@@ -12882,10 +12947,6 @@
             statusText = 'Torn API key missing. Sales/customer sync is paused. Open More → Settings, paste your Torn API key, and Save.';
             render();
         }
-
-        setInterval(() => {
-            backgroundRefreshTick().catch(error => console.warn('[MM CRM] Background coordinator failed', error));
-        }, BACKGROUND_REFRESH_INTERVAL_MS);
 
         setTimeout(() => {
             const checkedAt = Number(crmUpdateStatus().checkedAt || 0);
@@ -12896,12 +12957,13 @@
                 checkCrmUpdate({silent:true}).catch(()=>{});
             }
         }, 12_000);
+        crmInitialized = true;
     }
 
     // Manual utility surface. No automatic messaging or money transfer actions are exposed.
     window.MMBazaarCRM = Object.freeze({
         version: VERSION,
-        open: showCRM,
+        open: openCRM,
         sync,
         rebuildSalesHistory,
         repairSalesIntegrityNow,
@@ -12995,8 +13057,11 @@
         return;
     }
 
-    initialize().catch(error => {
-        console.error('[MM CRM] Initialization failed', error);
-        alert(`Torn Bazaar Customer CRM failed to initialize: ${error?.message || String(error)}`);
-    });
+    createLauncher();
+
+    if (pendingWorkflowNeedsDatabase()) {
+        ensureInitialized({ workflow:true }).catch(error => {
+            console.error('[MM CRM] Workflow initialization failed', error);
+        });
+    }
 })();
