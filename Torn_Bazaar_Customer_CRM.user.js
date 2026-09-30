@@ -6030,6 +6030,50 @@
         };
         const staleProcurement = procurementRows(db).find(r => r.id === id);
 
+        const marketDb = defaultDb();
+        const marketId = '2';
+        marketDb.procurement.catalog[marketId] = { id:marketId, name:'Bootstrap Item', type:'Supply', marketValue:20000 };
+        marketDb.procurement.inventory[marketId] = { id:marketId, name:'Bootstrap Item', quantity:0 };
+        marketDb.marketIntel.marketplace[marketId] = {
+            itemId:marketId,
+            itemName:'Bootstrap Item',
+            lowestPrice:10000,
+            bazaarAverage:20000,
+            marketPrice:21000,
+            totalBazaars:10
+        };
+        marketDb.procurement.marketSnapshots[marketId] = {
+            fetchedAt:nowIso(),
+            bazaar:{ lowest:10200, third:20500, median:20000, listings:10, totalQty:80 },
+            itemMarket:{ lowest:10000, third:21000, median:20500, listings:15, totalQty:120 },
+            realisticExit:20000,
+            totalDepth3Pct:100
+        };
+        const bootstrapProcurement = procurementRows(marketDb).find(r => r.id === marketId);
+
+        const dollarCamel = normalizeDollarBazaarItem({
+            itemId:3,itemName:'Camel Item',itemType:'Other',playerId:99,sellerName:'Camel Seller',
+            quantity:2,marketPrice:12345,totalValue:24690,lastUpdated:nowIso()
+        });
+        const dollarSnake = normalizeDollarBazaarItem({
+            item_id:4,item_name:'Snake Item',item_type:'Other',player_id:100,seller_name:'Snake Seller',
+            quantity:3,market_price:23456,total_value:70368,last_updated:nowIso()
+        });
+
+        let workbookOk = false;
+        let workbookBytes = 0;
+        try {
+            const bytes = buildFinancialXlsx(defaultDb());
+            workbookBytes = Number(bytes?.length || 0);
+            workbookOk =
+                bytes instanceof Uint8Array &&
+                bytes.length > 500 &&
+                bytes[0] === 0x50 &&
+                bytes[1] === 0x4B &&
+                bytes[2] === 0x03 &&
+                bytes[3] === 0x04;
+        } catch {}
+
         return {
             pass:
                 aggregateOnly.price === 0 &&
@@ -6039,7 +6083,15 @@
                 trusted.price > 0 &&
                 trusted.price < 1000000 &&
                 staleProcurement?.marketSnapshotFresh === false &&
-                staleProcurement?.action === 'SKIP',
+                staleProcurement?.action === 'SKIP' &&
+                bootstrapProcurement?.action === 'BUY' &&
+                bootstrapProcurement?.personalDemandQualified === false &&
+                bootstrapProcurement?.marketBootstrapQualified === true &&
+                dollarCamel.itemId === '3' &&
+                dollarCamel.sellerId === '99' &&
+                dollarSnake.itemId === '4' &&
+                dollarSnake.sellerId === '100' &&
+                workbookOk,
             aggregateOnly,
             staleListing,
             trusted,
@@ -6048,7 +6100,18 @@
                 marketSnapshotFresh: staleProcurement.marketSnapshotFresh,
                 bestBuyPrice: staleProcurement.bestBuyPrice,
                 realisticExit: staleProcurement.realisticExit
-            } : null
+            } : null,
+            bootstrapProcurement: bootstrapProcurement ? {
+                action:bootstrapProcurement.action,
+                personalDemandQualified:bootstrapProcurement.personalDemandQualified,
+                marketBootstrapQualified:bootstrapProcurement.marketBootstrapQualified,
+                marketDemandScore:bootstrapProcurement.marketDemandScore,
+                acquisitionScore:bootstrapProcurement.acquisitionScore
+            } : null,
+            dollarCamel,
+            dollarSnake,
+            workbookOk,
+            workbookBytes
         };
     }
 
@@ -8258,7 +8321,7 @@
 
 
     // ============================================================
-    // FACTION INVENTORY MANAGER — v7.3
+    // FACTION INVENTORY MANAGER — v7.4
     // ============================================================
 
     function factionEpochMs(value) {
@@ -11443,7 +11506,7 @@
             const db = dbLoad();
             const rows = procurementRows(db)
                 .filter(r => /^\d+$/.test(r.id) && (r.watched || r.rank <= 2 || r.shortage > 0))
-                .slice(0, Math.max(1, Math.min(30, Number(db.procurement.settings.marketRefreshLimit || PROCUREMENT_MARKET_REFRESH_LIMIT))));
+                .slice(0, businessRules(db).marketRefreshLimit);
             statusText = `Refreshing ${rows.length} market snapshot${rows.length === 1 ? '' : 's'}…`;
             render();
             let ok = 0;
