@@ -5355,9 +5355,10 @@
     function businessRefreshPlan(db = dbLoad(), {
         force = false,
         hasApi = Boolean(getApiKey()),
-        hasFactionApi = Boolean(getFactionApiKey())
+        hasFactionApi = Boolean(getFactionApiKey()),
+        freshness = null
     } = {}) {
-        const fresh = businessDataFreshness(db);
+        const fresh = freshness || businessDataFreshness(db);
         const rules = businessRules(db);
         const procurementMaxAgeMs = Math.max(
             2 * 60 * 1000,
@@ -6145,6 +6146,48 @@
             migrated.businessRules?.maxListingAgeSec === 240 &&
             migrated.businessRules?.marketRefreshLimit === 17;
 
+        const refreshDb = defaultDb();
+        const freshAt = nowIso();
+        const fullyFreshPlan = businessRefreshPlan(refreshDb, {
+            force:false,
+            hasApi:true,
+            hasFactionApi:true,
+            freshness:{
+                salesAt:freshAt,
+                procurementAt:freshAt,
+                marketAt:freshAt,
+                dollarAt:freshAt,
+                travelAt:freshAt,
+                factionAt:freshAt
+            }
+        });
+        const fullyStalePlan = businessRefreshPlan(refreshDb, {
+            force:false,
+            hasApi:true,
+            hasFactionApi:false,
+            freshness:{
+                salesAt:null,
+                procurementAt:null,
+                marketAt:null,
+                dollarAt:null,
+                travelAt:null,
+                factionAt:null
+            }
+        });
+        const refreshPlanOk =
+            fullyFreshPlan.sales === false &&
+            fullyFreshPlan.market === false &&
+            fullyFreshPlan.dollar === false &&
+            fullyFreshPlan.procurement === false &&
+            fullyFreshPlan.travel === false &&
+            fullyFreshPlan.faction === false &&
+            fullyStalePlan.sales === true &&
+            fullyStalePlan.market === true &&
+            fullyStalePlan.dollar === true &&
+            fullyStalePlan.procurement === true &&
+            fullyStalePlan.travel === true &&
+            fullyStalePlan.faction === false;
+
         return {
             pass:
                 aggregateOnly.price === 0 &&
@@ -6163,7 +6206,8 @@
                 dollarSnake.itemId === '4' &&
                 dollarSnake.sellerId === '100' &&
                 workbookOk &&
-                migrationOk,
+                migrationOk &&
+                refreshPlanOk,
             aggregateOnly,
             staleListing,
             trusted,
@@ -6185,6 +6229,11 @@
             workbookOk,
             workbookBytes,
             migrationOk,
+            refreshPlanOk,
+            refreshPlans: {
+                fullyFreshPlan,
+                fullyStalePlan
+            },
             migration: {
                 schema:migrated.schema,
                 customerCount:Object.keys(migrated.customers || {}).length,
