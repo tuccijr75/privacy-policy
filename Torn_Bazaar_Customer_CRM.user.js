@@ -56,7 +56,9 @@
     const ITEM_MARKET_FEE_RATE = 0.05;
     const MARKET_HISTORY_MAX_PER_ITEM = 240;
     const PROCUREMENT_FIRST_ACQUISITION_LOOKBACK_DAYS = 90;
-    const ACQUISITION_COVERAGE_VERSION = '7.4-fifo-1';
+    const ACQUISITION_COVERAGE_BACKFILL_DAYS = 180;
+    const ACQUISITION_COVERAGE_MAX_PAGES = 50;
+    const ACQUISITION_COVERAGE_VERSION = '7.4-fifo-window-2';
     const WEAV3R_BASE = 'https://weav3r.dev/api';
     const WEAV3R_GLOBAL_TTL_MS = 60_000;
     const WEAV3R_DETAIL_TTL_MS = 60_000;
@@ -2469,7 +2471,7 @@
         }).filter(row => row.itemId && row.quantity > 0);
     }
 
-    async function fetchLogsById(logId, fromSeconds = 0, maxPages = 100) {
+    async function fetchLogsByIdDetailed(logId, fromSeconds = 0, maxPages = 100) {
         const collected = [];
         let url = new URL(API_BASE + '/user/log');
         url.searchParams.set('log', String(logId));
@@ -2488,7 +2490,28 @@
             url = next ? new URL(next) : null;
             pages++;
         }
-        return collected;
+        return { rows: collected, pages, truncated: Boolean(url) };
+    }
+
+    async function fetchLogsById(logId, fromSeconds = 0, maxPages = 100) {
+        return (await fetchLogsByIdDetailed(logId, fromSeconds, maxPages)).rows;
+    }
+
+    function mergeAcquisitionLogRows(proc, rows, source) {
+        let added = 0;
+        for (const entry of rows) {
+            for (const lot of parseAcquisitionLog(entry, source, proc.catalog)) {
+                if (proc.acquisitionProcessed[lot.externalId]) continue;
+                proc.acquisitions.push(lot);
+                proc.acquisitionProcessed[lot.externalId] = true;
+                added++;
+            }
+        }
+        return added;
+    }
+
+    function acquisitionCoverageFromMs(nowMs = Date.now()) {
+        return Math.max(0, Number(nowMs || Date.now()) - ACQUISITION_COVERAGE_BACKFILL_DAYS * 86400000);
     }
 
     function indexProcessedAcquisitionLots(proc) {
@@ -2515,20 +2538,41 @@
     async function ensureAcquisitionCoverageBackfill() {
         const db = dbLoad();
         if (!acquisitionCoverageBackfillNeeded(db, Boolean(getApiKey()))) {
-            return { skipped:true, reason:'current', added:0 };
+            return { skipped:true, reason:'current', added:0, truncated:false };
         }
 
-        const indexed = indexProcessedAcquisitionLots(db.procurement);
-        if (indexed) dbSave(db);
+        const proc = db.procurement;
+        const indexed = indexProcessedAcquisitionLots(proc);
+        const fromMs = acquisitionCoverageFromMs();
+        let added = 0;
+        let truncated = false;
+        let pages = 0;
 
-        const added = await syncAcquisitionLogs(true);
-        const next = dbLoad();
-        indexProcessedAcquisitionLots(next.procurement);
-        next.meta.acquisitionCoverageVersion = ACQUISITION_COVERAGE_VERSION;
-        next.meta.acquisitionCoverageBackfilledAt = nowIso();
-        next.meta.acquisitionCoverageBackfillAdded = Number(added || 0);
-        dbSave(next);
-        return { ok:true, indexed, added:Number(added || 0) };
+        for (const [logIdText, source] of Object.entries(ACQUISITION_LOG_IDS)) {
+            const detail = await fetchLogsByIdDetailed(
+                Number(logIdText),
+                fromMs / 1000,
+                ACQUISITION_COVERAGE_MAX_PAGES
+            );
+            pages += Number(detail.pages || 0);
+            truncated = truncated || Boolean(detail.truncated);
+            added += mergeAcquisitionLogRows(proc, detail.rows, source);
+        }
+
+        proc.acquisitions = proc.acquisitions
+            .sort((a, b) => new Date(a.acquiredAt).getTime() - new Date(b.acquiredAt).getTime())
+            .slice(-10_000);
+        proc.lastAcquisitionSyncAt = nowIso();
+
+        db.meta.acquisitionCoverageVersion = ACQUISITION_COVERAGE_VERSION;
+        db.meta.acquisitionCoverageBackfilledAt = nowIso();
+        db.meta.acquisitionCoverageBackfillAdded = Number(added || 0);
+        db.meta.acquisitionCoverageFrom = new Date(fromMs).toISOString();
+        db.meta.acquisitionCoverageBackfillTruncated = truncated;
+        db.meta.acquisitionCoverageBackfillPages = pages;
+        dbSave(db);
+
+        return { ok:true, indexed, added:Number(added || 0), truncated, pages, fromMs };
     }
 
     async function syncAcquisitionLogs(forceFromZero = false) {
@@ -2546,14 +2590,7 @@
         for (const [logIdText, source] of Object.entries(ACQUISITION_LOG_IDS)) {
             const logId = Number(logIdText);
             const rows = await fetchLogsById(logId, fromMs ? fromMs / 1000 : 0, forceFromZero ? MAX_LOG_PAGES : 100);
-            for (const entry of rows) {
-                for (const lot of parseAcquisitionLog(entry, source, proc.catalog)) {
-                    if (proc.acquisitionProcessed[lot.externalId]) continue;
-                    proc.acquisitions.push(lot);
-                    proc.acquisitionProcessed[lot.externalId] = true;
-                    added++;
-                }
-            }
+            added += mergeAcquisitionLogRows(proc, rows, source);
         }
 
         proc.acquisitions = proc.acquisitions
@@ -5783,6 +5820,9 @@
                         const coverage = await ensureAcquisitionCoverageBackfill();
                         result.costBasis = Boolean(coverage?.ok);
                         result.costBasisAdded = Number(coverage?.added || 0);
+                        if (coverage?.truncated) {
+                            result.warnings.push('Cost basis: bounded history reached the page limit; older unmatched sales remain partial by design.');
+                        }
                     } catch (error) {
                         result.errors.push('Cost basis: ' + (error?.message || String(error)));
                     }
@@ -6762,6 +6802,13 @@
             acquisitionCoverageBackfillNeeded(acquisitionIndexDb, true) === false &&
             acquisitionCoverageBackfillNeeded(acquisitionIndexDb, false) === false;
 
+        const coverageNow = 1_800_000_000_000;
+        const acquisitionCoverageWindowOk =
+            acquisitionCoverageFromMs(coverageNow) ===
+            coverageNow - ACQUISITION_COVERAGE_BACKFILL_DAYS * 86400000 &&
+            ACQUISITION_COVERAGE_MAX_PAGES > 0 &&
+            ACQUISITION_COVERAGE_MAX_PAGES < MAX_LOG_PAGES;
+
         const snapshotNow = 1_800_000_000_000;
         const bazaarSnapshotFreshnessOk =
             bazaarSnapshotFreshness(Math.floor((snapshotNow - 30_000) / 1000), snapshotNow).fresh === true &&
@@ -6795,6 +6842,7 @@
                 refreshBreadthClampOk &&
                 acquisitionCoverageGateOk &&
                 acquisitionCoverageCurrentOk &&
+                acquisitionCoverageWindowOk &&
                 bazaarSnapshotFreshnessOk &&
                 fifoTemporalIntegrityOk &&
                 profitCoverageStatusOk,
@@ -6846,6 +6894,7 @@
             refreshBreadthClampOk,
             acquisitionCoverageGateOk,
             acquisitionCoverageCurrentOk,
+            acquisitionCoverageWindowOk,
             bazaarSnapshotFreshnessOk,
             fifoTemporalIntegrityOk,
             profitCoverageStatusOk,
