@@ -10512,7 +10512,7 @@
         const urgent = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','PRICE REVIEW','NEEDS LISTING','WATCH PRICE','DEAD STOCK'].includes(r.state));
         const needRestock = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)).length;
         const needListing = rows.filter(r => r.state === 'NEEDS LISTING').length;
-        const goodDeals = deals.filter(d => d.score >= 60).length;
+        const goodDeals = deals.filter(d => d.listingVerified && d.score >= 60).length;
         const pendingAlerts = Object.values(db.subscribers || {}).filter(s => s.pendingNotification).length;
 
         const fresh = businessDataFreshness(db);
@@ -10542,7 +10542,7 @@
         </div>`;
 
         const actions = card(`<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;">
-            <div><b style="font-size:15px;">What needs attention</b><div style="font-size:11px;color:#999;margin-top:3px;">${needRestock} restock · ${needListing} listing · ${goodDeals} strong deal(s) · ${pendingAlerts} customer alert(s)</div></div>
+            <div><b style="font-size:15px;">What needs attention</b><div style="font-size:11px;color:#999;margin-top:3px;">${needRestock} restock · ${needListing} listing · ${goodDeals} seller-verifiable deal(s) · ${pendingAlerts} customer alert(s)</div></div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;">${simpleActionButton('Restock','stock',true)}${simpleActionButton('List Bazaar','stock')}${simpleActionButton('Find Deals','deals')}${simpleActionButton('Customers','customers')}</div>
         </div>`);
 
