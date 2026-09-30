@@ -5003,41 +5003,105 @@
         return { budget, remaining, plan };
     }
 
-    async function verifyBazaarSellerForItem(itemId, sellerId) {
+    async function fetchPublicBazaarV1(playerId) {
+        const key = getApiKey();
+        const seller = asId(playerId);
+        if (!key) throw new Error('No Torn API key saved.');
+        if (!/^\d+$/.test(seller)) throw new Error('Invalid seller ID.');
+
+        const url = new URL('https://api.torn.com/user/' + encodeURIComponent(seller));
+        url.searchParams.set('selections', 'bazaar');
+        url.searchParams.set('key', key);
+        url.searchParams.set('comment', 'MM Bazaar CRM');
+
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method:'GET',
+                url:url.toString(),
+                timeout:20_000,
+                headers:{Accept:'application/json'},
+                onload:response => {
+                    if (response.status < 200 || response.status >= 300) {
+                        return reject(new Error('HTTP ' + response.status + ' from Torn Bazaar verification.'));
+                    }
+                    let data;
+                    try { data = JSON.parse(response.responseText); }
+                    catch { return reject(new Error('Torn Bazaar verification returned invalid JSON.')); }
+                    if (data?.error) {
+                        const code = Number(data.error.code || 0);
+                        const message = data.error.error || data.error.message || 'Unknown Torn API error';
+                        const error = new Error('Torn API ' + code + ': ' + message);
+                        error.code = code;
+                        return reject(error);
+                    }
+                    resolve(data);
+                },
+                ontimeout:() => reject(new Error('Torn Bazaar verification timed out.')),
+                onerror:() => reject(new Error('Torn Bazaar verification network request failed.'))
+            });
+        });
+    }
+
+    async function verifyBazaarSellerForItem(itemId, sellerId, expectedPrice = 0) {
         const id = asId(itemId);
         const seller = asId(sellerId);
         if (!/^\d+$/.test(id) || !/^\d+$/.test(seller)) {
             return { verified:false, reason:'invalid-id' };
         }
-        const url = new URL(API_BASE + '/market/' + encodeURIComponent(id) + '/bazaar');
-        // Unique timestamp avoids a stale request-specific service-cache response.
-        url.searchParams.set('timestamp', String(Math.floor(Date.now() / 1000)));
-        const data = await apiRequest(url.toString());
-        const rows = Array.isArray(data?.bazaar?.specialized) ? data.bazaar.specialized : [];
-        const found = rows.find(row => asId(row?.id) === seller && row?.is_open !== false);
+
+        const data = await fetchPublicBazaarV1(seller);
+        const rows = Array.isArray(data?.bazaar) ? data.bazaar : [];
+        const item = rows.find(row => asId(row?.ID ?? row?.id ?? row?.item_id) === id);
+        if (!data?.bazaar_is_open) {
+            return { verified:false, reason:'bazaar-closed', sellerId:seller };
+        }
+        if (!item) {
+            return { verified:false, reason:'item-gone', sellerId:seller };
+        }
+
+        const actualPrice = Math.max(0, Number(item.price || 0));
+        const quantity = Math.max(0, Number(item.quantity || item.qty || 0));
+        const expected = Math.max(0, Number(expectedPrice || 0));
+        const priceChanged = expected > 0 && actualPrice > 0 && actualPrice !== expected;
+
         return {
-            verified: Boolean(found),
-            reason: found ? 'present' : 'not-present',
-            sellerName: String(found?.name || '')
+            verified:true,
+            reason:priceChanged ? 'price-changed' : 'present',
+            sellerId:seller,
+            itemId:id,
+            itemName:String(item.name || ''),
+            actualPrice,
+            expectedPrice:expected,
+            quantity,
+            priceChanged,
+            bazaarTimestamp:Number(data?.bazaar_timestamp || 0)
         };
     }
 
-    async function verifyAndOpenBazaarSeller(itemId, sellerId) {
-        statusText = 'Verifying seller against Torn…';
+    async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0) {
+        statusText = 'Checking seller Bazaar directly in Torn…';
         render();
         try {
-            const result = await verifyBazaarSellerForItem(itemId, sellerId);
+            const result = await verifyBazaarSellerForItem(itemId, sellerId, expectedPrice);
             if (!result.verified) {
-                statusText = 'Listing is no longer verifiable in Torn. It was not opened.';
+                const reason = result.reason === 'bazaar-closed'
+                    ? 'Seller Bazaar is closed.'
+                    : result.reason === 'item-gone'
+                        ? 'Item is no longer in that Bazaar.'
+                        : 'Listing could not be verified.';
+                statusText = reason + ' The stale opportunity was not opened.';
                 render();
                 return false;
             }
-            statusText = 'Seller verified in Torn. Opening Bazaar…';
+
+            statusText = result.priceChanged
+                ? 'Listing still exists, but price changed from ' + money(result.expectedPrice) + ' to ' + money(result.actualPrice) + '. Opening current Bazaar.'
+                : 'Listing verified: ' + result.quantity.toLocaleString() + ' available @ ' + money(result.actualPrice) + '. Opening Bazaar.';
             render();
-            navigateFromCRM(`https://www.torn.com/bazaar.php?userId=${encodeURIComponent(sellerId)}`);
+            navigateFromCRM('https://www.torn.com/bazaar.php?userId=' + encodeURIComponent(sellerId));
             return true;
         } catch (error) {
-            statusText = 'Seller verification failed: ' + (error?.message || String(error));
+            statusText = 'Seller Bazaar verification failed: ' + (error?.message || String(error));
             render();
             return false;
         }
@@ -9496,7 +9560,7 @@
                     </div>
                     <div style="display:flex;gap:4px;align-items:flex-start;flex-wrap:wrap;">
                         <button data-intel-action="enrich" data-item="${r.id}" style="${btn()}">Verify</button>
-                        ${r.sellerId ? `<button data-intel-action="verify-seller" data-item="${r.id}" data-seller="${r.sellerId}" style="${btn()}">Verify Seller</button>` : ''}
+                        ${r.sellerId ? `<button data-intel-action="verify-seller" data-item="${r.id}" data-seller="${r.sellerId}" data-price="${Number(r.buyPrice||r.globalBuyPrice||0)}" style="${btn()}">Verify Seller</button>` : ''}
                         <button data-proc-action="log-buy" data-item="${r.id}" data-name="${escapeHtml(r.name)}" style="${btn()}">Log Buy</button>
                     </div>
                 </div>
@@ -9518,7 +9582,7 @@
                     </div>
                     <div style="display:flex;gap:4px;align-items:flex-start;flex-wrap:wrap;">
                         <button data-intel-action="enrich" data-item="${r.id}" style="${btn(r.enriched)}">${r.enriched ? 'Refresh' : 'Analyze'}</button>
-                        ${r.sellerId ? `<button data-intel-action="verify-seller" data-item="${r.id}" data-seller="${r.sellerId}" style="${btn()}">Verify Seller</button>` : ''}
+                        ${r.sellerId ? `<button data-intel-action="verify-seller" data-item="${r.id}" data-seller="${r.sellerId}" data-price="${Number(r.buyPrice||r.globalBuyPrice||0)}" style="${btn()}">Verify Seller</button>` : ''}
                     </div>
                 </div>
             `).join('') : `<div style="font-size:11px;color:#888;">Run Refresh Global Market to populate opportunities.</div>`}
@@ -9577,7 +9641,7 @@
                 return `<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;font-size:11px;">
                     <div><b>${escapeHtml(d.itemName)}</b> × ${d.quantity} · Market ${money(d.marketPrice)} · Total ${money(d.totalValue)} · Age ${Number.isFinite(f.ageSeconds) ? Math.round(f.ageSeconds) + 's' : '—'}<br>
                     ${escapeHtml(d.sellerName)} [${escapeHtml(d.sellerId)}]</div>
-                    <button data-intel-action="verify-seller" data-item="${d.itemId}" data-seller="${d.sellerId}" style="${btn()}">Verify & Open</button>
+                    <button data-intel-action="verify-seller" data-item="${d.itemId}" data-seller="${d.sellerId}" data-price="1" style="${btn()}">Verify & Open</button>
                 </div>`;
             }).join('') : `<div style="font-size:11px;color:#888;">Run $1 Scanner or Full Intelligence Sync.</div>`}
         `);
@@ -9648,7 +9712,7 @@
                 Need ${q.need} · Available ${q.sourceQty||'—'} · Buy ${q.buyPrice?money(q.buyPrice):'—'} · Max ${q.buyTarget?money(q.buyTarget):'—'} · Exit ${q.exit?money(q.exit):'—'} · ROI ${Number(q.roiPct||0).toFixed(1)}%
                 ${q.sellerName?`<br>Seller ${escapeHtml(q.sellerName)} [${escapeHtml(q.sellerId)}]`:''}</div>
                 <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">
-                    ${q.sellerId?`<button data-ops-action="seller" data-item="${q.itemId}" data-seller="${q.sellerId}" style="${btn()}">Verify Seller</button>`:''}
+                    ${q.sellerId?`<button data-ops-action="seller" data-item="${q.itemId}" data-seller="${q.sellerId}" data-price="${Number(q.buyPrice||0)}" style="${btn()}">Verify Seller</button>`:''}
                     <button id="mm-restock-log-purchase" style="${btn(true)}">Log Purchase</button>
                     <button id="mm-restock-skip" style="${btn()}">Skip / Next</button>
                 </div>`:'Session complete.'}
@@ -9873,7 +9937,7 @@
             const q = session.queue[session.activeIndex];
             return q ? `<div style="border-top:1px solid #333;margin-top:7px;padding-top:7px;font-size:12px;"><b>${escapeHtml(q.itemName)}</b><br>
                 Need ${q.need} · Buy ${q.buyPrice ? money(q.buyPrice) : '—'} · Max ${q.buyTarget ? money(q.buyTarget) : '—'} · Exit ${q.exit ? money(q.exit) : '—'} · ROI ${Number(q.roiPct||0).toFixed(1)}%
-                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">${q.sellerId?`<button data-ops-action="seller" data-item="${q.itemId}" data-seller="${q.sellerId}" style="${btn()}">Verify Seller</button>`:''}<button id="mm-restock-log-purchase" style="${btn(true)}">Log Purchase</button><button id="mm-restock-skip" style="${btn()}">Skip</button></div>
+                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">${q.sellerId?`<button data-ops-action="seller" data-item="${q.itemId}" data-seller="${q.sellerId}" data-price="${Number(q.buyPrice||0)}" style="${btn()}">Verify Seller</button>`:''}<button id="mm-restock-log-purchase" style="${btn(true)}">Log Purchase</button><button id="mm-restock-skip" style="${btn()}">Skip</button></div>
             </div>` : '';
         })() : ''}
         ${restockRows.length ? restockRows.slice(0,12).map(r => `<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;">
@@ -9914,7 +9978,7 @@
             top.length
                 ? top.map((r,i) => {
                     const sellerAction = r.sellerId
-                        ? '<button data-intel-action="verify-seller" data-item="' + escapeHtml(r.id) + '" data-seller="' + escapeHtml(r.sellerId) + '" style="' + btn() + '">Verify Seller</button>'
+                        ? '<button data-intel-action="verify-seller" data-item="' + escapeHtml(r.id) + '" data-seller="' + escapeHtml(r.sellerId) + '" data-price="' + Number(r.buyPrice||0) + '" style="' + btn() + '">Verify Seller</button>'
                         : '';
                     const verifiedText = r.listingVerified
                         ? ' · Seller listing verified fresh (' + Math.round(Number(r.listingAgeSeconds || 0)) + 's)'
@@ -9946,7 +10010,7 @@
                         ' · Market ' + money(d.marketPrice || 0) + ' · Value ' + money(d.totalValue || 0) +
                         ' · ' + escapeHtml(freshnessAgeText(d.lastUpdated)) + '<br>' +
                         escapeHtml(d.sellerName) + ' [' + escapeHtml(d.sellerId) + ']</div>' +
-                        '<button data-intel-action="verify-seller" data-item="' + escapeHtml(d.itemId) + '" data-seller="' + escapeHtml(d.sellerId) + '" style="' + btn() + '">Verify & Open</button>' +
+                        '<button data-intel-action="verify-seller" data-item="' + escapeHtml(d.itemId) + '" data-seller="' + escapeHtml(d.sellerId) + '" data-price="1" style="' + btn() + '">Verify & Open</button>' +
                     '</div>'
                 ).join('')
                 : '<div style="font-size:11px;color:#888;margin-top:6px;">No $1 scanner rows loaded.</div>')
@@ -10968,7 +11032,7 @@
         root.querySelectorAll('[data-ops-action]').forEach(button=>button.addEventListener('click',()=>{
             const action=button.dataset.opsAction;
             if(action==='seller'&&button.dataset.seller){
-                if(button.dataset.item)return verifyAndOpenBazaarSeller(button.dataset.item,button.dataset.seller);
+                if(button.dataset.item)return verifyAndOpenBazaarSeller(button.dataset.item,button.dataset.seller,button.dataset.price);
                 return navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(button.dataset.seller)}`);
             }
             if(action==='remove-event')return removeDemandEvent(button.dataset.event);
@@ -11162,7 +11226,7 @@
             if (action === 'verify-seller') {
                 const seller = button.dataset.seller;
                 const item = button.dataset.item;
-                if (seller && item) await verifyAndOpenBazaarSeller(item, seller);
+                if (seller && item) await verifyAndOpenBazaarSeller(item, seller, button.dataset.price);
                 return;
             }
             if (action === 'enrich') {
