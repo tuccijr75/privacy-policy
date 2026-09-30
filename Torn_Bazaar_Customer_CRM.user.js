@@ -56,6 +56,7 @@
     const ITEM_MARKET_FEE_RATE = 0.05;
     const MARKET_HISTORY_MAX_PER_ITEM = 240;
     const PROCUREMENT_FIRST_ACQUISITION_LOOKBACK_DAYS = 90;
+    const ACQUISITION_COVERAGE_VERSION = '7.4-fifo-1';
     const WEAV3R_BASE = 'https://weav3r.dev/api';
     const WEAV3R_GLOBAL_TTL_MS = 60_000;
     const WEAV3R_DETAIL_TTL_MS = 60_000;
@@ -544,6 +545,9 @@
         db.meta = db.meta && typeof db.meta === 'object' ? db.meta : {};
         db.meta.salesRebuiltAt = db.meta.salesRebuiltAt || null;
         db.meta.lastSalesAudit = db.meta.lastSalesAudit || null;
+        db.meta.acquisitionCoverageVersion = db.meta.acquisitionCoverageVersion || null;
+        db.meta.acquisitionCoverageBackfilledAt = db.meta.acquisitionCoverageBackfilledAt || null;
+        db.meta.acquisitionCoverageBackfillAdded = Number(db.meta.acquisitionCoverageBackfillAdded || 0);
 
         for (const [id, sub] of Object.entries(db.subscribers)) {
             sub.id = asId(sub.id || id);
@@ -2487,9 +2491,50 @@
         return collected;
     }
 
+    function indexProcessedAcquisitionLots(proc) {
+        proc.acquisitionProcessed = proc.acquisitionProcessed && typeof proc.acquisitionProcessed === 'object'
+            ? proc.acquisitionProcessed
+            : {};
+        let indexed = 0;
+        for (const acquisition of proc.acquisitions || []) {
+            const externalId = String(acquisition?.externalId || '');
+            if (!externalId.startsWith('logbuy:') || proc.acquisitionProcessed[externalId]) continue;
+            proc.acquisitionProcessed[externalId] = true;
+            indexed++;
+        }
+        return indexed;
+    }
+
+    function acquisitionCoverageBackfillNeeded(db = dbLoad(), hasApi = Boolean(getApiKey())) {
+        return Boolean(
+            hasApi &&
+            db?.meta?.acquisitionCoverageVersion !== ACQUISITION_COVERAGE_VERSION
+        );
+    }
+
+    async function ensureAcquisitionCoverageBackfill() {
+        const db = dbLoad();
+        if (!acquisitionCoverageBackfillNeeded(db, Boolean(getApiKey()))) {
+            return { skipped:true, reason:'current', added:0 };
+        }
+
+        const indexed = indexProcessedAcquisitionLots(db.procurement);
+        if (indexed) dbSave(db);
+
+        const added = await syncAcquisitionLogs(true);
+        const next = dbLoad();
+        indexProcessedAcquisitionLots(next.procurement);
+        next.meta.acquisitionCoverageVersion = ACQUISITION_COVERAGE_VERSION;
+        next.meta.acquisitionCoverageBackfilledAt = nowIso();
+        next.meta.acquisitionCoverageBackfillAdded = Number(added || 0);
+        dbSave(next);
+        return { ok:true, indexed, added:Number(added || 0) };
+    }
+
     async function syncAcquisitionLogs(forceFromZero = false) {
         const db = dbLoad();
         const proc = db.procurement;
+        indexProcessedAcquisitionLots(proc);
         const lookbackDays = Math.max(1, Number(proc.settings.acquisitionLookbackDays || PROCUREMENT_FIRST_ACQUISITION_LOOKBACK_DAYS));
         const fromMs = forceFromZero
             ? 0
@@ -5654,8 +5699,9 @@
         };
         const dueKeys = ['sales','market','dollar','procurement','travel','faction']
             .filter(key => sourceAvailable[key] && initialPlan[key]);
+        const costBasisDue = acquisitionCoverageBackfillNeeded(initialDb, Boolean(getApiKey()));
 
-        if (!dueKeys.length) {
+        if (!dueKeys.length && !costBasisDue) {
             const cached = ['sales','market','dollar','procurement','travel','faction']
                 .filter(key => sourceAvailable[key]);
             if (!silent) {
@@ -5682,7 +5728,7 @@
             render();
         }
 
-        const result = { sales:false, procurement:false, market:false, dollar:false, travel:false, faction:false, errors:[], warnings:[], stale:[], cached:[] };
+        const result = { sales:false, procurement:false, market:false, dollar:false, travel:false, faction:false, costBasis:false, costBasisAdded:0, errors:[], warnings:[], stale:[], cached:[] };
         try {
             let workingDb = initialDb;
             let plan = initialPlan;
@@ -5731,6 +5777,16 @@
                     result.procurement = Boolean(r?.ok);
                     if (r?.error) result.errors.push('Procurement: ' + r.error);
                 }
+
+                if (costBasisDue) {
+                    try {
+                        const coverage = await ensureAcquisitionCoverageBackfill();
+                        result.costBasis = Boolean(coverage?.ok);
+                        result.costBasisAdded = Number(coverage?.added || 0);
+                    } catch (error) {
+                        result.errors.push('Cost basis: ' + (error?.message || String(error)));
+                    }
+                }
             }
 
             try {
@@ -5771,6 +5827,7 @@
 
             if (!silent) {
                 const refreshed = ['sales','market','dollar','procurement','travel','faction'].filter(key => result[key]);
+                if (result.costBasis) refreshed.push('cost basis');
                 const refreshedText = refreshed.length ? refreshed.join(', ') : 'no source required a successful update';
                 if (result.errors.length) {
                     statusText = 'Refresh complete with errors: ' + result.errors.join('; ') +
@@ -6677,6 +6734,28 @@
             businessRules({ businessRules:{ marketRefreshLimit:99 } }).marketRefreshLimit === WEAV3R_MAX_ENRICH &&
             businessRules({ businessRules:{ marketRefreshLimit:1 } }).marketRefreshLimit === 5;
 
+        const acquisitionIndexDb = defaultDb();
+        acquisitionIndexDb.procurement.acquisitions = [{
+            id:'existing-auto-lot',
+            externalId:'logbuy:111:5:0',
+            itemId:'5',
+            itemName:'Indexed Item',
+            source:'Bazaar',
+            quantity:1,
+            unitCost:100,
+            acquiredAt:nowIso()
+        }];
+        acquisitionIndexDb.procurement.acquisitionProcessed = {};
+        const acquisitionIndexedCount = indexProcessedAcquisitionLots(acquisitionIndexDb.procurement);
+        const acquisitionCoverageGateOk =
+            acquisitionIndexedCount === 1 &&
+            acquisitionIndexDb.procurement.acquisitionProcessed['logbuy:111:5:0'] === true &&
+            acquisitionCoverageBackfillNeeded(acquisitionIndexDb, true) === true;
+        acquisitionIndexDb.meta.acquisitionCoverageVersion = ACQUISITION_COVERAGE_VERSION;
+        const acquisitionCoverageCurrentOk =
+            acquisitionCoverageBackfillNeeded(acquisitionIndexDb, true) === false &&
+            acquisitionCoverageBackfillNeeded(acquisitionIndexDb, false) === false;
+
         const snapshotNow = 1_800_000_000_000;
         const bazaarSnapshotFreshnessOk =
             bazaarSnapshotFreshness(Math.floor((snapshotNow - 30_000) / 1000), snapshotNow).fresh === true &&
@@ -6708,6 +6787,8 @@
                 refreshPlanOk &&
                 businessRulePropagationOk &&
                 refreshBreadthClampOk &&
+                acquisitionCoverageGateOk &&
+                acquisitionCoverageCurrentOk &&
                 bazaarSnapshotFreshnessOk &&
                 fifoTemporalIntegrityOk,
             aggregateOnly,
@@ -6756,6 +6837,8 @@
             refreshPlanOk,
             businessRulePropagationOk,
             refreshBreadthClampOk,
+            acquisitionCoverageGateOk,
+            acquisitionCoverageCurrentOk,
             bazaarSnapshotFreshnessOk,
             fifoTemporalIntegrityOk,
             fifoTemporalPast: {
