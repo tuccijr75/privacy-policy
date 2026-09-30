@@ -6074,6 +6074,42 @@
                 bytes[3] === 0x04;
         } catch {}
 
+        const legacy = defaultDb();
+        legacy.schema = 10;
+        delete legacy.businessRules;
+        delete legacy.syncState;
+        legacy.customers = {
+            '777': { id:'777', name:'Legacy Customer', purchases:2, units:3, spent:123456, firstPurchase:nowIso(), lastPurchase:nowIso() }
+        };
+        legacy.sales = {
+            'legacy-sale': {
+                id:'legacy-sale', playerId:'777', playerName:'Legacy Customer', timestamp:Date.now(),
+                total:123456, items:[{ id:'3', name:'Camel Item', quantity:1, price:123456, total:123456 }]
+            }
+        };
+        legacy.procurement.acquisitions = [{
+            id:'legacy-acq', itemId:'3', itemName:'Camel Item', source:'Manual',
+            quantity:2, unitCost:50000, acquiredAt:nowIso()
+        }];
+        legacy.procurement.settings.marketRefreshLimit = 17;
+        legacy.marketIntel.settings.minRoiPct = 7;
+        legacy.marketIntel.settings.minMarketPrice = 2500;
+        legacy.marketIntel.settings.maxCandidatePrice = 9000000;
+        legacy.marketIntel.settings.minBazaarSellers = 4;
+        legacy.marketIntel.settings.freshnessWarnSeconds = 240;
+        const migrated = normalizeDb(JSON.parse(JSON.stringify(legacy)));
+        const migrationOk =
+            migrated.schema === 11 &&
+            migrated.customers?.['777']?.name === 'Legacy Customer' &&
+            migrated.sales?.['legacy-sale']?.playerId === '777' &&
+            migrated.procurement?.acquisitions?.[0]?.id === 'legacy-acq' &&
+            migrated.businessRules?.minRoiPct === 7 &&
+            migrated.businessRules?.minPrice === 2500 &&
+            migrated.businessRules?.maxPrice === 9000000 &&
+            migrated.businessRules?.minSellerCount === 4 &&
+            migrated.businessRules?.maxListingAgeSec === 240 &&
+            migrated.businessRules?.marketRefreshLimit === 17;
+
         return {
             pass:
                 aggregateOnly.price === 0 &&
@@ -6091,7 +6127,8 @@
                 dollarCamel.sellerId === '99' &&
                 dollarSnake.itemId === '4' &&
                 dollarSnake.sellerId === '100' &&
-                workbookOk,
+                workbookOk &&
+                migrationOk,
             aggregateOnly,
             staleListing,
             trusted,
@@ -6111,7 +6148,15 @@
             dollarCamel,
             dollarSnake,
             workbookOk,
-            workbookBytes
+            workbookBytes,
+            migrationOk,
+            migration: {
+                schema:migrated.schema,
+                customerCount:Object.keys(migrated.customers || {}).length,
+                salesCount:Object.keys(migrated.sales || {}).length,
+                acquisitionCount:migrated.procurement?.acquisitions?.length || 0,
+                businessRules:migrated.businessRules
+            }
         };
     }
 
