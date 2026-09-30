@@ -5218,11 +5218,134 @@
     }
 
 
+    function parseCompactMoney(value) {
+        const raw = String(value || '').replaceAll(',', '').trim();
+        const match = raw.match(/\$?\s*([\d.]+)\s*([KMBT])?/i);
+        if (!match) return 0;
+        const n = Number(match[1] || 0);
+        const mult = { K:1e3, M:1e6, B:1e9, T:1e12 }[String(match[2] || '').toUpperCase()] || 1;
+        return Number.isFinite(n) ? Math.round(n * mult) : 0;
+    }
+
+    function fetchWeav3rDollarPage() {
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method:'GET',
+                url:'https://weav3r.dev/dollar-bazaars?tab=items&t=' + Date.now(),
+                timeout:20000,
+                headers:{ Accept:'text/html,application/xhtml+xml' },
+                onload:r => {
+                    if (r.status < 200 || r.status >= 300) return reject(new Error('TornW3B Dollar Bazaars HTTP ' + r.status));
+                    const body = String(r.responseText || '');
+                    if (/just a moment|challenge-platform|cf-chl/i.test(body)) {
+                        return reject(new Error('TornW3B Cloudflare challenge blocked Dollar Bazaars fallback'));
+                    }
+                    resolve(body);
+                },
+                ontimeout:()=>reject(new Error('TornW3B Dollar Bazaars fallback timed out')),
+                onerror:()=>reject(new Error('TornW3B Dollar Bazaars fallback network error'))
+            });
+        });
+    }
+
+    function parseWeav3rDollarPageHtml(html) {
+        if (typeof DOMParser === 'undefined') throw new Error('DOMParser is unavailable.');
+        const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+        const items = [];
+        const bazaars = [];
+        const seenItems = new Set();
+        const seenBazaars = new Set();
+
+        for (const tr of doc.querySelectorAll('tr')) {
+            const anchors = [...tr.querySelectorAll('a[href]')];
+            if (!anchors.length) continue;
+
+            const itemAnchor = anchors.find(a => /\/item\/\d+/i.test(String(a.getAttribute('href') || '')));
+            const sellerAnchor = anchors.find(a => /(?:XID|userId)=\d+/i.test(String(a.getAttribute('href') || '')));
+            if (!sellerAnchor) continue;
+
+            const sellerHref = String(sellerAnchor.getAttribute('href') || '');
+            const sellerMatch = sellerHref.match(/(?:XID|userId)=(\d+)/i);
+            const sellerId = asId(sellerMatch?.[1]);
+            if (!sellerId) continue;
+            const sellerName = String(sellerAnchor.textContent || '')
+                .replace(/\s*\[\d+\]\s*$/, '')
+                .trim();
+
+            const rowText = String(tr.textContent || '').replace(/\s+/g, ' ').trim();
+            const moneyValues = (rowText.match(/\$\s*[\d,.]+(?:\.\d+)?\s*[KMBT]?/gi) || [])
+                .map(parseCompactMoney)
+                .filter(v => v > 0);
+            const value = moneyValues[moneyValues.length - 1] || 0;
+
+            if (itemAnchor) {
+                const itemHref = String(itemAnchor.getAttribute('href') || '');
+                const itemId = asId(itemHref.match(/\/item\/(\d+)/i)?.[1]);
+                if (!itemId) continue;
+                const quantity = Math.max(1, Number((rowText.match(/Qty\s*:\s*([\d,]+)/i)?.[1] || '1').replaceAll(',', '')));
+                const key = itemId + ':' + sellerId;
+                if (seenItems.has(key)) continue;
+                seenItems.add(key);
+
+                const itemName = String(itemAnchor.textContent || '').trim();
+                const firstCell = tr.querySelector('td');
+                const itemType = firstCell
+                    ? String(firstCell.textContent || '').replace(itemName, '').replace(/\s+/g,' ').trim()
+                    : '';
+
+                items.push({
+                    itemId,
+                    itemName,
+                    itemType,
+                    sellerId,
+                    sellerName,
+                    quantity,
+                    marketPrice:value,
+                    totalValue:value * quantity,
+                    lastUpdated:null
+                });
+                continue;
+            }
+
+            const itemCount = Math.max(0, Number((rowText.match(/([\d,]+)\s+items?/i)?.[1] || '0').replaceAll(',', '')));
+            if (!itemCount) continue;
+            if (seenBazaars.has(sellerId)) continue;
+            seenBazaars.add(sellerId);
+            bazaars.push({
+                sellerId,
+                sellerName,
+                itemCount,
+                totalMarketValue:value
+            });
+        }
+
+        return { items, bazaars };
+    }
+
+
     async function syncWeavDollarBazaars() {
-        const [itemRows, bazaarRows] = await Promise.all([
+        const apiResults = await Promise.allSettled([
             fetchWeavPaged('/dollar-bazaars/items', 'items', 5, 100),
             fetchWeavPaged('/dollar-bazaars/bazaars', 'bazaars', 5, 100)
         ]);
+
+        let itemRows = apiResults[0].status === 'fulfilled' ? apiResults[0].value : [];
+        let bazaarRows = apiResults[1].status === 'fulfilled' ? apiResults[1].value : [];
+        let fallbackUsed = false;
+        let fallbackError = null;
+
+        if (!itemRows.length || !bazaarRows.length) {
+            try {
+                const html = await fetchWeav3rDollarPage();
+                const parsed = parseWeav3rDollarPageHtml(html);
+                if (!itemRows.length) itemRows = parsed.items;
+                if (!bazaarRows.length) bazaarRows = parsed.bazaars;
+                fallbackUsed = Boolean(parsed.items.length || parsed.bazaars.length);
+            } catch (error) {
+                fallbackError = error;
+            }
+        }
+
         const db = dbLoad();
         db.marketIntel.dollarItems = itemRows
             .map(normalizeDollarBazaarItem)
@@ -5232,6 +5355,22 @@
         db.marketIntel.dollarBazaars = bazaarRows
             .map(normalizeDollarBazaarSeller)
             .filter(row => row.sellerId);
+
+        if (!db.marketIntel.dollarItems.length && !db.marketIntel.dollarBazaars.length) {
+            const apiItemError = apiResults[0].status === 'rejected' ? apiResults[0].reason?.message || String(apiResults[0].reason) : 'empty';
+            const apiBazaarError = apiResults[1].status === 'rejected' ? apiResults[1].reason?.message || String(apiResults[1].reason) : 'empty';
+            throw new Error(
+                '$1 Bazaar sources returned no readable rows. API items: ' + apiItemError +
+                '; API bazaars: ' + apiBazaarError +
+                (fallbackError ? '; page fallback: ' + (fallbackError?.message || String(fallbackError)) : '')
+            );
+        }
+
+        if (fallbackUsed) {
+            addIntelDiagnostic(db.marketIntel, '$1 Bazaar API fallback used public Dollar Bazaars page: ' +
+                db.marketIntel.dollarItems.length + ' item rows, ' +
+                db.marketIntel.dollarBazaars.length + ' bazaars.');
+        }
 
         db.marketIntel.lastDollarSyncAt = nowIso();
         dbSave(db);
