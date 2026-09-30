@@ -2117,13 +2117,15 @@
                     render();
                 }).catch(() => {}), 50);
             }
+            return { ok:true, imported, rejected, auditOk:audit.ok };
         } catch (error) {
             const code = Number(error?.code || 0);
             // Authentication/permission errors are surfaced, but never permanently
             // disable future syncs. A corrected key can recover immediately.
             fatal = [2, 16].includes(code);
             statusText = `Sync failed: ${error?.message || String(error)}`;
-            render();
+            if (!silent) render();
+            return { ok:false, error:error?.message || String(error), code };
         } finally {
             syncRunning = false;
             if (!silent) render();
@@ -5030,9 +5032,9 @@
                 render();
                 return false;
             }
-            statusText = 'Seller verified in Torn. Opening profile…';
+            statusText = 'Seller verified in Torn. Opening Bazaar…';
             render();
-            navigateFromCRM(`https://www.torn.com/profiles.php?XID=${encodeURIComponent(sellerId)}`);
+            navigateFromCRM(`https://www.torn.com/bazaar.php?userId=${encodeURIComponent(sellerId)}`);
             return true;
         } catch (error) {
             statusText = 'Seller verification failed: ' + (error?.message || String(error));
@@ -5210,8 +5212,13 @@
         const result = { sales:false, procurement:false, market:false, travel:false, faction:false, errors:[] };
         try {
             if (getApiKey()) {
-                try { await sync({ silent:true }); result.sales = true; }
-                catch (error) { result.errors.push('Sales: ' + (error?.message || String(error))); }
+                try {
+                    const r = await sync({ silent:true });
+                    result.sales = Boolean(r?.ok);
+                    if (r?.error) result.errors.push('Sales: ' + r.error);
+                } catch (error) {
+                    result.errors.push('Sales: ' + (error?.message || String(error)));
+                }
 
                 let db = dbLoad();
                 // Refresh global market candidates first so the procurement pass can
@@ -10183,6 +10190,257 @@
         };
     }
 
+    function xlsxXmlEscape(value) {
+        return String(value == null ? '' : value)
+            .replaceAll('&','&amp;')
+            .replaceAll('<','&lt;')
+            .replaceAll('>','&gt;')
+            .replaceAll('"','&quot;')
+            .replaceAll("'","&apos;");
+    }
+
+    function xlsxColumnName(index) {
+        let n = Math.max(1, Number(index || 1));
+        let out = '';
+        while (n > 0) {
+            n--;
+            out = String.fromCharCode(65 + (n % 26)) + out;
+            n = Math.floor(n / 26);
+        }
+        return out;
+    }
+
+    function xlsxStyleForHeader(header) {
+        const key = String(header || '').toLowerCase();
+        if (/(roi|margin|coverage|confidence|volatility|rate|%)/.test(key)) return 3;
+        if (/(price|cost|revenue|profit|spend|amount|value|capital|cogs|cashback|refund|total)/.test(key)) return 2;
+        return 0;
+    }
+
+    function xlsxCellXml(value, row, col, style = 0) {
+        const ref = xlsxColumnName(col) + row;
+        const styleAttr = style ? ' s="' + style + '"' : '';
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return '<c r="' + ref + '"' + styleAttr + ' t="n"><v>' + value + '</v></c>';
+        }
+        if (typeof value === 'boolean') {
+            return '<c r="' + ref + '"' + styleAttr + ' t="b"><v>' + (value ? 1 : 0) + '</v></c>';
+        }
+        const text = xlsxXmlEscape(value);
+        return '<c r="' + ref + '"' + styleAttr + ' t="inlineStr"><is><t xml:space="preserve">' + text + '</t></is></c>';
+    }
+
+    function xlsxWorksheetXml(headers, rows) {
+        const allRows = [headers, ...(rows || []).map(row => headers.map(h => row?.[h]))];
+        const widths = headers.map((header, col) => {
+            let width = String(header || '').length + 2;
+            for (let i = 1; i < Math.min(allRows.length, 201); i++) {
+                width = Math.max(width, String(allRows[i]?.[col] ?? '').length + 1);
+            }
+            return Math.max(10, Math.min(38, width));
+        });
+        const cols = widths.map((width, i) =>
+            '<col min="' + (i+1) + '" max="' + (i+1) + '" width="' + width + '" customWidth="1"/>'
+        ).join('');
+        const sheetRows = allRows.map((values, rowIndex) => {
+            const rowNumber = rowIndex + 1;
+            const cells = values.map((value, colIndex) => {
+                const style = rowIndex === 0 ? 1 : xlsxStyleForHeader(headers[colIndex]);
+                return xlsxCellXml(value, rowNumber, colIndex + 1, style);
+            }).join('');
+            return '<row r="' + rowNumber + '">' + cells + '</row>';
+        }).join('');
+        const endCell = xlsxColumnName(Math.max(1, headers.length)) + Math.max(1, allRows.length);
+        return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+                '<dimension ref="A1:' + endCell + '"/>' +
+                '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' +
+                '<cols>' + cols + '</cols>' +
+                '<sheetData>' + sheetRows + '</sheetData>' +
+                (headers.length && allRows.length > 1 ? '<autoFilter ref="A1:' + endCell + '"/>' : '') +
+            '</worksheet>';
+    }
+
+    function crc32Bytes(bytes) {
+        let crc = 0xFFFFFFFF;
+        for (let i = 0; i < bytes.length; i++) {
+            crc ^= bytes[i];
+            for (let j = 0; j < 8; j++) {
+                crc = (crc >>> 1) ^ (0xEDB88320 & -(crc & 1));
+            }
+        }
+        return (crc ^ 0xFFFFFFFF) >>> 0;
+    }
+
+    function concatUint8(parts) {
+        const total = parts.reduce((sum, part) => sum + part.length, 0);
+        const out = new Uint8Array(total);
+        let offset = 0;
+        for (const part of parts) {
+            out.set(part, offset);
+            offset += part.length;
+        }
+        return out;
+    }
+
+    function zipStoreEntries(entries) {
+        const encoder = new TextEncoder();
+        const localParts = [];
+        const centralParts = [];
+        let offset = 0;
+
+        const write16 = (view, at, value) => view.setUint16(at, value, true);
+        const write32 = (view, at, value) => view.setUint32(at, value >>> 0, true);
+        const now = new Date();
+        const dosTime = ((now.getHours() & 31) << 11) | ((now.getMinutes() & 63) << 5) | ((Math.floor(now.getSeconds() / 2)) & 31);
+        const dosDate = (((now.getFullYear() - 1980) & 127) << 9) | (((now.getMonth() + 1) & 15) << 5) | (now.getDate() & 31);
+
+        for (const entry of entries) {
+            const nameBytes = encoder.encode(entry.name);
+            const dataBytes = entry.bytes instanceof Uint8Array ? entry.bytes : encoder.encode(String(entry.content || ''));
+            const crc = crc32Bytes(dataBytes);
+
+            const local = new Uint8Array(30 + nameBytes.length);
+            const lv = new DataView(local.buffer);
+            write32(lv, 0, 0x04034b50);
+            write16(lv, 4, 20);
+            write16(lv, 6, 0);
+            write16(lv, 8, 0);
+            write16(lv, 10, dosTime);
+            write16(lv, 12, dosDate);
+            write32(lv, 14, crc);
+            write32(lv, 18, dataBytes.length);
+            write32(lv, 22, dataBytes.length);
+            write16(lv, 26, nameBytes.length);
+            write16(lv, 28, 0);
+            local.set(nameBytes, 30);
+            localParts.push(local, dataBytes);
+
+            const central = new Uint8Array(46 + nameBytes.length);
+            const cv = new DataView(central.buffer);
+            write32(cv, 0, 0x02014b50);
+            write16(cv, 4, 20);
+            write16(cv, 6, 20);
+            write16(cv, 8, 0);
+            write16(cv, 10, 0);
+            write16(cv, 12, dosTime);
+            write16(cv, 14, dosDate);
+            write32(cv, 16, crc);
+            write32(cv, 20, dataBytes.length);
+            write32(cv, 24, dataBytes.length);
+            write16(cv, 28, nameBytes.length);
+            write16(cv, 30, 0);
+            write16(cv, 32, 0);
+            write16(cv, 34, 0);
+            write16(cv, 36, 0);
+            write32(cv, 38, 0);
+            write32(cv, 42, offset);
+            central.set(nameBytes, 46);
+            centralParts.push(central);
+
+            offset += local.length + dataBytes.length;
+        }
+
+        const central = concatUint8(centralParts);
+        const end = new Uint8Array(22);
+        const ev = new DataView(end.buffer);
+        write32(ev, 0, 0x06054b50);
+        write16(ev, 4, 0);
+        write16(ev, 6, 0);
+        write16(ev, 8, entries.length);
+        write16(ev, 10, entries.length);
+        write32(ev, 12, central.length);
+        write32(ev, 16, offset);
+        write16(ev, 20, 0);
+
+        return concatUint8([...localParts, central, end]);
+    }
+
+    function buildFinancialXlsx(db) {
+        const docs = financialExportDocuments(db);
+        const sheetDefs = [
+            ['Summary', docs.summary],
+            ['Sales', docs.sales],
+            ['Acquisitions', docs.acquisitions],
+            ['Inventory Profit', docs.inventory],
+            ['Refunds', docs.refunds],
+            ['Customer Value', docs.customers],
+            ['Procurement', docs.procurement]
+        ].filter(([,doc]) => doc);
+
+        const contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+            '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+            '<Default Extension="xml" ContentType="application/xml"/>' +
+            '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+            '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+            sheetDefs.map((_,i) => '<Override PartName="/xl/worksheets/sheet' + (i+1) + '.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('') +
+            '</Types>';
+
+        const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+            '</Relationships>';
+
+        const workbook = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+            '<bookViews><workbookView/></bookViews><sheets>' +
+            sheetDefs.map(([name],i) => '<sheet name="' + xlsxXmlEscape(name.slice(0,31)) + '" sheetId="' + (i+1) + '" r:id="rId' + (i+1) + '"/>').join('') +
+            '</sheets></workbook>';
+
+        const workbookRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+            sheetDefs.map((_,i) => '<Relationship Id="rId' + (i+1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet' + (i+1) + '.xml"/>').join('') +
+            '<Relationship Id="rId' + (sheetDefs.length+1) + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+            '</Relationships>';
+
+        const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+            '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+            '<numFmts count="2"><numFmt numFmtId="164" formatCode="$#,##0.00"/><numFmt numFmtId="165" formatCode="0.00\\%"/></numFmts>' +
+            '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts>' +
+            '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+            '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+            '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+            '<cellXfs count="4">' +
+                '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+                '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+                '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+                '<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+            '</cellXfs>' +
+            '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+            '</styleSheet>';
+
+        const entries = [
+            { name:'[Content_Types].xml', content:contentTypes },
+            { name:'_rels/.rels', content:rootRels },
+            { name:'xl/workbook.xml', content:workbook },
+            { name:'xl/_rels/workbook.xml.rels', content:workbookRels },
+            { name:'xl/styles.xml', content:styles }
+        ];
+        sheetDefs.forEach(([name,doc],i) => {
+            entries.push({
+                name:'xl/worksheets/sheet' + (i+1) + '.xml',
+                content:xlsxWorksheetXml(doc.headers, doc.rows)
+            });
+        });
+        return zipStoreEntries(entries);
+    }
+
+    function exportFinancialWorkbook() {
+        const bytes = buildFinancialXlsx(dbLoad());
+        const blob = new Blob([bytes], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'MM_Torn_CRM_' + exportDateStamp() + '_Financial_Workbook.xlsx';
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }
+
+
     function exportFinancialDocument(kind) {
         const docs = financialExportDocuments(dbLoad());
         const doc = docs[kind];
@@ -10203,7 +10461,7 @@
         return card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">' +
                 '<div><b>Financial Spreadsheet Export</b><div style="font-size:10px;color:#888;margin-top:3px;">Spreadsheet-compatible CSV documents generated from the current CRM ledger. Export does not modify CRM data.</div></div>' +
-                '<button data-financial-export="all" style="' + btn(true) + '">Export Financial Pack</button>' +
+                '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button data-financial-export="xlsx" style="' + btn(true) + '">Export Excel Workbook</button><button data-financial-export="all" style="' + btn() + '">Export CSV Pack</button></div>' +
             '</div>' +
             '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">' +
                 '<button data-financial-export="summary" style="' + btn() + '">Summary</button>' +
@@ -10652,9 +10910,14 @@
         root.querySelectorAll('[data-financial-export]').forEach(button => button.addEventListener('click', () => {
             try {
                 const kind = String(button.dataset.financialExport || '');
-                if (kind === 'all') exportFinancialPack();
+                if (kind === 'xlsx') exportFinancialWorkbook();
+                else if (kind === 'all') exportFinancialPack();
                 else exportFinancialDocument(kind);
-                statusText = kind === 'all' ? 'Financial export pack created.' : 'Financial spreadsheet exported: ' + kind + '.';
+                statusText = kind === 'xlsx'
+                    ? 'Financial Excel workbook exported.'
+                    : kind === 'all'
+                        ? 'Financial CSV pack created.'
+                        : 'Financial spreadsheet exported: ' + kind + '.';
                 render();
             } catch (error) {
                 statusText = 'Financial export failed: ' + (error?.message || String(error));
