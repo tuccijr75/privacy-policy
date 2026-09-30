@@ -10488,6 +10488,38 @@
             '</worksheet>';
     }
 
+    function utf8Bytes(value) {
+        const text = String(value ?? '');
+        if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(text);
+        const out = [];
+        for (let i = 0; i < text.length; i++) {
+            let cp = text.codePointAt(i);
+            if (cp > 0xFFFF) i++;
+            if (cp <= 0x7F) out.push(cp);
+            else if (cp <= 0x7FF) {
+                out.push(
+                    0xC0 | (cp >> 6),
+                    0x80 | (cp & 0x3F)
+                );
+            } else if (cp <= 0xFFFF) {
+                out.push(
+                    0xE0 | (cp >> 12),
+                    0x80 | ((cp >> 6) & 0x3F),
+                    0x80 | (cp & 0x3F)
+                );
+            } else {
+                out.push(
+                    0xF0 | (cp >> 18),
+                    0x80 | ((cp >> 12) & 0x3F),
+                    0x80 | ((cp >> 6) & 0x3F),
+                    0x80 | (cp & 0x3F)
+                );
+            }
+        }
+        return Uint8Array.from(out);
+    }
+
+
     function crc32Bytes(bytes) {
         let crc = 0xFFFFFFFF;
         for (let i = 0; i < bytes.length; i++) {
@@ -10511,7 +10543,6 @@
     }
 
     function zipStoreEntries(entries) {
-        const encoder = new TextEncoder();
         const localParts = [];
         const centralParts = [];
         let offset = 0;
@@ -10523,8 +10554,8 @@
         const dosDate = (((now.getFullYear() - 1980) & 127) << 9) | (((now.getMonth() + 1) & 15) << 5) | (now.getDate() & 31);
 
         for (const entry of entries) {
-            const nameBytes = encoder.encode(entry.name);
-            const dataBytes = entry.bytes instanceof Uint8Array ? entry.bytes : encoder.encode(String(entry.content || ''));
+            const nameBytes = utf8Bytes(entry.name);
+            const dataBytes = entry.bytes instanceof Uint8Array ? entry.bytes : utf8Bytes(String(entry.content || ''));
             const crc = crc32Bytes(dataBytes);
 
             const local = new Uint8Array(30 + nameBytes.length);
