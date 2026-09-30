@@ -6325,6 +6325,18 @@
         };
         const bootstrapProcurement = procurementRows(marketDb).find(r => r.id === marketId);
 
+        const movementNow = Date.now();
+        marketDb.procurement.marketHistory[marketId] = [
+            { at:new Date(movementNow - 20 * 60 * 1000).toISOString(), realisticExit:20000, depth3Pct:160 },
+            { at:new Date(movementNow - 10 * 60 * 1000).toISOString(), realisticExit:20100, depth3Pct:120 },
+            { at:new Date(movementNow).toISOString(), realisticExit:20050, depth3Pct:80 }
+        ];
+        const movementProcurement = procurementRows(marketDb).find(r => r.id === marketId);
+        const movementOk =
+            Number(movementProcurement?.marketMovementScore || 0) > 0 &&
+            Number(movementProcurement?.marketMovementConfidence || 0) > 0 &&
+            Number(movementProcurement?.marketDepletionPerHour || 0) > 0;
+
         const dollarCamel = normalizeDollarBazaarItem({
             itemId:3,itemName:'Camel Item',itemType:'Other',playerId:99,sellerName:'Camel Seller',
             quantity:2,marketPrice:12345,totalValue:24690,lastUpdated:nowIso()
@@ -6439,6 +6451,7 @@
                 bootstrapProcurement?.action === 'BUY' &&
                 bootstrapProcurement?.personalDemandQualified === false &&
                 bootstrapProcurement?.marketBootstrapQualified === true &&
+                movementOk &&
                 dollarCamel.itemId === '3' &&
                 dollarCamel.sellerId === '99' &&
                 dollarSnake.itemId === '4' &&
@@ -6461,6 +6474,14 @@
                 marketBootstrapQualified:bootstrapProcurement.marketBootstrapQualified,
                 marketDemandScore:bootstrapProcurement.marketDemandScore,
                 acquisitionScore:bootstrapProcurement.acquisitionScore
+            } : null,
+            movementOk,
+            movementProcurement: movementProcurement ? {
+                marketMovementScore:movementProcurement.marketMovementScore,
+                marketMovementConfidence:movementProcurement.marketMovementConfidence,
+                marketDepletionPerHour:movementProcurement.marketDepletionPerHour,
+                marketReplenishmentPerHour:movementProcurement.marketReplenishmentPerHour,
+                acquisitionScore:movementProcurement.acquisitionScore
             } : null,
             dollarCamel,
             dollarSnake,
