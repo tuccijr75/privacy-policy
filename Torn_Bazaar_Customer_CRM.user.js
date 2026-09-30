@@ -5685,12 +5685,14 @@
             if (plan.market) {
                 const r = await syncMarketIntelligence(full, { silent:true });
                 result.market = Boolean(r?.ok);
+                // A successful full intelligence sync already refreshed Dollar Bazaars.
+                if (full && r?.ok) result.dollar = true;
                 if (r?.error) result.errors.push('Market: ' + r.error);
             }
 
             workingDb = dbLoad();
             plan = businessRefreshPlan(workingDb, { force: effectiveForce });
-            if (plan.dollar) {
+            if (plan.dollar && !result.dollar) {
                 try {
                     await syncWeavDollarBazaars();
                     result.dollar = true;
