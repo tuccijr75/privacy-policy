@@ -4776,7 +4776,7 @@
             const bazaarAverage = Number(base.bazaarAverage || 0);
             const marketPrice = Number(base.marketPrice || 0);
             if (!(buy > 1)) continue;
-            if (marketPrice < rules.minPrice) continue;
+            if (buy < rules.minPrice) continue;
             if (buy > rules.maxPrice) continue;
             if (Number(base.totalBazaars || 0) < rules.minSellerCount) continue;
 
