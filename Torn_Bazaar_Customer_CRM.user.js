@@ -2338,7 +2338,11 @@
             bazaarLowest: snapshot.bazaar.lowest,
             bazaarThird: snapshot.bazaar.third,
             realisticExit: snapshot.realisticExit,
-            depth3Pct: snapshot.totalDepth3Pct
+            depth3Pct: snapshot.totalDepth3Pct,
+            itemMarketTotalQty: Number(snapshot.itemMarket?.totalQty || 0),
+            bazaarTotalQty: Number(snapshot.bazaar?.totalQty || 0),
+            itemMarketListings: Number(snapshot.itemMarket?.listings || 0),
+            bazaarListings: Number(snapshot.bazaar?.listings || 0)
         });
         proc.marketHistory[id] = proc.marketHistory[id].slice(-MARKET_HISTORY_MAX_PER_ITEM);
     }
@@ -2644,6 +2648,81 @@
         return { score, grade };
     }
 
+    function marketMovementMetrics(proc, itemId) {
+        const id = asId(itemId);
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        const history = (Array.isArray(proc?.marketHistory?.[id]) ? proc.marketHistory[id] : [])
+            .map(row => ({
+                at: Date.parse(row?.at || '') || 0,
+                depth: Math.max(0, Number(row?.depth3Pct || 0)),
+                exit: Math.max(0, Number(row?.realisticExit || 0))
+            }))
+            .filter(row => row.at >= cutoff && row.depth >= 0)
+            .sort((a,b) => a.at - b.at);
+
+        if (history.length < 3) {
+            return {
+                score:0,
+                confidence:0,
+                depletionPerHour:0,
+                replenishmentPerHour:0,
+                observations:history.length
+            };
+        }
+
+        let depletion = 0;
+        let replenishment = 0;
+        let observedHours = 0;
+        let usablePairs = 0;
+
+        for (let i = 1; i < history.length; i++) {
+            const prev = history[i - 1];
+            const cur = history[i];
+            const hours = Math.max(0, (cur.at - prev.at) / 3600000);
+            if (!(hours > 0) || hours > 6) continue;
+
+            // Ignore extreme repricing jumps; quantity movement across a major price
+            // regime change is too ambiguous to treat as demand evidence.
+            const priceBase = Math.max(1, prev.exit || cur.exit || 1);
+            const priceMovePct = Math.abs(Number(cur.exit || 0) - Number(prev.exit || 0)) / priceBase * 100;
+            if (prev.exit > 0 && cur.exit > 0 && priceMovePct > 12) continue;
+
+            const delta = cur.depth - prev.depth;
+            if (delta < 0) depletion += Math.abs(delta);
+            else if (delta > 0) replenishment += delta;
+            observedHours += hours;
+            usablePairs++;
+        }
+
+        if (!(observedHours > 0) || usablePairs < 2) {
+            return {
+                score:0,
+                confidence:0,
+                depletionPerHour:0,
+                replenishmentPerHour:0,
+                observations:history.length
+            };
+        }
+
+        const depletionPerHour = depletion / observedHours;
+        const replenishmentPerHour = replenishment / observedHours;
+        const activityPerHour = (depletion + replenishment) / observedHours;
+        const confidence = Math.max(0, Math.min(100, usablePairs * 12));
+        const score = Math.max(0, Math.min(100,
+            Math.log10(1 + depletionPerHour * 24) * 40 +
+            Math.log10(1 + activityPerHour * 24) * 25
+        ));
+
+        return {
+            score,
+            confidence,
+            depletionPerHour,
+            replenishmentPerHour,
+            observations:history.length
+        };
+    }
+
+
     function procurementRows(db) {
         const proc = db.procurement;
         const rules = businessRules(db);
@@ -2709,6 +2788,7 @@
 
             const liquidity = liquidityForRow(m, snap);
             const history = historyStats(proc, id);
+            const movement = marketMovementMetrics(proc, id);
             const globalDemand = db.marketIntel?.marketplace?.[id] || {};
             const marketSellerCount = Math.max(
                 Number(globalDemand.totalBazaars || 0),
@@ -2718,10 +2798,11 @@
                 Number(snap?.bazaar?.listings || 0) +
                 Number(snap?.itemMarket?.listings || 0);
             const marketDemandScore = Math.max(0, Math.min(100,
-                Math.min(45, Math.log10(1 + marketSellerCount) * 28) +
-                Math.min(30, Math.log10(1 + Number(snap.totalDepth3Pct || 0)) * 15) +
+                Math.min(35, Math.log10(1 + marketSellerCount) * 24) +
+                Math.min(25, Math.log10(1 + Number(snap.totalDepth3Pct || 0)) * 13) +
                 Math.min(15, marketListingCount * 1.5) +
-                Math.min(10, history.samples)
+                Math.min(10, history.samples) +
+                Math.min(15, movement.score * Math.min(1, movement.confidence / 60) * 0.15)
             ));
 
             const velocityScore = Math.min(100,
@@ -2858,6 +2939,10 @@
                 marketScore,
                 marketDemandScore,
                 marketSellerCount,
+                marketMovementScore: movement.score,
+                marketMovementConfidence: movement.confidence,
+                marketDepletionPerHour: movement.depletionPerHour,
+                marketReplenishmentPerHour: movement.replenishmentPerHour,
                 marketBootstrapQualified,
                 personalDemandScore,
                 ownRealizedRoiPct,
@@ -10657,6 +10742,8 @@
             'Personal Demand Mature': Boolean(r.personalDemandQualified),
             'Market Demand Score': Number(r.marketDemandScore || 0),
             'Market Sellers': Number(r.marketSellerCount || 0),
+            'Market Movement Score': Number(r.marketMovementScore || 0),
+            'Observed Near-Market Depletion / Hr': Number(r.marketDepletionPerHour || 0),
             'Demand / Day': Number(r.daily || 0),
             'Sold 7d': Number(r.sold7d || 0),
             'Sold 30d': Number(r.sold30d || 0),
@@ -10703,7 +10790,7 @@
             },
             procurement: {
                 filename: 'procurement-opportunities.csv',
-                headers: ['Item ID','Item','Action','Priority','Acquisition Score','Demand Basis','Personal Demand Mature','Market Demand Score','Market Sellers','Demand / Day','Sold 7d','Sold 30d','Stock','Shortage','Best Buy Price','Trusted Exit','Profit / Unit','ROI %','Liquidity','Market Fresh'],
+                headers: ['Item ID','Item','Action','Priority','Acquisition Score','Demand Basis','Personal Demand Mature','Market Demand Score','Market Sellers','Market Movement Score','Observed Near-Market Depletion / Hr','Demand / Day','Sold 7d','Sold 30d','Stock','Shortage','Best Buy Price','Trusted Exit','Profit / Unit','ROI %','Liquidity','Market Fresh'],
                 rows: procurementRowsExport
             }
         };
