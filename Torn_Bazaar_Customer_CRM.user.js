@@ -5610,6 +5610,42 @@
 
     async function syncBusinessData({ silent = false, force = false, full = false } = {}) {
         if (unifiedSyncRunning) return { skipped: true, reason: 'running' };
+
+        const effectiveForce = Boolean(force || full);
+        const initialDb = dbLoad();
+        const initialPlan = businessRefreshPlan(initialDb, { force: effectiveForce });
+        const sourceAvailable = {
+            sales: Boolean(getApiKey()),
+            procurement: Boolean(getApiKey()),
+            market: true,
+            dollar: true,
+            travel: true,
+            faction: Boolean(getFactionApiKey())
+        };
+        const dueKeys = ['sales','market','dollar','procurement','travel','faction']
+            .filter(key => sourceAvailable[key] && initialPlan[key]);
+
+        if (!dueKeys.length) {
+            const cached = ['sales','market','dollar','procurement','travel','faction']
+                .filter(key => sourceAvailable[key]);
+            if (!silent) {
+                statusText = 'Business data ready: cached data still fresh.';
+                render();
+            }
+            return {
+                skipped:true,
+                reason:'fresh',
+                sales:false,
+                procurement:false,
+                market:false,
+                dollar:false,
+                travel:false,
+                faction:false,
+                errors:[],
+                cached
+            };
+        }
+
         unifiedSyncRunning = true;
         if (!silent) {
             statusText = 'Refreshing business data…';
@@ -5618,8 +5654,8 @@
 
         const result = { sales:false, procurement:false, market:false, dollar:false, travel:false, faction:false, errors:[], cached:[] };
         try {
-            let workingDb = dbLoad();
-            let plan = businessRefreshPlan(workingDb, { force });
+            let workingDb = initialDb;
+            let plan = initialPlan;
 
             if (plan.sales) {
                 try {
@@ -5634,7 +5670,7 @@
             }
 
             workingDb = dbLoad();
-            plan = businessRefreshPlan(workingDb, { force });
+            plan = businessRefreshPlan(workingDb, { force: effectiveForce });
             // Public market intelligence remains usable without personal Torn API
             // access, but aggregate rows never become actionable without freshness
             // and seller-level/official corroboration.
@@ -5645,7 +5681,7 @@
             }
 
             workingDb = dbLoad();
-            plan = businessRefreshPlan(workingDb, { force });
+            plan = businessRefreshPlan(workingDb, { force: effectiveForce });
             if (plan.dollar) {
                 try {
                     await syncWeavDollarBazaars();
@@ -5657,7 +5693,7 @@
 
             if (getApiKey()) {
                 workingDb = dbLoad();
-                plan = businessRefreshPlan(workingDb, { force });
+                plan = businessRefreshPlan(workingDb, { force: effectiveForce });
                 if (plan.procurement) {
                     const r = await syncProcurement({ silent:true });
                     result.procurement = Boolean(r?.ok);
@@ -5667,7 +5703,7 @@
 
             try {
                 const db = dbLoad();
-                plan = businessRefreshPlan(db, { force });
+                plan = businessRefreshPlan(db, { force: effectiveForce });
                 if (plan.travel) {
                     await syncTravelStock({ silent:true, force:false });
                     result.travel = true;
@@ -5679,9 +5715,9 @@
             if (getFactionApiKey()) {
                 try {
                     const db = dbLoad();
-                    plan = businessRefreshPlan(db, { force });
+                    plan = businessRefreshPlan(db, { force: effectiveForce });
                     if (plan.faction) {
-                        const r = await syncFactionInventory({ silent:true, force });
+                        const r = await syncFactionInventory({ silent:true, force: effectiveForce });
                         result.faction = !r?.skipped;
                     }
                 } catch (error) {
