@@ -9258,12 +9258,16 @@
         const factionReady = Boolean(getFactionApiKey()) || Object.keys(db.factionInventory?.current || {}).length > 0;
         const simpleTabs = [['home','Today'],['stock','Stock & List'],['deals','Buy'],['customers','Customers'],['reports','Reports']];
         if (factionReady) simpleTabs.push(['faction','Faction']);
-        simpleTabs.push(['more','More']);
         const advancedTabs = [['ops','Operations'],['customers','Customers'],['inventory','Inventory'],['faction','Faction Inv'],['procurement','Procure'],['intel','Market Intel'],['analytics','Analytics'],['coupons','Coupons'],['subscribers','Restock'],['refunds','Refunds'],['sales','Sales'],['settings','Settings']];
         const tabs = simpleMode ? simpleTabs : advancedTabs;
+        const toolsButton = simpleMode
+            ? `<button data-tab="more" style="${btn(activeTab === 'more')}${activeTab === 'more' ? 'border-color:#d7ad4b;' : ''}font-size:10px;">Tools</button>`
+            : '';
         return `<div style="display:flex;gap:5px;flex-wrap:wrap;margin:8px 0;align-items:center;">
             ${tabs.map(([id,label]) => `<button data-tab="${id}" style="${btn(activeTab === id)}${activeTab === id ? 'border-color:#d7ad4b;' : ''}">${label}</button>`).join('')}
-            <button id="mm-ui-mode-toggle" style="${btn()}margin-left:auto;font-size:11px;">${simpleMode ? 'Advanced' : 'Simple'} mode</button>
+            <span style="flex:1;"></span>
+            ${toolsButton}
+            <button id="mm-ui-mode-toggle" style="${btn()}font-size:10px;">${simpleMode ? 'Advanced' : 'Simple'} mode</button>
         </div>`;
     }
 
@@ -10963,7 +10967,7 @@
     function moreSimpleHtml(db) {
         const brief = ownerBriefing(db);
         const preset = String(db.operations.settings.strategyPreset || 'BALANCED').replaceAll('_',' ');
-        return card(`<b>More</b><div style="font-size:11px;color:#999;margin:4px 0 8px;">Advanced reports and configuration remain fully available. Current strategy: <b>${escapeHtml(preset)}</b>.</div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;"><button data-simple-go="reports" style="${btn()}">Reports & Business Rules</button><button data-open-advanced="faction" style="${btn()}">Faction Inventory</button><button data-open-advanced="analytics" style="${btn()}">Analytics & Reports</button><button data-open-advanced="sales" style="${btn()}">Sales Ledger</button><button data-open-advanced="inventory" style="${btn()}">Full Inventory</button><button data-open-advanced="procurement" style="${btn()}">Full Procurement</button><button data-open-advanced="intel" style="${btn()}">Full Market Intel</button><button data-open-advanced="subscribers" style="${btn()}">Restock Subscribers</button><button data-open-advanced="coupons" style="${btn()}">Coupons</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button><button data-open-advanced="ops" style="${btn()}">Operations Detail</button><button data-open-advanced="settings" style="${btn(true)}">Settings & Diagnostics</button></div><div style="border-top:1px solid #333;margin-top:9px;padding-top:7px;font-size:11px;color:#aaa;">Revenue ${money(brief.revenue)} · Gross profit ${money(brief.grossProfit)} · Dead capital ${money(brief.deadCapital)} · Lost profit ${money(brief.lostProfit)}</div>`);
+        return card(`<b>Tools & Settings</b><div style="font-size:11px;color:#999;margin:4px 0 8px;">Advanced reports and configuration remain fully available. Current strategy: <b>${escapeHtml(preset)}</b>.</div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;"><button data-simple-go="reports" style="${btn()}">Reports & Business Rules</button><button data-open-advanced="faction" style="${btn()}">Faction Inventory</button><button data-open-advanced="analytics" style="${btn()}">Analytics & Reports</button><button data-open-advanced="sales" style="${btn()}">Sales Ledger</button><button data-open-advanced="inventory" style="${btn()}">Full Inventory</button><button data-open-advanced="procurement" style="${btn()}">Full Procurement</button><button data-open-advanced="intel" style="${btn()}">Full Market Intel</button><button data-open-advanced="subscribers" style="${btn()}">Restock Subscribers</button><button data-open-advanced="coupons" style="${btn()}">Coupons</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button><button data-open-advanced="ops" style="${btn()}">Operations Detail</button><button data-open-advanced="settings" style="${btn(true)}">Settings & Diagnostics</button></div><div style="border-top:1px solid #333;margin-top:9px;padding-top:7px;font-size:11px;color:#aaa;">Revenue ${money(brief.revenue)} · Gross profit ${money(brief.grossProfit)} · Dead capital ${money(brief.deadCapital)} · Lost profit ${money(brief.lostProfit)}</div>`);
     }
 
 
