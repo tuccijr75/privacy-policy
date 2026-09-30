@@ -6061,7 +6061,7 @@
         db.procurement.marketSnapshots[id] = {
             fetchedAt: nowIso(),
             bazaar: {},
-            itemMarket: { lowest: 280, median: 300, third: 310 },
+            itemMarket: { lowest: 280, median: 300, third: 310, listings: 3, totalQty: 30 },
             realisticExit: Math.floor(310 * (1 - ITEM_MARKET_FEE_RATE))
         };
         const trusted = trustedListingPriceDecision(db, id, row, { buckets: [], best: null });
