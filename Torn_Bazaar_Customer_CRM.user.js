@@ -5655,7 +5655,7 @@
             render();
         }
 
-        const result = { sales:false, procurement:false, market:false, dollar:false, travel:false, faction:false, errors:[], cached:[] };
+        const result = { sales:false, procurement:false, market:false, dollar:false, travel:false, faction:false, errors:[], warnings:[], stale:[], cached:[] };
         try {
             let workingDb = initialDb;
             let plan = initialPlan;
@@ -5708,8 +5708,15 @@
                 const db = dbLoad();
                 plan = businessRefreshPlan(db, { force: effectiveForce });
                 if (plan.travel) {
-                    await syncTravelStock({ silent:true, force:false });
-                    result.travel = true;
+                    const beforeTravelAt = db.travelIntel?.lastSyncAt || null;
+                    await syncTravelStock({ silent:true, force:effectiveForce });
+                    const afterTravelAt = dbLoad().travelIntel?.lastSyncAt || null;
+                    if (afterTravelAt && afterTravelAt !== beforeTravelAt) {
+                        result.travel = true;
+                    } else {
+                        result.stale.push('travel');
+                        result.warnings.push('Travel needs a newer TornW3B capture.');
+                    }
                 }
             } catch (error) {
                 result.errors.push('Travel: ' + (error?.message || String(error)));
@@ -5735,9 +5742,15 @@
 
             if (!silent) {
                 const refreshed = ['sales','market','dollar','procurement','travel','faction'].filter(key => result[key]);
-                statusText = result.errors.length
-                    ? `Refresh complete with ${result.errors.length} warning(s): ${result.errors.join('; ')}`
-                    : `Business data ready: ${refreshed.length ? refreshed.join(', ') : 'cached data still fresh'}.`;
+                const refreshedText = refreshed.length ? refreshed.join(', ') : 'no source required a successful update';
+                if (result.errors.length) {
+                    statusText = 'Refresh complete with errors: ' + result.errors.join('; ') +
+                        (result.warnings.length ? ' Warnings: ' + result.warnings.join('; ') : '');
+                } else if (result.warnings.length) {
+                    statusText = 'Refresh complete: ' + refreshedText + '. ' + result.warnings.join(' ');
+                } else {
+                    statusText = 'Business data ready: ' + refreshedText + '.';
+                }
                 render();
             }
             return result;
