@@ -5160,9 +5160,12 @@
                 dbSave(db);
             }
 
+            const dollarNote = result.actualPrice === 1
+                ? ' Torn $1 access is buyer-specific; the Bazaar page is the final eligibility check.'
+                : '';
             statusText = result.priceChanged
-                ? 'Listing still exists, but price changed from ' + money(result.expectedPrice) + ' to ' + money(result.actualPrice) + '. Local cache updated; opening current Bazaar.'
-                : 'Listing verified: ' + result.quantity.toLocaleString() + ' available @ ' + money(result.actualPrice) + '. Opening Bazaar.';
+                ? 'Listing still exists, but price changed from ' + money(result.expectedPrice) + ' to ' + money(result.actualPrice) + '. Local cache updated; opening current Bazaar.' + dollarNote
+                : 'Listing verified: ' + result.quantity.toLocaleString() + ' available @ ' + money(result.actualPrice) + '. Opening Bazaar.' + dollarNote;
             render();
             navigateFromCRM('https://www.torn.com/bazaar.php?userId=' + encodeURIComponent(sellerId));
             return true;
@@ -5185,31 +5188,46 @@
     }
 
 
+    function normalizeDollarBazaarItem(row) {
+        const itemId = asId(row?.itemId ?? row?.item_id ?? row?.id);
+        const sellerId = asId(row?.playerId ?? row?.player_id ?? row?.sellerId ?? row?.seller_id);
+        return {
+            itemId,
+            itemName: String(row?.itemName ?? row?.item_name ?? row?.name ?? ''),
+            itemType: String(row?.itemType ?? row?.item_type ?? row?.type ?? ''),
+            sellerId,
+            sellerName: String(row?.sellerName ?? row?.seller_name ?? row?.playerName ?? row?.player_name ?? ''),
+            quantity: Math.max(0, Number(row?.quantity ?? row?.qty ?? row?.amount ?? 0)),
+            marketPrice: Math.max(0, Number(row?.marketPrice ?? row?.market_price ?? row?.value ?? 0)),
+            totalValue: Math.max(0, Number(row?.totalValue ?? row?.total_value ?? 0)),
+            lastUpdated: row?.lastUpdated ?? row?.last_updated ?? row?.last_checked ?? row?.updated_at ?? null
+        };
+    }
+
+    function normalizeDollarBazaarSeller(row) {
+        return {
+            sellerId: asId(row?.playerId ?? row?.player_id ?? row?.sellerId ?? row?.seller_id ?? row?.id),
+            sellerName: String(row?.name ?? row?.sellerName ?? row?.seller_name ?? row?.playerName ?? row?.player_name ?? ''),
+            itemCount: Math.max(0, Number(row?.itemCount ?? row?.item_count ?? row?.items ?? 0)),
+            totalMarketValue: Math.max(0, Number(row?.totalMarketValue ?? row?.total_market_value ?? row?.value ?? 0))
+        };
+    }
+
+
     async function syncWeavDollarBazaars() {
         const [itemRows, bazaarRows] = await Promise.all([
             fetchWeavPaged('/dollar-bazaars/items', 'items', 5, 100),
             fetchWeavPaged('/dollar-bazaars/bazaars', 'bazaars', 5, 100)
         ]);
         const db = dbLoad();
-        db.marketIntel.dollarItems = itemRows.map(row => ({
-            itemId: asId(row?.itemId ?? row?.item_id),
-            itemName: String(row?.itemName ?? row?.item_name ?? ''),
-            itemType: String(row?.itemType ?? row?.item_type ?? ''),
-            sellerId: asId(row?.playerId ?? row?.player_id ?? row?.sellerId ?? row?.seller_id),
-            sellerName: String(row?.sellerName ?? row?.seller_name ?? row?.playerName ?? row?.player_name ?? ''),
-            quantity: Math.max(0, Number(row?.quantity ?? row?.qty ?? 0)),
-            marketPrice: Math.max(0, Number(row?.marketPrice ?? row?.market_price ?? 0)),
-            totalValue: Math.max(0, Number(row?.totalValue ?? row?.total_value ?? 0)),
-            lastUpdated: row?.lastUpdated ?? row?.last_updated ?? row?.last_checked ?? null
-        })).filter(row => row.itemId && row.sellerId && row.quantity > 0)
-          .sort((a,b) => b.totalValue - a.totalValue || b.marketPrice - a.marketPrice);
+        db.marketIntel.dollarItems = itemRows
+            .map(normalizeDollarBazaarItem)
+            .filter(row => row.itemId && row.sellerId && row.quantity > 0)
+            .sort((a,b) => b.totalValue - a.totalValue || b.marketPrice - a.marketPrice);
 
-        db.marketIntel.dollarBazaars = bazaarRows.map(row => ({
-            sellerId: asId(row?.playerId ?? row?.player_id ?? row?.sellerId ?? row?.seller_id),
-            sellerName: String(row?.name ?? row?.sellerName ?? row?.seller_name ?? row?.playerName ?? row?.player_name ?? ''),
-            itemCount: Math.max(0, Number(row?.itemCount ?? row?.item_count ?? 0)),
-            totalMarketValue: Math.max(0, Number(row?.totalMarketValue ?? row?.total_market_value ?? 0))
-        })).filter(row => row.sellerId);
+        db.marketIntel.dollarBazaars = bazaarRows
+            .map(normalizeDollarBazaarSeller)
+            .filter(row => row.sellerId);
 
         db.marketIntel.lastDollarSyncAt = nowIso();
         dbSave(db);
