@@ -6400,16 +6400,43 @@
 
         let workbookOk = false;
         let workbookBytes = 0;
+        let workbookStructureOk = false;
+        let financialDocumentsOk = false;
         try {
-            const bytes = buildFinancialXlsx(defaultDb());
+            const exportDb = defaultDb();
+            const docs = financialExportDocuments(exportDb);
+            const expectedDocs = ['summary','sales','acquisitions','inventory','refunds','customers','procurement'];
+            financialDocumentsOk =
+                expectedDocs.every(key =>
+                    docs?.[key] &&
+                    Array.isArray(docs[key].headers) &&
+                    docs[key].headers.length > 0 &&
+                    Array.isArray(docs[key].rows)
+                ) &&
+                Object.keys(docs || {}).length === expectedDocs.length;
+
+            const bytes = buildFinancialXlsx(exportDb);
             workbookBytes = Number(bytes?.length || 0);
+            const zipText = bytes instanceof Uint8Array
+                ? Array.from(bytes, b => String.fromCharCode(b)).join('')
+                : '';
+            const expectedSheets = ['Summary','Sales','Acquisitions','Inventory Profit','Refunds','Customer Value','Procurement'];
+            workbookStructureOk =
+                expectedSheets.every(name => zipText.includes('<sheet name="' + name + '"')) &&
+                expectedSheets.every((_, index) => zipText.includes('xl/worksheets/sheet' + (index + 1) + '.xml')) &&
+                zipText.includes('xl/workbook.xml') &&
+                zipText.includes('xl/_rels/workbook.xml.rels') &&
+                zipText.includes('xl/styles.xml');
+
             workbookOk =
                 bytes instanceof Uint8Array &&
                 bytes.length > 500 &&
                 bytes[0] === 0x50 &&
                 bytes[1] === 0x4B &&
                 bytes[2] === 0x03 &&
-                bytes[3] === 0x04;
+                bytes[3] === 0x04 &&
+                financialDocumentsOk &&
+                workbookStructureOk;
         } catch {}
 
         const legacy = defaultDb();
@@ -6582,6 +6609,8 @@
             dollarSnake,
             workbookOk,
             workbookBytes,
+            financialDocumentsOk,
+            workbookStructureOk,
             migrationOk,
             refreshPlanOk,
             businessRulePropagationOk,
