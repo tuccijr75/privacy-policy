@@ -37,7 +37,6 @@
     const BAZAAR_SELL_LOG_ID = 1226;
     const PENDING_COMPOSE_KEY = 'mm_bazaar_crm_pending_compose_v1';
     const PENDING_FIRST_SEND_KEY = 'mm_bazaar_crm_pending_first_send_v1';
-    const POLL_MS = 15_000;
     const FIRST_SYNC_LOOKBACK_MS = 24 * 60 * 60 * 1000;
     const CUSTOMER_REFRESH_LOOKBACK_MS = 72 * 60 * 60 * 1000;
     const NORMAL_LOOKBACK_MS = 6 * 60 * 60 * 1000;
@@ -63,8 +62,12 @@
     const WEAV3R_GLOBAL_TTL_MS = 60_000;
     const WEAV3R_DETAIL_TTL_MS = 60_000;
     const WEAV3R_MAX_ENRICH = 30;
-    const MARKET_ENRICH_CONCURRENCY = 4;
-    const PROCUREMENT_MARKET_CONCURRENCY = 3;
+    const SMART_REFRESH_ITEM_LIMIT = 8;
+    const MARKET_ENRICH_CONCURRENCY = 1;
+    const PROCUREMENT_MARKET_CONCURRENCY = 1;
+    const BACKGROUND_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+    const BACKGROUND_COORDINATOR_LEASE_MS = 75 * 1000;
+    const BACKGROUND_COORDINATOR_KEY = 'mm_bazaar_crm_background_coordinator_v1';
     const BAZAAR_VERIFY_MAX_AGE_SEC = 120;
     const MARKET_INTEL_HISTORY_MAX = 120;
     const OPS_SNAPSHOT_MAX = 2500;
@@ -229,7 +232,8 @@
             },
             syncState: {
                 lastUnifiedSyncAt: null,
-                lastUnifiedSyncError: null
+                lastUnifiedSyncError: null,
+                backgroundRefreshEnabled: false
             },
             procurement: {
                 catalog: {},
@@ -442,6 +446,7 @@
         db.syncState = db.syncState && typeof db.syncState === 'object' ? db.syncState : {};
         db.syncState.lastUnifiedSyncAt = db.syncState.lastUnifiedSyncAt || null;
         db.syncState.lastUnifiedSyncError = db.syncState.lastUnifiedSyncError || null;
+        db.syncState.backgroundRefreshEnabled = db.syncState.backgroundRefreshEnabled === true;
 
         db.procurement = db.procurement && typeof db.procurement === 'object' ? db.procurement : {};
         db.procurement.catalog = db.procurement.catalog && typeof db.procurement.catalog === 'object' ? db.procurement.catalog : {};
@@ -656,12 +661,12 @@
                             dbCache = normalizeDb(latest);
                             // Do not tear down/rebuild a minimized panel in background tabs.
                             // It will render from fresh dbCache when reopened.
-                            if (!getUI().minimized) render();
+                            if (document.visibilityState === 'visible' && !getUI().minimized) render();
                         }
                     } catch (error) {
                         console.warn('[MM CRM] Cross-tab refresh failed', error);
                     }
-                }, 120);
+                }, 750);
             });
         } catch (error) {
             console.warn('[MM CRM] BroadcastChannel unavailable', error);
@@ -3088,7 +3093,7 @@
         return { budget, remaining, plan };
     }
 
-    async function syncProcurement({ silent = false } = {}) {
+    async function syncProcurement({ silent = false, marketLimit = null } = {}) {
         if (procurementRunning || !getApiKey()) return { skipped: true };
         procurementRunning = true;
         if (!silent) {
@@ -3147,7 +3152,9 @@
                     b.acquisitionScore - a.acquisitionScore ||
                     b.daily - a.daily
                 )
-                .slice(0, rules.marketRefreshLimit);
+                .slice(0, marketLimit == null
+                    ? rules.marketRefreshLimit
+                    : Math.max(1, Math.min(rules.marketRefreshLimit, Number(marketLimit || SMART_REFRESH_ITEM_LIMIT))));
 
             const marketResults = await mapWithConcurrency(
                 candidates,
@@ -5662,12 +5669,15 @@
         return results;
     }
 
-    async function enrichTopGlobalOpportunities() {
+    async function enrichTopGlobalOpportunities(maxItems = null) {
         const db = dbLoad();
-        const limit = Math.max(1, Math.min(
+        const configuredLimit = Math.max(1, Math.min(
             WEAV3R_MAX_ENRICH,
             businessRules(db).marketRefreshLimit
         ));
+        const limit = maxItems == null
+            ? configuredLimit
+            : Math.max(1, Math.min(configuredLimit, Number(maxItems || SMART_REFRESH_ITEM_LIMIT)));
         const rows = globalOpportunityRows(db).slice(0, limit);
         const results = await mapWithConcurrency(
             rows,
@@ -5691,7 +5701,7 @@
         return { requested: rows.length, ok };
     }
 
-    async function syncMarketIntelligence(full = false, { silent = false } = {}) {
+    async function syncMarketIntelligence(full = false, { silent = false, maxItems = null } = {}) {
         if (procurementRunning) return { skipped: true };
         procurementRunning = true;
         if (!silent) {
@@ -5700,7 +5710,7 @@
         }
         try {
             await syncWeavMarketplace(true);
-            const enrichment = await enrichTopGlobalOpportunities();
+            const enrichment = await enrichTopGlobalOpportunities(maxItems);
             if (full) {
                 await syncWeavDollarBazaars();
                 await syncWeavRanked();
@@ -5807,11 +5817,13 @@
         const setRefreshStage = stage => {
             if (silent) return;
             statusText = 'Refreshing business data — ' + stage + '…';
-            render();
+            const status = document.getElementById('mm-status');
+            if (status) status.textContent = statusText;
         };
         if (!silent) setRefreshStage('starting');
 
         const result = { sales:false, procurement:false, market:false, dollar:false, travel:false, faction:false, costBasis:false, costBasisAdded:0, errors:[], warnings:[], stale:[], cached:[] };
+        const operationalMarketLimit = full ? null : SMART_REFRESH_ITEM_LIMIT;
         try {
             let workingDb = initialDb;
             let plan = initialPlan;
@@ -5836,7 +5848,7 @@
             // and seller-level/official corroboration.
             if (plan.market) {
                 setRefreshStage('market');
-                const r = await syncMarketIntelligence(full, { silent:true });
+                const r = await syncMarketIntelligence(full, { silent:true, maxItems:operationalMarketLimit });
                 result.market = Boolean(r?.ok);
                 // A successful full intelligence sync already refreshed Dollar Bazaars.
                 if (full && r?.ok) result.dollar = true;
@@ -5860,7 +5872,7 @@
                 plan = businessRefreshPlan(workingDb, { force: effectiveForce });
                 if (plan.procurement) {
                     setRefreshStage('procurement');
-                    const r = await syncProcurement({ silent:true });
+                    const r = await syncProcurement({ silent:true, marketLimit:operationalMarketLimit });
                     result.procurement = Boolean(r?.ok);
                     if (r?.error) result.errors.push('Procurement: ' + r.error);
                 }
@@ -5939,12 +5951,9 @@
     }
 
     function ensureDataForTab(tab) {
-        if (!['home','stock','deals','customers','reports'].includes(String(tab || ''))) return;
-        setTimeout(() => {
-            syncBusinessData({ silent:true, force:false }).then(() => render()).catch(error => {
-                console.warn('[MM CRM] Smart refresh failed', error);
-            });
-        }, 0);
+        // Navigation is intentionally read-only. Data refresh occurs only when the
+        // operator presses Smart Refresh or a targeted Advanced maintenance action.
+        return ['home','stock','deals','customers','reports'].includes(String(tab || ''));
     }
 
 
@@ -6833,11 +6842,12 @@
             businessRules({ businessRules:{ marketRefreshLimit:99 } }).marketRefreshLimit === WEAV3R_MAX_ENRICH &&
             businessRules({ businessRules:{ marketRefreshLimit:1 } }).marketRefreshLimit === 5;
 
-        const boundedConcurrencyOk =
-            MARKET_ENRICH_CONCURRENCY > 1 &&
-            MARKET_ENRICH_CONCURRENCY <= WEAV3R_MAX_ENRICH &&
-            PROCUREMENT_MARKET_CONCURRENCY > 1 &&
-            PROCUREMENT_MARKET_CONCURRENCY <= WEAV3R_MAX_ENRICH;
+        const resourceSafeRefreshOk =
+            MARKET_ENRICH_CONCURRENCY === 1 &&
+            PROCUREMENT_MARKET_CONCURRENCY === 1 &&
+            SMART_REFRESH_ITEM_LIMIT > 0 &&
+            SMART_REFRESH_ITEM_LIMIT < WEAV3R_MAX_ENRICH &&
+            defaultDb().syncState.backgroundRefreshEnabled === false;
 
         const acquisitionIndexDb = defaultDb();
         acquisitionIndexDb.procurement.acquisitions = [{
@@ -6899,7 +6909,7 @@
                 refreshPlanOk &&
                 businessRulePropagationOk &&
                 refreshBreadthClampOk &&
-                boundedConcurrencyOk &&
+                resourceSafeRefreshOk &&
                 acquisitionCoverageGateOk &&
                 acquisitionCoverageCurrentOk &&
                 acquisitionCoverageWindowOk &&
@@ -6952,7 +6962,7 @@
             refreshPlanOk,
             businessRulePropagationOk,
             refreshBreadthClampOk,
-            boundedConcurrencyOk,
+            resourceSafeRefreshOk,
             acquisitionCoverageGateOk,
             acquisitionCoverageCurrentOk,
             acquisitionCoverageWindowOk,
@@ -7824,7 +7834,9 @@
         if (githubSyncTimer) clearInterval(githubSyncTimer);
         if (!getGithubSettings().autoSync) return;
         githubSyncTimer = setInterval(() => {
-            if (githubConfigured()) githubSyncNow({ silent: true });
+            if (githubConfigured() && claimBackgroundCoordinator()) {
+                githubSyncNow({ silent: true });
+            }
         }, GITHUB_SYNC_INTERVAL_MS);
     }
 
@@ -11856,6 +11868,10 @@
             <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
                 <button data-smart-refresh style="${btn(true)}">Smart Refresh Business Data</button>
             </div>
+            <div style="margin-top:8px;padding:7px;border:1px solid #333;border-radius:6px;background:#151515;">
+                <label style="font-size:11px;"><input id="mm-background-refresh" type="checkbox" ${db.syncState.backgroundRefreshEnabled ? 'checked' : ''}> Enable low-frequency background refresh while one visible CRM tab is open</label>
+                <div style="font-size:10px;color:#888;margin-top:4px;">Off by default. Normal operation is manual Smart Refresh. Background mode uses one coordinator tab and never runs from hidden/minimized CRM tabs.</div>
+            </div>
             <details style="margin-top:7px;">
                 <summary style="cursor:pointer;font-size:11px;color:#aaa;">Maintenance & targeted syncs</summary>
                 <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
@@ -11889,7 +11905,7 @@
                     <button id="mm-clear-faction-api" style="${btn()}">Clear</button>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:11px;">
-                    <label><input id="mm-faction-auto-sync" type="checkbox" ${db.factionInventory.settings.autoSync ? 'checked' : ''}> Hourly background sync when dedicated key is configured</label>
+                    <label><input id="mm-faction-auto-sync" type="checkbox" ${db.factionInventory.settings.autoSync ? 'checked' : ''}> Include faction inventory when opt-in background refresh is enabled</label>
                     <button id="mm-faction-sync-settings" style="${btn()}">Sync Armory Now</button>
                 </div>
                 <div style="font-size:10px;color:#888;margin-top:6px;">
@@ -11995,7 +12011,7 @@
         const ui = getUI();
         if (ui.minimized) return;
         const db = dbLoad();
-        root.innerHTML = `<div id="mm-drag" style="position:sticky;top:0;z-index:2;background:#111;border-bottom:1px solid #4b4024;cursor:move;"><div style="height:76px;background:linear-gradient(90deg,#0008,#0002),url('${BANNER_URL}') center/cover;border-radius:8px 8px 0 0;display:flex;align-items:flex-end;justify-content:space-between;padding:8px;box-sizing:border-box;"><div><b style="font-size:17px;text-shadow:0 2px 4px #000;">${SHOP_NAME}</b><div style="font-size:11px;text-shadow:0 1px 3px #000;">Bazaar Customer CRM v${VERSION}</div></div><div style="display:flex;gap:5px;"><button id="mm-minimize" style="${btn()}">−</button><button id="mm-close" style="${btn()}">×</button></div></div></div><div style="padding:9px;">${tabsHtml()}<div style="padding:6px 8px;background:#151515;border:1px solid #333;border-radius:5px;color:#d7ad4b;margin-bottom:7px;">${escapeHtml(statusText)}</div>${panelBody(db)}</div>`;
+        root.innerHTML = `<div id="mm-drag" style="position:sticky;top:0;z-index:2;background:#111;border-bottom:1px solid #4b4024;cursor:move;"><div style="height:76px;background:linear-gradient(90deg,#0008,#0002),url('${BANNER_URL}') center/cover;border-radius:8px 8px 0 0;display:flex;align-items:flex-end;justify-content:space-between;padding:8px;box-sizing:border-box;"><div><b style="font-size:17px;text-shadow:0 2px 4px #000;">${SHOP_NAME}</b><div style="font-size:11px;text-shadow:0 1px 3px #000;">Bazaar Customer CRM v${VERSION}</div></div><div style="display:flex;gap:5px;"><button id="mm-minimize" style="${btn()}">−</button><button id="mm-close" style="${btn()}">×</button></div></div></div><div style="padding:9px;">${tabsHtml()}<div id="mm-status" style="padding:6px 8px;background:#151515;border:1px solid #333;border-radius:5px;color:#d7ad4b;margin-bottom:7px;">${escapeHtml(statusText)}</div>${panelBody(db)}</div>`;
         bindPanelEvents(root);
         enableDragging(root);
     }
@@ -12106,7 +12122,7 @@
         }));
 
         root.querySelectorAll('[data-smart-refresh]').forEach(button => button.addEventListener('click', () => {
-            syncBusinessData({ silent:false, force:true }).catch(error => {
+            syncBusinessData({ silent:false, force:false }).catch(error => {
                 statusText = 'Smart refresh failed: ' + (error?.message || String(error));
                 render();
             });
@@ -12223,6 +12239,16 @@
             dbSave(db);
         });
         root.querySelector('#mm-faction-sync-settings')?.addEventListener('click', () => syncFactionInventory({silent:false,force:true}).catch(()=>{}));
+        root.querySelector('#mm-background-refresh')?.addEventListener('change', e => {
+            const db = dbLoad();
+            db.syncState.backgroundRefreshEnabled = Boolean(e.currentTarget.checked);
+            dbSave(db);
+            statusText = db.syncState.backgroundRefreshEnabled
+                ? 'Background refresh enabled for one visible CRM tab.'
+                : 'Background refresh disabled. Smart Refresh is manual.';
+            const status = document.getElementById('mm-status');
+            if (status) status.textContent = statusText;
+        });
 
         root.querySelector('#mm-add-customer')?.addEventListener('click', () => addManualCustomer(root.querySelector('#mm-add-id')?.value));
         root.querySelector('#mm-refresh-customers')?.addEventListener('click', async () => {
@@ -12791,6 +12817,43 @@
         saveUI({ left, top });
     }
 
+    function claimBackgroundCoordinator() {
+        if (document.visibilityState !== 'visible' || getUI().minimized) return false;
+        const now = Date.now();
+        let current = null;
+        try { current = JSON.parse(localStorage.getItem(BACKGROUND_COORDINATOR_KEY) || 'null'); } catch {}
+        if (
+            current &&
+            current.owner &&
+            current.owner !== tabInstanceId &&
+            Number(current.expiresAt || 0) > now
+        ) return false;
+        try {
+            localStorage.setItem(BACKGROUND_COORDINATOR_KEY, JSON.stringify({
+                owner: tabInstanceId,
+                expiresAt: now + BACKGROUND_COORDINATOR_LEASE_MS
+            }));
+        } catch {
+            return false;
+        }
+        return true;
+    }
+
+    async function backgroundRefreshTick() {
+        const db = dbLoad();
+        if (!db.syncState.backgroundRefreshEnabled) return;
+        if (!claimBackgroundCoordinator()) return;
+        try {
+            await syncBusinessData({ silent:true, force:false });
+            const latest = dbLoad();
+            if (isDataStale(latest.travelIntel?.lastYataSyncAt, BACKGROUND_REFRESH_INTERVAL_MS)) {
+                await syncYataTravelHistory({ silent:true }).catch(() => {});
+            }
+        } catch (error) {
+            console.warn('[MM CRM] Background refresh failed', error);
+        }
+    }
+
     async function initialize() {
         migrateApiKey();
 
@@ -12816,47 +12879,27 @@
         window.addEventListener('resize', clampPanel);
         scheduleGithubSync();
 
-        if (githubConfigured() && getGithubSettings().autoSync) {
-            setTimeout(() => githubSyncNow({ silent: true }), 90_000);
-        }
-
         if (getApiKey()) {
-            setTimeout(async () => {
-                await repairUsernames(8);
-                render();
-                setTimeout(() => syncBusinessData({ silent:true, force:false }).catch(error => console.warn('[MM CRM] Smart startup refresh failed', error)), 250);
-                setTimeout(() => repairRecentSalesCoverage({ lookbackMs: FIRST_SYNC_LOOKBACK_MS, silent: true }).catch(error => console.warn('[MM CRM] Recent sales repair failed', error)), 2200);
-            }, 1000);
+            statusText = 'Ready. Smart Refresh is manual.';
+            render();
         } else {
             statusText = 'Torn API key missing. Sales/customer sync is paused. Open More → Settings, paste your Torn API key, and Save.';
             render();
         }
-        setInterval(() => {
-            syncBusinessData({ silent:true, force:false }).catch(error =>
-                console.warn('[MM CRM] Background business refresh failed', error)
-            );
-        }, POLL_MS);
 
-        setTimeout(() => checkCrmUpdate({silent:true}).catch(()=>{}), 12_000);
-
-        if (getFactionApiKey() && dbLoad().factionInventory.settings.autoSync) {
-            setTimeout(() => syncFactionInventory({silent:true}).catch(error => console.warn('[MM CRM] Faction inventory startup sync failed', error)), 6500);
-        }
         setInterval(() => {
-            const db=dbLoad();
-            if (getFactionApiKey() && db.factionInventory.settings.autoSync) {
-                syncFactionInventory({silent:true}).catch(error => console.warn('[MM CRM] Faction inventory background sync failed', error));
+            backgroundRefreshTick().catch(error => console.warn('[MM CRM] Background coordinator failed', error));
+        }, BACKGROUND_REFRESH_INTERVAL_MS);
+
+        setTimeout(() => {
+            const checkedAt = Number(crmUpdateStatus().checkedAt || 0);
+            if (
+                Date.now() - checkedAt > 6 * 60 * 60 * 1000 &&
+                claimBackgroundCoordinator()
+            ) {
+                checkCrmUpdate({silent:true}).catch(()=>{});
             }
-        }, FACTION_INVENTORY_SYNC_INTERVAL_MS);
-
-        setTimeout(() => syncYataTravelHistory({silent:true}).catch(error => console.warn('[MM CRM] YATA shared history startup sync failed', error)), 2400);
-        setInterval(() => syncYataTravelHistory({silent:true}).catch(error => console.warn('[MM CRM] YATA shared history sync failed', error)), YATA_SAMPLE_INTERVAL_MS);
-
-        setInterval(() => {
-            backgroundTravelSample().then(count => {
-                if(!count) syncTravelStock({ silent:true }).catch(error => console.warn('[MM CRM] Travel Stock background sync failed', error));
-            }).catch(() => {});
-        }, TRAVEL_SYNC_INTERVAL_MS);
+        }, 12_000);
     }
 
     // Manual utility surface. No automatic messaging or money transfer actions are exposed.
