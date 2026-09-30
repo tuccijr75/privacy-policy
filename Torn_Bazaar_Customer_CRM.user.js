@@ -2638,12 +2638,17 @@
         const proc = db.procurement;
         const rules = businessRules(db);
         const metrics = salesItemMetrics(db);
+        const globalCandidateIds = globalOpportunityRows(db)
+            .slice(0, Math.max(50, rules.marketRefreshLimit * 2))
+            .map(row => asId(row.id))
+            .filter(Boolean);
         const keys = new Set([
             ...Object.keys(proc.bazaar),
             ...Object.keys(proc.itemMarket),
             ...Object.keys(proc.inventory),
             ...Object.keys(proc.watchlist),
-            ...Object.keys(metrics).filter(k => /^\d+$/.test(k))
+            ...Object.keys(metrics).filter(k => /^\d+$/.test(k)),
+            ...globalCandidateIds
         ]);
 
         const rows = [];
@@ -2705,14 +2710,40 @@
                 : 0;
             const volatilityPenalty = Math.min(25, Math.max(0, history.volatilityPct) * 0.8);
 
-            // Acquisition ranking is intentionally ROI/turnover-first rather than
-            // shortage-first. Inventory need remains visible, but does not control rank.
-            const acquisitionScore = Math.max(0, Math.min(100,
+            // Start with market evidence, then shift ranking authority toward the
+            // owner's own demand + realized ROI as the personal sample matures.
+            const ownAverageSalePrice = Number(m.sold30d || 0) > 0
+                ? Number(m.revenue30d || 0) / Number(m.sold30d || 1)
+                : 0;
+            const ownRealizedRoiPct = avgCost > 0 && ownAverageSalePrice > 0
+                ? (ownAverageSalePrice - avgCost) / avgCost * 100
+                : 0;
+            const personalDemandScore = Math.min(100,
+                Math.log10(1 + Math.max(0, daily) * 12) * 55 +
+                Math.min(35, Number(m.saleDays30d || 0) * 3.5)
+            );
+            const personalRoiScore = Math.min(100, Math.max(0, ownRealizedRoiPct) * 5);
+            const personalMaturity = Math.max(0, Math.min(1,
+                Math.max(
+                    Number(m.sold30d || 0) / 30,
+                    Number(m.saleDays30d || 0) / 10
+                )
+            ));
+            const marketScore = Math.max(0, Math.min(100,
                 roiScore * 0.50 +
                 liquidity.score * 0.25 +
-                velocityScore * 0.20 +
-                absoluteProfitScore * 0.05 -
+                velocityScore * 0.15 +
+                absoluteProfitScore * 0.10 -
                 volatilityPenalty
+            ));
+            const personalScore = Math.max(0, Math.min(100,
+                personalDemandScore * 0.55 +
+                personalRoiScore * 0.45
+            ));
+            const personalWeight = personalMaturity * 0.70;
+            const acquisitionScore = Math.max(0, Math.min(100,
+                marketScore * (1 - personalWeight) +
+                personalScore * personalWeight
             ));
 
             let priority = 'LOW', rank = 4;
@@ -2781,6 +2812,7 @@
                 priority,
                 rank,
                 watched: Boolean(proc.watchlist[id]),
+                globalCandidate: globalCandidateIds.includes(id),
                 liquidityScore: liquidity.score,
                 liquidityGrade: liquidity.grade,
                 median7d: history.median7d,
@@ -2790,6 +2822,11 @@
                 marketFetchedAt: snap.fetchedAt || null,
                 marketSnapshotFresh,
                 velocityScore,
+                marketScore,
+                personalDemandScore,
+                ownRealizedRoiPct,
+                personalMaturity,
+                personalWeight,
                 acquisitionScore,
                 turnoverDays,
                 opportunityQtyCap,
@@ -5273,7 +5310,7 @@
             render();
         }
 
-        const result = { sales:false, procurement:false, market:false, travel:false, faction:false, errors:[] };
+        const result = { sales:false, procurement:false, market:false, dollar:false, travel:false, faction:false, errors:[] };
         try {
             if (getApiKey()) {
                 try {
@@ -5291,6 +5328,16 @@
                     const r = await syncMarketIntelligence(full, { silent:true });
                     result.market = Boolean(r?.ok);
                     if (r?.error) result.errors.push('Market: ' + r.error);
+                }
+
+                db = dbLoad();
+                if (force || isDataStale(db.marketIntel?.lastDollarSyncAt, 2 * 60 * 1000)) {
+                    try {
+                        await syncWeavDollarBazaars();
+                        result.dollar = true;
+                    } catch (error) {
+                        result.errors.push('$1 Bazaar: ' + (error?.message || String(error)));
+                    }
                 }
 
                 db = dbLoad();
@@ -5329,7 +5376,7 @@
             dbSave(db);
 
             if (!silent) {
-                const refreshed = ['sales','procurement','market','travel','faction'].filter(key => result[key]);
+                const refreshed = ['sales','market','dollar','procurement','travel','faction'].filter(key => result[key]);
                 statusText = result.errors.length
                     ? `Refresh complete with ${result.errors.length} warning(s): ${result.errors.join('; ')}`
                     : `Business data ready: ${refreshed.length ? refreshed.join(', ') : 'cached data still fresh'}.`;
@@ -11707,9 +11754,8 @@
             setTimeout(async () => {
                 await repairUsernames(8);
                 render();
-                sync({ silent: true });
-                setTimeout(() => repairRecentSalesCoverage({ lookbackMs: FIRST_SYNC_LOOKBACK_MS, silent: true }).catch(error => console.warn('[MM CRM] Recent sales repair failed', error)), 1800);
-                setTimeout(() => syncBusinessData({ silent:true, force:false }).catch(error => console.warn('[MM CRM] Smart startup refresh failed', error)), 2500);
+                setTimeout(() => syncBusinessData({ silent:true, force:false }).catch(error => console.warn('[MM CRM] Smart startup refresh failed', error)), 250);
+                setTimeout(() => repairRecentSalesCoverage({ lookbackMs: FIRST_SYNC_LOOKBACK_MS, silent: true }).catch(error => console.warn('[MM CRM] Recent sales repair failed', error)), 2200);
             }, 1000);
         } else {
             statusText = 'Torn API key missing. Sales/customer sync is paused. Open More → Settings, paste your Torn API key, and Save.';
