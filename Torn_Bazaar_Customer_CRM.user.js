@@ -2377,16 +2377,16 @@
 
         if (!itemMarketRows.length && !bazaarRows.length) {
             throw new Error(
-                `No official market listings returned. Item Market: ${imError?.message || 'empty'}; ` +
-                `Bazaar: ${bazaarError?.message || 'empty'}`
+                `No trusted market listings returned. Torn Item Market: ${imError?.message || 'empty'}; ` +
+                `Bazaar seller observations: ${bazaarError?.message || 'empty'}`
             );
         }
 
         const itemMarket = marketMetrics(itemMarketRows);
         const bazaar = marketMetrics(bazaarRows);
 
-        // Prefer Bazaar exit because it avoids the Item Market tax. If official Bazaar
-        // listing data is unavailable, use the third Item Market price net of 5%.
+        // Bazaar exit uses fresh TornW3B seller observations. Official Torn Item
+        // Market is an independent fallback and is netted for the 5% market fee.
         const realisticExit = bazaar.third || bazaar.lowest ||
             Math.floor((itemMarket.third || itemMarket.lowest || 0) * (1 - ITEM_MARKET_FEE_RATE));
 
@@ -2395,6 +2395,10 @@
             itemMarket,
             bazaar,
             realisticExit,
+            sources: {
+                itemMarket: itemMarketRows.length ? 'Torn API Item Market' : null,
+                bazaar: bazaarRows.length ? 'TornW3B fresh seller observations' : null
+            },
             totalDepth3Pct: Number(itemMarket.depth3Pct || 0) + Number(bazaar.depth3Pct || 0),
             fetchedAt: nowIso()
         };
@@ -5929,13 +5933,12 @@
         const sales = salesByItemDetailed(db, id)
             .filter(x => Date.now() - Number(x.timestamp || 0) <= 30 * 86400000 && Number(x.unitPrice || 0) > 0);
         const ownSaleMedian = sales.length >= 3 ? medianNumber(sales.map(x => x.unitPrice)) : 0;
-        const officialFresh = snapshot.fetchedAt && ageSeconds(snapshot.fetchedAt) <= Math.max(300, rules.maxListingAgeSec * 2);
+        const snapshotFresh = snapshot.fetchedAt && ageSeconds(snapshot.fetchedAt) <= Math.max(300, rules.maxListingAgeSec * 2);
+        const itemMarketFresh = Boolean(snapshotFresh && Number(snapshot?.itemMarket?.listings || 0) > 0);
 
         const signals = [];
-        if (officialFresh) {
-            const bazaarThird = Number(snapshot?.bazaar?.third || snapshot?.bazaar?.median || snapshot?.bazaar?.lowest || 0);
+        if (itemMarketFresh) {
             const imThirdNet = Math.floor(Number(snapshot?.itemMarket?.third || snapshot?.itemMarket?.median || snapshot?.itemMarket?.lowest || 0) * (1 - ITEM_MARKET_FEE_RATE));
-            if (bazaarThird > 0) signals.push({ source:'Torn Bazaar', value:bazaarThird, weight:3 });
             if (imThirdNet > 0) signals.push({ source:'Torn Item Market net', value:imThirdNet, weight:3 });
         }
 
@@ -5980,13 +5983,19 @@
         const dispersion = signals.length > 1
             ? (Math.max(...signals.map(x=>x.value)) - Math.min(...signals.map(x=>x.value))) / anchor
             : 0.50;
-        const confidence = Math.max(0, Math.min(100,
+        let confidence = Math.max(0, Math.min(100,
             Math.min(100, signals.length * 22) +
-            (officialFresh ? 20 : 0) +
+            (itemMarketFresh ? 20 : 0) +
             (freshListings.length ? 20 : 0) +
             (ownSaleMedian > 0 ? 20 : 0) -
             Math.min(40, dispersion * 100)
         ));
+        // A single authoritative source can still be actionable. External Bazaar
+        // evidence alone requires multiple fresh sellers before it gets the same trust.
+        if (itemMarketFresh) confidence = Math.max(confidence, 65);
+        if (ownSaleMedian > 0) confidence = Math.max(confidence, 65);
+        if (freshListings.length >= 3) confidence = Math.max(confidence, 60);
+        confidence = Math.min(100, confidence);
 
         return {
             price,
