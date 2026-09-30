@@ -5797,6 +5797,93 @@
     }
 
 
+    function workflowDataTrustSelfTest() {
+        const db = defaultDb();
+        const id = '1';
+        const row = {
+            id,
+            name: 'Synthetic Item',
+            bazaarPrice: 0,
+            avgCost: 100,
+            realisticExit: 0
+        };
+
+        // Regression: a wildly wrong aggregate Bazaar/market value is context only.
+        // It must never become the actionable listing price by itself.
+        db.marketIntel.marketplace[id] = {
+            itemId: id,
+            itemName: 'Synthetic Item',
+            lowestPrice: 900000,
+            bazaarAverage: 1000000,
+            marketPrice: 1000000
+        };
+        const aggregateOnly = trustedListingPriceDecision(db, id, row, { buckets: [], best: null });
+
+        const staleAt = Date.now() - 60 * 60 * 1000;
+        db.marketIntel.details[id] = {
+            itemId: id,
+            itemName: 'Synthetic Item',
+            organicListings: [{
+                price: 275,
+                quantity: 5,
+                sponsored: false,
+                sellerId: '99',
+                sellerName: 'Stale Seller',
+                lastChecked: staleAt,
+                contentUpdated: staleAt
+            }]
+        };
+        const staleListing = trustedListingPriceDecision(db, id, row, { buckets: [], best: null });
+
+        const now = Date.now();
+        db.marketIntel.details[id].organicListings = [{
+            price: 275,
+            quantity: 5,
+            sponsored: false,
+            sellerId: '99',
+            sellerName: 'Fresh Seller',
+            lastChecked: now,
+            contentUpdated: now
+        }];
+        db.procurement.marketSnapshots[id] = {
+            fetchedAt: nowIso(),
+            bazaar: {},
+            itemMarket: { lowest: 280, median: 300, third: 310 },
+            realisticExit: Math.floor(310 * (1 - ITEM_MARKET_FEE_RATE))
+        };
+        const trusted = trustedListingPriceDecision(db, id, row, { buckets: [], best: null });
+
+        db.procurement.inventory[id] = { itemId:id, name:'Synthetic Item', quantity:1 };
+        db.procurement.marketSnapshots[id] = {
+            fetchedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            bazaar: {},
+            itemMarket: { lowest: 10000, median: 15000, third: 20000 },
+            realisticExit: 19000
+        };
+        const staleProcurement = procurementRows(db).find(r => r.id === id);
+
+        return {
+            pass:
+                aggregateOnly.price === 0 &&
+                aggregateOnly.state === 'NEEDS MARKET REFRESH' &&
+                staleListing.price === 0 &&
+                trusted.state === 'TRUSTED' &&
+                trusted.price > 0 &&
+                trusted.price < 1000000 &&
+                staleProcurement?.marketSnapshotFresh === false &&
+                staleProcurement?.action === 'SKIP',
+            aggregateOnly,
+            staleListing,
+            trusted,
+            staleProcurement: staleProcurement ? {
+                action: staleProcurement.action,
+                marketSnapshotFresh: staleProcurement.marketSnapshotFresh,
+                bestBuyPrice: staleProcurement.bestBuyPrice,
+                realisticExit: staleProcurement.realisticExit
+            } : null
+        };
+    }
+
     function recommendedListingPrice(db, itemId, row = null, elasticity = null) {
         return trustedListingPriceDecision(db, itemId, row, elasticity).price;
     }
@@ -11346,6 +11433,13 @@
         processCustomerCommand,
         refreshCustomerUsername,
         syncProcurement,
+        syncBusinessData,
+        businessRules: () => businessRules(dbLoad()),
+        saveBusinessRules,
+        workflowDataTrustSelfTest,
+        financialExportDocuments: () => financialExportDocuments(dbLoad()),
+        exportFinancialDocument,
+        exportFinancialPack,
         syncMarketIntelligence,
         syncWeavMarketplace,
         enrichWeavItem,
