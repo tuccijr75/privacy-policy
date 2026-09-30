@@ -10005,7 +10005,7 @@
                 '<label style="font-size:10px;color:#aaa;">Market Items / Refresh<input id="mm-rule-refresh-limit" type="number" min="5" max="100" step="1" value="' + r.marketRefreshLimit + '" style="' + inputCss() + 'width:100%;"></label>' +
             '</div>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;"><button id="mm-save-business-rules" style="' + btn(true) + '">Save Business Rules</button></div>' +
-            '<div style="font-size:10px;color:#777;margin-top:6px;">Demand threshold is not used to punish new SKUs with little history. It activates after ≥5 sold units in 30 days or sales on ≥3 distinct days.</div>'
+            '<div style="font-size:10px;color:#777;margin-top:6px;">Before your personal sample matures, procurement uses market seller/depth evidence. After ≥5 sold units in 30 days or sales on ≥3 distinct days, your own demand increasingly controls ranking and the Demand/day threshold applies directly.</div>'
         );
     }
 
