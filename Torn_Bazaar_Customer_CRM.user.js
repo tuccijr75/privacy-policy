@@ -87,9 +87,7 @@
     const GITHUB_BACKUP_PASSPHRASE_KEY = 'mm_bazaar_crm_github_backup_passphrase_v1';
     const CONTACT_LEDGER_KEY = 'mm_bazaar_crm_contact_ledger_v1';
     const DB_CHANNEL_NAME = 'mm_bazaar_crm_cross_tab_v1';
-    const TRAVEL_SYNC_INTERVAL_MS = 5 * 60 * 1000;
     const YATA_TRAVEL_URL = 'https://yata.yt/api/v1/travel/export/';
-    const YATA_SAMPLE_INTERVAL_MS = 60 * 1000;
     const TRAVEL_HISTORY_WINDOW_HOURS = 24;
     const TRAVEL_FORECAST_LEDGER_MAX = 1000;
     const TRAVEL_FORECAST_MODEL_VERSION = '7.2.0-eval-2';
@@ -10171,12 +10169,6 @@
     // ============================================================
     // VALUE / ROI INTELLIGENCE v6.5
     // ============================================================
-
-    function medianNumber(values){
-        const a=values.map(Number).filter(Number.isFinite).sort((x,y)=>x-y);
-        if(!a.length)return 0; const m=Math.floor(a.length/2);
-        return a.length%2?a[m]:(a[m-1]+a[m])/2;
-    }
 
     function capitalRotationRows(db){
         return procurementRows(db).filter(r=>r.bestBuyPrice>0&&r.realisticExit>r.bestBuyPrice&&r.bestDealProfit>0).map(r=>{
