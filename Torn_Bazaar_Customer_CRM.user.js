@@ -5752,7 +5752,7 @@
             minAbsoluteProfit: Math.max(0, Number(rules.minAbsoluteProfit || 0)),
             minSellerCount: Math.max(0, Math.round(Number(rules.minSellerCount || 0))),
             maxListingAgeSec: Math.max(30, Math.round(Number(rules.maxListingAgeSec || 180))),
-            marketRefreshLimit: Math.max(5, Math.min(100, Math.round(Number(rules.marketRefreshLimit || 30))))
+            marketRefreshLimit: Math.max(5, Math.min(WEAV3R_MAX_ENRICH, Math.round(Number(rules.marketRefreshLimit || 30))))
         };
     }
 
@@ -5768,7 +5768,7 @@
         next.maxPrice = Math.max(next.minPrice, Number(next.maxPrice || Number.MAX_SAFE_INTEGER));
         next.minSellerCount = Math.max(0, Math.round(Number(next.minSellerCount || 0)));
         next.maxListingAgeSec = Math.max(30, Math.round(Number(next.maxListingAgeSec || 180)));
-        next.marketRefreshLimit = Math.max(5, Math.min(100, Math.round(Number(next.marketRefreshLimit || 30))));
+        next.marketRefreshLimit = Math.max(5, Math.min(WEAV3R_MAX_ENRICH, Math.round(Number(next.marketRefreshLimit || 30))));
         next.updatedAt = nowIso();
         db.businessRules = next;
 
@@ -10392,7 +10392,7 @@
                 '<label style="font-size:10px;color:#aaa;">Min Profit / unit<input id="mm-rule-min-profit" type="number" min="0" step="1" value="' + r.minAbsoluteProfit + '" style="' + inputCss() + 'width:100%;"></label>' +
                 '<label style="font-size:10px;color:#aaa;">Min Sellers<input id="mm-rule-min-sellers" type="number" min="0" step="1" value="' + r.minSellerCount + '" style="' + inputCss() + 'width:100%;"></label>' +
                 '<label style="font-size:10px;color:#aaa;">Max Listing Age (sec)<input id="mm-rule-max-age" type="number" min="30" step="10" value="' + r.maxListingAgeSec + '" style="' + inputCss() + 'width:100%;"></label>' +
-                '<label style="font-size:10px;color:#aaa;">Market Items / Refresh<input id="mm-rule-refresh-limit" type="number" min="5" max="100" step="1" value="' + r.marketRefreshLimit + '" style="' + inputCss() + 'width:100%;"></label>' +
+                '<label style="font-size:10px;color:#aaa;">Market Items / Refresh<input id="mm-rule-refresh-limit" type="number" min="5" max="30" step="1" value="' + r.marketRefreshLimit + '" style="' + inputCss() + 'width:100%;"></label>' +
             '</div>' +
             '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;"><button id="mm-save-business-rules" style="' + btn(true) + '">Save Business Rules</button></div>' +
             '<div style="font-size:10px;color:#777;margin-top:6px;">Before your personal sample matures, procurement uses market seller/depth evidence. After ≥5 sold units in 30 days or sales on ≥3 distinct days, your own demand increasingly controls ranking and the Demand/day threshold applies directly.</div>'
