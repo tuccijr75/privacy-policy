@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.3.2
-// @description  Bazaar operations CRM with in-CRM update checking, TornW3B travel intelligence, customer automation, procurement, analytics, and IndexedDB storage.
+// @version      7.4.0
+// @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js
 // @match        https://www.torn.com/*
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.3.2';
+    const VERSION = '7.4.0';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -9003,7 +9003,7 @@
     function tabsHtml() {
         const db = dbLoad();
         const factionReady = Boolean(getFactionApiKey()) || Object.keys(db.factionInventory?.current || {}).length > 0;
-        const simpleTabs = [['home','Home'],['stock','Stock'],['deals','Deals'],['customers','Customers'],['reports','Reports']];
+        const simpleTabs = [['home','Today'],['stock','Stock & List'],['deals','Buy'],['customers','Customers'],['reports','Reports']];
         if (factionReady) simpleTabs.push(['faction','Faction']);
         simpleTabs.push(['more','More']);
         const advancedTabs = [['ops','Operations'],['customers','Customers'],['inventory','Inventory'],['faction','Faction Inv'],['procurement','Procure'],['intel','Market Intel'],['analytics','Analytics'],['coupons','Coupons'],['subscribers','Restock'],['refunds','Refunds'],['sales','Sales'],['settings','Settings']];
@@ -10651,7 +10651,7 @@
                 simpleMetric('Refunds/Cashback', money(refunds)) +
                 simpleMetric('Stockouts', String(brief.stockouts)) +
             '</div>' +
-            '<div style="margin-top:7px;"><button data-open-advanced="analytics" style="' + btn() + '">Deep Analytics</button></div>'
+            '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;"><button data-open-advanced="analytics" style="' + btn() + '">Deep Analytics</button><button data-open-advanced="settings" style="' + btn(true) + '">Settings & Diagnostics</button></div>'
         );
 
         return summary + businessRulesCard(db, false) + financialExportCard() + demandHtml + roiHtml + health;
@@ -10668,7 +10668,7 @@
         const eligible = Object.values(db.coupons || {}).filter(c => couponQualification(db,c).qualified);
         const top = topBySpend.slice(0,10);
         const summary = `<div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;">${['VIP','LOYAL','REGULAR','NEW','AT RISK','DORMANT'].map(s=>simpleMetric(s,String(counts[s]||0))).join('')}</div>`;
-        const actions = card(`<b>Customer Actions</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;"><button id="mm-refresh-customers" style="${btn(true)}">Refresh Customers</button><button data-open-advanced="customers" style="${btn()}">View Customers</button><button data-open-advanced="subscribers" style="${btn()}">Restock Alerts ${pending.length?`(${pending.length})`:''}</button><button data-open-advanced="coupons" style="${btn()}">Coupons ${eligible.length?`(${eligible.length} eligible)`:''}</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button></div>`);
+        const actions = card(`<b>Customer Actions</b><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;"><button id="mm-refresh-customers" style="${btn()}">Refresh Customers Only</button><button data-open-advanced="customers" style="${btn()}">View Customers</button><button data-open-advanced="subscribers" style="${btn()}">Restock Alerts ${pending.length?`(${pending.length})`:''}</button><button data-open-advanced="coupons" style="${btn()}">Coupons ${eligible.length?`(${eligible.length} eligible)`:''}</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button></div>`);
         const values = card(`<b>Top Customer Value</b>${top.map(c=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(c.name)} [${escapeHtml(c.id)}]</b> · ${escapeHtml(c.segment)} · Spend ${money(c.monetary)}<details style="margin-top:3px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Recency ${c.recencyDays.toFixed(1)}d · Purchases ${c.frequency} · Affinity ${c.topProducts.map(x=>`${escapeHtml(x[0])}×${x[1]}`).join(', ')||'—'}</div></details></div>`).join('')||'<div style="font-size:11px;color:#888;">No customer history yet.</div>'}`);
         return summary + actions + values;
     }
@@ -11824,6 +11824,7 @@
         financialExportDocuments: () => financialExportDocuments(dbLoad()),
         exportFinancialDocument,
         exportFinancialPack,
+        exportFinancialWorkbook,
         syncMarketIntelligence,
         syncWeavMarketplace,
         enrichWeavItem,
