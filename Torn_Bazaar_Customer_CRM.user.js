@@ -5195,16 +5195,20 @@
     function normalizeDollarBazaarItem(row) {
         const itemId = asId(row?.itemId ?? row?.item_id ?? row?.id);
         const sellerId = asId(row?.playerId ?? row?.player_id ?? row?.sellerId ?? row?.seller_id);
+        const quantity = Math.max(0, Number(row?.quantity ?? row?.qty ?? row?.amount ?? 0));
+        const marketPrice = Math.max(0, Number(row?.marketPrice ?? row?.market_price ?? row?.value ?? 0));
+        const explicitTotal = Math.max(0, Number(row?.totalValue ?? row?.total_value ?? 0));
         return {
             itemId,
             itemName: String(row?.itemName ?? row?.item_name ?? row?.name ?? ''),
             itemType: String(row?.itemType ?? row?.item_type ?? row?.type ?? ''),
             sellerId,
             sellerName: String(row?.sellerName ?? row?.seller_name ?? row?.playerName ?? row?.player_name ?? ''),
-            quantity: Math.max(0, Number(row?.quantity ?? row?.qty ?? row?.amount ?? 0)),
-            marketPrice: Math.max(0, Number(row?.marketPrice ?? row?.market_price ?? row?.value ?? 0)),
-            totalValue: Math.max(0, Number(row?.totalValue ?? row?.total_value ?? 0)),
-            lastUpdated: row?.lastUpdated ?? row?.last_updated ?? row?.last_checked ?? row?.updated_at ?? null
+            quantity,
+            marketPrice,
+            totalValue: explicitTotal || marketPrice * quantity,
+            lastUpdated: row?.lastUpdated ?? row?.last_updated ?? row?.last_checked ?? row?.updated_at ?? null,
+            source: String(row?.source || 'TornW3B Dollar Bazaars API')
         };
     }
 
@@ -5302,7 +5306,8 @@
                     quantity,
                     marketPrice:value,
                     totalValue:value * quantity,
-                    lastUpdated:null
+                    lastUpdated:nowIso(),
+                    source:'TornW3B Dollar Bazaars public page'
                 });
                 continue;
             }
@@ -10457,7 +10462,8 @@
                     '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;font-size:10px;">' +
                         '<div><b>' + escapeHtml(d.itemName) + '</b> × ' + Number(d.quantity || 0).toLocaleString() +
                         ' · Market ' + money(d.marketPrice || 0) + ' · Value ' + money(d.totalValue || 0) +
-                        ' · ' + escapeHtml(freshnessAgeText(d.lastUpdated)) + '<br>' +
+                        ' · ' + escapeHtml(freshnessAgeText(d.lastUpdated)) +
+                        ' · ' + escapeHtml(d.source || 'TornW3B') + '<br>' +
                         escapeHtml(d.sellerName) + ' [' + escapeHtml(d.sellerId) + ']</div>' +
                         '<button data-intel-action="verify-seller" data-item="' + escapeHtml(d.itemId) + '" data-seller="' + escapeHtml(d.sellerId) + '" data-price="1" style="' + btn() + '">Verify & Open</button>' +
                     '</div>'
