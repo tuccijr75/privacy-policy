@@ -5756,8 +5756,7 @@
         };
     }
 
-    function saveBusinessRules(values) {
-        const db = dbLoad();
+    function applyBusinessRules(db, values) {
         const next = { ...db.businessRules };
         for (const [key, raw] of Object.entries(values || {})) {
             if (raw == null || String(raw).trim() === '') continue;
@@ -5783,6 +5782,12 @@
         db.marketIntel.settings.freshnessWarnSeconds = next.maxListingAgeSec;
         db.marketIntel.settings.maxEnrich = Math.min(WEAV3R_MAX_ENRICH, next.marketRefreshLimit);
         db.operations.settings.strategyPreset = 'CUSTOM';
+        return next;
+    }
+
+    function saveBusinessRules(values) {
+        const db = dbLoad();
+        applyBusinessRules(db, values);
         dbSave(db);
         render();
     }
@@ -6453,6 +6458,40 @@
             fullyStalePlan.travel === true &&
             fullyStalePlan.faction === false;
 
+        const rulesDb = defaultDb();
+        const appliedRules = applyBusinessRules(rulesDb, {
+            minRoiPct: 8.5,
+            minDemandPerDay: 0.4,
+            minPrice: 2500,
+            maxPrice: 750000,
+            minAbsoluteProfit: 12000,
+            minSellerCount: 5,
+            maxListingAgeSec: 90,
+            marketRefreshLimit: 99
+        });
+        const businessRulePropagationOk =
+            appliedRules.minRoiPct === 8.5 &&
+            appliedRules.minDemandPerDay === 0.4 &&
+            appliedRules.minPrice === 2500 &&
+            appliedRules.maxPrice === 750000 &&
+            appliedRules.minAbsoluteProfit === 12000 &&
+            appliedRules.minSellerCount === 5 &&
+            appliedRules.maxListingAgeSec === 90 &&
+            appliedRules.marketRefreshLimit === WEAV3R_MAX_ENRICH &&
+            rulesDb.procurement.settings.marketRefreshLimit === WEAV3R_MAX_ENRICH &&
+            rulesDb.marketIntel.settings.minRoiPct === 8.5 &&
+            rulesDb.marketIntel.settings.minAbsoluteProfit === 12000 &&
+            rulesDb.marketIntel.settings.minMarketPrice === 2500 &&
+            rulesDb.marketIntel.settings.maxCandidatePrice === 750000 &&
+            rulesDb.marketIntel.settings.minBazaarSellers === 5 &&
+            rulesDb.marketIntel.settings.freshnessWarnSeconds === 90 &&
+            rulesDb.marketIntel.settings.maxEnrich === WEAV3R_MAX_ENRICH &&
+            rulesDb.operations.settings.strategyPreset === 'CUSTOM';
+
+        const refreshBreadthClampOk =
+            businessRules({ businessRules:{ marketRefreshLimit:99 } }).marketRefreshLimit === WEAV3R_MAX_ENRICH &&
+            businessRules({ businessRules:{ marketRefreshLimit:1 } }).marketRefreshLimit === 5;
+
         return {
             pass:
                 aggregateOnly.price === 0 &&
@@ -6473,7 +6512,9 @@
                 dollarSnake.sellerId === '100' &&
                 workbookOk &&
                 migrationOk &&
-                refreshPlanOk,
+                refreshPlanOk &&
+                businessRulePropagationOk &&
+                refreshBreadthClampOk,
             aggregateOnly,
             staleListing,
             trusted,
@@ -6504,6 +6545,9 @@
             workbookBytes,
             migrationOk,
             refreshPlanOk,
+            businessRulePropagationOk,
+            refreshBreadthClampOk,
+            appliedBusinessRules: appliedRules,
             refreshPlans: {
                 fullyFreshPlan,
                 fullyStalePlan
