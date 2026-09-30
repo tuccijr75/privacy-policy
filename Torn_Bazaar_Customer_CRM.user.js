@@ -60,6 +60,7 @@
     const WEAV3R_GLOBAL_TTL_MS = 60_000;
     const WEAV3R_DETAIL_TTL_MS = 60_000;
     const WEAV3R_MAX_ENRICH = 30;
+    const BAZAAR_VERIFY_MAX_AGE_SEC = 120;
     const MARKET_INTEL_HISTORY_MAX = 120;
     const OPS_SNAPSHOT_MAX = 2500;
     const PRICE_HISTORY_MAX_PER_ITEM = 500;
@@ -5141,6 +5142,20 @@
         return apiRequestV1UserIdSelection(playerId, 'bazaar');
     }
 
+    function bazaarSnapshotFreshness(timestamp, nowMs = Date.now()) {
+        const raw = Number(timestamp || 0);
+        if (!(raw > 0)) {
+            return { fresh:false, ageSeconds:Number.POSITIVE_INFINITY, timestamp:0 };
+        }
+        const atMs = raw > 1e12 ? raw : raw * 1000;
+        const ageSeconds = Math.max(0, (Number(nowMs || Date.now()) - atMs) / 1000);
+        return {
+            fresh: ageSeconds <= BAZAAR_VERIFY_MAX_AGE_SEC,
+            ageSeconds,
+            timestamp:raw
+        };
+    }
+
     async function verifyBazaarSellerForItem(itemId, sellerId, expectedPrice = 0) {
         const id = asId(itemId);
         const seller = asId(sellerId);
@@ -5149,13 +5164,24 @@
         }
 
         const data = await fetchPublicBazaarV1(seller);
+        const snapshot = bazaarSnapshotFreshness(data?.bazaar_timestamp);
+        if (!snapshot.fresh) {
+            return {
+                verified:false,
+                reason:'snapshot-stale',
+                sellerId:seller,
+                bazaarTimestamp:snapshot.timestamp,
+                snapshotAgeSec:snapshot.ageSeconds
+            };
+        }
+
         const rows = Array.isArray(data?.bazaar) ? data.bazaar : [];
         const item = rows.find(row => asId(row?.ID ?? row?.id ?? row?.item_id) === id);
         if (!data?.bazaar_is_open) {
-            return { verified:false, reason:'bazaar-closed', sellerId:seller };
+            return { verified:false, reason:'bazaar-closed', sellerId:seller, bazaarTimestamp:snapshot.timestamp, snapshotAgeSec:snapshot.ageSeconds };
         }
         if (!item) {
-            return { verified:false, reason:'item-gone', sellerId:seller };
+            return { verified:false, reason:'item-gone', sellerId:seller, bazaarTimestamp:snapshot.timestamp, snapshotAgeSec:snapshot.ageSeconds };
         }
 
         const actualPrice = Math.max(0, Number(item.price || 0));
@@ -5173,7 +5199,8 @@
             expectedPrice:expected,
             quantity,
             priceChanged,
-            bazaarTimestamp:Number(data?.bazaar_timestamp || 0)
+            bazaarTimestamp:snapshot.timestamp,
+            snapshotAgeSec:snapshot.ageSeconds
         };
     }
 
@@ -5187,20 +5214,25 @@
             const seller = asId(sellerId);
             const detail = db.marketIntel?.details?.[id];
             if (!result.verified) {
-                if (detail) {
+                const disproved = result.reason === 'bazaar-closed' || result.reason === 'item-gone';
+                if (detail && disproved) {
                     const keep = row => asId(row?.sellerId) !== seller;
                     detail.organicListings = (detail.organicListings || []).filter(keep);
                     detail.listings = (detail.listings || []).filter(keep);
                     detail.fetchedAt = nowIso();
-                    addIntelDiagnostic(db.marketIntel, 'Live Bazaar verification removed stale seller ' + seller + ' for item ' + id + ' (' + result.reason + ').');
+                    addIntelDiagnostic(db.marketIntel, 'Bazaar recency check removed disproved seller ' + seller + ' for item ' + id + ' (' + result.reason + ').');
                     dbSave(db);
                 }
                 const reason = result.reason === 'bazaar-closed'
                     ? 'Seller Bazaar is closed.'
                     : result.reason === 'item-gone'
                         ? 'Item is no longer in that Bazaar.'
-                        : 'Listing could not be verified.';
-                statusText = reason + ' The stale opportunity was removed locally and was not opened.';
+                        : result.reason === 'snapshot-stale'
+                            ? 'Torn Bazaar snapshot is too old to verify safely' + (Number.isFinite(result.snapshotAgeSec) ? ' (' + Math.round(result.snapshotAgeSec) + 's old).' : '.')
+                            : 'Listing could not be verified.';
+                statusText = disproved
+                    ? reason + ' The disproved opportunity was removed locally and was not opened.'
+                    : reason + ' Local opportunity data was preserved, but automatic navigation was blocked.';
                 render();
                 return false;
             }
@@ -6492,6 +6524,12 @@
             businessRules({ businessRules:{ marketRefreshLimit:99 } }).marketRefreshLimit === WEAV3R_MAX_ENRICH &&
             businessRules({ businessRules:{ marketRefreshLimit:1 } }).marketRefreshLimit === 5;
 
+        const snapshotNow = 1_800_000_000_000;
+        const bazaarSnapshotFreshnessOk =
+            bazaarSnapshotFreshness(Math.floor((snapshotNow - 30_000) / 1000), snapshotNow).fresh === true &&
+            bazaarSnapshotFreshness(Math.floor((snapshotNow - (BAZAAR_VERIFY_MAX_AGE_SEC + 1) * 1000) / 1000), snapshotNow).fresh === false &&
+            bazaarSnapshotFreshness(0, snapshotNow).fresh === false;
+
         return {
             pass:
                 aggregateOnly.price === 0 &&
@@ -6514,7 +6552,8 @@
                 migrationOk &&
                 refreshPlanOk &&
                 businessRulePropagationOk &&
-                refreshBreadthClampOk,
+                refreshBreadthClampOk &&
+                bazaarSnapshotFreshnessOk,
             aggregateOnly,
             staleListing,
             trusted,
@@ -6547,6 +6586,7 @@
             refreshPlanOk,
             businessRulePropagationOk,
             refreshBreadthClampOk,
+            bazaarSnapshotFreshnessOk,
             appliedBusinessRules: appliedRules,
             refreshPlans: {
                 fullyFreshPlan,
@@ -11392,7 +11432,7 @@
             <div style="font-size:12px;color:#bbb;margin:4px 0 8px;">
                 The CRM uses Torn directly for <b>User → Basic</b>, <b>User → Log</b> (Bazaar Sell 1226, Bazaar Buy 1225, Item Market Buy 1112),
                 your own <b>User → Bazaar</b> and <b>User → Item Market</b>, <b>Torn → Items</b>, and <b>Market → Item Market</b>.
-                Public seller Bazaar verification uses Torn API v1 <b>User → Bazaar</b> for the selected seller immediately before navigation.
+                Seller verification uses Torn API v1 <b>User → Bazaar</b> immediately before navigation and blocks API snapshots older than 120 seconds. Torn globally caches Bazaar data, so this is a recency check rather than a guaranteed real-time read.
                 <b>User → Inventory</b> remains optional but improves personal stock counts. Optional <b>Faction → Inventory</b> remains isolated from the normal business workflow.
             </div>
             <div style="display:flex;gap:6px;">
