@@ -11726,6 +11726,51 @@
             });
         }
 
+        const proposedItemKeys=new Set(proposals.filter(row=>row.scope==='ITEM').map(row=>String(row.category||'')+'|'+String(row.item||'').toLowerCase()));
+        const addMissingCore=(category,name)=>{
+            const key=category+'|'+name.toLowerCase();
+            if(proposedItemKeys.has(key)) return;
+            const reserve=rosterCount;
+            proposals.push({
+                scope:'ITEM',
+                category,
+                slot:'',
+                itemId:'',
+                item:name,
+                current:0,
+                observedPerDay:0,
+                recommendedMin:reserve,
+                recommendedMax:Math.ceil(reserve*FACTION_STOCK_MAX_FACTOR),
+                shortfall:reserve,
+                risk:'WAR CRITICAL',
+                confidence:'LOW',
+                rationale:'Core readiness item is absent from the current armory snapshot. Start with one-per-roster reserve while usage evidence is collected.',
+                neededInput:'Confirm item is intentionally supported by faction policy and collect usage after stocking.',
+                managerRecommendation:'APPROVE PROVISIONAL MIN/MAX'
+            });
+        };
+        for(const name of coreMedical) addMissingCore('medical',name);
+        for(const name of coreTemporary) addMissingCore('temporary',name);
+        if(!proposals.some(row=>row.scope==='ITEM' && /^blood bag\s*:/i.test(String(row.item||'')))) {
+            proposals.push({
+                scope:'ITEM',
+                category:'medical',
+                slot:'',
+                itemId:'',
+                item:'Filled Blood Bag mix',
+                current:0,
+                observedPerDay:0,
+                recommendedMin:null,
+                recommendedMax:null,
+                shortfall:null,
+                risk:'WAR CRITICAL',
+                confidence:'DATA REQUIRED',
+                rationale:'A faction-wide filled-blood-bag target cannot be set safely without member blood-type compatibility.',
+                neededInput:'Roster blood-type distribution and expected active Ranked War participants.',
+                managerRecommendation:'COLLECT DATA, THEN APPROVE MIX'
+            });
+        }
+
         const loanerMin=Math.max(2,Math.ceil(rosterCount*FACTION_EQUIPMENT_POOL_PCT)+FACTION_EQUIPMENT_POOL_SPARES);
         const equipmentMax=Math.ceil(loanerMin*FACTION_STOCK_MAX_FACTOR);
         const addEquipmentPool=(category,slot,label,current,unclassified=0)=>{
