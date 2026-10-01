@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.14
+// @version      7.4.15
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -18,6 +18,8 @@
 // @connect      yata.yt
 // @connect      api.github.com
 // @connect      raw.githubusercontent.com
+// @connect      script.google.com
+// @connect      script.googleusercontent.com
 // ==/UserScript==
 
 (() => {
@@ -27,7 +29,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.14';
+    const VERSION = '7.4.15';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -87,6 +89,8 @@
     const GITHUB_TOKEN_KEY = 'mm_bazaar_crm_github_token_v1';
     const GITHUB_BACKUP_PASSPHRASE_KEY = 'mm_bazaar_crm_github_backup_passphrase_v1';
     const CONTACT_LEDGER_KEY = 'mm_bazaar_crm_contact_ledger_v1';
+    const FACTION_REPORT_UPLOAD_URL_KEY = 'mm_bazaar_crm_faction_report_upload_url_v1';
+    const FACTION_REPORT_UPLOAD_SECRET_KEY = 'mm_bazaar_crm_faction_report_upload_secret_v1';
     const DB_CHANNEL_NAME = 'mm_bazaar_crm_cross_tab_v1';
     const YATA_TRAVEL_URL = 'https://yata.yt/api/v1/travel/export/';
     const TRAVEL_HISTORY_WINDOW_HOURS = 24;
@@ -11256,7 +11260,7 @@
         ]);
     }
 
-    function factionLeadershipReportMessage(db) {
+    function factionLeadershipReportMessage(db, reportUrl = '') {
         const rows = factionMemberReadinessRows(db);
         const optimized = rows.filter(row => Array.isArray(row.profile?.optimization?.recommendations) && row.profile.optimization.recommendations.length);
         const procure = optimized.reduce((sum,row) => sum + row.profile.optimization.recommendations.filter(rec => rec.acquisition === 'PROCURE').length, 0);
@@ -11272,27 +11276,119 @@
                 'Recommended armory issues: ' + armory + '.\n' +
                 'Recommended procurement targets: ' + procure + '.\n\n' +
                 'Optimization is not limited to current faction inventory. Missing recommended equipment can be procured using the approved route: faction member bazaar → trusted/private supplier → Item Market.\n\n' +
-                'The full XLSX was generated locally and includes Armory Allocation, current equipment, battle stats, loans, readiness, and procurement actions. Torn messaging does not provide this CRM a safe automatic file-attachment path, so the workbook must be shared manually if you want the file itself delivered.\n\n' +
+                'The full XLSX is stored remotely and includes Armory Allocation, current equipment, battle stats, loans, readiness, and procurement actions.\n' +
+                (reportUrl ? 'Report link: '+reportUrl+'\n\n' : '\n') +
                 '— Manic Mike'
         };
     }
 
-    function exportFactionInventoryWorkbook() {
+    function getFactionReportUploadSettings() {
+        return {
+            url: String(GM_getValue(FACTION_REPORT_UPLOAD_URL_KEY, '') || '').trim(),
+            secret: String(GM_getValue(FACTION_REPORT_UPLOAD_SECRET_KEY, '') || '')
+        };
+    }
+
+    function factionReportUploadConfigured() {
+        const settings = getFactionReportUploadSettings();
+        return /^https:\/\//i.test(settings.url) && Boolean(settings.secret);
+    }
+
+    function configureFactionReportStorage() {
+        const current = getFactionReportUploadSettings();
+        const url = prompt(
+            'Google Drive report uploader URL (deployed Apps Script /exec URL). Leadership XLSX will be uploaded here instead of downloaded locally.',
+            current.url
+        );
+        if (url === null) return false;
+        const cleanUrl = String(url || '').trim();
+        if (cleanUrl && !/^https:\/\//i.test(cleanUrl)) {
+            alert('Report uploader URL must use HTTPS.');
+            return false;
+        }
+
+        const secret = prompt(
+            'Uploader shared secret. This is stored in Tampermonkey/GM storage, not in the userscript source.',
+            current.secret ? current.secret : ''
+        );
+        if (secret === null) return false;
+
+        if (cleanUrl) GM_setValue(FACTION_REPORT_UPLOAD_URL_KEY, cleanUrl);
+        else GM_deleteValue(FACTION_REPORT_UPLOAD_URL_KEY);
+        if (String(secret || '')) GM_setValue(FACTION_REPORT_UPLOAD_SECRET_KEY, String(secret));
+        else GM_deleteValue(FACTION_REPORT_UPLOAD_SECRET_KEY);
+
+        statusText = cleanUrl && secret
+            ? 'Remote Leadership report storage configured.'
+            : 'Remote Leadership report storage cleared.';
+        render();
+        return Boolean(cleanUrl && secret);
+    }
+
+    function uploadFactionLeadershipWorkbook(bytes, filename) {
+        const settings = getFactionReportUploadSettings();
+        if (!factionReportUploadConfigured()) {
+            return Promise.reject(new Error('Remote Leadership report storage is not configured.'));
+        }
+        const payload = {
+            secret: settings.secret,
+            filename,
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            contentBase64: bytesToBase64(bytes),
+            generatedAt: nowIso(),
+            faction: FACTION_INVENTORY_POLICY.faction,
+            reportType: 'leadership-xlsx'
+        };
+
+        return new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: 'POST',
+                url: settings.url,
+                timeout: 60000,
+                headers: { 'Content-Type': 'application/json' },
+                data: JSON.stringify(payload),
+                onload: response => {
+                    let data = null;
+                    try { data = JSON.parse(response.responseText || '{}'); } catch {}
+                    if (response.status >= 200 && response.status < 300 && data?.ok && /^https:\/\//i.test(String(data.url || ''))) {
+                        resolve(data);
+                        return;
+                    }
+                    reject(new Error(data?.error || ('Report upload failed with HTTP '+response.status+'.')));
+                },
+                onerror: () => reject(new Error('Report upload network request failed.')),
+                ontimeout: () => reject(new Error('Report upload timed out.'))
+            });
+        });
+    }
+
+    async function exportFactionInventoryWorkbook() {
+        if (!factionReportUploadConfigured()) {
+            statusText = 'Leadership XLSX requires remote report storage before generation.';
+            render();
+            if (confirm('Leadership XLSX must be stored remotely. Configure the Google Drive report uploader now?')) {
+                configureFactionReportStorage();
+            }
+            return;
+        }
+
         const reportDb = dbLoad();
         const bytes = buildFactionInventoryXlsx(reportDb);
-        const blob = new Blob([bytes], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'MM_Torn_Faction_Inventory_Leadership_' + exportDateStamp() + '.xlsx';
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1500);
-        const leaderMessage = factionLeadershipReportMessage(reportDb);
-        composeMessage(FACTION_LEADER_TORN_ID, leaderMessage.subject, leaderMessage.body);
-        statusText = 'Leadership XLSX generated. Report message prepared for '+FACTION_LEADER_TORN_NAME+' ['+FACTION_LEADER_TORN_ID+']; Send remains manual.';
+        const filename = 'MM_Torn_Faction_Inventory_Leadership_' + exportDateStamp() + '.xlsx';
+
+        statusText = 'Uploading Leadership XLSX to remote report storage…';
+        render();
+
+        try {
+            const uploaded = await uploadFactionLeadershipWorkbook(bytes, filename);
+            const leaderMessage = factionLeadershipReportMessage(reportDb, uploaded.url);
+            composeMessage(FACTION_LEADER_TORN_ID, leaderMessage.subject, leaderMessage.body);
+            statusText = 'Leadership XLSX uploaded. Share link prepared for '+FACTION_LEADER_TORN_NAME+' ['+FACTION_LEADER_TORN_ID+']; Send remains manual.';
+        } catch (error) {
+            statusText = 'Leadership XLSX was not sent or downloaded because remote upload failed: '+(error?.message || String(error));
+            alert(statusText);
+            render();
+        }
     }
 
     function factionInventoryStatusBadge(status) {
@@ -11337,6 +11433,7 @@
                     '<button id="mm-faction-sync" style="'+btn(true)+'">Sync Armory</button>'+
                     '<button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button>'+
                     '<button id="mm-faction-export" style="'+btn()+'">Leadership XLSX</button>'+
+                    '<button id="mm-faction-report-storage" style="'+btn(factionReportUploadConfigured())+'">Report Storage</button>'+
                     '<button id="mm-faction-log" style="'+btn()+'">Log Activity</button>'+
                     '<button id="mm-faction-roster-sync" style="'+btn()+'">Sync Members</button>'+
                     '<button id="mm-faction-member-key-import" style="'+btn()+'">Import Member Key</button>'+
@@ -13926,7 +14023,8 @@
         root.querySelector('#mm-travel-save')?.addEventListener('click', () => saveTravelSettings(root));
         root.querySelector('#mm-faction-sync')?.addEventListener('click', () => syncFactionInventory({silent:false,force:true}).catch(()=>{}));
         root.querySelector('#mm-faction-market')?.addEventListener('click', () => syncMarketIntelligence(false));
-        root.querySelector('#mm-faction-export')?.addEventListener('click', () => exportFactionInventoryWorkbook());
+        root.querySelector('#mm-faction-export')?.addEventListener('click', () => exportFactionInventoryWorkbook().catch(()=>{}));
+        root.querySelector('#mm-faction-report-storage')?.addEventListener('click', () => configureFactionReportStorage());
         root.querySelector('#mm-faction-log')?.addEventListener('click', () => promptFactionLogisticsEntry());
         root.querySelector('#mm-faction-roster-sync')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
         root.querySelector('#mm-faction-member-key-import')?.addEventListener('click', () => promptFactionMemberApiImport());
