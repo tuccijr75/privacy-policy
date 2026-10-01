@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.9
+// @version      7.4.10
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.9';
+    const VERSION = '7.4.10';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -113,6 +113,8 @@
     const OLD_API_KEY = 'mm_bazaar_crm_api_v1';
     const API_KEY = 'mm_bazaar_crm_api_v3';
     const FACTION_API_KEY = 'mm_bazaar_crm_faction_api_v1';
+    const FACTION_MEMBER_KEY_VAULT = 'mm_bazaar_crm_faction_member_key_vault_v1';
+    const FACTION_MEMBER_KEY_VAULT_ITERATIONS = 250000;
     const FACTION_INVENTORY_SYNC_INTERVAL_MS = 60 * 60 * 1000;
     const FACTION_INVENTORY_SNAPSHOT_MAX = 192;
     const FACTION_INVENTORY_EVENT_MAX = 2500;
@@ -155,6 +157,7 @@
     let unifiedSyncRunning = false;
     let factionInventoryRunning = false;
     let fatal = false;
+    let factionMemberVaultSession = null;
     let lastHref = location.href;
     let routeTimer = null;
     let dbCache = null;
@@ -10118,6 +10121,191 @@
         return { memberId, memberName, profile, equipmentSummary };
     }
 
+    function factionVaultBytesToBase64(bytes) {
+        let binary = '';
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        return btoa(binary);
+    }
+
+    function factionVaultBase64ToBytes(value) {
+        const binary = atob(String(value || ''));
+        const bytes = new Uint8Array(binary.length);
+        for (let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+        return bytes;
+    }
+
+    function getFactionMemberKeyVault() {
+        const raw = GM_getValue(FACTION_MEMBER_KEY_VAULT, null);
+        return raw && typeof raw === 'object' ? raw : null;
+    }
+
+    function saveFactionMemberKeyVault(vault) {
+        GM_setValue(FACTION_MEMBER_KEY_VAULT, vault);
+    }
+
+    async function deriveFactionMemberVaultKey(passphrase, saltB64) {
+        if (!globalThis.crypto?.subtle) throw new Error('Browser Web Crypto is unavailable; encrypted key vault cannot be used.');
+        const encoder = new TextEncoder();
+        const baseKey = await crypto.subtle.importKey(
+            'raw',
+            encoder.encode(String(passphrase || '')),
+            'PBKDF2',
+            false,
+            ['deriveKey']
+        );
+        return crypto.subtle.deriveKey(
+            {
+                name:'PBKDF2',
+                salt:factionVaultBase64ToBytes(saltB64),
+                iterations:FACTION_MEMBER_KEY_VAULT_ITERATIONS,
+                hash:'SHA-256'
+            },
+            baseKey,
+            { name:'AES-GCM', length:256 },
+            false,
+            ['encrypt','decrypt']
+        );
+    }
+
+    async function encryptFactionVaultText(cryptoKey, plainText) {
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const encoded = new TextEncoder().encode(String(plainText || ''));
+        const cipher = await crypto.subtle.encrypt({ name:'AES-GCM', iv }, cryptoKey, encoded);
+        return {
+            iv:factionVaultBytesToBase64(iv),
+            cipher:factionVaultBytesToBase64(new Uint8Array(cipher))
+        };
+    }
+
+    async function decryptFactionVaultText(cryptoKey, sealed) {
+        const plain = await crypto.subtle.decrypt(
+            { name:'AES-GCM', iv:factionVaultBase64ToBytes(sealed?.iv || '') },
+            cryptoKey,
+            factionVaultBase64ToBytes(sealed?.cipher || '')
+        );
+        return new TextDecoder().decode(plain);
+    }
+
+    async function unlockFactionMemberKeyVault(options = {}) {
+        if (factionMemberVaultSession?.cryptoKey) return factionMemberVaultSession.cryptoKey;
+
+        let vault = getFactionMemberKeyVault();
+        if (!vault) {
+            if (options.create === false) throw new Error('No encrypted member-key vault exists yet.');
+            const first = prompt('Create a passphrase for the encrypted faction member-key vault. Use at least 12 characters. The passphrase is not stored:', '');
+            if (first == null) throw new Error('Vault setup cancelled.');
+            if (String(first).length < 12) throw new Error('Vault passphrase must be at least 12 characters.');
+            const second = prompt('Re-enter the new vault passphrase:', '');
+            if (second == null || String(second) !== String(first)) throw new Error('Vault passphrases did not match.');
+
+            const salt = crypto.getRandomValues(new Uint8Array(16));
+            const saltB64 = factionVaultBytesToBase64(salt);
+            const cryptoKey = await deriveFactionMemberVaultKey(first,saltB64);
+            const verifier = await encryptFactionVaultText(cryptoKey,'MM-FACTION-READINESS-VAULT-v1');
+            vault = {
+                version:1,
+                createdAt:nowIso(),
+                updatedAt:nowIso(),
+                salt:saltB64,
+                verifier,
+                entries:{}
+            };
+            saveFactionMemberKeyVault(vault);
+            factionMemberVaultSession={ cryptoKey, unlockedAt:Date.now() };
+            return cryptoKey;
+        }
+
+        const passphrase = prompt('Unlock the encrypted faction member-key vault:', '');
+        if (passphrase == null) throw new Error('Vault unlock cancelled.');
+        const cryptoKey = await deriveFactionMemberVaultKey(passphrase,vault.salt);
+        let verifier = '';
+        try { verifier = await decryptFactionVaultText(cryptoKey,vault.verifier); }
+        catch { throw new Error('Vault passphrase is incorrect or the encrypted vault is damaged.'); }
+        if (verifier !== 'MM-FACTION-READINESS-VAULT-v1') throw new Error('Vault verification failed.');
+        factionMemberVaultSession={ cryptoKey, unlockedAt:Date.now() };
+        return cryptoKey;
+    }
+
+    function factionMemberKeyVaultSummary() {
+        const vault = getFactionMemberKeyVault();
+        return {
+            exists:Boolean(vault),
+            savedMembers:Object.keys(vault?.entries || {}).length,
+            updatedAt:vault?.updatedAt || null,
+            unlocked:Boolean(factionMemberVaultSession?.cryptoKey)
+        };
+    }
+
+    async function importAndSaveFactionMemberKey() {
+        const key = prompt(
+            'Paste the member Limited Access Torn API key. It will be imported and then encrypted in the local readiness-key vault:',
+            ''
+        );
+        if (key == null || !String(key).trim()) return;
+        try {
+            statusText='Importing member data and unlocking encrypted vault…';
+            render();
+            const result = await importFactionMemberReadinessKey(String(key).trim());
+            const cryptoKey = await unlockFactionMemberKeyVault({create:true});
+            const vault = getFactionMemberKeyVault();
+            const sealed = await encryptFactionVaultText(cryptoKey,String(key).trim());
+            vault.entries = vault.entries && typeof vault.entries === 'object' ? vault.entries : {};
+            vault.entries[result.memberId] = {
+                memberId:result.memberId,
+                memberName:result.memberName,
+                sealed,
+                addedAt:vault.entries[result.memberId]?.addedAt || nowIso(),
+                updatedAt:nowIso(),
+                lastUsedAt:nowIso()
+            };
+            vault.updatedAt=nowIso();
+            saveFactionMemberKeyVault(vault);
+            statusText='Imported '+result.memberName+' ['+result.memberId+'] and saved the key encrypted in the local vault.';
+            render();
+        } catch(error) {
+            statusText='Encrypted member-key import failed: '+(error?.message||String(error));
+            render();
+        }
+    }
+
+    async function refreshFactionMemberKeyVault() {
+        try {
+            const vault = getFactionMemberKeyVault();
+            if (!vault || !Object.keys(vault.entries || {}).length) throw new Error('No member keys are saved in the encrypted vault.');
+            const cryptoKey = await unlockFactionMemberKeyVault({create:false});
+            const entries = Object.values(vault.entries || {});
+            let ok = 0;
+            const failures = [];
+            statusText='Refreshing '+entries.length+' saved member profile'+(entries.length===1?'':'s')+'…';
+            render();
+
+            for (const entry of entries) {
+                try {
+                    const key = await decryptFactionVaultText(cryptoKey,entry.sealed);
+                    const result = await importFactionMemberReadinessKey(key);
+                    entry.memberName=result.memberName;
+                    entry.lastUsedAt=nowIso();
+                    entry.updatedAt=nowIso();
+                    ok++;
+                    await flushDbWrites();
+                } catch(error) {
+                    failures.push(String(entry.memberName || entry.memberId || 'Unknown')+': '+(error?.message||String(error)));
+                }
+            }
+
+            vault.updatedAt=nowIso();
+            saveFactionMemberKeyVault(vault);
+            statusText='Encrypted vault refresh complete: '+ok+'/'+entries.length+' member'+(entries.length===1?'':'s')+' refreshed'+
+                (failures.length?' · '+failures.length+' failed: '+failures.slice(0,3).join(' | '):'')+'.';
+            render();
+            return {ok,total:entries.length,failures};
+        } catch(error) {
+            statusText='Encrypted vault refresh failed: '+(error?.message||String(error));
+            render();
+            throw error;
+        }
+    }
+
     async function promptFactionMemberApiImport() {
         const key = prompt(
             'Paste the member Limited Access Torn API key. It is used once in this browser to read basic identity, battle stats, and equipment, and is NOT saved by the CRM:',
@@ -10613,6 +10801,8 @@
                     '<button id="mm-faction-log" style="'+btn()+'">Log Activity</button>'+
                     '<button id="mm-faction-roster-sync" style="'+btn()+'">Sync Members</button>'+
                     '<button id="mm-faction-member-key-import" style="'+btn()+'">Import Member Key</button>'+
+                    '<button id="mm-faction-member-key-save" style="'+btn()+'">Import + Save Key</button>'+
+                    '<button id="mm-faction-member-key-refresh" style="'+btn()+'">Refresh Saved Keys</button>'+
                 '</div>'+
             '</div>'+
             '<div style="font-size:11px;color:#aaa;margin-top:7px;line-height:1.55;">'+
@@ -10691,6 +10881,7 @@
 
         const readinessRows = factionMemberReadinessRows(db);
         const readinessStore = state.memberReadiness || {};
+        const keyVault = factionMemberKeyVaultSummary();
         const readinessMissing = readinessRows.filter(r=>r.readinessStatus==='MISSING DATA').length;
         const readinessStale = readinessRows.filter(r=>r.readinessStatus==='STALE DATA').length;
         const readinessSupply = readinessRows.filter(r=>r.readinessStatus==='SUPPLY ACTION').length;
@@ -10701,6 +10892,7 @@
             '</div>'+
             '<div style="font-size:10px;color:#999;margin-top:5px;">Last roster sync: '+escapeHtml(fmtDate(readinessStore.lastRosterSyncAt))+
                 ' · Members '+readinessRows.length+' · Missing '+readinessMissing+' · Stale '+readinessStale+' · Supply action '+readinessSupply+
+                ' · Encrypted saved keys '+keyVault.savedMembers+(keyVault.unlocked?' (vault unlocked)':'')+
                 '<br>Optimization rule: never infer equipment strength from market price. Candidate assignments require combat metadata or manual comparison; high-value RW allocation remains leadership-controlled.</div>'+
             (readinessRows.length ? readinessRows.slice(0,60).map(row =>
                 '<div style="border-top:1px solid #303030;padding:6px 0;font-size:10px;">'+
@@ -13168,6 +13360,8 @@
         root.querySelector('#mm-faction-log')?.addEventListener('click', () => promptFactionLogisticsEntry());
         root.querySelector('#mm-faction-roster-sync')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
         root.querySelector('#mm-faction-member-key-import')?.addEventListener('click', () => promptFactionMemberApiImport());
+        root.querySelector('#mm-faction-member-key-save')?.addEventListener('click', () => importAndSaveFactionMemberKey());
+        root.querySelector('#mm-faction-member-key-refresh')?.addEventListener('click', () => refreshFactionMemberKeyVault().catch(()=>{}));
         root.querySelector('#mm-faction-roster-sync-card')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
         root.querySelectorAll('[data-faction-member-edit]').forEach(button => button.addEventListener('click', () => promptFactionMemberReadiness(button.dataset.factionMemberEdit)));
         root.querySelector('#mm-faction-category')?.addEventListener('change', e => {
@@ -13988,6 +14182,9 @@
         recordFactionLogisticsEntry,
         syncFactionMemberRoster,
         importFactionMemberReadinessKey,
+        importAndSaveFactionMemberKey,
+        refreshFactionMemberKeyVault,
+        factionMemberKeyVaultSummary,
         saveFactionMemberReadinessProfile,
         factionMemberReadinessRows: () => factionMemberReadinessRows(dbLoad()),
         factionArmoryCandidateRows: () => factionArmoryCandidateRows(dbLoad()),
