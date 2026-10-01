@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.10
+// @version      7.4.11
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.10';
+    const VERSION = '7.4.11';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -10306,6 +10306,63 @@
         }
     }
 
+    function factionMemberVaultEntry(memberId) {
+        const id = asId(memberId);
+        const vault = getFactionMemberKeyVault();
+        const entry = vault?.entries?.[id];
+        return entry && typeof entry === 'object' ? entry : null;
+    }
+
+    async function refreshSavedFactionMember(memberId) {
+        const id = asId(memberId);
+        if (!id) throw new Error('Member ID is required.');
+        try {
+            const vault = getFactionMemberKeyVault();
+            const entry = vault?.entries?.[id];
+            if (!entry) throw new Error('No encrypted saved key exists for this member.');
+            const cryptoKey = await unlockFactionMemberKeyVault({create:false});
+            statusText='Refreshing saved readiness data for '+String(entry.memberName || id)+'…';
+            render();
+            const key = await decryptFactionVaultText(cryptoKey,entry.sealed);
+            const result = await importFactionMemberReadinessKey(key);
+            entry.memberName=result.memberName;
+            entry.lastUsedAt=nowIso();
+            entry.updatedAt=nowIso();
+            vault.updatedAt=nowIso();
+            saveFactionMemberKeyVault(vault);
+            await flushDbWrites();
+            statusText='Refreshed '+result.memberName+' ['+result.memberId+'] from encrypted saved key.';
+            render();
+            return result;
+        } catch(error) {
+            statusText='Saved member refresh failed: '+(error?.message||String(error));
+            render();
+            throw error;
+        }
+    }
+
+    function removeSavedFactionMemberKey(memberId) {
+        const id = asId(memberId);
+        if (!id) throw new Error('Member ID is required.');
+        const vault = getFactionMemberKeyVault();
+        const entry = vault?.entries?.[id];
+        if (!entry) {
+            statusText='No encrypted saved key exists for this member.';
+            render();
+            return false;
+        }
+        const label=String(entry.memberName || id);
+        if (!confirm('Remove the encrypted saved API key for '+label+' ['+id+']? The readiness snapshot will remain, but future automatic refreshes will require a new key.')) {
+            return false;
+        }
+        delete vault.entries[id];
+        vault.updatedAt=nowIso();
+        saveFactionMemberKeyVault(vault);
+        statusText='Removed encrypted saved key for '+label+' ['+id+']. Existing readiness snapshot was preserved.';
+        render();
+        return true;
+    }
+
     async function promptFactionMemberApiImport() {
         const key = prompt(
             'Paste the member Limited Access Torn API key. It is used once in this browser to read basic identity, battle stats, and equipment, and is NOT saved by the CRM:',
@@ -10882,12 +10939,13 @@
         const readinessRows = factionMemberReadinessRows(db);
         const readinessStore = state.memberReadiness || {};
         const keyVault = factionMemberKeyVaultSummary();
+        const keyVaultRaw = getFactionMemberKeyVault();
         const readinessMissing = readinessRows.filter(r=>r.readinessStatus==='MISSING DATA').length;
         const readinessStale = readinessRows.filter(r=>r.readinessStatus==='STALE DATA').length;
         const readinessSupply = readinessRows.filter(r=>r.readinessStatus==='SUPPLY ACTION').length;
         const readinessCard = card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-                '<div><b>Member War Readiness / Equipment Optimization</b><div style="font-size:10px;color:#888;">Faction roster + armory loans are automatic. Exact battle stats/current personal equipment require member authorization. Use a separate <b>Limited Access</b> Torn API key with <b>Import Member Key</b> for a one-time local read; the key is not stored and may be revoked immediately after import.</div></div>'+
+                '<div><b>Member War Readiness / Equipment Optimization</b><div style="font-size:10px;color:#888;">Faction roster + armory loans are automatic. Exact battle stats/current personal equipment require member authorization. <b>Import Member Key</b> performs a one-time read without retention. <b>Import + Save Key</b> stores that member key encrypted in the local vault for future refreshes. Saved-key status is shown on each member row.</div></div>'+
                 '<button id="mm-faction-roster-sync-card" style="'+btn(true)+'">Sync Faction Roster</button>'+
             '</div>'+
             '<div style="font-size:10px;color:#999;margin-top:5px;">Last roster sync: '+escapeHtml(fmtDate(readinessStore.lastRosterSyncAt))+
@@ -10898,10 +10956,19 @@
                 '<div style="border-top:1px solid #303030;padding:6px 0;font-size:10px;">'+
                     '<div style="display:flex;justify-content:space-between;gap:6px;align-items:flex-start;">'+
                         '<div><b>'+escapeHtml(row.memberName)+'</b> ['+escapeHtml(row.memberId)+'] · Lv '+Number(row.level||0)+' · '+escapeHtml(row.statProfile.label)+' · <b>'+escapeHtml(row.readinessStatus)+'</b></div>'+
-                        '<button data-faction-member-edit="'+escapeHtml(row.memberId)+'" style="'+btn(row.readinessStatus==='READY FOR REVIEW')+'">Edit Readiness</button>'+
+                        '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
+                            '<button data-faction-member-edit="'+escapeHtml(row.memberId)+'" style="'+btn(row.readinessStatus==='READY FOR REVIEW')+'">Edit Readiness</button>'+
+                            (keyVaultRaw?.entries?.[asId(row.memberId)]
+                                ? '<button data-faction-member-refresh="'+escapeHtml(row.memberId)+'" style="'+btn(true)+'">Refresh This Member</button>'+
+                                  '<button data-faction-member-remove-key="'+escapeHtml(row.memberId)+'" style="'+btn()+'">Remove Saved Key</button>'
+                                : '')+
+                        '</div>'+
                     '</div>'+
                     '<div style="color:#aaa;margin-top:2px;">Stats total: '+Number(row.statProfile.total||0).toLocaleString()+
                     ' · Faction loans: '+Number(row.loans||0)+' · Medical: '+escapeHtml(row.profile?.medicalStatus||'UNKNOWN')+' · Ipecac: '+escapeHtml(row.profile?.ipecacStatus||'UNKNOWN')+
+                    (keyVaultRaw?.entries?.[asId(row.memberId)]
+                        ? ' · <b>Saved key: ENCRYPTED</b> · Last key refresh: '+escapeHtml(fmtDate(keyVaultRaw.entries[asId(row.memberId)].lastUsedAt))
+                        : ' · Saved key: none')+
                     (row.profile?.warRole?' · Role: '+escapeHtml(row.profile.warRole):'')+
                     '<br>Current gear: '+escapeHtml(row.equipmentSummary||'—')+
                     '<br><b>Plan:</b> '+escapeHtml(row.equipmentPlan)+
@@ -13364,6 +13431,8 @@
         root.querySelector('#mm-faction-member-key-refresh')?.addEventListener('click', () => refreshFactionMemberKeyVault().catch(()=>{}));
         root.querySelector('#mm-faction-roster-sync-card')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
         root.querySelectorAll('[data-faction-member-edit]').forEach(button => button.addEventListener('click', () => promptFactionMemberReadiness(button.dataset.factionMemberEdit)));
+        root.querySelectorAll('[data-faction-member-refresh]').forEach(button => button.addEventListener('click', () => refreshSavedFactionMember(button.dataset.factionMemberRefresh).catch(()=>{})));
+        root.querySelectorAll('[data-faction-member-remove-key]').forEach(button => button.addEventListener('click', () => removeSavedFactionMemberKey(button.dataset.factionMemberRemoveKey)));
         root.querySelector('#mm-faction-category')?.addEventListener('change', e => {
             const db=dbLoad();
             db.factionInventory.settings.selectedCategory=String(e.currentTarget.value||'all');
@@ -14185,6 +14254,9 @@
         importAndSaveFactionMemberKey,
         refreshFactionMemberKeyVault,
         factionMemberKeyVaultSummary,
+        factionMemberVaultEntry,
+        refreshSavedFactionMember,
+        removeSavedFactionMemberKey,
         saveFactionMemberReadinessProfile,
         factionMemberReadinessRows: () => factionMemberReadinessRows(dbLoad()),
         factionArmoryCandidateRows: () => factionArmoryCandidateRows(dbLoad()),
