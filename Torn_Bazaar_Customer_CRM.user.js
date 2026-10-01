@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.11
+// @version      7.4.12
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.11';
+    const VERSION = '7.4.12';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -10007,72 +10007,64 @@
         return stats;
     }
 
-    function factionEquipmentSummaryFromResponse(data) {
+    function factionEquipmentItemsFromResponse(data) {
         const rows = [];
         const seen = new Set();
-
         const semanticSlot = (item, fallback = '') => {
-            const subType = String(item?.sub_type ?? item?.subType ?? '').trim();
-            const type = String(item?.type ?? item?.category ?? '').trim();
+            const subType = String(item?.sub_type ?? item?.subType ?? item?.item?.sub_type ?? '').trim();
+            const type = String(item?.type ?? item?.category ?? item?.item?.type ?? '').trim();
             const rawSlot = String(item?.slot ?? '').trim();
-
-            // Prefer Torn's semantic item metadata. Numeric slot identifiers are not
-            // treated as a global enum because weapon/armor equipment families can
-            // use values that do not map safely to one guessed table.
             if (subType && !/^\d+$/.test(subType)) return subType;
             if (type && !/^\d+$/.test(type)) return type;
             if (rawSlot && !/^\d+$/.test(rawSlot)) return rawSlot;
             return String(fallback || '').trim();
         };
-
-        const push = (fallbackSlot, item) => {
-            if (!item) return;
-            if (typeof item === 'string') {
-                const text = item.trim();
-                if (text && !seen.has(fallbackSlot+'|'+text)) {
-                    seen.add(fallbackSlot+'|'+text);
-                    rows.push((fallbackSlot?fallbackSlot+': ':'')+text);
-                }
-                return;
-            }
-            if (Array.isArray(item)) {
-                item.forEach(x=>push(fallbackSlot,x));
-                return;
-            }
-            if (typeof item !== 'object') return;
-
-            const name = String(item.name ?? item.item_name ?? item.item?.name ?? '').trim();
-            const id = asId(item.id ?? item.item_id ?? item.item?.id);
-            const slot = semanticSlot(item,fallbackSlot);
-
-            if (name || id) {
-                const text = (slot?slot+': ':'') + (name || ('Item '+id)) + (id ? ' ['+id+']' : '');
-                if (!seen.has(text)) {
-                    seen.add(text);
-                    rows.push(text);
-                }
-                return;
-            }
-
-            for (const [key,val] of Object.entries(item)) {
-                if (['ammo','quantity','amount','uid','uids','mods','bonuses','stats'].includes(String(key).toLowerCase())) continue;
-                push(String(key),val);
-            }
+        const numeric = value => {
+            if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+            if (typeof value === 'string') return Number(value.replace(/,/g,'')) || 0;
+            return 0;
         };
-
+        const push = (fallbackSlot, item) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) return;
+            const itemObj = item.item && typeof item.item === 'object' ? item.item : {};
+            const id = asId(item.id ?? item.item_id ?? itemObj.id);
+            const uid = String(item.uid ?? item.item_uid ?? itemObj.uid ?? '').trim();
+            const name = String(item.name ?? item.item_name ?? itemObj.name ?? (id ? 'Item '+id : '')).trim();
+            const slot = semanticSlot(item,fallbackSlot);
+            if (!name && !id) return;
+            const key = uid || [id,slot,name].join('|');
+            if (seen.has(key)) return;
+            seen.add(key);
+            const stats = item.stats && typeof item.stats === 'object'
+                ? item.stats
+                : (itemObj.stats && typeof itemObj.stats === 'object' ? itemObj.stats : {});
+            rows.push({
+                uid,
+                itemId:id,
+                name,
+                slot,
+                type:String(item.type ?? item.category ?? itemObj.type ?? '').trim(),
+                subType:String(item.sub_type ?? item.subType ?? itemObj.sub_type ?? '').trim(),
+                damage:numeric(item.damage ?? stats.damage),
+                accuracy:numeric(item.accuracy ?? stats.accuracy),
+                armor:numeric(item.armor ?? stats.armor ?? stats.protection),
+                quality:numeric(item.quality ?? stats.quality),
+                bonuses:item.bonuses && typeof item.bonuses === 'object'
+                    ? deepClone(item.bonuses)
+                    : (itemObj.bonuses && typeof itemObj.bonuses === 'object' ? deepClone(itemObj.bonuses) : null)
+            });
+        };
         const equipment = Array.isArray(data?.equipment) ? data.equipment : [];
         const clothing = Array.isArray(data?.clothing) ? data.clothing : [];
-
         equipment.forEach(item=>push('',item));
         clothing.forEach(item=>push('Clothing',item));
+        return rows;
+    }
 
-        if (!equipment.length && !clothing.length) {
-            const root = (data?.items ?? data) || {};
-            if (Array.isArray(root)) root.forEach(x=>push('',x));
-            else if (root && typeof root === 'object') Object.entries(root).forEach(([slot,item])=>push(slot,item));
-        }
-
-        return rows.slice(0,30).join(' | ');
+    function factionEquipmentSummaryFromResponse(data) {
+        return factionEquipmentItemsFromResponse(data).slice(0,30).map(item =>
+            (item.slot ? item.slot+': ' : '') + item.name + (item.itemId ? ' ['+item.itemId+']' : '')
+        ).join(' | ');
     }
 
     async function importFactionMemberReadinessKey(memberKey) {
@@ -10092,6 +10084,7 @@
         }
         const memberName = extractUsernameFromApiPayload(basic,memberId) || roster[memberId]?.memberName || memberId;
         const stats = factionBattleStatsFromResponse(battlestats);
+        const equipmentItems = factionEquipmentItemsFromResponse(equipment);
         const equipmentSummary = factionEquipmentSummaryFromResponse(equipment);
         const statTotal = Number(stats.strength||0)+Number(stats.defense||0)+Number(stats.speed||0)+Number(stats.dexterity||0);
         const responseShape = {
@@ -10109,7 +10102,7 @@
         delete stats._apiTotal;
         const profile = saveFactionMemberReadinessProfile(memberId,{
             stats,
-            equipment:{ summary:equipmentSummary, rawImported:false },
+            equipment:{ summary:equipmentSummary, items:equipmentItems, rawImported:false },
             source:'member Limited Access API key — one-time local import',
             verifiedAt:nowIso()
         });
