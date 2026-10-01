@@ -9778,6 +9778,32 @@
         render();
     }
 
+    function applyFactionWarReadinessBaseline() {
+        const db = dbLoad();
+        const baseline = factionWarReadinessBaseline(db);
+        const rows = factionInventoryRows(db);
+        let applied = 0;
+        for (const base of baseline.rows) {
+            if (base.target == null) continue;
+            const row = rows.find(item => String(item.name || '') === String(base.name || ''));
+            if (!row?.itemId) continue;
+            const id = asId(row.itemId);
+            db.factionInventory.thresholds[id] = {
+                target: Math.max(0, Math.round(Number(base.target || 0))),
+                basis: FACTION_INVENTORY_LOAN_CATEGORIES.includes(String(row.category || '')) ? 'available' : 'owned',
+                updatedAt: nowIso()
+            };
+            applied++;
+        }
+        db.factionInventory.settings.warBaselineAppliedAt = nowIso();
+        db.factionInventory.settings.warBaselineStatus = 'PROVISIONAL — LEADERSHIP SIGN-OFF REQUIRED BEFORE NEXT RW';
+        addFactionInventoryDiagnostic(db.factionInventory, 'Applied Leadership-authorized provisional War-Readiness Baseline to '+applied+' item target(s). Filled blood-bag mix remains data-required.');
+        dbSave(db);
+        statusText = 'Applied provisional War-Readiness Baseline to '+applied+' item target(s). Filled blood-bag mix remains data-required; formal sign-off is required before the next Ranked War.';
+        render();
+        return applied;
+    }
+
     function factionInventoryRows(db) {
         return Object.values(db.factionInventory?.current || {}).map(item => {
             const threshold = factionInventoryThresholdState(db, item);
@@ -11238,21 +11264,25 @@
         const rows = factionInventoryRows(db);
         const report = factionInventoryReport(db, 7);
         const loans = factionLoanPersistenceRows(db);
+        const baseline = factionWarReadinessBaseline(db);
         const ledger = Array.isArray(db.factionInventory?.logisticsLedger) ? db.factionInventory.logisticsLedger : [];
         const configured = rows.filter(row => Number(row.threshold?.target || 0) > 0);
         const shortfalls = configured.filter(row => Number(row.threshold?.shortfall || 0) > 0);
         const critical = shortfalls.filter(row => row.threshold?.status === 'CRITICAL');
         const estimatedRestockCost = shortfalls.reduce((sum,row) => sum + Number(row.estimatedRestockCost || 0), 0);
+        const loanEscalations = loans.filter(row=>row.followUpStatus==='ESCALATE — LEADERSHIP + SUPERVISOR').length;
+        const loanWarnings = loans.filter(row=>row.followUpStatus==='FINAL WARNING DUE').length;
+        const loanReminders = loans.filter(row=>row.followUpStatus==='REMINDER DUE').length;
         const plan = [
-            { phase:'1. Establish armory control', cadence:'Now / once, then verify after permission changes', action:'Confirm Faction → Inventory API access; capture a clean baseline; verify unlocked armor, temporary, medical, and consumables armories; audit access and flag unsafe/unauthorized conditions.', owner:'Inventory Manager + Leadership for permissions', status:Object.keys(db.factionInventory?.current || {}).length ? 'ACTIVE' : 'BLOCKED — API/SNAPSHOT', evidence:'Torn snapshot + access audit entry' },
-            { phase:'2. Establish accountable records', cadence:'Every material transaction', action:'Record purchases, distributions, returns, loans, adjustments, access audits, and readiness checks. Use Torn snapshots as independent reconciliation evidence.', owner:'Inventory Manager', status:ledger.length ? 'ACTIVE — ' + ledger.length + ' ledger entry(s)' : 'START NOW', evidence:'Logistics Ledger + snapshot/event history' },
-            { phase:'3. Measure usage and set targets', cadence:'Weekly analysis / monthly target review', action:'Measure depletion and replenishment by category, avoid over-investment, and build evidence-based operational targets plus separate Ranked War/chain reserves.', owner:'Inventory Manager proposes; Leadership approves reserves', status:configured.length ? 'IN PROGRESS' : 'COLLECTING BASELINE', evidence:configured.length + ' provisional target(s); ' + report.observedDays.toFixed(1) + ' observed day(s)' },
-            { phase:'4. Maintain readiness', cadence:'Before every Ranked War/chain + daily exceptions', action:'Check critical medical, blood bags, temporary items, consumables, armor availability, and shortage risk before scheduled operations; report funding needs to Bankers/Leadership.', owner:'Inventory Manager', status:critical.length ? 'CRITICAL — ' + critical.length + ' severe shortfall(s)' : shortfalls.length ? 'ACTION — ' + shortfalls.length + ' shortfall(s)' : 'MONITOR', evidence:money(estimatedRestockCost) + ' estimated priced shortfall cost' },
-            { phase:'5. Source and replenish', cadence:'After material use / when below target', action:'Prioritize faction-member bazaars, then trusted traders/private bazaars and Item Market. Compare medical/temp purchases against Item Market. Use travel for gear/weapon upgrades only with leadership authorization and available funds.', owner:'Inventory Manager within approved funds; Bankers/Leadership for authorization', status:shortfalls.length ? 'ACTION' : 'MONITOR', evidence:'Restock Plan + purchase ledger' },
-            { phase:'6. Control loans and distribution', cadence:'Daily exception review + active war/chain support', action:'Track armor/temp loans and prompt returns; respond quickly to routine supply requests. High-value Ranked War equipment remains leadership-controlled immediately before war; support leadership allocation and member loadout guidance.', owner:'Inventory Manager; Leadership controls high-value RW distribution/enforcement', status:loans.length ? 'MONITOR — ' + loans.length + ' loan row(s)' : 'CLEAR', evidence:'Loan ledger + UID/snapshot persistence' },
-            { phase:'7. Report and improve', cadence:'Proposed weekly + immediate exceptions', action:'Export the leadership workbook with inventory state, readiness, shortages, spend estimates, loans, movement, logistics records, data freshness, and unresolved leadership decisions.', owner:'Inventory Manager', status:'READY', evidence:'Faction Inventory Leadership Workbook' }
+            { phase:'1. Establish armory control', cadence:'Now / once, then verify after permission changes', action:'Confirm Faction → Inventory API access; maintain a clean baseline; verify unlocked armories; audit access and submit recommended permission changes. Direct permission control remains with Leadership during the 2–3 week stabilization period.', owner:'Inventory Manager + Leadership for permission changes', status:Object.keys(db.factionInventory?.current || {}).length ? 'ACTIVE' : 'BLOCKED — API/SNAPSHOT', evidence:'Torn snapshot + access audit entry' },
+            { phase:'2. Establish accountable records', cadence:'Every material transaction', action:'Record purchases, distributions, returns, loans, adjustments, access audits, and readiness checks. Purchases require receipts/market evidence and approval references where applicable.', owner:'Inventory Manager', status:ledger.length ? 'ACTIVE — ' + ledger.length + ' ledger entry(s)' : 'START NOW', evidence:'Logistics Ledger + snapshot/event history' },
+            { phase:'3. Maintain provisional targets', cadence:'Weekly analysis + formal review before next Ranked War', action:'Maintain Leadership-authorized provisional minimums and war reserves. Current baseline uses a '+FACTION_PROVISIONAL_COVERAGE_DAYS+'-day consumption horizon plus roster floors while history matures; filled blood-bag mix remains data-required.', owner:'Inventory Manager proposes; Leadership signs off before next RW', status:baseline.belowTarget ? 'ACTION — '+baseline.belowTarget+' below target' : baseline.dataRequired ? 'DATA REQUIRED — '+baseline.dataRequired+' item(s)' : 'READY', evidence:money(baseline.estimatedCost)+' provisional replenishment cost; '+baseline.observedDays.toFixed(1)+' observed day(s)' },
+            { phase:'4. Maintain readiness', cadence:'24–48h before every Ranked War + daily exceptions', action:'Check medical stock, blood-bag capacity/type mix, Ipecac, essential temporary weapons, consumables, armor availability, and shortage risk. Escalate major shortages, missing high-value gear, or unexplained inventory loss immediately.', owner:'Inventory Manager', status:critical.length ? 'CRITICAL — ' + critical.length + ' severe shortfall(s)' : shortfalls.length ? 'ACTION — ' + shortfalls.length + ' configured shortfall(s)' : 'MONITOR', evidence:'Pre-War Readiness Report + War Readiness Baseline' },
+            { phase:'5. Source and replenish', cadence:'After material use / when below target', action:'Use faction-member bazaars first when pricing matches market, then trusted aligned/bulk sellers, then Item Market/public bazaars. Use the 7-day market/bazaar average as baseline; urgent premium cap is '+FACTION_PRICE_PREMIUM_CAP_PCT+'%. Routine authority is '+money(FACTION_PURCHASE_TRANSACTION_LIMIT)+' per transaction / '+money(FACTION_PURCHASE_WEEKLY_LIMIT)+' per week; exceptions require Leadership/Banker approval.', owner:'Inventory Manager within approved funds; Bankers/Leadership for exceptions', status:baseline.belowTarget || shortfalls.length ? 'ACTION' : 'MONITOR', evidence:'War Readiness Baseline + Restock Plan + logistics ledger' },
+            { phase:'6. Control loans and distribution', cadence:'Daily exception review + active war/chain support', action:'Track armor/temp loans. Send reminder at '+FACTION_LOAN_REMINDER_DAYS+' days, final warning at '+FACTION_LOAN_FINAL_WARNING_DAYS+' days, and escalate to Leadership + Supervisor at '+FACTION_LOAN_ESCALATION_DAYS+' days absent prior arrangement. High-value RW distribution remains leadership-controlled.', owner:'Inventory Manager; Leadership/Supervisor handle formal enforcement', status:loanEscalations ? 'ESCALATE — '+loanEscalations : loanWarnings ? 'FINAL WARNING — '+loanWarnings : loanReminders ? 'REMIND — '+loanReminders : loans.length ? 'MONITOR — '+loans.length+' loan row(s)' : 'CLEAR', evidence:'Loan ledger + UID/snapshot persistence' },
+            { phase:'7. Report and improve', cadence:'Sunday weekly + 24–48h pre-war + immediate exceptions', action:'Deliver the Weekly Inventory Summary every Sunday and Pre-War Readiness Report 24–48 hours before Ranked Wars. Immediate exception reporting applies to major shortages, missing high-value gear, or unexplained inventory losses.', owner:'Inventory Manager', status:'ACTIVE', evidence:'Faction Inventory Leadership Workbook' }
         ];
-        return { plan, rows, report, loans, ledger, configured, shortfalls, critical, estimatedRestockCost, questions:factionLeadershipQuestions(db) };
+        return { plan, rows, report, loans, baseline, ledger, configured, shortfalls, critical, estimatedRestockCost, questions:factionLeadershipQuestions(db) };
     }
 
     function factionInventoryExportDocuments(db) {
@@ -11565,39 +11595,35 @@
         const armory = optimized.reduce((sum,row) => sum + row.profile.optimization.recommendations.filter(rec => rec.acquisition === 'ISSUE FROM ARMORY').length, 0);
         const missing = rows.filter(row => row.readinessStatus === 'MISSING DATA').length;
         const stale = rows.filter(row => row.readinessStatus === 'STALE DATA').length;
-        const questions = factionInventoryManagerPlan(db).questions || [];
-        const decisionLines = questions.map((q,index) =>
-            'D' + String(index + 1).padStart(2,'0') + ' · ' + String(q.area || '') + ': ' + String(q.decision || q.question || '')
-        );
+        const manager = factionInventoryManagerPlan(db);
+        const baseline = manager.baseline || factionWarReadinessBaseline(db);
+        const escalations = manager.loans.filter(row=>row.followUpStatus==='ESCALATE — LEADERSHIP + SUPERVISOR').length;
         const safeUrl = /^https:\/\//i.test(String(reportUrl || '')) ? String(reportUrl) : '';
         const body =
             'Dakiller_MLM,\n\nFaction Inventory leadership report generated by Manic Mike.\n\n' +
+            'Leadership policy authorizations D01–D07 are recorded and operational.\n' +
             'Member readiness: ' + rows.length + ' tracked · ' + missing + ' missing data · ' + stale + ' stale.\n' +
-            'Optimized members: ' + optimized.length + '.\n' +
-            'Recommended armory issues: ' + armory + '.\n' +
-            'Recommended procurement targets: ' + procure + '.\n\n' +
-            'The workbook is organized around Leadership Dashboard, Leadership Decisions, Equipment Actions, and Manager Follow-Up.\n' +
-            'Please reply using the decision IDs D01–D' + String(Math.max(questions.length,1)).padStart(2,'0') + ' so I can record and execute the approved direction.\n\n' +
-            (decisionLines.length ? decisionLines.join('\n') + '\n\n' : '') +
+            'War baseline: ' + baseline.belowTarget + ' item(s) below provisional target · ' + baseline.dataRequired + ' data-required · estimated replenishment ' + money(baseline.estimatedCost) + '.\n' +
+            'Loan escalations due: ' + escalations + '.\n' +
+            'Recommended armory issues: ' + armory + ' · procurement targets: ' + procure + '.\n\n' +
+            'Only one policy dependency remains: the named preferred external trade-partner list when Leadership has it available.\n\n' +
             (safeUrl ? 'Leadership report: ' + safeUrl + '\n\n' : '') +
-            'Optimization is not limited to current faction inventory. Missing recommended equipment can be procured using the approved route: faction member bazaar → trusted/private supplier → Item Market.\n\n' +
+            'Current authority: provisional targets/reserves; '+money(FACTION_PURCHASE_TRANSACTION_LIMIT)+' per transaction / '+money(FACTION_PURCHASE_WEEKLY_LIMIT)+' per week for routine replenishment; 7-day market baseline with '+FACTION_PRICE_PREMIUM_CAP_PCT+'% urgent premium cap; 7/10/14-day loan workflow.\n\n' +
             '— Manic Mike';
 
-        const htmlDecisionLines = decisionLines.map(line =>
-            '<div style="padding:5px 0;border-top:1px solid #333;">' + escapeMessageHtml(line) + '</div>'
-        ).join('');
         const bodyHtml =
             '<div data-mm-message-kind="leadership-report" style="font-family:Arial,sans-serif;background:#111;color:#f3f3f3;padding:14px;line-height:1.45;">' +
                 '<div style="font-size:18px;font-weight:bold;color:#f2c94c;">Faction Inventory Leadership Report</div>' +
                 '<div style="margin:8px 0;">Dakiller_MLM,</div>' +
-                '<div style="margin:8px 0;">Member readiness: <b>' + rows.length + '</b> tracked · <b>' + missing + '</b> missing data · <b>' + stale + '</b> stale.<br>' +
-                    'Optimized members: <b>' + optimized.length + '</b> · Armory issues: <b>' + armory + '</b> · Procurement targets: <b>' + procure + '</b>.</div>' +
+                '<div style="margin:8px 0;"><b>Leadership policy authorizations D01–D07 are recorded and operational.</b><br>' +
+                    'Readiness: <b>' + rows.length + '</b> tracked · <b>' + missing + '</b> missing · <b>' + stale + '</b> stale.<br>' +
+                    'War baseline: <b>' + baseline.belowTarget + '</b> below target · <b>' + baseline.dataRequired + '</b> data-required · replenishment <b>' + escapeMessageHtml(money(baseline.estimatedCost)) + '</b>.<br>' +
+                    'Loan escalations due: <b>' + escalations + '</b> · Armory issues: <b>' + armory + '</b> · Procurement targets: <b>' + procure + '</b>.</div>' +
                 (safeUrl
                     ? '<div style="margin:14px 0;"><a href="' + escapeMessageHtml(safeUrl) + '" style="display:inline-block;background:#1f4e78;color:#ffffff;text-decoration:none;font-weight:bold;padding:10px 14px;border-radius:4px;">OPEN LEADERSHIP REPORT</a></div>'
                     : '') +
-                '<div style="margin:10px 0;color:#ddd;">The workbook starts with a decision dashboard. Please reply using the IDs below so I can record your direction and evaluate the follow-up actions.</div>' +
-                htmlDecisionLines +
-                '<div style="margin-top:12px;color:#aaa;">Missing recommended equipment may be procured via faction member bazaar → trusted/private supplier → Item Market. High-value Ranked War allocation remains leadership-controlled.</div>' +
+                '<div style="margin:10px 0;color:#ddd;">Only one policy dependency remains: the named preferred external trade-partner list when available.</div>' +
+                '<div style="margin-top:12px;color:#aaa;">Routine authority: '+escapeMessageHtml(money(FACTION_PURCHASE_TRANSACTION_LIMIT))+' per transaction / '+escapeMessageHtml(money(FACTION_PURCHASE_WEEKLY_LIMIT))+' per week · 7-day market baseline · '+FACTION_PRICE_PREMIUM_CAP_PCT+'% urgent premium cap · 7/10/14-day loan workflow.</div>' +
                 '<div style="margin-top:12px;">— Manic Mike</div>' +
             '</div>';
 
@@ -11859,6 +11885,7 @@
                     '<button id="mm-faction-sync" style="'+btn(true)+'">Sync Armory</button>'+
                     '<button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button>'+
                     '<button id="mm-faction-export" style="'+btn()+'">Leadership XLSX</button>'+
+                    '<button id="mm-faction-war-baseline" style="'+btn(true)+'">Apply War Baseline</button>'+
                     '<button id="mm-faction-report-storage" style="'+btn(factionReportUploadConfigured())+'">Report Storage</button>'+
                     '<button id="mm-faction-followup" '+(getLatestFactionReport().url?'':'disabled')+' style="'+btn(Boolean(getLatestFactionReport().url))+'">Leadership Follow-Up</button>'+
                     '<button id="mm-faction-log" style="'+btn()+'">Log Activity</button>'+
@@ -11898,7 +11925,8 @@
                 '<b>Stock:</b> '+escapeHtml(policy.stock)+'<br>'+
                 '<b>Loans:</b> '+escapeHtml(policy.loans)+'<br>'+
                 '<b>High-value RW gear:</b> '+escapeHtml(policy.highValue)+'<br>'+
-                '<b>Purchasing:</b> '+escapeHtml(policy.purchasing)+
+                '<b>Purchasing:</b> '+escapeHtml(policy.purchasing)+'<br>'+
+                '<b>Reporting:</b> '+escapeHtml(policy.reporting)+
             '</div>'
         );
 
@@ -11906,7 +11934,7 @@
             '<b>Stock Planning / Restock Queue</b>'+
             (configured.length
                 ? '<div style="font-size:11px;color:#bbb;margin-top:5px;">Provisional targets: '+configured.length+' · At/above '+configured.filter(r=>r.threshold.status==='GREEN').length+' · Below '+configured.filter(r=>r.threshold.status==='LOW').length+' · Severe shortfall '+critical.length+'</div>'
-                : '<div style="font-size:11px;color:#888;margin-top:5px;">Leadership has not finalized minimum/maximum stock levels. Collect usage first; add provisional targets only when they are useful for planning.</div>')+
+                : '<div style="font-size:11px;color:#888;margin-top:5px;">Leadership authorized provisional minimums and war reserves. Use <b>Apply War Baseline</b> to load the first medical/Ipecac/core-temp targets; formal sign-off is required before the next Ranked War.</div>')+
             (restock.length
                 ? restock.slice(0,20).map(row => '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;">'+
                     factionInventoryStatusBadge(row.threshold.status)+' <b>'+escapeHtml(row.name)+'</b> · '+escapeHtml(row.category)+' · '+
@@ -11915,9 +11943,9 @@
                 '</div>').join('')
                 : configured.length ? '<div style="font-size:11px;color:#9fe3a8;margin-top:5px;">All provisional planning targets are currently met.</div>' : '')+
             (loanReview.length
-                ? '<div style="border-top:1px solid #303030;margin-top:6px;padding-top:6px;font-size:11px;"><b>Loan age observations</b><div style="font-size:10px;color:#888;margin:2px 0 4px;">No automatic overdue threshold is applied. Observed age is informational; extended, lost, or long-outstanding items are reviewed manually and escalated to leadership as needed.</div>'+
+                ? '<div style="border-top:1px solid #303030;margin-top:6px;padding-top:6px;font-size:11px;"><b>Loan age observations</b><div style="font-size:10px;color:#888;margin:2px 0 4px;">Leadership policy: 7d courteous reminder · 10d final warning · 14d Leadership + Supervisor escalation unless a prior arrangement is documented.</div>'+
                     loanReview.slice(0,12).map(row =>
-                        escapeHtml(row.memberName)+' · '+escapeHtml(row.name)+' × '+row.amount+' · observed '+Math.floor(row.observedHours)+'h'
+                        '<b>'+escapeHtml(row.followUpStatus||'ROUTINE')+'</b> · '+escapeHtml(row.memberName)+' · '+escapeHtml(row.name)+' × '+row.amount+' · observed '+Number(row.observedDays||0).toFixed(1)+'d'
                     ).join('<br>')+
                   '</div>'
                 : '')
@@ -12036,7 +12064,7 @@
 
         const memberView = card(
             '<b>Member Loan View</b>'+
-            '<div style="font-size:10px;color:#888;margin-top:4px;">Armor and temporary weapons may be borrowed for chains, Ranked Wars, and training. No fixed loan duration is enforced here; follow-up and escalation remain a management judgment.</div>'+
+            '<div style="font-size:10px;color:#888;margin-top:4px;">Armor and temporary weapons may be borrowed for chains, Ranked Wars, and training. Policy: 7d reminder · 10d final warning · 14d Leadership + Supervisor escalation absent prior arrangement.</div>'+
             (loans.length ? loans.slice(0,40).map(member =>
                 '<details style="border-top:1px solid #303030;padding:5px 0;"><summary style="cursor:pointer;font-size:11px;"><b>'+escapeHtml(member.memberName)+'</b> ['+escapeHtml(member.memberId)+'] · '+member.amount+' item'+(member.amount===1?'':'s')+'</summary>'+
                 '<div style="font-size:10px;color:#aaa;margin-top:4px;">'+member.items.map(item => {
@@ -14457,6 +14485,7 @@
         root.querySelector('#mm-faction-sync')?.addEventListener('click', () => syncFactionInventory({silent:false,force:true}).catch(()=>{}));
         root.querySelector('#mm-faction-market')?.addEventListener('click', () => syncMarketIntelligence(false));
         root.querySelector('#mm-faction-export')?.addEventListener('click', () => exportFactionInventoryWorkbook().catch(()=>{}));
+        root.querySelector('#mm-faction-war-baseline')?.addEventListener('click', () => applyFactionWarReadinessBaseline());
         root.querySelector('#mm-faction-report-storage')?.addEventListener('click', () => configureFactionReportStorage());
         root.querySelector('#mm-faction-followup')?.addEventListener('click', () => openLatestFactionReport());
         root.querySelector('#mm-faction-log')?.addEventListener('click', () => promptFactionLogisticsEntry());
