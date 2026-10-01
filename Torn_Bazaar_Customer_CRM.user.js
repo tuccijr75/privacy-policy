@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.8
+// @version      7.4.9
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.8';
+    const VERSION = '7.4.9';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -10007,42 +10007,68 @@
     function factionEquipmentSummaryFromResponse(data) {
         const rows = [];
         const seen = new Set();
-        const slotName = slot => {
-            const n = Number(slot);
-            const names = { 1:'Primary', 2:'Secondary', 3:'Melee', 4:'Temporary', 5:'Helmet', 6:'Body', 7:'Gloves', 8:'Pants', 9:'Boots' };
-            return names[n] || (slot ? String(slot) : '');
+
+        const semanticSlot = (item, fallback = '') => {
+            const subType = String(item?.sub_type ?? item?.subType ?? '').trim();
+            const type = String(item?.type ?? item?.category ?? '').trim();
+            const rawSlot = String(item?.slot ?? '').trim();
+
+            // Prefer Torn's semantic item metadata. Numeric slot identifiers are not
+            // treated as a global enum because weapon/armor equipment families can
+            // use values that do not map safely to one guessed table.
+            if (subType && !/^\d+$/.test(subType)) return subType;
+            if (type && !/^\d+$/.test(type)) return type;
+            if (rawSlot && !/^\d+$/.test(rawSlot)) return rawSlot;
+            return String(fallback || '').trim();
         };
-        const push = (slot, item) => {
+
+        const push = (fallbackSlot, item) => {
             if (!item) return;
             if (typeof item === 'string') {
                 const text = item.trim();
-                if (text && !seen.has(slot+'|'+text)) { seen.add(slot+'|'+text); rows.push((slot?slot+': ':'')+text); }
+                if (text && !seen.has(fallbackSlot+'|'+text)) {
+                    seen.add(fallbackSlot+'|'+text);
+                    rows.push((fallbackSlot?fallbackSlot+': ':'')+text);
+                }
                 return;
             }
-            if (Array.isArray(item)) { item.forEach(x=>push(slot,x)); return; }
+            if (Array.isArray(item)) {
+                item.forEach(x=>push(fallbackSlot,x));
+                return;
+            }
             if (typeof item !== 'object') return;
+
             const name = String(item.name ?? item.item_name ?? item.item?.name ?? '').trim();
             const id = asId(item.id ?? item.item_id ?? item.item?.id);
-            const resolvedSlot = slotName(item.slot ?? slot);
+            const slot = semanticSlot(item,fallbackSlot);
+
             if (name || id) {
-                const text = (resolvedSlot?resolvedSlot+': ':'') + (name || ('Item '+id)) + (id ? ' ['+id+']' : '');
-                if (!seen.has(text)) { seen.add(text); rows.push(text); }
+                const text = (slot?slot+': ':'') + (name || ('Item '+id)) + (id ? ' ['+id+']' : '');
+                if (!seen.has(text)) {
+                    seen.add(text);
+                    rows.push(text);
+                }
                 return;
             }
+
             for (const [key,val] of Object.entries(item)) {
                 if (['ammo','quantity','amount','uid','uids','mods','bonuses','stats'].includes(String(key).toLowerCase())) continue;
                 push(String(key),val);
             }
         };
+
         const equipment = Array.isArray(data?.equipment) ? data.equipment : [];
         const clothing = Array.isArray(data?.clothing) ? data.clothing : [];
-        equipment.forEach(item=>push(item?.slot ?? '',item));
-        clothing.forEach(item=>push(item?.type || 'Clothing',item));
+
+        equipment.forEach(item=>push('',item));
+        clothing.forEach(item=>push('Clothing',item));
+
         if (!equipment.length && !clothing.length) {
             const root = (data?.items ?? data) || {};
             if (Array.isArray(root)) root.forEach(x=>push('',x));
             else if (root && typeof root === 'object') Object.entries(root).forEach(([slot,item])=>push(slot,item));
         }
+
         return rows.slice(0,30).join(' | ');
     }
 
