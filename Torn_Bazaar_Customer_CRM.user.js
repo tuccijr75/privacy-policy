@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.18
+// @version      7.4.19
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -29,7 +29,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.18';
+    const VERSION = '7.4.19';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -124,9 +124,9 @@
     const FACTION_INVENTORY_SNAPSHOT_MAX = 192;
     const FACTION_INVENTORY_EVENT_MAX = 2500;
     const FACTION_INVENTORY_CATEGORIES = Object.freeze([
-        'armor','temporary','medical','consumables'
+        'weapons','armor','temporary','medical','consumables'
     ]);
-    const FACTION_INVENTORY_LOAN_CATEGORIES = Object.freeze(['armor','temporary']);
+    const FACTION_INVENTORY_LOAN_CATEGORIES = Object.freeze(['weapons','armor','temporary']);
     const FACTION_PURCHASE_TRANSACTION_LIMIT = 5_000_000;
     const FACTION_PURCHASE_WEEKLY_LIMIT = 15_000_000;
     const FACTION_PRICE_PREMIUM_CAP_PCT = 5;
@@ -142,7 +142,7 @@
         position: 'Inventory Manager',
         appointee: 'Manic Mike',
         objective: 'Maintain total control over faction supply and logistics so unlocked armories are accurately tracked, appropriately stocked, and ready for Ranked Wars, chains, training, and daily operations.',
-        scope: 'Active vault scope is the currently unlocked armor, temporary weapons, medical, and consumables armories, including sweets and beers. Weapon and gear upgrades are part of sourcing/planning; direct weapon-armory inventory control begins only if that armory is unlocked and access is granted.',
+        scope: 'Active vault scope is the currently unlocked weapons, armor, temporary, medical, and consumables armories, including sweets and beers. Weapon and gear upgrades are part of inventory, build planning, sourcing, loans, and readiness; high-value Ranked War allocation remains leadership-controlled.',
         audit: 'Regularly audit vault stock, inventory movement, loans, returns, distributions, purchases, and access/readiness exceptions. Keep accurate records and flag unexplained loss or variance.',
         readiness: 'Maintain supply readiness for scheduled Ranked Wars and faction chains. Leadership authorized a provisional War-Readiness Baseline now; submit provisional thresholds for formal sign-off before the next Ranked War.',
         distribution: 'Respond rapidly to supply requests. Routine consumables and permitted armory gear may be supported by the Inventory Manager; high-value Ranked War equipment remains in the vault and is distributed by leadership immediately before war. Support leadership in matching gear to combat roles and assignments.',
@@ -10612,7 +10612,7 @@
         if (!key) throw new Error('No compatible faction API key is available.');
         const inventoryRows = factionInventoryRows(db)
             .filter(row => Number(row.availableCount||0) > 0)
-            .filter(row => ['armor','temporary'].includes(String(row.category||'')))
+            .filter(row => ['weapons','armor','temporary'].includes(String(row.category||'')))
             .filter(row => Array.isArray(row.availableUids) && row.availableUids.length);
 
         const uidMap = new Map();
@@ -10636,7 +10636,7 @@
                 inventoryRows.find(r=>asId(r.itemId)===asId(detail.itemId)) || {};
             return {
                 ...detail,
-                category:String(sourceRow.category||''),
+                category:String(sourceRow.category||'') === 'weapons' ? 'weapon' : String(sourceRow.category||''),
                 available:Number(sourceRow.availableCount||0),
                 referencePrice:Number(sourceRow.referencePrice||0)
             };
@@ -11927,7 +11927,7 @@
 
         const summary = card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-                '<div><b style="font-size:15px;">Faction Inventory Manager</b><div style="font-size:10px;color:#888;">Read-only armory operations · confirmed scope: armor, temporary, medical, consumables</div></div>'+
+                '<div><b style="font-size:15px;">Faction Inventory Manager</b><div style="font-size:10px;color:#888;">Read-only armory operations · confirmed scope: weapons, armor, temporary, medical, consumables</div></div>'+
                 '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">'+
                     '<label style="font-size:10px;color:#aaa;display:flex;align-items:center;gap:4px;">Category <select id="mm-faction-category" style="'+inputCss()+'padding:5px 7px;min-width:150px;">'+
                         categories.map(cat => '<option value="'+escapeHtml(cat)+'" '+(selectedCategory===cat?'selected':'')+'>'+escapeHtml(cat==='all'?'All categories':cat)+'</option>').join('')+
