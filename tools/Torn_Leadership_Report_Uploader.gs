@@ -44,9 +44,10 @@ function doPost(e) {
 }
 
 function json_(value) {
-  return ContentService
-    .createTextOutput(JSON.stringify(value))
-    .setMimeType(ContentService.MimeType.JSON);
+  // HtmlService avoids ContentService's one-time googleusercontent redirect.
+  // That redirect can cause some POST clients to repeat POST against the
+  // redirected URL and receive HTTP 405 Method Not Allowed.
+  return HtmlService.createHtmlOutput(JSON.stringify(value));
 }
 
 function sanitizeFilename_(value) {
