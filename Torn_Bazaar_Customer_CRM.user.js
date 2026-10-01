@@ -10974,7 +10974,10 @@
         }));
         const armoryAllocationRows = memberReadiness.filter(row=>row.hasStats&&row.hasEquipment).map(row=>({
             'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Battle Profile':String(row.statProfile?.label||'UNKNOWN'),
-            'Current Equipment':String(row.equipmentSummary||''), 'Current Faction Loans':Number(row.loans||0), 'Candidate / Review Plan':row.equipmentPlan,
+            'Current Equipment':String(row.equipmentSummary||''), 'Current Faction Loans':Number(row.loans||0), 'Candidate / Review Plan':String(row.profile?.optimization?.summary || row.equipmentPlan),
+            'Optimization Details':Array.isArray(row.profile?.optimization?.recommendations)
+                ? row.profile.optimization.recommendations.map(x=>[x.kind,x.slot,x.current,x.candidate,x.delta!=null?'Δ '+x.delta:'',x.note].filter(Boolean).join(' · ')).join(' | ')
+                : '',
             'Authority':'Candidate planning only; high-value Ranked War allocation remains leadership-controlled.'
         }));
         const assumptionRows = [
@@ -11196,6 +11199,9 @@
                         '<div><b>'+escapeHtml(row.memberName)+'</b> ['+escapeHtml(row.memberId)+'] · Lv '+Number(row.level||0)+' · '+escapeHtml(row.statProfile.label)+' · <b>'+escapeHtml(row.readinessStatus)+'</b></div>'+
                         '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
                             '<button data-faction-member-edit="'+escapeHtml(row.memberId)+'" style="'+btn(row.readinessStatus==='READY FOR REVIEW')+'">Edit Readiness</button>'+
+                            (row.readinessStatus==='READY FOR REVIEW'
+                                ? '<button data-faction-member-optimize="'+escapeHtml(row.memberId)+'" style="'+btn(true)+'">Optimize Loadout</button>'
+                                : '')+
                             (keyVaultRaw?.entries?.[asId(row.memberId)]
                                 ? '<button data-faction-member-refresh="'+escapeHtml(row.memberId)+'" style="'+btn(true)+'">Refresh This Member</button>'+
                                   '<button data-faction-member-remove-key="'+escapeHtml(row.memberId)+'" style="'+btn()+'">Remove Saved Key</button>'
@@ -11209,7 +11215,20 @@
                         : ' · Saved key: none')+
                     (row.profile?.warRole?' · Role: '+escapeHtml(row.profile.warRole):'')+
                     '<br>Current gear: '+escapeHtml(row.equipmentSummary||'—')+
-                    '<br><b>Plan:</b> '+escapeHtml(row.equipmentPlan)+
+                    '<br><b>Plan:</b> '+escapeHtml(row.profile?.optimization?.summary || row.equipmentPlan)+
+                    (Array.isArray(row.profile?.optimization?.recommendations) && row.profile.optimization.recommendations.length
+                        ? '<div style="margin-top:3px;padding-left:8px;border-left:2px solid #444;">'+
+                          row.profile.optimization.recommendations.map(rec =>
+                              '<div><b>'+escapeHtml(rec.kind)+'</b> · '+escapeHtml(rec.slot||'')+
+                              (rec.current?' · Current: '+escapeHtml(rec.current):'')+
+                              (rec.candidate?' · Candidate: '+escapeHtml(rec.candidate):'')+
+                              (rec.delta!=null && Number(rec.delta)!==0?' · Δ '+escapeHtml(String(rec.delta)):'')+
+                              (rec.available!=null?' · Available '+Number(rec.available):'')+
+                              (rec.note?'<br><span style="color:#888;">'+escapeHtml(rec.note)+'</span>':'')+
+                              '</div>'
+                          ).join('')+
+                          '</div>'
+                        : '')+
                     '</div>'+
                 '</div>'
             ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">Sync the faction roster to begin member readiness planning.</div>')
@@ -13669,6 +13688,7 @@
         root.querySelector('#mm-faction-member-key-refresh')?.addEventListener('click', () => refreshFactionMemberKeyVault().catch(()=>{}));
         root.querySelector('#mm-faction-roster-sync-card')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
         root.querySelectorAll('[data-faction-member-edit]').forEach(button => button.addEventListener('click', () => promptFactionMemberReadiness(button.dataset.factionMemberEdit)));
+        root.querySelectorAll('[data-faction-member-optimize]').forEach(button => button.addEventListener('click', () => optimizeFactionMemberLoadout(button.dataset.factionMemberOptimize).catch(()=>{})));
         root.querySelectorAll('[data-faction-member-refresh]').forEach(button => button.addEventListener('click', () => refreshSavedFactionMember(button.dataset.factionMemberRefresh).catch(()=>{})));
         root.querySelectorAll('[data-faction-member-remove-key]').forEach(button => button.addEventListener('click', () => removeSavedFactionMemberKey(button.dataset.factionMemberRemoveKey)));
         root.querySelector('#mm-faction-category')?.addEventListener('change', e => {
@@ -14497,6 +14517,8 @@
         removeSavedFactionMemberKey,
         saveFactionMemberReadinessProfile,
         factionMemberReadinessRows: () => factionMemberReadinessRows(dbLoad()),
+        optimizeFactionMemberLoadout,
+        factionLoadoutOptimization,
         factionArmoryCandidateRows: () => factionArmoryCandidateRows(dbLoad()),
         factionInventorySelfTest,
         syncTravelStock,
