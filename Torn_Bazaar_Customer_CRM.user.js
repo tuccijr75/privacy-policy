@@ -10543,6 +10543,74 @@
             .sort((a,b) => (b.armorRating-a.armorRating) || ((b.damage+b.accuracy)-(a.damage+a.accuracy)) || (b.quality-a.quality) || (b.available-a.available));
     }
 
+    function factionWeaponSlot(item) {
+        const raw=[item?.subType,item?.slot,item?.type,item?.name].map(v=>String(v||'').toLowerCase()).join(' ');
+        if(/pistol|revolver|secondary/.test(raw)) return 'secondary';
+        if(/melee|piercing|slashing|clubbing|mechanical|fist|weapon of honor/.test(raw)) return 'melee';
+        if(/rifle|shotgun|smg|machine gun|heavy artillery|primary/.test(raw)) return 'primary';
+        return '';
+    }
+
+    function factionEquipmentCategory(item) {
+        if (factionArmorSlot(item)) return 'armor';
+        const raw=[item?.category,item?.type,item?.subType,item?.name].map(v=>String(v||'').toLowerCase()).join(' ');
+        if (/temporary|grenade|pepper spray|tear gas|smoke|flash|molotov/.test(raw)) return 'temporary';
+        if (Number(item?.damage||0)>0 || Number(item?.accuracy||0)>0 || factionWeaponSlot(item)) return 'weapon';
+        return '';
+    }
+
+    function factionProcurementPriceContext(db, itemId, catalogRow = {}) {
+        const id=asId(itemId);
+        const detail=db.marketIntel?.details?.[id] || {};
+        const base=db.marketIntel?.marketplace?.[id] || {};
+        const organic=Array.isArray(detail.organicListings) ? detail.organicListings
+            .filter(x=>Number(x.price||0)>0)
+            .sort((a,b)=>Number(a.price||0)-Number(b.price||0))[0] : null;
+        if (organic) return { price:Number(organic.price||0), source:'TornW3B organic listing' };
+        if (Number(base.lowestPrice||0)>0) return { price:Number(base.lowestPrice||0), source:'TornW3B lowest' };
+        if (Number(detail.marketPrice||0)>0) return { price:Number(detail.marketPrice||0), source:'Torn market reference' };
+        if (Number(catalogRow.marketValue||0)>0) return { price:Number(catalogRow.marketValue||0), source:'Torn catalog market value' };
+        return { price:0, source:'' };
+    }
+
+    function factionGlobalEquipmentCandidates(db) {
+        const catalog=db.procurement?.catalog || {};
+        const armoryRows=factionInventoryRows(db);
+        const armoryById=new Map(armoryRows.map(row=>[asId(row.itemId),row]));
+        const rows=[];
+
+        for (const item of Object.values(catalog)) {
+            if (!item || typeof item !== 'object') continue;
+            const category=factionEquipmentCategory(item);
+            if (!category) continue;
+
+            const armory=armoryById.get(asId(item.id));
+            const available=Number(armory?.availableCount||0);
+            const price=factionProcurementPriceContext(db,item.id,item);
+            rows.push({
+                itemId:asId(item.id),
+                name:String(item.name||('Item '+item.id)),
+                type:String(item.type||''),
+                subType:String(item.subType||''),
+                category,
+                damage:Number(item.damage||0),
+                accuracy:Number(item.accuracy||0),
+                armor:Number(item.armor||0),
+                quality:Number(item.quality||0),
+                bonuses:null,
+                available,
+                uid:'',
+                source:available>0?'FACTION ARMORY':'GLOBAL CATALOG',
+                acquisition:available>0?'ISSUE FROM ARMORY':'PROCURE',
+                procurementRoute:available>0?'Faction armory':'Faction member bazaar → trusted/private supplier → Item Market',
+                referencePrice:Number(price.price||0),
+                priceSource:String(price.source||'')
+            });
+        }
+
+        return rows;
+    }
+
     function factionLoadoutOptimization(member, armoryDetails) {
         const equipped = Array.isArray(member?.profile?.equipment?.items)
             ? member.profile.equipment.items
