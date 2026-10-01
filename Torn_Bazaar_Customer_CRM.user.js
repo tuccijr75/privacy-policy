@@ -11630,9 +11630,10 @@
 
         try {
             const uploaded = await uploadFactionLeadershipWorkbook(bytes, filename);
+            saveLatestFactionReport({ url:uploaded.url, filename, generatedAt:nowIso() });
             const leaderMessage = factionLeadershipReportMessage(reportDb, uploaded.url);
-            composeMessage(FACTION_LEADER_TORN_ID, leaderMessage.subject, leaderMessage.body);
-            statusText = 'Leadership XLSX uploaded. Share link prepared for '+FACTION_LEADER_TORN_NAME+' ['+FACTION_LEADER_TORN_ID+']; Send remains manual.';
+            composeMessage(FACTION_LEADER_TORN_ID, leaderMessage.subject, leaderMessage.body, leaderMessage.bodyHtml);
+            statusText = 'Leadership XLSX uploaded. Clickable report link prepared for '+FACTION_LEADER_TORN_NAME+' ['+FACTION_LEADER_TORN_ID+']; Leadership Follow-Up now opens the latest report. Send remains manual.';
         } catch (error) {
             statusText = 'Leadership XLSX was not sent or downloaded because remote upload failed: '+(error?.message || String(error));
             alert(statusText);
@@ -11682,7 +11683,8 @@
                     '<button id="mm-faction-sync" style="'+btn(true)+'">Sync Armory</button>'+
                     '<button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button>'+
                     '<button id="mm-faction-export" style="'+btn()+'">Leadership XLSX</button>'+
-                    '<button id="mm-faction-report-storage" style="'+btn(factionReportUploadConfigured())+'">Report Storage</button>'+\n                    '<button id="mm-faction-followup" '+(getLatestFactionReport().url?'':'disabled')+' style="'+btn(Boolean(getLatestFactionReport().url))+'">Leadership Follow-Up</button>'+
+                    '<button id="mm-faction-report-storage" style="'+btn(factionReportUploadConfigured())+'">Report Storage</button>'+
+                    '<button id="mm-faction-followup" '+(getLatestFactionReport().url?'':'disabled')+' style="'+btn(Boolean(getLatestFactionReport().url))+'">Leadership Follow-Up</button>'+
                     '<button id="mm-faction-log" style="'+btn()+'">Log Activity</button>'+
                     '<button id="mm-faction-roster-sync" style="'+btn()+'">Sync Members</button>'+
                     '<button id="mm-faction-member-key-import" style="'+btn()+'">Import Member Key</button>'+
@@ -14279,7 +14281,8 @@
         root.querySelector('#mm-faction-sync')?.addEventListener('click', () => syncFactionInventory({silent:false,force:true}).catch(()=>{}));
         root.querySelector('#mm-faction-market')?.addEventListener('click', () => syncMarketIntelligence(false));
         root.querySelector('#mm-faction-export')?.addEventListener('click', () => exportFactionInventoryWorkbook().catch(()=>{}));
-        root.querySelector('#mm-faction-report-storage')?.addEventListener('click', () => configureFactionReportStorage());\n        root.querySelector('#mm-faction-followup')?.addEventListener('click', () => openLatestFactionReport());
+        root.querySelector('#mm-faction-report-storage')?.addEventListener('click', () => configureFactionReportStorage());
+        root.querySelector('#mm-faction-followup')?.addEventListener('click', () => openLatestFactionReport());
         root.querySelector('#mm-faction-log')?.addEventListener('click', () => promptFactionLogisticsEntry());
         root.querySelector('#mm-faction-roster-sync')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
         root.querySelector('#mm-faction-member-key-import')?.addEventListener('click', () => promptFactionMemberApiImport());
