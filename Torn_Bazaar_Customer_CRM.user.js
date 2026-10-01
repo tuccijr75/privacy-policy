@@ -11301,7 +11301,8 @@
         const loanRows = manager.loans.map(row=>({
             'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Category':String(row.category||''), 'Item ID':asId(row.itemId), 'Item':String(row.name||''),
             'Quantity':Number(row.amount||0), 'UIDs':(row.uids||[]).join(' | '), 'First Observed':row.observedSince ? new Date(row.observedSince).toISOString() : '',
-            'Observed Hours':Number(row.observedHours||0), 'Disposition':'Monitor; follow up/escalate per leadership-approved loan timing.'
+            'Observed Hours':Number(row.observedHours||0), 'Observed Days':Number(row.observedDays||0), 'Follow-Up Status':String(row.followUpStatus||'ROUTINE'),
+            'Disposition':String(row.disposition||'Routine monitoring.')
         }));
         const logisticsRows = manager.ledger.slice().sort((a,b)=>String(b.at||'').localeCompare(String(a.at||''))).map(row=>({
             'Date':String(row.at||''), 'Action':String(row.action||''), 'Category':String(row.category||''), 'Item ID':asId(row.itemId), 'Item / Subject':String(row.itemName||''),
@@ -11315,28 +11316,16 @@
         const planRows = manager.plan.map(row=>({
             'Phase':row.phase, 'Cadence':row.cadence, 'Action':row.action, 'Owner':row.owner, 'Status':row.status, 'Evidence / Definition of Done':row.evidence
         }));
-        const managerProposalForDecision = area => {
-            const key = String(area || '');
-            if (key === 'Stock targets and reserves') return 'Approve the target-setting method now; use observed consumption plus a separate Ranked War/chain reserve once the history window is mature.';
-            if (key === 'Purchasing authority') return 'Set standing purchase/reimbursement limits and require leadership approval above them.';
-            if (key === 'Price guidelines') return 'Use category-specific guardrails against a verified market reference; exceptions require leadership approval.';
-            if (key === 'Loan follow-up') return 'Define both a routine follow-up interval and a separate escalation interval; leadership retains enforcement.';
-            if (key === 'Trusted supplier register') return 'Approve a named supplier list after faction-member bazaars, plus prohibited/exception sources.';
-            if (key === 'Armory access authority') return 'Audit and recommend by default; permission changes only when leadership explicitly grants that authority.';
-            if (key === 'Reporting cadence') return 'Weekly routine report; immediate exception report for critical shortage, unexplained loss, access risk, or major funding need.';
-            return '';
-        };
-        const questionRows = manager.questions.map((q,index)=>({
-            'Decision ID':'D' + String(index + 1).padStart(2,'0'),
-            'Priority':q.priority,
-            'Area':q.area,
-            'Question':q.question,
-            'Current State / Assumption':q.current,
-            'Decision Needed':q.decision,
-            'Manager Proposal / Structure':managerProposalForDecision(q.area),
-            'Leader Decision':'',
-            'Leader Notes / Limits':'',
-            'Decision Status':'AWAITING LEADER'
+        const authorizations = factionLeadershipAuthorizations();
+        const questionRows = authorizations.map(row=>({
+            'Decision ID':row.id,
+            'Priority':row.priority,
+            'Area':row.area,
+            'Question':row.question,
+            'Manager Proposal / Structure':row.managerProposal,
+            'Leader Decision':row.leaderDecision,
+            'Leader Notes / Limits':row.leaderNotes,
+            'Decision Status':row.decisionStatus
         }));
         const loanExposureMap = new Map();
         for (const loan of manager.loans) {
@@ -11445,34 +11434,55 @@
         const readyMembers = memberReadiness.filter(row=>row.readinessStatus==='READY FOR REVIEW').length;
         const missingMembers = memberReadiness.filter(row=>row.readinessStatus==='MISSING DATA').length;
         const clearUpgradeCount = equipmentActionRows.filter(row=>String(row['Action Type']).includes('CLEAR')).length;
+        const baseline = factionWarReadinessBaseline(db);
         const dashboardRows = [
             { Section:'READINESS', Signal:'Readiness coverage', Current:readyMembers + '/' + memberReadiness.length, Status:missingMembers ? 'ACTION' : 'READY', 'Leader / Manager Interpretation':missingMembers + ' member(s) still missing readiness data.' },
             { Section:'READINESS', Signal:'Inventory snapshot age (hours)', Current:sourceAgeHours === '' ? '' : Number(sourceAgeHours.toFixed(1)), Status:sourceAgeHours === '' ? 'MISSING' : Number(sourceAgeHours) > 2 ? 'STALE REVIEW' : 'CURRENT', 'Leader / Manager Interpretation':'Refresh before time-sensitive allocation decisions.' },
-            { Section:'LOANS', Signal:'Loan exposure', Current:totalLoaned, Status:manager.loans.length ? 'MONITOR' : 'CLEAR', 'Leader / Manager Interpretation':manager.loans.length + ' item/member loan row(s).' },
-            { Section:'PLANNING', Signal:'Configured planning targets', Current:manager.configured.length, Status:manager.configured.length ? 'ACTIVE' : 'DECISION REQUIRED', 'Leader / Manager Interpretation':'Restock shortfalls are not meaningful until targets/reserves are approved.' },
-            { Section:'DECISIONS', Signal:'Open leadership decisions', Current:questionRows.length, Status:'DECISION REQUIRED', 'Leader / Manager Interpretation':'Reply using D01–D' + String(Math.max(questionRows.length,1)).padStart(2,'0') + '.' },
-            { Section:'HISTORY', Signal:'Observed history days', Current:Number(manager.report.observedDays || 0).toFixed(1), Status:manager.report.observedDays >= 7 ? 'MATURE WEEK' : 'COLLECTING HISTORY', 'Leader / Manager Interpretation':'Target setting becomes stronger with a longer usage baseline.' },
+            { Section:'LOANS', Signal:'Loan exposure', Current:totalLoaned, Status:manager.loans.some(row=>row.followUpStatus==='ESCALATE — LEADERSHIP + SUPERVISOR') ? 'ESCALATE' : manager.loans.some(row=>row.followUpStatus!=='ROUTINE') ? 'ACTION' : manager.loans.length ? 'MONITOR' : 'CLEAR', 'Leader / Manager Interpretation':manager.loans.length + ' item/member loan row(s); policy is 7d reminder / 10d final warning / 14d escalation.' },
+            { Section:'PLANNING', Signal:'Provisional war baseline', Current:baseline.belowTarget + ' below target / ' + baseline.dataRequired + ' data-required', Status:baseline.belowTarget ? 'ACTION' : baseline.dataRequired ? 'DATA REQUIRED' : 'READY', 'Leader / Manager Interpretation':'Leadership authorized provisional targets; formal sign-off is required before the next Ranked War.' },
+            { Section:'AUTHORITY', Signal:'Routine purchase authority', Current:money(FACTION_PURCHASE_TRANSACTION_LIMIT) + ' txn / ' + money(FACTION_PURCHASE_WEEKLY_LIMIT) + ' week', Status:'AUTHORIZED', 'Leader / Manager Interpretation':'Routine replenishment only; single purchases above the per-transaction limit require Leadership or Banker approval.' },
+            { Section:'PRICING', Signal:'Emergency premium cap', Current:FACTION_PRICE_PREMIUM_CAP_PCT + '%', Status:'AUTHORIZED', 'Leader / Manager Interpretation':'Use 7-day Item Market/Bazaar average; >5% premium requires separate approval.' },
+            { Section:'POLICY', Signal:'Open policy decisions', Current:0, Status:'AUTHORIZED', 'Leader / Manager Interpretation':'D01–D07 answered. Preferred external partner names remain a pending dependency.' },
+            { Section:'DEPENDENCY', Signal:'Preferred supplier names', Current:manager.questions.length, Status:manager.questions.length ? 'WAITING — LEADERSHIP' : 'COMPLETE', 'Leader / Manager Interpretation':manager.questions.length ? manager.questions[0].decision : 'Preferred supplier register complete.' },
+            { Section:'HISTORY', Signal:'Observed history days', Current:Number(manager.report.observedDays || 0).toFixed(1), Status:manager.report.observedDays >= 7 ? 'MATURE WEEK' : 'COLLECTING HISTORY', 'Leader / Manager Interpretation':'Provisional targets use a conservative roster floor while the history window matures.' },
             { Section:'EQUIPMENT', Signal:'Clear equipment upgrades', Current:clearUpgradeCount, Status:clearUpgradeCount ? 'REVIEW / APPROVE' : 'NONE', 'Leader / Manager Interpretation':'Review Equipment Actions for per-member candidate, acquisition, and rationale.' }
         ];
         for (const row of questionRows) {
             dashboardRows.push({
-                Section:'DECISION',
+                Section:'AUTHORIZATION',
                 Signal:row['Decision ID'] + ' · ' + row.Area,
                 Current:row.Priority,
                 Status:row['Decision Status'],
-                'Leader / Manager Interpretation':row['Decision Needed'] + ' Manager proposal: ' + row['Manager Proposal / Structure']
+                'Leader / Manager Interpretation':row['Leader Decision'] + ' ' + row['Leader Notes / Limits']
             });
         }
 
-        const managerFollowUpRows = questionRows.map(row=>({
-            'Decision ID':row['Decision ID'],
-            'Area':row.Area,
-            'Leader Decision':'',
-            'Manager Assessment':'',
-            'Next Action':'',
-            'Owner':'',
-            'Due Date':'',
-            'Follow-Up Status':'AWAITING LEADER'
+        const managerFollowUpRows = authorizations.map(row=>({
+            'Decision ID':row.id,
+            'Area':row.area,
+            'Leader Decision':row.leaderDecision,
+            'Manager Assessment':row.managerAssessment,
+            'Next Action':row.nextAction,
+            'Owner':row.owner,
+            'Due Date':row.due,
+            'Follow-Up Status':row.followUpStatus
+        }));
+
+        const warBaselineRows = baseline.rows.map(row=>({
+            'Category':row.category,
+            'Item':row.name,
+            'Current':Number(row.current||0),
+            'Observed / Day':Number(row.daily||0),
+            'Target Mode':row.mode === 'MAX_USE_ROSTER' ? 'MAX(14D USE, ROSTER)' : row.mode === 'ROSTER' ? 'ROSTER' : 'DATA REQUIRED',
+            'Roster Floor':row.target==null ? 0 : baseline.rosterCount,
+            'Coverage Days':baseline.coverageDays,
+            'Provisional Target':row.target==null ? '' : Number(row.target),
+            'Shortfall':row.shortfall==null ? '' : Number(row.shortfall),
+            'Reference Price':Number(row.referencePrice||0),
+            'Estimated Replenishment Cost':row.estimatedCost==null ? '' : Number(row.estimatedCost),
+            'Readiness':row.readiness,
+            'Purchase Authority':row.purchaseAuthority,
+            'Notes':row.note
         }));
         const assumptionRows = [
             { Topic:'Faction / position', Value:FACTION_INVENTORY_POLICY.faction + ' — ' + FACTION_INVENTORY_POLICY.position + ' — appointed ' + FACTION_INVENTORY_POLICY.appointee, Classification:'OFFICIAL INDUCTION' },
@@ -11481,16 +11491,17 @@
             { Topic:'Audit/accountability', Value:FACTION_INVENTORY_POLICY.audit, Classification:'OFFICIAL INDUCTION' },
             { Topic:'Readiness', Value:FACTION_INVENTORY_POLICY.readiness, Classification:'OFFICIAL INDUCTION' },
             { Topic:'Distribution', Value:FACTION_INVENTORY_POLICY.distribution, Classification:'OFFICIAL INDUCTION' },
-            { Topic:'Access safety', Value:FACTION_INVENTORY_POLICY.access, Classification:'OFFICIAL INDUCTION / AUTHORITY OPEN' },
+            { Topic:'Access safety', Value:FACTION_INVENTORY_POLICY.access, Classification:'LEADERSHIP AUTHORIZATION 2026-10-01' },
             { Topic:'Member guidance', Value:FACTION_INVENTORY_POLICY.guidance, Classification:'OFFICIAL INDUCTION' },
             { Topic:'Inventory lifespan precedent', Value:FACTION_INVENTORY_POLICY.precedent, Classification:'LEADERSHIP CONTEXT' },
             { Topic:'Role', Value:FACTION_INVENTORY_POLICY.role, Classification:'CONFIRMED POLICY' },
             { Topic:'Sourcing', Value:FACTION_INVENTORY_POLICY.sourcing, Classification:'CONFIRMED POLICY' },
-            { Topic:'Pricing', Value:FACTION_INVENTORY_POLICY.pricing, Classification:'CONFIRMED POLICY' },
-            { Topic:'Stock', Value:FACTION_INVENTORY_POLICY.stock, Classification:'OPEN POLICY' },
-            { Topic:'Loans', Value:FACTION_INVENTORY_POLICY.loans, Classification:'PARTIAL POLICY' },
+            { Topic:'Pricing', Value:FACTION_INVENTORY_POLICY.pricing, Classification:'LEADERSHIP AUTHORIZATION 2026-10-01' },
+            { Topic:'Stock', Value:FACTION_INVENTORY_POLICY.stock, Classification:'LEADERSHIP AUTHORIZATION 2026-10-01' },
+            { Topic:'Loans', Value:FACTION_INVENTORY_POLICY.loans, Classification:'LEADERSHIP AUTHORIZATION 2026-10-01' },
             { Topic:'High-value RW gear', Value:FACTION_INVENTORY_POLICY.highValue, Classification:'CONFIRMED POLICY' },
-            { Topic:'Purchasing', Value:FACTION_INVENTORY_POLICY.purchasing, Classification:'PARTIAL POLICY' },
+            { Topic:'Purchasing', Value:FACTION_INVENTORY_POLICY.purchasing, Classification:'LEADERSHIP AUTHORIZATION 2026-10-01' },
+            { Topic:'Reporting cadence', Value:FACTION_INVENTORY_POLICY.reporting, Classification:'LEADERSHIP AUTHORIZATION 2026-10-01' },
             { Topic:'Inventory source', Value:'Torn API v2 faction/inventory; local CRM snapshots retain history.', Classification:'SOURCE' },
             { Topic:'Market references', Value:'Advisory only. Current CRM market evidence may include Item Market, Bazaar observations, TornW3B, or catalog fallback.', Classification:'ADVISORY' },
             { Topic:'Equipment optimization scope', Value:'Optimization may recommend equipment not currently owned by the faction. Armory availability determines acquisition path, not the target loadout. Missing items are procurement targets using faction-member bazaars first, then trusted/private suppliers, then Item Market.', Classification:'CONFIRMED OPERATING MODEL' },
@@ -11501,6 +11512,7 @@
             dashboard:makeDoc('Faction_Leadership_Dashboard.csv',dashboardRows),
             questions:makeDoc('Faction_Leadership_Decisions.csv',questionRows),
             managerFollowUp:makeDoc('Faction_Manager_Follow_Up.csv',managerFollowUpRows),
+            warBaseline:makeDoc('Faction_War_Readiness_Baseline.csv',warBaselineRows),
             summary:makeDoc('Faction_Executive_Summary.csv',summaryRows),
             equipmentActions:makeDoc('Faction_Equipment_Actions.csv',equipmentActionRows),
             armoryAllocation:makeDoc('Faction_Armory_Allocation.csv',armoryAllocationRows),
@@ -11526,6 +11538,7 @@
             ['Leadership Dashboard',docs.dashboard],
             ['Leadership Decisions',docs.questions],
             ['Manager Follow-Up',docs.managerFollowUp],
+            ['War Readiness Baseline',docs.warBaseline],
             ['Executive Summary',docs.summary],
             ['Equipment Actions',docs.equipmentActions],
             ['Armory Allocation',docs.armoryAllocation],
