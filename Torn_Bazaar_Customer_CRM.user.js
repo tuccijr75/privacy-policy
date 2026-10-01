@@ -10748,8 +10748,10 @@
         const statPct = percentile(known.map(row=>Number(row.statProfile?.total||0)), Number(member?.statProfile?.total||0));
         const levelPct = percentile(known.map(row=>Number(row.level||0)), Number(member?.level||0));
         const composite = statPct * 0.75 + levelPct * 0.25;
-        const label = composite >= 0.75 ? 'ADVANCED' : composite >= 0.35 ? 'STANDARD' : 'DEVELOPMENT';
-        return { label, composite, statPercentile:statPct, levelPercentile:levelPct };
+        const label = known.length < 4
+            ? 'STANDARD'
+            : composite >= 0.75 ? 'ADVANCED' : composite >= 0.35 ? 'STANDARD' : 'DEVELOPMENT';
+        return { label, composite, statPercentile:statPct, levelPercentile:levelPct, comparisonCount:known.length };
     }
 
     function factionBuildWeaponBias(member) {
@@ -10797,7 +10799,7 @@
             items:[],
             temporaryPool:[],
             summary:'',
-            methodology:'Manager heuristic: faction-relative battle-stat percentile carries 75% of build tier and level percentile carries 25%. Development builds prefer armory stock; Standard builds prefer armory stock when it is within 90% of the best scored candidate; Advanced builds select the strongest evidence-backed target. Weapon scoring uses the displayed damage/accuracy bias. This is a logistics build recommendation, not a claim of an exact Torn combat formula.'
+            methodology:'Manager heuristic: faction-relative battle-stat percentile carries 75% of build tier and level percentile carries 25%; until at least four members have known stats, tier defaults to Standard. Development builds prefer armory stock; Standard builds prefer armory stock when it is within 90% of the best scored candidate; Advanced builds select the strongest evidence-backed target. Weapon scoring uses the displayed damage/accuracy bias. This is a logistics build recommendation, not a claim of an exact Torn combat formula.'
         };
 
         const weaponCandidates = candidates.filter(item =>
@@ -11454,7 +11456,7 @@
         const action = String(actionRaw || '').trim().toUpperCase();
         const itemName = prompt('Item / subject name (for access/readiness audits, describe the armory or check):', '') ?? '';
         const itemId = prompt('Item ID (optional):', '') ?? '';
-        const category = prompt('Category (armor, temporary, medical, consumables, weapons/planning, access, readiness, other):', '') ?? '';
+        const category = prompt('Category (weapons, armor, temporary, medical, consumables, access, readiness, other):', '') ?? '';
         const quantityRaw = prompt('Quantity (0 if not applicable):', '0');
         if (quantityRaw == null) return;
         const quantity = Math.max(0, Number(quantityRaw || 0));
@@ -11883,6 +11885,7 @@
         const report = factionInventoryReport(db, 7);
         const loans = factionLoanPersistenceRows(db);
         const baseline = factionWarReadinessBaseline(db);
+        const minimums = factionMinimumStockProposal(db);
         const ledger = Array.isArray(db.factionInventory?.logisticsLedger) ? db.factionInventory.logisticsLedger : [];
         const configured = rows.filter(row => Number(row.threshold?.target || 0) > 0);
         const shortfalls = configured.filter(row => Number(row.threshold?.shortfall || 0) > 0);
@@ -11894,13 +11897,13 @@
         const plan = [
             { phase:'1. Establish armory control', cadence:'Now / once, then verify after permission changes', action:'Confirm Faction → Inventory API access; maintain a clean baseline; verify unlocked armories; audit access and submit recommended permission changes. Direct permission control remains with Leadership during the 2–3 week stabilization period.', owner:'Inventory Manager + Leadership for permission changes', status:Object.keys(db.factionInventory?.current || {}).length ? 'ACTIVE' : 'BLOCKED — API/SNAPSHOT', evidence:'Torn snapshot + access audit entry' },
             { phase:'2. Establish accountable records', cadence:'Every material transaction', action:'Record purchases, distributions, returns, loans, adjustments, access audits, and readiness checks. Purchases require receipts/market evidence and approval references where applicable.', owner:'Inventory Manager', status:ledger.length ? 'ACTIVE — ' + ledger.length + ' ledger entry(s)' : 'START NOW', evidence:'Logistics Ledger + snapshot/event history' },
-            { phase:'3. Maintain provisional targets', cadence:'Weekly analysis + formal review before next Ranked War', action:'Maintain Leadership-authorized provisional minimums and war reserves. Current baseline uses a '+FACTION_PROVISIONAL_COVERAGE_DAYS+'-day consumption horizon plus roster floors while history matures; filled blood-bag mix remains data-required.', owner:'Inventory Manager proposes; Leadership signs off before next RW', status:baseline.belowTarget ? 'ACTION — '+baseline.belowTarget+' below target' : baseline.dataRequired ? 'DATA REQUIRED — '+baseline.dataRequired+' item(s)' : 'READY', evidence:money(baseline.estimatedCost)+' provisional replenishment cost; '+baseline.observedDays.toFixed(1)+' observed day(s)' },
+            { phase:'3. Establish and maintain minimums', cadence:'Weekly recalculation + formal review before next Ranked War', action:'Maintain the Manager Minimums Proposal: 14-day observed depletion plus explicit reserves for stackables, and a 25% roster + two-spare routine loaner pool per weapon/armor slot. Filled blood-bag mix remains data-required. Submit min/max bands to Leadership for approval.', owner:'Inventory Manager proposes; Leadership approves thresholds', status:minimums.actionable.length ? 'ACTION — '+minimums.actionable.length+' proposal shortfall(s)' : minimums.dataRequired.length ? 'DATA REQUIRED — '+minimums.dataRequired.length : 'READY', evidence:minimums.proposals.length+' proposal row(s); confidence '+minimums.confidence+'; '+minimums.observedDays.toFixed(1)+' observed day(s)' },
             { phase:'4. Maintain readiness', cadence:'24–48h before every Ranked War + daily exceptions', action:'Check medical stock, blood-bag capacity/type mix, Ipecac, essential temporary weapons, consumables, armor availability, and shortage risk. Escalate major shortages, missing high-value gear, or unexplained inventory loss immediately.', owner:'Inventory Manager', status:critical.length ? 'CRITICAL — ' + critical.length + ' severe shortfall(s)' : shortfalls.length ? 'ACTION — ' + shortfalls.length + ' configured shortfall(s)' : 'MONITOR', evidence:'Pre-War Readiness Report + War Readiness Baseline' },
             { phase:'5. Source and replenish', cadence:'After material use / when below target', action:'Use faction-member bazaars first when pricing matches market, then trusted aligned/bulk sellers, then Item Market/public bazaars. Use the 7-day market/bazaar average as baseline; urgent premium cap is '+FACTION_PRICE_PREMIUM_CAP_PCT+'%. Routine authority is '+money(FACTION_PURCHASE_TRANSACTION_LIMIT)+' per transaction / '+money(FACTION_PURCHASE_WEEKLY_LIMIT)+' per week; exceptions require Leadership/Banker approval.', owner:'Inventory Manager within approved funds; Bankers/Leadership for exceptions', status:baseline.belowTarget || shortfalls.length ? 'ACTION' : 'MONITOR', evidence:'War Readiness Baseline + Restock Plan + logistics ledger' },
             { phase:'6. Control loans and distribution', cadence:'Daily exception review + active war/chain support', action:'Track armor/temp loans. Send reminder at '+FACTION_LOAN_REMINDER_DAYS+' days, final warning at '+FACTION_LOAN_FINAL_WARNING_DAYS+' days, and escalate to Leadership + Supervisor at '+FACTION_LOAN_ESCALATION_DAYS+' days absent prior arrangement. High-value RW distribution remains leadership-controlled.', owner:'Inventory Manager; Leadership/Supervisor handle formal enforcement', status:loanEscalations ? 'ESCALATE — '+loanEscalations : loanWarnings ? 'FINAL WARNING — '+loanWarnings : loanReminders ? 'REMIND — '+loanReminders : loans.length ? 'MONITOR — '+loans.length+' loan row(s)' : 'CLEAR', evidence:'Loan ledger + UID/snapshot persistence' },
             { phase:'7. Report and improve', cadence:'Sunday weekly + 24–48h pre-war + immediate exceptions', action:'Deliver the Weekly Inventory Summary every Sunday and Pre-War Readiness Report 24–48 hours before Ranked Wars. Immediate exception reporting applies to major shortages, missing high-value gear, or unexplained inventory losses.', owner:'Inventory Manager', status:'ACTIVE', evidence:'Faction Inventory Leadership Workbook' }
         ];
-        return { plan, rows, report, loans, baseline, ledger, configured, shortfalls, critical, estimatedRestockCost, questions:factionLeadershipQuestions(db) };
+        return { plan, rows, report, loans, baseline, minimums, ledger, configured, shortfalls, critical, estimatedRestockCost, questions:factionLeadershipQuestions(db) };
     }
 
     function factionInventoryExportDocuments(db) {
@@ -11926,7 +11929,9 @@
             { Metric:'Manual logistics ledger entries', Value:manager.ledger.length, Status:manager.ledger.length ? 'ACTIVE' : 'START RECORDING' },
             { Metric:'7d movement events', Value:manager.report.events, Status:'INFO' },
             { Metric:'Observed history days', Value:manager.report.observedDays, Status:manager.report.observedDays >= 7 ? 'MATURE WEEK' : 'COLLECTING HISTORY' },
-            { Metric:'Open leadership questions', Value:manager.questions.length, Status:'LEADERSHIP DECISION REQUIRED' },
+            { Metric:'Manager minimum proposal rows', Value:manager.minimums?.proposals?.length || 0, Status:'LEADERSHIP APPROVAL PACKAGE' },
+            { Metric:'Manager proposal shortfalls', Value:manager.minimums?.actionable?.length || 0, Status:(manager.minimums?.actionable?.length||0) ? 'ACTION' : 'CLEAR' },
+            { Metric:'Remaining leadership-controlled inputs', Value:manager.questions.length, Status:manager.questions.length ? 'FOLLOW-UP' : 'COMPLETE' },
             { Metric:'Faction roster members', Value:factionMemberReadinessRows(db).length, Status:'WAR READINESS' },
             { Metric:'Members missing readiness data', Value:factionMemberReadinessRows(db).filter(x=>x.readinessStatus==='MISSING DATA').length, Status:'ACTION' }
         ];
