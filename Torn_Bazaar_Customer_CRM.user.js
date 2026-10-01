@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.6
+// @version      7.4.7
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.6';
+    const VERSION = '7.4.7';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -9914,22 +9914,37 @@
 
     function factionBattleStatsFromResponse(data) {
         const root = (data?.battlestats && typeof data.battlestats === 'object') ? data.battlestats : (data || {});
+        const numeric = value => {
+            if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+            if (typeof value === 'string') return Number(value.replace(/,/g,'')) || 0;
+            return 0;
+        };
         const valueOf = key => {
             const raw = root?.[key];
-            if (raw && typeof raw === 'object') return Number(raw.value ?? raw.total ?? raw.amount ?? 0) || 0;
-            return Number(raw || 0) || 0;
+            if (raw && typeof raw === 'object') {
+                return numeric(raw.value ?? raw.effective ?? raw.total ?? raw.amount ?? raw.base ?? 0);
+            }
+            return numeric(raw);
         };
-        return {
+        const stats = {
             strength:valueOf('strength'),
             defense:valueOf('defense'),
             speed:valueOf('speed'),
             dexterity:valueOf('dexterity')
         };
+        const apiTotal = numeric(root?.total);
+        stats._apiTotal = apiTotal;
+        return stats;
     }
 
     function factionEquipmentSummaryFromResponse(data) {
         const rows = [];
         const seen = new Set();
+        const slotName = slot => {
+            const n = Number(slot);
+            const names = { 1:'Primary', 2:'Secondary', 3:'Melee', 4:'Temporary', 5:'Helmet', 6:'Body', 7:'Gloves', 8:'Pants', 9:'Boots' };
+            return names[n] || (slot ? String(slot) : '');
+        };
         const push = (slot, item) => {
             if (!item) return;
             if (typeof item === 'string') {
@@ -9941,8 +9956,9 @@
             if (typeof item !== 'object') return;
             const name = String(item.name ?? item.item_name ?? item.item?.name ?? '').trim();
             const id = asId(item.id ?? item.item_id ?? item.item?.id);
+            const resolvedSlot = slotName(item.slot ?? slot);
             if (name || id) {
-                const text = (slot?slot+': ':'') + (name || ('Item '+id)) + (id ? ' ['+id+']' : '');
+                const text = (resolvedSlot?resolvedSlot+': ':'') + (name || ('Item '+id)) + (id ? ' ['+id+']' : '');
                 if (!seen.has(text)) { seen.add(text); rows.push(text); }
                 return;
             }
@@ -9951,9 +9967,15 @@
                 push(String(key),val);
             }
         };
-        const root = (data?.equipment ?? data?.items ?? data) || {};
-        if (Array.isArray(root)) root.forEach(x=>push('',x));
-        else if (root && typeof root === 'object') Object.entries(root).forEach(([slot,item])=>push(slot,item));
+        const equipment = Array.isArray(data?.equipment) ? data.equipment : [];
+        const clothing = Array.isArray(data?.clothing) ? data.clothing : [];
+        equipment.forEach(item=>push(item?.slot ?? '',item));
+        clothing.forEach(item=>push(item?.type || 'Clothing',item));
+        if (!equipment.length && !clothing.length) {
+            const root = (data?.items ?? data) || {};
+            if (Array.isArray(root)) root.forEach(x=>push('',x));
+            else if (root && typeof root === 'object') Object.entries(root).forEach(([slot,item])=>push(slot,item));
+        }
         return rows.slice(0,30).join(' | ');
     }
 
@@ -9975,10 +9997,24 @@
         const memberName = extractUsernameFromApiPayload(basic,memberId) || roster[memberId]?.memberName || memberId;
         const stats = factionBattleStatsFromResponse(battlestats);
         const equipmentSummary = factionEquipmentSummaryFromResponse(equipment);
+        const statTotal = Number(stats.strength||0)+Number(stats.defense||0)+Number(stats.speed||0)+Number(stats.dexterity||0);
+        const responseShape = {
+            battlestatsKeys:Object.keys(battlestats?.battlestats || battlestats || {}).slice(0,20),
+            equipmentKeys:Object.keys(equipment || {}).slice(0,20),
+            equipmentCount:Array.isArray(equipment?.equipment) ? equipment.equipment.length : null,
+            clothingCount:Array.isArray(equipment?.clothing) ? equipment.clothing.length : null
+        };
+        if (!(statTotal > 0 || Number(stats._apiTotal||0) > 0)) {
+            throw new Error('Battle stats response parsed as zero. Response shape: '+JSON.stringify(responseShape));
+        }
+        if (!equipmentSummary) {
+            throw new Error('Equipment response contained no parsable equipped items. Response shape: '+JSON.stringify(responseShape));
+        }
+        delete stats._apiTotal;
         const profile = saveFactionMemberReadinessProfile(memberId,{
             stats,
             equipment:{ summary:equipmentSummary, rawImported:false },
-            source:'member custom API key — one-time local import',
+            source:'member Limited Access API key — one-time local import',
             verifiedAt:nowIso()
         });
         const db2=dbLoad();
