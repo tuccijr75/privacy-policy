@@ -13437,7 +13437,8 @@
     function xlsxStyleForHeader(header) {
         const key = String(header || '').toLowerCase();
         if (/(roi|margin|coverage|confidence|volatility|rate|%)/.test(key)) return 3;
-        if (/(price|cost|revenue|profit|spend|amount|value|capital|cogs|cashback|refund|total)/.test(key)) return 2;
+        if (/(price|cost|revenue|profit|spend|amount|capital|cogs|cashback|refund)/.test(key)) return 2;
+        if (/(question|decision|assumption|action|notes|plan|equipment|details|rationale|route|loan members|disposition|authority|evidence|interpretation|proposal|value)/.test(key)) return 4;
         return 0;
     }
 
@@ -13461,18 +13462,22 @@
             for (let i = 1; i < Math.min(allRows.length, 201); i++) {
                 width = Math.max(width, String(allRows[i]?.[col] ?? '').length + 1);
             }
-            return Math.max(10, Math.min(38, width));
+            const key = String(header || '').toLowerCase();
+            const cap = /(question|decision|assumption|action|notes|plan|equipment|details|rationale|route|loan members|disposition|authority|evidence|interpretation|proposal|value)/.test(key) ? 52 : 30;
+            return Math.max(10, Math.min(cap, width));
         });
         const cols = widths.map((width, i) =>
             '<col min="' + (i+1) + '" max="' + (i+1) + '" width="' + width + '" customWidth="1"/>'
         ).join('');
         const sheetRows = allRows.map((values, rowIndex) => {
             const rowNumber = rowIndex + 1;
+            const maxText = values.reduce((max,value) => Math.max(max, String(value ?? '').length), 0);
+            const rowHeight = rowIndex === 0 ? 30 : Math.min(90, maxText > 160 ? 72 : maxText > 80 ? 54 : maxText > 38 ? 36 : 20);
             const cells = values.map((value, colIndex) => {
                 const style = rowIndex === 0 ? 1 : xlsxStyleForHeader(headers[colIndex]);
                 return xlsxCellXml(value, rowNumber, colIndex + 1, style);
             }).join('');
-            return '<row r="' + rowNumber + '">' + cells + '</row>';
+            return '<row r="' + rowNumber + '" ht="' + rowHeight + '" customHeight="1">' + cells + '</row>';
         }).join('');
         const endCell = xlsxColumnName(Math.max(1, headers.length)) + Math.max(1, allRows.length);
         return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
@@ -13647,11 +13652,12 @@
             '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F4E78"/><bgColor indexed="64"/></patternFill></fill></fills>' +
             '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
             '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-            '<cellXfs count="4">' +
+            '<cellXfs count="5">' +
                 '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
-                '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/>' +
+                '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment wrapText="1" vertical="center"/></xf>' +
                 '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
                 '<xf numFmtId="165" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>' +
+                '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment wrapText="1" vertical="top"/></xf>' +
             '</cellXfs>' +
             '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
             '</styleSheet>';
