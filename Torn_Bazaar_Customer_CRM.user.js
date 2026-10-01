@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.17
+// @version      7.4.18
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -29,7 +29,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.17';
+    const VERSION = '7.4.18';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -127,6 +127,16 @@
         'armor','temporary','medical','consumables'
     ]);
     const FACTION_INVENTORY_LOAN_CATEGORIES = Object.freeze(['armor','temporary']);
+    const FACTION_PURCHASE_TRANSACTION_LIMIT = 5_000_000;
+    const FACTION_PURCHASE_WEEKLY_LIMIT = 15_000_000;
+    const FACTION_PRICE_PREMIUM_CAP_PCT = 5;
+    const FACTION_LOAN_REMINDER_DAYS = 7;
+    const FACTION_LOAN_FINAL_WARNING_DAYS = 10;
+    const FACTION_LOAN_ESCALATION_DAYS = 14;
+    const FACTION_PROVISIONAL_COVERAGE_DAYS = 14;
+    const FACTION_PERMISSION_REVIEW_MIN_DAYS = 14;
+    const FACTION_PERMISSION_REVIEW_MAX_DAYS = 21;
+
     const FACTION_INVENTORY_POLICY = Object.freeze({
         faction: 'OBSIDIAN FORCE',
         position: 'Inventory Manager',
@@ -134,17 +144,18 @@
         objective: 'Maintain total control over faction supply and logistics so unlocked armories are accurately tracked, appropriately stocked, and ready for Ranked Wars, chains, training, and daily operations.',
         scope: 'Active vault scope is the currently unlocked armor, temporary weapons, medical, and consumables armories, including sweets and beers. Weapon and gear upgrades are part of sourcing/planning; direct weapon-armory inventory control begins only if that armory is unlocked and access is granted.',
         audit: 'Regularly audit vault stock, inventory movement, loans, returns, distributions, purchases, and access/readiness exceptions. Keep accurate records and flag unexplained loss or variance.',
-        readiness: 'Maintain supply readiness for scheduled Ranked Wars and faction chains, with strong availability around war starts, chain pushes, and critical combat windows.',
+        readiness: 'Maintain supply readiness for scheduled Ranked Wars and faction chains. Leadership authorized a provisional War-Readiness Baseline now; submit provisional thresholds for formal sign-off before the next Ranked War.',
         distribution: 'Respond rapidly to supply requests. Routine consumables and permitted armory gear may be supported by the Inventory Manager; high-value Ranked War equipment remains in the vault and is distributed by leadership immediately before war. Support leadership in matching gear to combat roles and assignments.',
-        access: 'Audit armory access and flag unauthorized or unsafe access conditions. Do not assume authority to change member permissions unless leadership explicitly grants it.',
+        access: 'Current authority is audit, distribution tracking, and recommended permission updates only. Direct armory permission control remains with Leadership during the initial stabilization period and is expected to be reviewed after 2–3 weeks of smooth logistics-ledger and loan-system operation.',
         guidance: 'Assist members with appropriate gear/loadout guidance based on their role, stats, and war assignment while escalating high-value allocation decisions to leadership.',
-        sourcing: 'Prioritize faction member bazaars to keep funds within the faction. If unavailable, use trusted traders/private bazaars and the Item Market. Medical supplies and temporary weapons should be compared against the Item Market because leadership reports it is usually the most cost-effective source.',
-        pricing: 'No fixed maximum pricing rules exist yet. Establish sensible evidence-based purchasing guidelines; CRM market prices are advisory references, not independent spending authorization.',
-        stock: 'Formal minimum and maximum stock levels are not finalized. Track usage over time and avoid over-investing so funds remain available for future faction projects. Ranked War and chain targets are to be determined collaboratively from observed usage.',
+        sourcing: 'Priority 1: faction member bazaars when pricing matches market. Priority 2: trusted faction-aligned traders or verified bulk sellers; Leadership will provide the named preferred external partner list. Priority 3: Item Market/public bazaars for emergency fill-ins within authorized price limits.',
+        pricing: 'Use the 7-day average Item Market/Bazaar price as the buying baseline. Up to a 5% premium may be paid when immediate restocking is required for an upcoming war or chain. Anything above a 5% premium requires separate Leadership approval before purchase.',
+        stock: 'Leadership authorized the Inventory Manager to establish provisional minimum stock levels and war reserves from current usage and upcoming-war estimates. Bring provisional numbers to Leadership before the next Ranked War for formal sign-off; signed-off values become official faction thresholds.',
         precedent: 'Leadership reports approximately 3,000 sweets were restocked after the September Ranked War and more than 1,800 remain, illustrating that properly managed inventory can have a long lifespan.',
-        loans: 'All members may borrow armor and temporary weapons for chains, Ranked Wars, and training. Requests are currently informal through faction chat, prompt return is expected, and no fixed loan duration exists. Follow up on extended holdings and flag lost or long-outstanding items to leadership; leadership handles enforcement and borrowing privileges.',
+        loans: 'All members may borrow armor and temporary weapons for chains, Ranked Wars, and training. Send a courteous reminder at 7 days, a final warning at 10 days, and escalate at 14 days to Leadership and the Supervisor if the item remains unreturned without prior arrangement. Leadership retains formal enforcement and vault-deduction authority.',
         highValue: 'High-value Ranked War equipment remains in the vault and is distributed by leadership immediately before war.',
-        purchasing: 'Purchases use pre-approved faction funds or reimbursement. Coordinate shortages and replenishment funding with Bankers/Leadership. Travel sourcing for gear and weapon upgrades requires leadership authorization and available faction finances.'
+        purchasing: 'Routine medical supplies, blood bags, and essential temporary replenishment may use pre-approved faction funds up to $5,000,000 per transaction and $15,000,000 per week. Any single purchase or restock batch above $5,000,000 requires explicit Leadership or Banker approval. Log transactions, receipts, and market purchases in the logistics ledger for Banker reconciliation.',
+        reporting: 'Deliver a Pre-War Readiness Report 24–48 hours before every Ranked War, a Weekly Inventory Summary every Sunday, and immediate escalation for major shortages, missing high-value gear, or unexplained inventory losses.'
     });
     const FACTION_LEADER_TORN_ID = '3534730';
     const FACTION_LEADER_TORN_NAME = 'Dakiller_MLM';
