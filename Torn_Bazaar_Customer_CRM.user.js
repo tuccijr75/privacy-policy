@@ -2192,7 +2192,7 @@
         return [];
     }
 
-    async function refreshProcurementCatalog(force = false) {
+    async function refreshProcurementCatalog(force = false, keyOverride = '') {
         const db = dbLoad();
         const proc = procurementState(db);
         if (
@@ -2202,7 +2202,7 @@
             Object.keys(proc.catalog).length
         ) return proc.catalog;
 
-        const data = await apiRequest('/torn/items');
+        const data = await apiRequest('/torn/items', keyOverride || getApiKey());
         const next = {};
         for (const row of catalogRows(data)) {
             const id = asId(row.id ?? row.ID ?? row.item_id);
@@ -10807,19 +10807,32 @@
         const id=asId(memberId);
         if(!id) throw new Error('Member ID is required.');
         try {
-            statusText='Analyzing armory options for member '+id+'…';
+            statusText='Analyzing global equipment and faction armory options for member '+id+'…';
             render();
 
+            await refreshProcurementCatalog(false,factionInventoryApiKey());
             const db=dbLoad();
             const member=factionMemberReadinessRows(db).find(x=>asId(x.memberId)===id);
             if(!member) throw new Error('Member is not present in the current faction roster.');
             if(!member.hasStats || !member.hasEquipment) throw new Error('Refresh/import this member before optimizing loadout.');
             if(!Array.isArray(member.profile?.equipment?.items) || !member.profile.equipment.items.length) {
-                throw new Error('Structured equipment data is missing. Refresh this member once on v7.4.12 before optimizing.');
+                throw new Error('Structured equipment data is missing. Refresh this member once before optimizing.');
             }
 
             const armoryDetails=await fetchFactionArmoryCandidateDetails(db);
-            const optimization=factionLoadoutOptimization(member,armoryDetails);
+            const globalCandidates=factionGlobalEquipmentCandidates(db);
+            const enrichedArmory=armoryDetails.map(item=>{
+                const price=factionProcurementPriceContext(db,item.itemId,{marketValue:item.referencePrice||0});
+                return {
+                    ...item,
+                    source:'FACTION ARMORY INSTANCE',
+                    acquisition:'ISSUE FROM ARMORY',
+                    procurementRoute:'Faction armory',
+                    referencePrice:Number(price.price||item.referencePrice||0),
+                    priceSource:String(price.source||'Faction market reference')
+                };
+            });
+            const optimization=factionLoadoutOptimization(member,[...globalCandidates,...enrichedArmory]);
 
             const db2=dbLoad();
             const profile=db2.factionInventory.memberReadiness.profiles[id] || {};
