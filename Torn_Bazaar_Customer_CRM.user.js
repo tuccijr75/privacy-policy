@@ -9842,6 +9842,17 @@
                     observedSince = Number(snap.inventoryTimestamp || snap.at || observedSince);
                 }
 
+                const observedHours = observedSince && latestSourceAt >= observedSince
+                    ? (latestSourceAt - observedSince) / 3600000
+                    : 0;
+                const observedDays = observedHours / 24;
+                const followUpStatus = observedDays >= FACTION_LOAN_ESCALATION_DAYS
+                    ? 'ESCALATE — LEADERSHIP + SUPERVISOR'
+                    : observedDays >= FACTION_LOAN_FINAL_WARNING_DAYS
+                        ? 'FINAL WARNING DUE'
+                        : observedDays >= FACTION_LOAN_REMINDER_DAYS
+                            ? 'REMINDER DUE'
+                            : 'ROUTINE';
                 rows.push({
                     key: item.key,
                     itemId: item.itemId,
@@ -9852,9 +9863,16 @@
                     amount: Number(loan.amount || 0),
                     uids: Array.isArray(loan.uids) ? loan.uids.slice() : [],
                     observedSince,
-                    observedHours: observedSince && latestSourceAt >= observedSince
-                        ? (latestSourceAt - observedSince) / 3600000
-                        : 0
+                    observedHours,
+                    observedDays,
+                    followUpStatus,
+                    disposition: followUpStatus === 'ESCALATE — LEADERSHIP + SUPERVISOR'
+                        ? 'Escalate to Leadership and Supervisor unless a prior arrangement is documented.'
+                        : followUpStatus === 'FINAL WARNING DUE'
+                            ? 'Send final warning; escalation begins at 14 days absent prior arrangement.'
+                            : followUpStatus === 'REMINDER DUE'
+                                ? 'Send courteous return reminder.'
+                                : 'Routine monitoring.'
                 });
             }
         }
@@ -11044,54 +11062,176 @@
         render();
     }
 
-    function factionLeadershipQuestions(db) {
-        const rows = factionInventoryRows(db);
-        const configured = rows.filter(row => Number(row.threshold?.target || 0) > 0);
-        const settings = db.factionInventory?.settings || {};
+    function factionLeadershipAuthorizations() {
         return [
             {
-                priority:'HIGH', area:'Stock targets and reserves',
+                id:'D01', priority:'HIGH', area:'Stock targets and reserves',
                 question:'What target/minimum quantities should be maintained for critical items, and what additional reserve should be protected for Ranked Wars and chains?',
-                current:'Leadership explicitly left formal minimum/maximum levels open pending usage evidence. ' + configured.length + ' provisional item target(s) are currently configured.',
-                decision:'Approve evidence-based targets/reserves or authorize the Inventory Manager to maintain provisional targets subject to leadership review.'
+                managerProposal:'Use observed consumption plus a separate Ranked War/chain reserve and submit provisional values for Leadership sign-off.',
+                leaderDecision:'Authorized to establish provisional minimum stock levels and war reserves from current usage and upcoming war estimates.',
+                leaderNotes:'Bring provisional numbers to Leadership before the next Ranked War for formal sign-off; once signed off they become official faction thresholds.',
+                decisionStatus:'APPROVED — PROVISIONAL',
+                managerAssessment:'Authorization is sufficient to establish a provisional war-readiness baseline now. Current history remains immature, so targets should stay explicitly provisional.',
+                nextAction:'Build the first medical, blood-bag capacity, Ipecac, and core temporary baseline; refresh usage before the next RW and submit thresholds for sign-off.',
+                owner:'Manic Mike',
+                due:'Before next Ranked War',
+                followUpStatus:'IN PROGRESS'
             },
             {
-                priority:'HIGH', area:'Purchasing authority',
+                id:'D02', priority:'HIGH', area:'Purchasing authority',
                 question:'What standing per-purchase or weekly amount may the Inventory Manager commit without separate approval, and what reimbursement evidence is required?',
-                current:'Purchases are authorized only through pre-approved funds or reimbursement; no standing limit is defined.',
-                decision:'Set spending/reimbursement guardrails while preserving Banker/Leadership approval for exceptions.'
+                managerProposal:'Set standing purchase/reimbursement limits and require leadership approval above them.',
+                leaderDecision:'Authorized up to $5,000,000 per transaction and $15,000,000 per week from pre-approved faction funds for routine armory replenishment.',
+                leaderNotes:'Any single purchase/restock batch over $5,000,000 requires Leadership or Banker approval. Log transactions, receipts, and market purchases for reconciliation.',
+                decisionStatus:'APPROVED',
+                managerAssessment:'Standing authority removes routine purchase bottlenecks, but ledger discipline is now mandatory.',
+                nextAction:'Apply transaction/weekly-spend guardrails to procurement and require an approval reference for purchases above the per-transaction limit.',
+                owner:'Manic Mike / Banker',
+                due:'Immediate',
+                followUpStatus:'IMPLEMENT'
             },
             {
-                priority:'HIGH', area:'Price guidelines',
+                id:'D03', priority:'HIGH', area:'Price guidelines',
                 question:'What purchase-price guardrails should trigger leadership approval for medical, temporary, armor, consumables, and travel-sourced upgrades?',
-                current:'Leadership assigned establishment of sensible pricing guidelines as an initial Inventory Manager responsibility; no fixed maximum prices exist.',
-                decision:'Approve the proposed category pricing rules after enough market evidence is collected.'
+                managerProposal:'Use a verified market reference with an explicit premium cap for exceptions.',
+                leaderDecision:'Use the 7-day average Item Market/Bazaar price as the buying baseline. Up to a 5% premium is allowed for urgent war/chain restocking.',
+                leaderNotes:'Anything above a 5% premium requires separate Leadership approval before purchase.',
+                decisionStatus:'APPROVED',
+                managerAssessment:'Pricing authority is clear; the main dependency is enough market-history depth to calculate a reliable 7-day baseline.',
+                nextAction:'Use the 7-day Item Market/Bazaar average as baseline; warn at >5% premium and require approval above the cap.',
+                owner:'Manic Mike',
+                due:'Immediate / mature with 7d data',
+                followUpStatus:'IN PROGRESS'
             },
             {
-                priority:'MEDIUM', area:'Loan follow-up',
+                id:'D04', priority:'MEDIUM', area:'Loan follow-up',
                 question:'What observed holding duration should trigger routine follow-up before an item is escalated to leadership?',
-                current:'Prompt return is expected and the Inventory Manager follows up on extended holdings, but no fixed duration exists; leadership handles enforcement.',
-                decision:'Set a follow-up interval and an escalation interval, or explicitly retain judgment-based review.'
+                managerProposal:'Define reminder, final-warning, and escalation intervals while Leadership retains enforcement.',
+                leaderDecision:'Routine reminder at 7 days; final warning at 10 days; Leadership + Supervisor escalation at 14 days if unreturned without prior arrangement.',
+                leaderNotes:'Leadership retains formal intervention/enforcement authority.',
+                decisionStatus:'APPROVED',
+                managerAssessment:'Loan policy is deterministic and can be automated as reminder/escalation flags without changing enforcement authority.',
+                nextAction:'Flag 7d reminder, 10d final warning, and 14d Leadership + Supervisor escalation; preserve exceptions for prior arrangements.',
+                owner:'Manic Mike',
+                due:'Immediate',
+                followUpStatus:'IMPLEMENT'
             },
             {
-                priority:'MEDIUM', area:'Trusted supplier register',
+                id:'D05', priority:'MEDIUM', area:'Trusted supplier register',
                 question:'Which traders/private bazaars should be treated as trusted suppliers after faction-member bazaars?',
-                current:'The sourcing order is confirmed, but the named trusted-supplier list is not recorded in CRM.',
-                decision:'Provide/approve the trusted supplier list and any prohibited sources.'
+                managerProposal:'Use member bazaars first, then trusted aligned/bulk sellers, then public markets; maintain a named approved-partner list.',
+                leaderDecision:'Priority 1 faction member bazaars at market rates; Priority 2 trusted faction-aligned traders/verified bulk sellers; Priority 3 Item Market/public bazaars for emergency fill-ins.',
+                leaderNotes:'Leadership will provide the named preferred external trade-partner list separately.',
+                decisionStatus:'APPROVED — LIST PENDING',
+                managerAssessment:'Sourcing order is fully defined; only the named external partner list remains outstanding.',
+                nextAction:'Use the approved source order now; add preferred external partners when Leadership supplies the names.',
+                owner:'Manic Mike / Leadership',
+                due:'Pending partner list',
+                followUpStatus:'WAITING — LEADERSHIP'
             },
             {
-                priority:'MEDIUM', area:'Armory access authority',
+                id:'D06', priority:'MEDIUM', area:'Armory access authority',
                 question:'Is the Inventory Manager authorized to change armory access levels, or only audit and recommend changes to leadership?',
-                current:'The role requires safe/correct armory access, but the supplied scope does not explicitly grant permission-management authority.',
-                decision:'Confirm audit-only versus permission-change authority.'
+                managerProposal:'Audit and recommend by default; permission changes only when Leadership explicitly grants that authority.',
+                leaderDecision:'Current authority is audit access, track distributions, and recommend permission changes to Leadership.',
+                leaderNotes:'Direct armory permission control is expected after the logistics ledger and loan system run smoothly for 2–3 weeks.',
+                decisionStatus:'APPROVED — AUDIT ONLY',
+                managerAssessment:'Permission scope remains read-only/audit-and-recommend during the stabilization period.',
+                nextAction:'Continue access audits and recommendations; revisit direct permission authority after 2–3 weeks of stable operation.',
+                owner:'Manic Mike / Leadership',
+                due:'2–3 week review',
+                followUpStatus:'MONITOR'
             },
             {
-                priority:'LOW', area:'Reporting cadence',
+                id:'D07', priority:'LOW', area:'Reporting cadence',
                 question:'How often should leadership receive the inventory workbook, and which shortage/loss/access conditions require immediate exception reporting?',
-                current:String(settings.leadershipCadence || 'No formal reporting cadence is recorded.'),
-                decision:'Choose routine cadence and exception triggers.'
+                managerProposal:'Weekly routine report plus pre-war and immediate-exception reporting.',
+                leaderDecision:'Pre-war readiness report 24–48 hours before each Ranked War; weekly inventory summary every Sunday; immediate escalation for major shortages, missing high-value gear, or unexplained losses.',
+                leaderNotes:'Cadence approved in full.',
+                decisionStatus:'APPROVED',
+                managerAssessment:'Reporting cadence is operationally complete.',
+                nextAction:'Prepare Sunday summary; prepare pre-war report 24–48h before RW; escalate major shortage/high-value loss/unexplained loss immediately.',
+                owner:'Manic Mike',
+                due:'Active',
+                followUpStatus:'ACTIVE'
             }
         ];
+    }
+
+    function factionLeadershipQuestions(db) {
+        return [{
+            priority:'MEDIUM',
+            area:'Trusted supplier register',
+            question:'Which named external traders/private bazaars should be added to the approved preferred-partner register?',
+            current:'Leadership approved the sourcing order but stated that the named preferred external trade-partner list will be provided separately.',
+            decision:'Provide the preferred external partner names when available.'
+        }];
+    }
+
+    function factionWarReadinessBaseline(db) {
+        const rows = factionInventoryRows(db);
+        const report = factionInventoryReport(db, 7);
+        const rosterCount = Math.max(1, factionMemberReadinessRows(db).length);
+        const byName = new Map(rows.map(row => [String(row.name || ''), row]));
+        const movementByName = new Map(report.rows.map(row => [String(row.name || ''), row]));
+        const specs = [
+            ['medical','First Aid Kit','MAX_USE_ROSTER','Observed use + roster floor'],
+            ['medical','Morphine','MAX_USE_ROSTER','Observed use + roster floor'],
+            ['medical','Small First Aid Kit','MAX_USE_ROSTER','Observed use + roster floor'],
+            ['medical','Ipecac Syrup','ROSTER','One per roster member until war-specific usage evidence matures'],
+            ['medical','Empty Blood Bag','ROSTER','Capacity reserve: one empty bag per roster member'],
+            ['medical','Blood Bag : O+','DATA_REQUIRED','Do not set a faction-wide filled-bag target from O+ alone; determine the needed blood-type mix before formal sign-off'],
+            ['temporary','Flash Grenade','MAX_USE_ROSTER','Core war temporary; provisional roster floor'],
+            ['temporary','Smoke Grenade','MAX_USE_ROSTER','Core war temporary; provisional roster floor'],
+            ['temporary','Tear Gas','MAX_USE_ROSTER','Core war temporary; provisional roster floor'],
+            ['temporary','HEG','MAX_USE_ROSTER','Core war temporary; provisional roster floor'],
+            ['temporary','Grenade','MAX_USE_ROSTER','Core war temporary; provisional roster floor'],
+            ['temporary','Pepper Spray','MAX_USE_ROSTER','Core war temporary; provisional roster floor']
+        ];
+
+        const baselineRows = specs.map(([category,name,mode,note]) => {
+            const item = byName.get(name);
+            const movement = movementByName.get(name);
+            const current = Number(item?.threshold?.current ?? item?.availableCount ?? item?.amountOwned ?? 0);
+            const daily = Number(movement?.consumptionPerDay || 0);
+            const target = mode === 'DATA_REQUIRED'
+                ? null
+                : mode === 'ROSTER'
+                    ? rosterCount
+                    : Math.max(rosterCount, Math.ceil(daily * FACTION_PROVISIONAL_COVERAGE_DAYS));
+            const shortfall = target == null ? null : Math.max(0, target - current);
+            const referencePrice = Number(item?.referencePrice || 0);
+            const estimatedCost = shortfall == null ? null : shortfall * referencePrice;
+            const readiness = target == null
+                ? 'DATA REQUIRED'
+                : current >= target
+                    ? 'READY'
+                    : current >= target * 0.5
+                        ? 'LOW'
+                        : 'CRITICAL';
+            const purchaseAuthority = target == null
+                ? 'DATA REQUIRED'
+                : !shortfall
+                    ? 'NO PURCHASE NEEDED'
+                    : estimatedCost > FACTION_PURCHASE_TRANSACTION_LIMIT
+                        ? 'APPROVAL REQUIRED'
+                        : 'WITHIN PER-TXN LIMIT';
+            return {
+                category,name,current,daily,mode,rosterCount,
+                coverageDays:FACTION_PROVISIONAL_COVERAGE_DAYS,
+                target,shortfall,referencePrice,estimatedCost,readiness,purchaseAuthority,note
+            };
+        });
+
+        return {
+            rosterCount,
+            coverageDays:FACTION_PROVISIONAL_COVERAGE_DAYS,
+            rows:baselineRows,
+            estimatedCost:baselineRows.reduce((sum,row)=>sum+Number(row.estimatedCost || 0),0),
+            belowTarget:baselineRows.filter(row=>row.target!=null && Number(row.shortfall || 0)>0).length,
+            dataRequired:baselineRows.filter(row=>row.target==null).length,
+            observedDays:Number(report.observedDays || 0)
+        };
     }
 
     function factionInventoryManagerPlan(db) {
