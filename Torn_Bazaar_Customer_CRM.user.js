@@ -8974,20 +8974,32 @@
     }
 
     function verifyRenderedBrandedMessage(html) {
-        const greeting = expectedGreetingFromHtml(html);
+        const source = String(html || '');
         const pageText = String(document.body?.innerText || '').replace(/\s+/g, ' ');
 
+        if (source.includes('data-mm-message-kind="leadership-report"')) {
+            if (!pageText.includes('Faction Inventory Leadership Report')) return false;
+            if (source.includes('OPEN LEADERSHIP REPORT') && !pageText.includes('OPEN LEADERSHIP REPORT')) return false;
+            const link = [...document.querySelectorAll('a')].find(anchor =>
+                visible(anchor) &&
+                String(anchor.textContent || '').includes('OPEN LEADERSHIP REPORT') &&
+                /^https:\/\//i.test(String(anchor.href || ''))
+            );
+            return Boolean(link);
+        }
+
+        const greeting = expectedGreetingFromHtml(source);
         if (greeting && !pageText.toLowerCase().includes(greeting.toLowerCase())) return false;
         if (!pageText.includes('HOW IT WORKS')) return false;
-        if (!pageText.includes('CASHBACK TIERS') && String(html).includes('CASHBACK TIERS')) return false;
-        if (!pageText.includes('IMPORTANT') && String(html).includes('IMPORTANT')) return false;
+        if (!pageText.includes('CASHBACK TIERS') && source.includes('CASHBACK TIERS')) return false;
+        if (!pageText.includes('IMPORTANT') && source.includes('IMPORTANT')) return false;
 
         const matchingTable = [...document.querySelectorAll('table')].find(table => {
             if (!visible(table)) return false;
             const t = String(table.innerText || table.textContent || '');
             return t.includes('HOW IT WORKS') &&
-                (!String(html).includes('CASHBACK TIERS') || t.includes('CASHBACK TIERS')) &&
-                (!String(html).includes('IMPORTANT') || t.includes('IMPORTANT'));
+                (!source.includes('CASHBACK TIERS') || t.includes('CASHBACK TIERS')) &&
+                (!source.includes('IMPORTANT') || t.includes('IMPORTANT'));
         });
 
         return Boolean(matchingTable);
@@ -11411,7 +11423,7 @@
             '<div style="padding:5px 0;border-top:1px solid #333;">' + escapeMessageHtml(line) + '</div>'
         ).join('');
         const bodyHtml =
-            '<div style="font-family:Arial,sans-serif;background:#111;color:#f3f3f3;padding:14px;line-height:1.45;">' +
+            '<div data-mm-message-kind="leadership-report" style="font-family:Arial,sans-serif;background:#111;color:#f3f3f3;padding:14px;line-height:1.45;">' +
                 '<div style="font-size:18px;font-weight:bold;color:#f2c94c;">Faction Inventory Leadership Report</div>' +
                 '<div style="margin:8px 0;">Dakiller_MLM,</div>' +
                 '<div style="margin:8px 0;">Member readiness: <b>' + rows.length + '</b> tracked · <b>' + missing + '</b> missing data · <b>' + stale + '</b> stale.<br>' +
