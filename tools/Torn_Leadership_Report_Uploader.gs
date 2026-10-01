@@ -52,11 +52,11 @@ function doPost(e) {
 function doGet(e) {
   const requestId = String((e && e.parameter && e.parameter.requestId) || '').trim();
   if (!/^[a-f0-9]{32}$/i.test(requestId)) {
-    return json_({ ok:false, error:'Invalid or missing requestId.' });
+    return jsonGet_({ ok:false, error:'Invalid or missing requestId.' });
   }
   const cached = CacheService.getScriptCache().get('report-result:' + requestId);
-  if (!cached) return json_({ ok:false, pending:true });
-  return json_(JSON.parse(cached));
+  if (!cached) return jsonGet_({ ok:false, pending:true });
+  return jsonGet_(JSON.parse(cached));
 }
 
 function remember_(requestId, result) {
@@ -74,6 +74,14 @@ function storeResult_(requestId, result) {
 
 function json_(value) {
   return HtmlService.createHtmlOutput(JSON.stringify(value));
+}
+
+function jsonGet_(value) {
+  // GET may safely follow Apps Script's ContentService redirect.
+  // This returns clean JSON to the CRM result-lookup request.
+  return ContentService
+    .createTextOutput(JSON.stringify(value))
+    .setMimeType(ContentService.MimeType.JSON);
 }
 
 function sanitizeFilename_(value) {
