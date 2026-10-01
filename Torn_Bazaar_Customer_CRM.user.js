@@ -9761,6 +9761,186 @@
         return { days, observedDays, events: events.length, rows };
     }
 
+    function factionLeadershipQuestions(db) {
+        const rows = factionInventoryRows(db);
+        const configured = rows.filter(row => Number(row.threshold?.target || 0) > 0);
+        const settings = db.factionInventory?.settings || {};
+        const questions = [
+            {
+                priority:'HIGH', area:'Stock targets',
+                question:'What minimum/target stock should the faction maintain for each critical medical, consumable, armor, and temporary item?',
+                current:'No formal faction-wide minimum/maximum levels are established. ' + configured.length + ' item target(s) are currently provisional in CRM.',
+                decision:'Approve item/category targets or authorize the Inventory Manager to set and revise provisional targets from observed usage.'
+            },
+            {
+                priority:'HIGH', area:'Ranked War reserve',
+                question:'What equipment and consumable reserve must remain untouched for Ranked War, chains, and other scheduled operations?',
+                current:'High-value Ranked War equipment remains leadership-controlled, but a quantified reserve is not defined.',
+                decision:'Define reserve quantities or a reserve formula by event type.'
+            },
+            {
+                priority:'HIGH', area:'Purchasing authority',
+                question:'What dollar amount may the Inventory Manager spend without case-by-case leadership approval, and what reimbursement process should be used?',
+                current:'Purchases require pre-approved faction funds or reimbursement; no standing spending limit is recorded.',
+                decision:'Set per-purchase and/or weekly budget authority plus reimbursement evidence requirements.'
+            },
+            {
+                priority:'MEDIUM', area:'Loan escalation',
+                question:'After how long should an armor/temporary loan be followed up, escalated, or treated as lost?',
+                current:'Prompt return is expected; no fixed duration or escalation clock is established.',
+                decision:'Set follow-up and leadership-escalation intervals, with any exceptions for war/training.'
+            },
+            {
+                priority:'MEDIUM', area:'Approved sourcing',
+                question:'Which faction members, traders, or private bazaars are approved/preferred suppliers, and are there sources that should never be used?',
+                current:'Current policy is member bazaars first, then trusted traders/private bazaars, then Item Market.',
+                decision:'Provide approved/preferred supplier list and any restricted sources.'
+            },
+            {
+                priority:'MEDIUM', area:'Price guardrails',
+                question:'Should purchases use a maximum premium/discount versus Item Market or another reference before leadership approval is required?',
+                current:'CRM market prices are advisory; no fixed maximum purchase prices are established.',
+                decision:'Approve price guardrails by category or authorize case-by-case judgment.'
+            },
+            {
+                priority:'LOW', area:'Reporting cadence',
+                question:'How often should leadership receive the inventory workbook and which events require an immediate exception report?',
+                current:String(settings.leadershipCadence || 'No formal reporting cadence recorded.'),
+                decision:'Choose routine cadence and exception triggers.'
+            }
+        ];
+        return questions;
+    }
+
+    function factionInventoryManagerPlan(db) {
+        const rows = factionInventoryRows(db);
+        const report = factionInventoryReport(db, 7);
+        const loans = factionLoanPersistenceRows(db);
+        const configured = rows.filter(row => Number(row.threshold?.target || 0) > 0);
+        const shortfalls = configured.filter(row => Number(row.threshold?.shortfall || 0) > 0);
+        const critical = shortfalls.filter(row => row.threshold?.status === 'CRITICAL');
+        const estimatedRestockCost = shortfalls.reduce((sum,row) => sum + Number(row.estimatedRestockCost || 0), 0);
+        const plan = [
+            { phase:'1. Establish control', cadence:'Now / once', action:'Confirm Faction → Inventory API access; capture a clean baseline snapshot; verify the four managed categories.', owner:'Inventory Manager', status:Object.keys(db.factionInventory?.current || {}).length ? 'ACTIVE' : 'BLOCKED — API/SNAPSHOT', evidence:'Torn faction inventory snapshot + CRM local history' },
+            { phase:'2. Define policy', cadence:'Leadership decision', action:'Approve stock targets/reserves, purchasing authority, loan escalation, suppliers, price guardrails, and reporting cadence.', owner:'Leadership + Inventory Manager', status:'LEADERSHIP DECISION REQUIRED', evidence:'Leadership Questions sheet' },
+            { phase:'3. Set targets', cadence:'Initial + monthly review', action:'Set per-item planning targets using available count for loanable equipment and owned count for medical/consumables; separate operational target from war reserve.', owner:'Inventory Manager', status:configured.length ? 'IN PROGRESS' : 'NOT STARTED', evidence:configured.length + ' target(s) configured' },
+            { phase:'4. Replenish', cadence:'Daily/after material use', action:'Work the restock queue by severity, usage, market reference, and approved budget. Prefer approved faction/member sources before broader market where policy requires.', owner:'Inventory Manager', status:shortfalls.length ? 'ACTION — ' + shortfalls.length + ' shortfall(s)' : 'MONITOR', evidence:money(estimatedRestockCost) + ' estimated shortfall cost where priced' },
+            { phase:'5. Control loans', cadence:'Daily exception review', action:'Review armor/temporary loans, observed age, UID evidence, and member concentration. Follow up/escalate according to leadership-approved timing.', owner:'Inventory Manager', status:loans.length ? 'MONITOR — ' + loans.length + ' loan row(s)' : 'CLEAR', evidence:'Loan ledger + snapshot persistence' },
+            { phase:'6. Measure consumption', cadence:'Weekly', action:'Review 7-day depletion/additions and consumption/day. Adjust provisional targets only when evidence supports the change.', owner:'Inventory Manager', status:report.observedDays > 0 ? 'ACTIVE' : 'COLLECTING HISTORY', evidence:report.events + ' movement event(s), ' + report.observedDays.toFixed(1) + ' observed day(s)' },
+            { phase:'7. Report leadership', cadence:'Proposed weekly + exceptions', action:'Export the Faction Inventory Leadership Workbook; highlight critical shortages, spend estimate, aged loans, unresolved decisions, and data freshness.', owner:'Inventory Manager', status:'READY', evidence:'Faction Inventory Leadership Workbook' }
+        ];
+        return { plan, rows, report, loans, configured, shortfalls, critical, estimatedRestockCost, questions:factionLeadershipQuestions(db) };
+    }
+
+    function factionInventoryExportDocuments(db) {
+        const manager = factionInventoryManagerPlan(db);
+        const state = db.factionInventory || {};
+        const totalOwned = manager.rows.reduce((sum,row)=>sum+Number(row.amountOwned||0),0);
+        const totalAvailable = manager.rows.reduce((sum,row)=>sum+Number(row.availableCount||0),0);
+        const totalLoaned = manager.rows.reduce((sum,row)=>sum+Number(row.loanedCount||0),0);
+        const sourceAgeHours = state.inventoryTimestamp ? Math.max(0,(Date.now()-Date.parse(state.inventoryTimestamp))/3600000) : '';
+        const summaryRows = [
+            { Metric:'Report generated', Value:nowIso(), Status:'INFO' },
+            { Metric:'Torn inventory snapshot', Value:String(state.inventoryTimestamp || ''), Status:state.inventoryTimestamp ? 'SOURCE' : 'MISSING' },
+            { Metric:'Source age hours', Value:sourceAgeHours, Status:sourceAgeHours === '' ? 'MISSING' : Number(sourceAgeHours) > 2 ? 'STALE REVIEW' : 'CURRENT' },
+            { Metric:'Managed item/category rows', Value:manager.rows.length, Status:'INFO' },
+            { Metric:'Owned units', Value:totalOwned, Status:'INFO' },
+            { Metric:'Available units', Value:totalAvailable, Status:'INFO' },
+            { Metric:'Loaned units', Value:totalLoaned, Status:'INFO' },
+            { Metric:'Configured planning targets', Value:manager.configured.length, Status:manager.configured.length ? 'IN PROGRESS' : 'LEADERSHIP / MANAGER ACTION' },
+            { Metric:'Planning shortfalls', Value:manager.shortfalls.length, Status:manager.shortfalls.length ? 'ACTION' : 'CLEAR' },
+            { Metric:'Critical shortfalls', Value:manager.critical.length, Status:manager.critical.length ? 'CRITICAL' : 'CLEAR' },
+            { Metric:'Estimated restock cost', Value:manager.estimatedRestockCost, Status:'ADVISORY — priced rows only' },
+            { Metric:'Current loan rows', Value:manager.loans.length, Status:manager.loans.length ? 'MONITOR' : 'CLEAR' },
+            { Metric:'7d movement events', Value:manager.report.events, Status:'INFO' },
+            { Metric:'Observed history days', Value:manager.report.observedDays, Status:manager.report.observedDays >= 7 ? 'MATURE WEEK' : 'COLLECTING HISTORY' },
+            { Metric:'Open leadership questions', Value:manager.questions.length, Status:'LEADERSHIP DECISION REQUIRED' }
+        ];
+        const inventoryRows = manager.rows.map(row => ({
+            'Category':String(row.category||''), 'Item ID':asId(row.itemId), 'Item':String(row.name||''), 'Type':String(row.type||''),
+            'Owned':Number(row.amountOwned||0), 'Available':Number(row.availableCount||0), 'Loaned':Number(row.loanedCount||0),
+            'Planning Basis':String(row.threshold?.basis||''), 'Planning Current':Number(row.threshold?.current||0),
+            'Target':Number(row.threshold?.target||0), 'Shortfall':Number(row.threshold?.shortfall||0), 'Status':String(row.threshold?.status||'UNSET'),
+            'Reference Price':Number(row.referencePrice||0), 'Price Source':String(row.priceSource||''), 'Estimated Restock Cost':Number(row.estimatedRestockCost||0),
+            'Loan Members':(row.loans||[]).map(x=>String(x.memberName||x.memberId||'')).join(' | '),
+            'Source Snapshot':String(state.inventoryTimestamp||''), 'Last Fetch':String(state.lastSyncAt||'')
+        }));
+        const restockRows = manager.shortfalls.map((row,index)=>({
+            'Priority':index+1, 'Status':String(row.threshold.status||''), 'Category':String(row.category||''), 'Item ID':asId(row.itemId), 'Item':String(row.name||''),
+            'Current':Number(row.threshold.current||0), 'Basis':String(row.threshold.basis||''), 'Target':Number(row.threshold.target||0),
+            'Shortfall':Number(row.threshold.shortfall||0), 'Reference Price':Number(row.referencePrice||0), 'Price Source':String(row.priceSource||''),
+            'Estimated Cost':Number(row.estimatedRestockCost||0),
+            'Action':'Source ' + Number(row.threshold.shortfall||0) + ' unit(s) within approved budget/price guardrails; leadership approval still governs spending.'
+        }));
+        const loanRows = manager.loans.map(row=>({
+            'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Category':String(row.category||''), 'Item ID':asId(row.itemId), 'Item':String(row.name||''),
+            'Quantity':Number(row.amount||0), 'UIDs':(row.uids||[]).join(' | '), 'First Observed':row.observedSince ? new Date(row.observedSince).toISOString() : '',
+            'Observed Hours':Number(row.observedHours||0), 'Disposition':'Monitor; follow up/escalate per leadership-approved loan timing.'
+        }));
+        const movementRows = manager.report.rows.map(row=>({
+            'Category':String(row.category||''), 'Item ID':asId(row.itemId), 'Item':String(row.name||''), 'Depleted':Number(row.depleted||0), 'Added':Number(row.added||0),
+            'Available Out':Number(row.availableOut||0), 'Loaned Out':Number(row.loanedOut||0), 'Net Owned':Number(row.netOwned||0), 'Consumption / Day':Number(row.consumptionPerDay||0)
+        }));
+        const planRows = manager.plan.map(row=>({
+            'Phase':row.phase, 'Cadence':row.cadence, 'Action':row.action, 'Owner':row.owner, 'Status':row.status, 'Evidence / Definition of Done':row.evidence
+        }));
+        const questionRows = manager.questions.map(q=>({
+            'Priority':q.priority, 'Area':q.area, 'Question for Leadership':q.question, 'Current State / Assumption':q.current, 'Decision Needed':q.decision, 'Status':'LEADERSHIP DECISION REQUIRED'
+        }));
+        const assumptionRows = [
+            { Topic:'Scope', Value:FACTION_INVENTORY_POLICY.scope, Classification:'CONFIRMED POLICY' },
+            { Topic:'Role', Value:FACTION_INVENTORY_POLICY.role, Classification:'CONFIRMED POLICY' },
+            { Topic:'Sourcing', Value:FACTION_INVENTORY_POLICY.sourcing, Classification:'CONFIRMED POLICY' },
+            { Topic:'Pricing', Value:FACTION_INVENTORY_POLICY.pricing, Classification:'CONFIRMED POLICY' },
+            { Topic:'Stock', Value:FACTION_INVENTORY_POLICY.stock, Classification:'OPEN POLICY' },
+            { Topic:'Loans', Value:FACTION_INVENTORY_POLICY.loans, Classification:'PARTIAL POLICY' },
+            { Topic:'High-value RW gear', Value:FACTION_INVENTORY_POLICY.highValue, Classification:'CONFIRMED POLICY' },
+            { Topic:'Purchasing', Value:FACTION_INVENTORY_POLICY.purchasing, Classification:'PARTIAL POLICY' },
+            { Topic:'Inventory source', Value:'Torn API v2 faction/inventory; local CRM snapshots retain history.', Classification:'SOURCE' },
+            { Topic:'Market references', Value:'Advisory only. Current CRM market evidence may include Item Market, Bazaar observations, TornW3B, or catalog fallback.', Classification:'ADVISORY' },
+            { Topic:'Automation boundary', Value:'Read-only manager: no automatic faction item movement, purchase, reimbursement, trade, give, retrieve, or consumption action.', Classification:'CONTROL' }
+        ];
+        const makeDoc=(filename,rows)=>({filename,headers:rows.length?Object.keys(rows[0]):[],rows});
+        return {
+            summary:makeDoc('Faction_Executive_Summary.csv',summaryRows),
+            inventory:makeDoc('Faction_Current_Inventory.csv',inventoryRows),
+            restock:makeDoc('Faction_Restock_Plan.csv',restockRows),
+            loans:makeDoc('Faction_Loans.csv',loanRows),
+            movement:makeDoc('Faction_7d_Movement.csv',movementRows),
+            plan:makeDoc('Faction_Operating_Plan.csv',planRows),
+            questions:makeDoc('Faction_Leadership_Questions.csv',questionRows),
+            assumptions:makeDoc('Faction_Data_Assumptions.csv',assumptionRows)
+        };
+    }
+
+    function buildFactionInventoryXlsx(db) {
+        const docs = factionInventoryExportDocuments(db);
+        return buildXlsxWorkbook([
+            ['Executive Summary',docs.summary],
+            ['Current Inventory',docs.inventory],
+            ['Restock Plan',docs.restock],
+            ['Loans',docs.loans],
+            ['7d Movement',docs.movement],
+            ['Operating Plan',docs.plan],
+            ['Leadership Questions',docs.questions],
+            ['Data Assumptions',docs.assumptions]
+        ]);
+    }
+
+    function exportFactionInventoryWorkbook() {
+        const bytes = buildFactionInventoryXlsx(dbLoad());
+        const blob = new Blob([bytes], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'MM_Torn_Faction_Inventory_Leadership_' + exportDateStamp() + '.xlsx';
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }
+
     function factionInventoryStatusBadge(status) {
         const styles = {
             CRITICAL: 'background:#6b1f1f;color:#ffd0d0;border:1px solid #a94a4a;',
@@ -9800,6 +9980,7 @@
                     '</select></label>'+
                     '<button id="mm-faction-sync" style="'+btn(true)+'">Sync Armory</button>'+
                     '<button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button>'+
+                    '<button id="mm-faction-export" style="'+btn()+'">Leadership XLSX</button>'+
                 '</div>'+
             '</div>'+
             '<div style="font-size:11px;color:#aaa;margin-top:7px;line-height:1.55;">'+
@@ -9849,6 +10030,25 @@
                     ).join('<br>')+
                   '</div>'
                 : '')
+        );
+
+        const managerPlan = factionInventoryManagerPlan(db);
+        const managerPlanCard = card(
+            '<b>Inventory Manager Plan</b>'+
+            '<div style="font-size:10px;color:#888;margin:3px 0 5px;">Operational sequence: establish control → define policy → set targets → replenish → control loans → measure consumption → report leadership.</div>'+
+            managerPlan.plan.map(row =>
+                '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>'+escapeHtml(row.phase)+'</b> · '+escapeHtml(row.status)+
+                '<br><span style="color:#bbb;">'+escapeHtml(row.action)+'</span><br><span style="font-size:10px;color:#888;">Cadence: '+escapeHtml(row.cadence)+' · Owner: '+escapeHtml(row.owner)+' · Evidence: '+escapeHtml(row.evidence)+'</span></div>'
+            ).join('')
+        );
+
+        const leadershipQuestionsCard = card(
+            '<b>Questions for Leadership</b>'+
+            '<div style="font-size:10px;color:#888;margin:3px 0 5px;">These are unresolved policy/authority inputs. CRM will not invent them.</div>'+
+            managerPlan.questions.map(q =>
+                '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>'+escapeHtml(q.priority)+' · '+escapeHtml(q.area)+'</b> — '+escapeHtml(q.question)+
+                '<br><span style="color:#aaa;">Decision needed: '+escapeHtml(q.decision)+'</span></div>'
+            ).join('')
         );
 
         const armory = card(
@@ -9920,7 +10120,7 @@
                 : '<div style="font-size:11px;color:#888;margin-top:5px;">No in-scope inventory changes recorded yet.</div>')
         );
 
-        return summary + operatingPolicy + planning + armory + memberView + weekly + audit;
+        return summary + operatingPolicy + managerPlanCard + leadershipQuestionsCard + planning + armory + memberView + weekly + audit;
     }
 
     function factionInventorySelfTest() {
@@ -11636,17 +11836,8 @@
         return concatUint8([...localParts, central, end]);
     }
 
-    function buildFinancialXlsx(db) {
-        const docs = financialExportDocuments(db);
-        const sheetDefs = [
-            ['Summary', docs.summary],
-            ['Sales', docs.sales],
-            ['Acquisitions', docs.acquisitions],
-            ['Inventory Profit', docs.inventory],
-            ['Refunds', docs.refunds],
-            ['Customer Value', docs.customers],
-            ['Procurement', docs.procurement]
-        ].filter(([,doc]) => doc);
+    function buildXlsxWorkbook(sheetDefs) {
+        sheetDefs = (sheetDefs || []).filter(([,doc]) => doc && Array.isArray(doc.headers) && Array.isArray(doc.rows));
 
         const contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
             '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
@@ -11704,6 +11895,19 @@
             });
         });
         return zipStoreEntries(entries);
+    }
+
+    function buildFinancialXlsx(db) {
+        const docs = financialExportDocuments(db);
+        return buildXlsxWorkbook([
+            ['Summary', docs.summary],
+            ['Sales', docs.sales],
+            ['Acquisitions', docs.acquisitions],
+            ['Inventory Profit', docs.inventory],
+            ['Refunds', docs.refunds],
+            ['Customer Value', docs.customers],
+            ['Procurement', docs.procurement]
+        ]);
     }
 
     function exportFinancialWorkbook() {
@@ -12293,6 +12497,7 @@
         root.querySelector('#mm-travel-save')?.addEventListener('click', () => saveTravelSettings(root));
         root.querySelector('#mm-faction-sync')?.addEventListener('click', () => syncFactionInventory({silent:false,force:true}).catch(()=>{}));
         root.querySelector('#mm-faction-market')?.addEventListener('click', () => syncMarketIntelligence(false));
+        root.querySelector('#mm-faction-export')?.addEventListener('click', () => exportFactionInventoryWorkbook());
         root.querySelector('#mm-faction-category')?.addEventListener('change', e => {
             const db=dbLoad();
             db.factionInventory.settings.selectedCategory=String(e.currentTarget.value||'all');
@@ -13105,6 +13310,9 @@
         factionInventoryLoans: () => factionLoanMemberRows(dbLoad()),
         factionLoanPersistence: () => factionLoanPersistenceRows(dbLoad()),
         factionInventoryReport: (days=7) => factionInventoryReport(dbLoad(),days),
+        factionInventoryManagerPlan: () => factionInventoryManagerPlan(dbLoad()),
+        factionInventoryExportDocuments: () => factionInventoryExportDocuments(dbLoad()),
+        exportFactionInventoryWorkbook,
         factionInventorySelfTest,
         syncTravelStock,
         updateTravelData,
