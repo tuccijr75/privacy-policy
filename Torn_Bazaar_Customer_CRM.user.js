@@ -134,6 +134,9 @@
     const FACTION_LOAN_FINAL_WARNING_DAYS = 10;
     const FACTION_LOAN_ESCALATION_DAYS = 14;
     const FACTION_PROVISIONAL_COVERAGE_DAYS = 14;
+    const FACTION_EQUIPMENT_POOL_PCT = 0.25;
+    const FACTION_EQUIPMENT_POOL_SPARES = 2;
+    const FACTION_STOCK_MAX_FACTOR = 1.5;
     const FACTION_PERMISSION_REVIEW_MIN_DAYS = 14;
     const FACTION_PERMISSION_REVIEW_MAX_DAYS = 21;
 
@@ -11580,6 +11583,240 @@
             dataRequired:baselineRows.filter(row=>row.target==null).length,
             observedDays:Number(report.observedDays || 0)
         };
+    }
+
+    function factionMinimumStockProposal(db) {
+        const rows=factionInventoryRows(db);
+        const report=factionInventoryReport(db,7);
+        const roster=factionMemberReadinessRows(db);
+        const rosterCount=Math.max(1,roster.length);
+        const observedDays=Number(report.observedDays||0);
+        const confidence=observedDays>=7?'HIGH':observedDays>=3?'MEDIUM':'LOW';
+        const movementByKey=new Map((report.rows||[]).map(row=>[
+            String(row.key||factionInventoryKey(row.category,row.itemId)),
+            row
+        ]));
+        const proposals=[];
+        const coreMedical=new Set(['First Aid Kit','Morphine','Small First Aid Kit','Ipecac Syrup','Empty Blood Bag']);
+        const coreTemporary=new Set(['Flash Grenade','Smoke Grenade','Tear Gas','HEG','Grenade','Pepper Spray']);
+
+        for(const row of rows) {
+            const category=String(row.category||'');
+            if(!['medical','temporary','consumables'].includes(category)) continue;
+            const name=String(row.name||'');
+            const movement=movementByKey.get(String(row.key||factionInventoryKey(category,row.itemId))) || {};
+            const daily=Math.max(0,Number(movement.consumptionPerDay||0));
+            const current=Number(row.threshold?.current ?? row.amountOwned ?? 0);
+            const isFilledBlood=/^blood bag\s*:/i.test(name);
+            if(isFilledBlood) {
+                proposals.push({
+                    scope:'ITEM',
+                    category,
+                    slot:'',
+                    itemId:asId(row.itemId),
+                    item:name,
+                    current,
+                    observedPerDay:daily,
+                    recommendedMin:null,
+                    recommendedMax:null,
+                    shortfall:null,
+                    risk:'WAR CRITICAL',
+                    confidence:'DATA REQUIRED',
+                    rationale:'Filled blood-bag minimum must be set by roster blood-type compatibility, not by one observed bag type.',
+                    neededInput:'Roster blood-type distribution and expected active Ranked War participants.',
+                    managerRecommendation:'COLLECT DATA, THEN APPROVE MIX'
+                });
+                continue;
+            }
+
+            let reserve=0;
+            let risk='ROUTINE';
+            if(category==='medical') {
+                reserve=coreMedical.has(name) ? rosterCount : (daily>0 ? Math.ceil(rosterCount*0.5) : 0);
+                if(coreMedical.has(name)) risk='WAR CRITICAL';
+            } else if(category==='temporary') {
+                reserve=coreTemporary.has(name) ? rosterCount : (daily>0 ? Math.ceil(rosterCount*0.25) : 0);
+                if(coreTemporary.has(name)) risk='WAR CRITICAL';
+            } else if(category==='consumables') {
+                reserve=daily>0 ? Math.ceil(rosterCount*0.5) : 0;
+            }
+
+            const usageNeed=Math.ceil(daily*FACTION_PROVISIONAL_COVERAGE_DAYS);
+            const recommendedMin=Math.max(reserve,usageNeed+reserve);
+            const recommendedMax=recommendedMin>0 ? Math.ceil(recommendedMin*FACTION_STOCK_MAX_FACTOR) : 0;
+            proposals.push({
+                scope:'ITEM',
+                category,
+                slot:'',
+                itemId:asId(row.itemId),
+                item:name,
+                current,
+                observedPerDay:daily,
+                recommendedMin,
+                recommendedMax,
+                shortfall:Math.max(0,recommendedMin-current),
+                risk,
+                confidence,
+                rationale:recommendedMin>0
+                    ? FACTION_PROVISIONAL_COVERAGE_DAYS+'d observed depletion ('+usageNeed+') + explicit reserve ('+reserve+').'
+                    : 'No observed depletion and no manager-designated reserve requirement yet; do not deliberately overstock.',
+                neededInput:confidence==='LOW'?'Continue collecting movement history until at least 3–7 days are observed.':'',
+                managerRecommendation:recommendedMin>0?'APPROVE PROVISIONAL MIN/MAX':'APPROVE ZERO DELIBERATE MINIMUM'
+            });
+        }
+
+        const loanerMin=Math.max(2,Math.ceil(rosterCount*FACTION_EQUIPMENT_POOL_PCT)+FACTION_EQUIPMENT_POOL_SPARES);
+        const equipmentMax=Math.ceil(loanerMin*FACTION_STOCK_MAX_FACTOR);
+        const addEquipmentPool=(category,slot,label,current,unclassified=0)=>{
+            proposals.push({
+                scope:'POOL',
+                category,
+                slot,
+                itemId:'',
+                item:label,
+                current,
+                observedPerDay:0,
+                recommendedMin:loanerMin,
+                recommendedMax:equipmentMax,
+                shortfall:Math.max(0,loanerMin-current),
+                risk:'WAR READINESS',
+                confidence:rows.some(row=>String(row.category||'')===category)?'MEDIUM':'LOW',
+                rationale:'Manager proposal: support '+Math.round(FACTION_EQUIPMENT_POOL_PCT*100)+'% of roster simultaneously plus '+FACTION_EQUIPMENT_POOL_SPARES+' spare(s) for this slot. High-value RW gear is excluded from routine loaner assumptions.',
+                neededInput:unclassified>0 ? unclassified+' '+category+' item(s) could not be classified into a standard slot; review after weapon/armor sync.' : '',
+                managerRecommendation:'APPROVE LOANER-POOL MINIMUM'
+            });
+        };
+
+        const weaponRows=rows.filter(row=>String(row.category||'')==='weapons');
+        const armorRows=rows.filter(row=>String(row.category||'')==='armor');
+        const weaponSlots=['primary','secondary','melee'];
+        const armorSlots=['helmet','body','gloves','pants','boots'];
+        const unclassifiedWeapons=weaponRows.filter(row=>!factionWeaponSlot(row)).length;
+        const unclassifiedArmor=armorRows.filter(row=>!factionArmorSlot(row)).length;
+        for(const slot of weaponSlots) {
+            const current=weaponRows.filter(row=>factionWeaponSlot(row)===slot).reduce((sum,row)=>sum+Number(row.availableCount||0),0);
+            addEquipmentPool('weapons',slot,'Routine loaner '+slot+' weapon pool',current,unclassifiedWeapons);
+        }
+        for(const slot of armorSlots) {
+            const current=armorRows.filter(row=>factionArmorSlot(row)===slot).reduce((sum,row)=>sum+Number(row.availableCount||0),0);
+            addEquipmentPool('armor',slot,'Routine loaner '+slot+' armor pool',current,unclassifiedArmor);
+        }
+
+        const actionable=proposals.filter(row=>row.recommendedMin!=null && Number(row.shortfall||0)>0);
+        const dataRequired=proposals.filter(row=>row.recommendedMin==null || String(row.confidence)==='DATA REQUIRED');
+        return {
+            generatedAt:nowIso(),
+            rosterCount,
+            observedDays,
+            confidence,
+            loanerMin,
+            proposals,
+            actionable,
+            dataRequired,
+            methodology:'Stackables: 14 days of observed depletion plus an explicit war/operational reserve. Critical medical/core temporary reserve = one per roster member. Other used medical = 50% roster reserve; other used temporary = 25%; used consumables = 50%. Weapons/armor: routine loaner pool = 25% of roster + two spares per standard slot. Working maximum = 150% of minimum. Filled blood-bag mix remains data-required until roster compatibility is known.'
+        };
+    }
+
+    function factionManagerProposalInputs(db) {
+        const minimums=factionMinimumStockProposal(db);
+        const rows=factionInventoryRows(db);
+        const readiness=factionMemberReadinessRows(db);
+        const withStats=readiness.filter(row=>row.hasStats).length;
+        const withBuild=readiness.filter(row=>row.profile?.simpleBuild).length;
+        const weapons=rows.filter(row=>String(row.category||'')==='weapons');
+        return [
+            {
+                priority:'HIGH',
+                topic:'Filled blood-bag mix',
+                current:'Individual filled blood bags are visible, but CRM does not yet have faction-member blood types.',
+                proposal:'Collect member blood types and set a compatible bag mix sized to active war participation, with Empty Blood Bags retained as general capacity reserve.',
+                why:'Prevents us from setting an unusable minimum based on whatever blood type happens to be in the armory now.',
+                status:'DATA REQUIRED'
+            },
+            {
+                priority:'HIGH',
+                topic:'Minimum-stock approval',
+                current:minimums.proposals.filter(row=>row.recommendedMin!=null).length+' provisional minimum rows generated; '+minimums.actionable.length+' currently below proposal.',
+                proposal:'Approve the Minimums Proposal methodology and initial values, then review after a full 7-day usage window and before each Ranked War.',
+                why:'Leadership already authorized Manic Mike to establish provisional values; this turns that authority into explicit numbers.',
+                status:'READY FOR LEADERSHIP'
+            },
+            {
+                priority:'HIGH',
+                topic:'Weapon inventory baseline',
+                current:weapons.length ? weapons.length+' weapon item row(s) in current CRM snapshot.' : 'No weapon rows in the current snapshot yet.',
+                proposal:'Sync the new Weapons category, enrich available weapon UIDs through Torn itemdetails, then use Build Builder coverage to refine the routine loaner pool.',
+                why:'Weapon armory was previously omitted by CRM even though Torn faction inventory supports weapon UIDs.',
+                status:weapons.length?'ACTIVE':'SYNC REQUIRED'
+            },
+            {
+                priority:'MEDIUM',
+                topic:'Member build coverage',
+                current:withStats+'/'+readiness.length+' members have battle stats; '+withBuild+'/'+readiness.length+' have a saved Simple Build.',
+                proposal:'Build every war-active member first; use build demand to refine primary/secondary/melee and armor-slot pool minimums.',
+                why:'A build-derived pool is stronger evidence than a generic 25% loaner assumption.',
+                status:withStats===readiness.length && withBuild===readiness.length?'COMPLETE':'IN PROGRESS'
+            },
+            {
+                priority:'MEDIUM',
+                topic:'Usage-history confidence',
+                current:Number(minimums.observedDays||0).toFixed(1)+' observed day(s).',
+                proposal:'Keep the current proposal provisional until at least 7 distinct days of inventory movement exist; recalculate weekly.',
+                why:'Short history can overreact to one chain, war, restock, or distribution event.',
+                status:minimums.observedDays>=7?'MATURE':'COLLECTING'
+            },
+            {
+                priority:'MEDIUM',
+                topic:'Preferred external suppliers',
+                current:'Leadership approved the sourcing order but has not supplied the named external partner list.',
+                proposal:'Use faction member bazaars first and verified market sources meanwhile; add named preferred partners when supplied.',
+                why:'Avoids blocking replenishment while preserving the approved sourcing hierarchy.',
+                status:'WAITING — LEADERSHIP'
+            },
+            {
+                priority:'LOW',
+                topic:'High-value gear definition',
+                current:'Policy reserves high-value Ranked War gear for Leadership, but no numeric value/bonus threshold is defined.',
+                proposal:'For now treat any clearly special/ranked bonus gear as Leadership-controlled and exclude it from routine loaner minimums; propose a numeric threshold after weapon/armor values are visible.',
+                why:'Prevents routine-pool calculations from implying authority over premium gear.',
+                status:'MANAGER RULE — REVIEW LATER'
+            }
+        ];
+    }
+
+    function factionMinimumProposalCard(db) {
+        const minimums=factionMinimumStockProposal(db);
+        const inputs=factionManagerProposalInputs(db);
+        const top=minimums.proposals
+            .filter(row=>row.recommendedMin!=null && Number(row.shortfall||0)>0)
+            .sort((a,b)=>{
+                const p={ 'WAR CRITICAL':0,'WAR READINESS':1,'ROUTINE':2 };
+                return (p[a.risk]??9)-(p[b.risk]??9) || Number(b.shortfall||0)-Number(a.shortfall||0);
+            })
+            .slice(0,12);
+        return card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+                '<div><b>Manager Minimums Proposal</b><div style="font-size:10px;color:#888;margin-top:2px;">Our numbers for Leadership approval—not open-ended questions. Current confidence: <b>'+escapeHtml(minimums.confidence)+'</b> from '+Number(minimums.observedDays||0).toFixed(1)+' observed day(s).</div></div>'+
+                '<div style="font-size:10px;color:#aaa;">'+minimums.actionable.length+' shortfall(s) · '+minimums.dataRequired.length+' data-required</div>'+
+            '</div>'+
+            '<div style="font-size:10px;color:#999;margin-top:6px;">'+escapeHtml(minimums.methodology)+'</div>'+
+            (top.length ? '<div style="margin-top:7px;">'+top.map(row =>
+                '<div style="border-top:1px solid #303030;padding:5px 0;font-size:10px;"><b>'+escapeHtml(row.item)+'</b>'+
+                    (row.slot?' · '+escapeHtml(row.slot):'')+
+                    ' · Current '+Number(row.current||0).toLocaleString()+
+                    ' · Proposed min <b>'+Number(row.recommendedMin||0).toLocaleString()+'</b>'+
+                    ' · Short '+Number(row.shortfall||0).toLocaleString()+
+                    ' · '+escapeHtml(row.risk)+
+                    '<br><span style="color:#888;">'+escapeHtml(row.rationale)+'</span></div>'
+            ).join('')+'</div>' : '<div style="font-size:10px;color:#9fcfa8;margin-top:6px;">No current numeric shortfalls against the proposal.</div>')+
+            '<details style="margin-top:7px;"><summary style="cursor:pointer;font-size:10px;color:#aaa;">What we still need to figure out</summary>'+
+                '<div style="margin-top:4px;">'+inputs.map(row =>
+                    '<div style="border-top:1px solid #303030;padding:5px 0;font-size:10px;"><b>'+escapeHtml(row.priority)+' · '+escapeHtml(row.topic)+'</b> · '+escapeHtml(row.status)+
+                    '<br><span style="color:#bbb;">Proposal: '+escapeHtml(row.proposal)+'</span>'+
+                    '<br><span style="color:#777;">Why: '+escapeHtml(row.why)+'</span></div>'
+                ).join('')+'</div>'+
+            '</details>'
+        );
     }
 
     function factionInventoryManagerPlan(db) {
