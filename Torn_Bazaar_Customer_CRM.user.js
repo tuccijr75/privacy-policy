@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.1
+// @version      7.4.2
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.1';
+    const VERSION = '7.4.2';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -337,6 +337,13 @@
                 snapshots: [],
                 events: [],
                 logisticsLedger: [],
+                memberReadiness: {
+                    roster: {},
+                    profiles: {},
+                    lastRosterSyncAt: null,
+                    diagnostics: [],
+                    settings: { staleHours: 72 }
+                },
                 thresholds: {},
                 inventoryTimestamp: null,
                 lastSyncAt: null,
@@ -548,6 +555,13 @@
         db.factionInventory.current = db.factionInventory.current && typeof db.factionInventory.current === 'object' ? db.factionInventory.current : {};
         db.factionInventory.snapshots = Array.isArray(db.factionInventory.snapshots) ? db.factionInventory.snapshots.slice(-FACTION_INVENTORY_SNAPSHOT_MAX) : [];
         db.factionInventory.events = Array.isArray(db.factionInventory.events) ? db.factionInventory.events.slice(-FACTION_INVENTORY_EVENT_MAX) : [];
+        db.factionInventory.memberReadiness = db.factionInventory.memberReadiness && typeof db.factionInventory.memberReadiness === 'object' ? db.factionInventory.memberReadiness : {};
+        db.factionInventory.memberReadiness.roster = db.factionInventory.memberReadiness.roster && typeof db.factionInventory.memberReadiness.roster === 'object' ? db.factionInventory.memberReadiness.roster : {};
+        db.factionInventory.memberReadiness.profiles = db.factionInventory.memberReadiness.profiles && typeof db.factionInventory.memberReadiness.profiles === 'object' ? db.factionInventory.memberReadiness.profiles : {};
+        db.factionInventory.memberReadiness.lastRosterSyncAt = db.factionInventory.memberReadiness.lastRosterSyncAt || null;
+        db.factionInventory.memberReadiness.diagnostics = Array.isArray(db.factionInventory.memberReadiness.diagnostics) ? db.factionInventory.memberReadiness.diagnostics.slice(-40) : [];
+        db.factionInventory.memberReadiness.settings = db.factionInventory.memberReadiness.settings && typeof db.factionInventory.memberReadiness.settings === 'object' ? db.factionInventory.memberReadiness.settings : {};
+        db.factionInventory.memberReadiness.settings.staleHours = Math.max(12, Math.min(720, Number(db.factionInventory.memberReadiness.settings.staleHours || 72)));
         db.factionInventory.thresholds = db.factionInventory.thresholds && typeof db.factionInventory.thresholds === 'object' ? db.factionInventory.thresholds : {};
         for (const [itemId, threshold] of Object.entries(db.factionInventory.thresholds)) {
             if (!threshold || typeof threshold !== 'object') {
@@ -9394,6 +9408,11 @@
                         availableUids: [],
                         loans: [],
                         uidCount: 0,
+                        armorRating: Number(raw?.armor ?? raw?.stats?.armor ?? raw?.stats?.protection ?? 0) || 0,
+                        damage: Number(raw?.damage ?? raw?.stats?.damage ?? 0) || 0,
+                        accuracy: Number(raw?.accuracy ?? raw?.stats?.accuracy ?? 0) || 0,
+                        quality: Number(raw?.quality ?? raw?.stats?.quality ?? 0) || 0,
+                        bonuses: raw?.bonuses && typeof raw.bonuses === 'object' ? raw.bonuses : null,
                         fetchedAt
                     };
                 }
@@ -9771,6 +9790,215 @@
         return { days, observedDays, events: events.length, rows };
     }
 
+    function factionMembersFromResponse(data) {
+        const source = data?.members ?? data?.faction?.members ?? data?.data?.members ?? [];
+        const rows = Array.isArray(source)
+            ? source
+            : source && typeof source === 'object'
+                ? Object.entries(source).map(([id,row]) => ({ id, ...(row && typeof row === 'object' ? row : {}) }))
+                : [];
+        return rows.map(raw => {
+            const id = asId(raw?.id ?? raw?.player_id ?? raw?.user_id ?? raw?.user?.id);
+            if (!id) return null;
+            const status = raw?.status && typeof raw.status === 'object'
+                ? String(raw.status.state || raw.status.description || raw.status.color || '')
+                : String(raw?.status || '');
+            return {
+                memberId:id,
+                memberName:String(raw?.name ?? raw?.player_name ?? raw?.user?.name ?? id),
+                level:Math.max(0,Number(raw?.level || 0)),
+                position:String(raw?.position || raw?.role || ''),
+                status,
+                lastActionAt:Number(raw?.last_action?.timestamp || raw?.last_action?.relative || raw?.lastActionAt || 0) || 0,
+                joinedAt:Number(raw?.joined_at || raw?.joined || 0) || 0,
+                fetchedAt:Date.now()
+            };
+        }).filter(Boolean);
+    }
+
+    async function syncFactionMemberRoster(options = {}) {
+        const key = factionInventoryApiKey();
+        if (!key) throw new Error('No compatible faction API key is available.');
+        try {
+            const data = await apiRequest('/faction/members', key);
+            const rows = factionMembersFromResponse(data);
+            if (!rows.length) throw new Error('Faction members response contained no members.');
+            const db = dbLoad();
+            const readiness = db.factionInventory.memberReadiness;
+            const next = {};
+            for (const row of rows) next[row.memberId] = row;
+            readiness.roster = next;
+            readiness.lastRosterSyncAt = nowIso();
+            dbSave(db);
+            statusText = 'Faction roster synced: ' + rows.length + ' members.';
+            if (!options.silent) render();
+            return rows;
+        } catch (error) {
+            const db = dbLoad();
+            db.factionInventory.memberReadiness.diagnostics.push({ at:nowIso(), message:error?.message || String(error) });
+            db.factionInventory.memberReadiness.diagnostics = db.factionInventory.memberReadiness.diagnostics.slice(-40);
+            dbSave(db);
+            statusText = 'Faction roster sync failed: ' + (error?.message || String(error));
+            if (!options.silent) render();
+            throw error;
+        }
+    }
+
+    function factionBattleStatProfile(stats = {}) {
+        const values = {
+            Strength:Math.max(0,Number(stats.strength || 0)),
+            Defense:Math.max(0,Number(stats.defense || 0)),
+            Speed:Math.max(0,Number(stats.speed || 0)),
+            Dexterity:Math.max(0,Number(stats.dexterity || 0))
+        };
+        const total = Object.values(values).reduce((a,b)=>a+b,0);
+        if (!total) return { label:'UNKNOWN', total:0, dominant:'', shares:{} };
+        const shares = Object.fromEntries(Object.entries(values).map(([k,v])=>[k,v/total]));
+        const ranked = Object.entries(shares).sort((a,b)=>b[1]-a[1]);
+        const [dominant,share] = ranked[0];
+        const label = share < 0.34 ? 'BALANCED' :
+            dominant === 'Strength' ? 'STRENGTH-FOCUSED' :
+            dominant === 'Defense' ? 'DEFENSE-FOCUSED' :
+            dominant === 'Speed' ? 'SPEED-FOCUSED' : 'DEXTERITY-FOCUSED';
+        return { label, total, dominant, shares };
+    }
+
+    function saveFactionMemberReadinessProfile(memberId, patch = {}) {
+        const id = asId(memberId);
+        if (!id) throw new Error('Member ID is required.');
+        const db = dbLoad();
+        const readiness = db.factionInventory.memberReadiness;
+        const previous = readiness.profiles[id] && typeof readiness.profiles[id] === 'object' ? readiness.profiles[id] : {};
+        const prevStats = previous.stats && typeof previous.stats === 'object' ? previous.stats : {};
+        const nextStats = patch.stats && typeof patch.stats === 'object' ? patch.stats : prevStats;
+        const equipment = patch.equipment && typeof patch.equipment === 'object'
+            ? { ...(previous.equipment || {}), ...patch.equipment }
+            : (previous.equipment || {});
+        readiness.profiles[id] = {
+            ...previous,
+            ...patch,
+            memberId:id,
+            stats:{
+                strength:Math.max(0,Number(nextStats.strength || 0)),
+                defense:Math.max(0,Number(nextStats.defense || 0)),
+                speed:Math.max(0,Number(nextStats.speed || 0)),
+                dexterity:Math.max(0,Number(nextStats.dexterity || 0))
+            },
+            equipment,
+            source:String(patch.source || previous.source || 'manual/opt-in'),
+            verifiedAt:String(patch.verifiedAt || nowIso()),
+            notes:String(patch.notes ?? previous.notes ?? '')
+        };
+        dbSave(db);
+        return readiness.profiles[id];
+    }
+
+    function promptFactionMemberReadiness(memberId) {
+        const db = dbLoad();
+        const id = asId(memberId);
+        const member = db.factionInventory.memberReadiness.roster[id] || {};
+        const existing = db.factionInventory.memberReadiness.profiles[id] || {};
+        const stats = existing.stats || {};
+        const rawStats = prompt(
+            'Battle stats for ' + String(member.memberName || id) + ' as Strength,Defense,Speed,Dexterity. Leave blank to keep unknown:',
+            [stats.strength||'',stats.defense||'',stats.speed||'',stats.dexterity||''].join(',')
+        );
+        if (rawStats == null) return;
+        const parts = String(rawStats).split(',').map(v=>Math.max(0,Number(String(v).replace(/[^0-9.]/g,''))||0));
+        const equipmentSummary = prompt(
+            'Currently equipped personal gear summary (weapon + armor; plain text is fine):',
+            String(existing.equipment?.summary || '')
+        );
+        if (equipmentSummary == null) return;
+        const warRole = prompt('War role / assignment (optional):', String(existing.warRole || '')) ?? '';
+        const med = prompt('Medical readiness: READY, NEEDS SUPPLY, or UNKNOWN:', String(existing.medicalStatus || 'UNKNOWN')) ?? 'UNKNOWN';
+        const ipecac = prompt('Ipecac readiness: READY, NOT NEEDED, NEEDS IPECAC, or UNKNOWN:', String(existing.ipecacStatus || 'UNKNOWN')) ?? 'UNKNOWN';
+        const notes = prompt('Inventory Manager notes (optional):', String(existing.notes || '')) ?? '';
+        saveFactionMemberReadinessProfile(id,{
+            stats:{ strength:parts[0]||0, defense:parts[1]||0, speed:parts[2]||0, dexterity:parts[3]||0 },
+            equipment:{ summary:String(equipmentSummary || '').trim() },
+            warRole:String(warRole || '').trim(),
+            medicalStatus:String(med || 'UNKNOWN').trim().toUpperCase(),
+            ipecacStatus:String(ipecac || 'UNKNOWN').trim().toUpperCase(),
+            notes,
+            source:'manual/opt-in'
+        });
+        statusText = 'Readiness profile updated for ' + String(member.memberName || id) + '.';
+        render();
+    }
+
+    function factionArmoryCandidateRows(db) {
+        return factionInventoryRows(db)
+            .filter(row => FACTION_INVENTORY_LOAN_CATEGORIES.includes(String(row.category||'')) && Number(row.availableCount||0) > 0)
+            .map(row => ({
+                itemId:asId(row.itemId), name:String(row.name||''), category:String(row.category||''),
+                available:Number(row.availableCount||0), armorRating:Number(row.armorRating||0),
+                damage:Number(row.damage||0), accuracy:Number(row.accuracy||0), quality:Number(row.quality||0),
+                referencePrice:Number(row.referencePrice||0), metadataComplete:Boolean(Number(row.armorRating||0) || Number(row.damage||0) || Number(row.accuracy||0) || Number(row.quality||0))
+            }))
+            .sort((a,b) => (b.armorRating-a.armorRating) || ((b.damage+b.accuracy)-(a.damage+a.accuracy)) || (b.quality-a.quality) || (b.available-a.available));
+    }
+
+    function factionMemberReadinessRows(db) {
+        const readiness = db.factionInventory?.memberReadiness || {};
+        const roster = Object.values(readiness.roster || {});
+        const profiles = readiness.profiles || {};
+        const loanMap = new Map(factionLoanMemberRows(db).map(x=>[asId(x.memberId),x]));
+        const candidates = factionArmoryCandidateRows(db);
+        const staleHours = Number(readiness.settings?.staleHours || 72);
+        return roster.map(member => {
+            const id = asId(member.memberId);
+            const profile = profiles[id] || {};
+            const stats = profile.stats || {};
+            const statProfile = factionBattleStatProfile(stats);
+            const equipmentSummary = String(profile.equipment?.summary || '').trim();
+            const verifiedMs = Date.parse(profile.verifiedAt || '') || 0;
+            const ageHours = verifiedMs ? Math.max(0,(Date.now()-verifiedMs)/3600000) : null;
+            const hasStats = statProfile.total > 0;
+            const hasEquipment = Boolean(equipmentSummary);
+            const loan = loanMap.get(id) || null;
+            const stale = ageHours != null && ageHours > staleHours;
+            let readinessStatus = 'READY FOR REVIEW';
+            let action = 'Review against war assignment and armory availability.';
+            if (!hasStats || !hasEquipment) {
+                readinessStatus = 'MISSING DATA';
+                action = 'Collect opt-in battle stats and current equipped gear before issuing upgrades.';
+            } else if (stale) {
+                readinessStatus = 'STALE DATA';
+                action = 'Refresh member stats/equipment before war loadout decisions.';
+            } else if (String(profile.medicalStatus||'UNKNOWN').includes('NEEDS') || String(profile.ipecacStatus||'UNKNOWN').includes('NEEDS')) {
+                readinessStatus = 'SUPPLY ACTION';
+                action = 'Resolve medical/Ipecac requirement, then review equipment.';
+            }
+            const knownCandidates = candidates.filter(x=>x.metadataComplete);
+            const candidate = knownCandidates[0] || null;
+            let equipmentPlan = '';
+            if (!hasStats || !hasEquipment) equipmentPlan = 'No optimization until member data is complete.';
+            else if (loan?.amount) equipmentPlan = 'Member already holds ' + loan.amount + ' faction item(s); compare current faction loans to declared personal gear before issuing more.';
+            else if (candidate) equipmentPlan = 'Armory candidate for comparison: ' + candidate.name + ' ('+candidate.category+', '+candidate.available+' available). Candidate only; leadership/manager review required.';
+            else equipmentPlan = 'Armory item combat metadata is incomplete; perform manual item comparison before assignment. Do not use market price as a strength proxy.';
+            return {
+                ...member,
+                profile,
+                stats,
+                statProfile,
+                equipmentSummary,
+                hasStats,
+                hasEquipment,
+                ageHours,
+                stale,
+                loans:loan?.amount || 0,
+                loanItems:loan?.items || [],
+                readinessStatus,
+                action,
+                equipmentPlan
+            };
+        }).sort((a,b) => {
+            const p={'MISSING DATA':0,'STALE DATA':1,'SUPPLY ACTION':2,'READY FOR REVIEW':3};
+            return (p[a.readinessStatus]??9)-(p[b.readinessStatus]??9) || Number(b.level||0)-Number(a.level||0) || String(a.memberName||'').localeCompare(String(b.memberName||''));
+        });
+    }
+
     function recordFactionLogisticsEntry(entry = {}) {
         const db = dbLoad();
         db.factionInventory.logisticsLedger = Array.isArray(db.factionInventory.logisticsLedger) ? db.factionInventory.logisticsLedger : [];
@@ -9921,7 +10149,9 @@
             { Metric:'Manual logistics ledger entries', Value:manager.ledger.length, Status:manager.ledger.length ? 'ACTIVE' : 'START RECORDING' },
             { Metric:'7d movement events', Value:manager.report.events, Status:'INFO' },
             { Metric:'Observed history days', Value:manager.report.observedDays, Status:manager.report.observedDays >= 7 ? 'MATURE WEEK' : 'COLLECTING HISTORY' },
-            { Metric:'Open leadership questions', Value:manager.questions.length, Status:'LEADERSHIP DECISION REQUIRED' }
+            { Metric:'Open leadership questions', Value:manager.questions.length, Status:'LEADERSHIP DECISION REQUIRED' },
+            { Metric:'Faction roster members', Value:factionMemberReadinessRows(db).length, Status:'WAR READINESS' },
+            { Metric:'Members missing readiness data', Value:factionMemberReadinessRows(db).filter(x=>x.readinessStatus==='MISSING DATA').length, Status:'ACTION' }
         ];
         const inventoryRows = manager.rows.map(row => ({
             'Category':String(row.category||''), 'Item ID':asId(row.itemId), 'Item':String(row.name||''), 'Type':String(row.type||''),
@@ -9959,6 +10189,38 @@
         const questionRows = manager.questions.map(q=>({
             'Priority':q.priority, 'Area':q.area, 'Question for Leadership':q.question, 'Current State / Assumption':q.current, 'Decision Needed':q.decision, 'Status':'LEADERSHIP DECISION REQUIRED'
         }));
+        const memberReadiness = factionMemberReadinessRows(db);
+        const memberReadinessRows = memberReadiness.map(row=>({
+            'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Position':String(row.position||''),
+            'Faction Status':String(row.status||''), 'Readiness':row.readinessStatus, 'Data Source':String(row.profile?.source||''),
+            'Verified At':String(row.profile?.verifiedAt||''), 'Data Age Hours':row.ageHours==null?'':Number(row.ageHours.toFixed(1)),
+            'War Role':String(row.profile?.warRole||''), 'Medical':String(row.profile?.medicalStatus||'UNKNOWN'), 'Ipecac':String(row.profile?.ipecacStatus||'UNKNOWN'),
+            'Faction Loans':Number(row.loans||0), 'Action':row.action
+        }));
+        const battleStatRows = memberReadiness.map(row=>({
+            'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0),
+            'Strength':Number(row.stats?.strength||0), 'Defense':Number(row.stats?.defense||0), 'Speed':Number(row.stats?.speed||0), 'Dexterity':Number(row.stats?.dexterity||0),
+            'Total Battle Stats':Number(row.statProfile?.total||0), 'Profile':String(row.statProfile?.label||'UNKNOWN'), 'Verified At':String(row.profile?.verifiedAt||'')
+        }));
+        const equipmentRows = memberReadiness.map(row=>({
+            'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Current Equipment (member-provided)':String(row.equipmentSummary||''),
+            'Faction Loan Count':Number(row.loans||0), 'Faction Loan Items':(row.loanItems||[]).map(x=>String(x.name||'')+' x'+Number(x.amount||0)).join(' | '),
+            'Optimization Plan':row.equipmentPlan, 'Manager Notes':String(row.profile?.notes||'')
+        }));
+        const missingRows = memberReadiness.filter(row=>row.readinessStatus==='MISSING DATA'||row.readinessStatus==='STALE DATA').map(row=>({
+            'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Issue':row.readinessStatus,
+            'Battle Stats Present':row.hasStats?'YES':'NO', 'Equipment Present':row.hasEquipment?'YES':'NO', 'Verified At':String(row.profile?.verifiedAt||''), 'Action':row.action
+        }));
+        const warPrepRows = memberReadiness.map(row=>({
+            'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Battle Profile':String(row.statProfile?.label||'UNKNOWN'),
+            'Medical':String(row.profile?.medicalStatus||'UNKNOWN'), 'Ipecac':String(row.profile?.ipecacStatus||'UNKNOWN'), 'Faction Loans':Number(row.loans||0),
+            'Equipment Plan':row.equipmentPlan, 'Readiness':row.readinessStatus, 'War Role':String(row.profile?.warRole||'')
+        }));
+        const armoryAllocationRows = memberReadiness.filter(row=>row.hasStats&&row.hasEquipment).map(row=>({
+            'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Battle Profile':String(row.statProfile?.label||'UNKNOWN'),
+            'Current Equipment':String(row.equipmentSummary||''), 'Current Faction Loans':Number(row.loans||0), 'Candidate / Review Plan':row.equipmentPlan,
+            'Authority':'Candidate planning only; high-value Ranked War allocation remains leadership-controlled.'
+        }));
         const assumptionRows = [
             { Topic:'Faction / position', Value:FACTION_INVENTORY_POLICY.faction + ' — ' + FACTION_INVENTORY_POLICY.position + ' — appointed ' + FACTION_INVENTORY_POLICY.appointee, Classification:'OFFICIAL INDUCTION' },
             { Topic:'Objective', Value:FACTION_INVENTORY_POLICY.objective, Classification:'OFFICIAL INDUCTION' },
@@ -9990,7 +10252,13 @@
             movement:makeDoc('Faction_7d_Movement.csv',movementRows),
             plan:makeDoc('Faction_Operating_Plan.csv',planRows),
             questions:makeDoc('Faction_Leadership_Questions.csv',questionRows),
-            assumptions:makeDoc('Faction_Data_Assumptions.csv',assumptionRows)
+            assumptions:makeDoc('Faction_Data_Assumptions.csv',assumptionRows),
+            memberReadiness:makeDoc('Faction_Member_Readiness.csv',memberReadinessRows),
+            battleStats:makeDoc('Faction_Battle_Stats.csv',battleStatRows),
+            currentEquipment:makeDoc('Faction_Current_Equipment.csv',equipmentRows),
+            armoryAllocation:makeDoc('Faction_Armory_Allocation.csv',armoryAllocationRows),
+            missingMemberData:makeDoc('Faction_Missing_Member_Data.csv',missingRows),
+            warPrep:makeDoc('Faction_War_Prep_Checklist.csv',warPrepRows)
         };
     }
 
@@ -10005,7 +10273,13 @@
             ['7d Movement',docs.movement],
             ['Operating Plan',docs.plan],
             ['Leadership Questions',docs.questions],
-            ['Data Assumptions',docs.assumptions]
+            ['Data Assumptions',docs.assumptions],
+            ['Member Readiness',docs.memberReadiness],
+            ['Battle Stats',docs.battleStats],
+            ['Current Equipment',docs.currentEquipment],
+            ['Armory Allocation',docs.armoryAllocation],
+            ['Missing Member Data',docs.missingMemberData],
+            ['War Prep Checklist',docs.warPrep]
         ]);
     }
 
@@ -10064,6 +10338,7 @@
                     '<button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button>'+
                     '<button id="mm-faction-export" style="'+btn()+'">Leadership XLSX</button>'+
                     '<button id="mm-faction-log" style="'+btn()+'">Log Activity</button>'+
+                    '<button id="mm-faction-roster-sync" style="'+btn()+'">Sync Members</button>'+
                 '</div>'+
             '</div>'+
             '<div style="font-size:11px;color:#aaa;margin-top:7px;line-height:1.55;">'+
@@ -10140,6 +10415,35 @@
             ).join('')
         );
 
+        const readinessRows = factionMemberReadinessRows(db);
+        const readinessStore = state.memberReadiness || {};
+        const readinessMissing = readinessRows.filter(r=>r.readinessStatus==='MISSING DATA').length;
+        const readinessStale = readinessRows.filter(r=>r.readinessStatus==='STALE DATA').length;
+        const readinessSupply = readinessRows.filter(r=>r.readinessStatus==='SUPPLY ACTION').length;
+        const readinessCard = card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+                '<div><b>Member War Readiness / Equipment Optimization</b><div style="font-size:10px;color:#888;">Faction roster + armory loans are automatic. Exact battle stats/current personal equipment are opt-in or manually supplied.</div></div>'+
+                '<button id="mm-faction-roster-sync-card" style="'+btn(true)+'">Sync Faction Roster</button>'+
+            '</div>'+
+            '<div style="font-size:10px;color:#999;margin-top:5px;">Last roster sync: '+escapeHtml(fmtDate(readinessStore.lastRosterSyncAt))+
+                ' · Members '+readinessRows.length+' · Missing '+readinessMissing+' · Stale '+readinessStale+' · Supply action '+readinessSupply+
+                '<br>Optimization rule: never infer equipment strength from market price. Candidate assignments require combat metadata or manual comparison; high-value RW allocation remains leadership-controlled.</div>'+
+            (readinessRows.length ? readinessRows.slice(0,60).map(row =>
+                '<div style="border-top:1px solid #303030;padding:6px 0;font-size:10px;">'+
+                    '<div style="display:flex;justify-content:space-between;gap:6px;align-items:flex-start;">'+
+                        '<div><b>'+escapeHtml(row.memberName)+'</b> ['+escapeHtml(row.memberId)+'] · Lv '+Number(row.level||0)+' · '+escapeHtml(row.statProfile.label)+' · <b>'+escapeHtml(row.readinessStatus)+'</b></div>'+
+                        '<button data-faction-member-edit="'+escapeHtml(row.memberId)+'" style="'+btn(row.readinessStatus==='READY FOR REVIEW')+'">Edit Readiness</button>'+
+                    '</div>'+
+                    '<div style="color:#aaa;margin-top:2px;">Stats total: '+Number(row.statProfile.total||0).toLocaleString()+
+                    ' · Faction loans: '+Number(row.loans||0)+' · Medical: '+escapeHtml(row.profile?.medicalStatus||'UNKNOWN')+' · Ipecac: '+escapeHtml(row.profile?.ipecacStatus||'UNKNOWN')+
+                    (row.profile?.warRole?' · Role: '+escapeHtml(row.profile.warRole):'')+
+                    '<br>Current gear: '+escapeHtml(row.equipmentSummary||'—')+
+                    '<br><b>Plan:</b> '+escapeHtml(row.equipmentPlan)+
+                    '</div>'+
+                '</div>'
+            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">Sync the faction roster to begin member readiness planning.</div>')
+        );
+
         const armory = card(
             '<b>Armory Dashboard</b>'+
             (rows.length ? rows.map(row => {
@@ -10209,7 +10513,7 @@
                 : '<div style="font-size:11px;color:#888;margin-top:5px;">No in-scope inventory changes recorded yet.</div>')
         );
 
-        return summary + operatingPolicy + managerPlanCard + leadershipQuestionsCard + planning + armory + memberView + weekly + audit;
+        return summary + operatingPolicy + managerPlanCard + leadershipQuestionsCard + readinessCard + planning + armory + memberView + weekly + audit;
     }
 
     function factionInventorySelfTest() {
@@ -12588,6 +12892,9 @@
         root.querySelector('#mm-faction-market')?.addEventListener('click', () => syncMarketIntelligence(false));
         root.querySelector('#mm-faction-export')?.addEventListener('click', () => exportFactionInventoryWorkbook());
         root.querySelector('#mm-faction-log')?.addEventListener('click', () => promptFactionLogisticsEntry());
+        root.querySelector('#mm-faction-roster-sync')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
+        root.querySelector('#mm-faction-roster-sync-card')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
+        root.querySelectorAll('[data-faction-member-edit]').forEach(button => button.addEventListener('click', () => promptFactionMemberReadiness(button.dataset.factionMemberEdit)));
         root.querySelector('#mm-faction-category')?.addEventListener('change', e => {
             const db=dbLoad();
             db.factionInventory.settings.selectedCategory=String(e.currentTarget.value||'all');
@@ -13404,6 +13711,10 @@
         factionInventoryExportDocuments: () => factionInventoryExportDocuments(dbLoad()),
         exportFactionInventoryWorkbook,
         recordFactionLogisticsEntry,
+        syncFactionMemberRoster,
+        saveFactionMemberReadinessProfile,
+        factionMemberReadinessRows: () => factionMemberReadinessRows(dbLoad()),
+        factionArmoryCandidateRows: () => factionArmoryCandidateRows(dbLoad()),
         factionInventorySelfTest,
         syncTravelStock,
         updateTravelData,
