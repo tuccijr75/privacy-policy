@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.15
+// @version      7.4.16
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -29,7 +29,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.15';
+    const VERSION = '7.4.16';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -11325,12 +11325,77 @@
         return Boolean(cleanUrl && secret);
     }
 
+    function factionReportRequestId() {
+        const bytes = crypto.getRandomValues(new Uint8Array(16));
+        return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('');
+    }
+
+    function parseFactionReportUploadResponse(responseText) {
+        try {
+            return JSON.parse(String(responseText || '').trim() || '{}');
+        } catch {
+            return null;
+        }
+    }
+
+    function fetchFactionReportUploadResult(settings, requestId, attempts = 12) {
+        return new Promise((resolve, reject) => {
+            const check = remaining => {
+                const separator = settings.url.includes('?') ? '&' : '?';
+                const url = settings.url + separator + 'requestId=' + encodeURIComponent(requestId) + '&_=' + Date.now();
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url,
+                    timeout: 30000,
+                    onload: response => {
+                        const data = parseFactionReportUploadResponse(response.responseText);
+                        if (response.status >= 200 && response.status < 300 && data?.ok && /^https:\/\//i.test(String(data.url || ''))) {
+                            resolve(data);
+                            return;
+                        }
+                        if (data?.pending && remaining > 1) {
+                            setTimeout(() => check(remaining - 1), 750);
+                            return;
+                        }
+                        if (data && data.ok === false && !data.pending) {
+                            reject(new Error(data.error || 'Report upload failed.'));
+                            return;
+                        }
+                        if (remaining > 1) {
+                            setTimeout(() => check(remaining - 1), 750);
+                            return;
+                        }
+                        reject(new Error('Report upload completed but its Drive link could not be retrieved.'));
+                    },
+                    onerror: () => {
+                        if (remaining > 1) {
+                            setTimeout(() => check(remaining - 1), 750);
+                            return;
+                        }
+                        reject(new Error('Report link retrieval failed.'));
+                    },
+                    ontimeout: () => {
+                        if (remaining > 1) {
+                            setTimeout(() => check(remaining - 1), 750);
+                            return;
+                        }
+                        reject(new Error('Report link retrieval timed out.'));
+                    }
+                });
+            };
+            check(attempts);
+        });
+    }
+
     function uploadFactionLeadershipWorkbook(bytes, filename) {
         const settings = getFactionReportUploadSettings();
         if (!factionReportUploadConfigured()) {
             return Promise.reject(new Error('Remote Leadership report storage is not configured.'));
         }
+
+        const requestId = factionReportRequestId();
         const payload = {
+            requestId,
             secret: settings.secret,
             filename,
             mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -11341,6 +11406,13 @@
         };
 
         return new Promise((resolve, reject) => {
+            let fallbackStarted = false;
+            const retrieveResult = () => {
+                if (fallbackStarted) return;
+                fallbackStarted = true;
+                fetchFactionReportUploadResult(settings, requestId).then(resolve, reject);
+            };
+
             GM_xmlhttpRequest({
                 method: 'POST',
                 url: settings.url,
@@ -11348,16 +11420,15 @@
                 headers: { 'Content-Type': 'application/json' },
                 data: JSON.stringify(payload),
                 onload: response => {
-                    let data = null;
-                    try { data = JSON.parse(response.responseText || '{}'); } catch {}
+                    const data = parseFactionReportUploadResponse(response.responseText);
                     if (response.status >= 200 && response.status < 300 && data?.ok && /^https:\/\//i.test(String(data.url || ''))) {
                         resolve(data);
                         return;
                     }
-                    reject(new Error(data?.error || ('Report upload failed with HTTP '+response.status+'.')));
+                    retrieveResult();
                 },
-                onerror: () => reject(new Error('Report upload network request failed.')),
-                ontimeout: () => reject(new Error('Report upload timed out.'))
+                onerror: retrieveResult,
+                ontimeout: retrieveResult
             });
         });
     }
