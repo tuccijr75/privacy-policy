@@ -72,8 +72,6 @@
     const DB_KEY = 'mm_bazaar_crm_v1';
     const OLD_API_KEY = 'mm_bazaar_crm_api_v1';
     const API_KEY = 'mm_bazaar_crm_api_v3';
-    const FACTION_LEADER_TORN_ID = '3534730';
-    const FACTION_LEADER_TORN_NAME = 'Dakiller_MLM';
     const SYNC_KEY = 'mm_bazaar_crm_logstate_v1';
     const PROCESSED_KEY = 'mm_bazaar_crm_processed_v1';
     const UI_KEY = 'mm_bazaar_crm_ui_v1';
