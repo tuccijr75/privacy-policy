@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.5
+// @version      7.4.6
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.5';
+    const VERSION = '7.4.6';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -9991,7 +9991,7 @@
 
     async function promptFactionMemberApiImport() {
         const key = prompt(
-            'Paste the member API custom key. Required selections: user/basic, user/battlestats, user/equipment. The key is used once in this browser and is NOT saved by the CRM:',
+            'Paste the member Limited Access Torn API key. It is used once in this browser to read basic identity, battle stats, and equipment, and is NOT saved by the CRM:',
             ''
         );
         if (key == null || !String(key).trim()) return;
@@ -10567,7 +10567,7 @@
         const readinessSupply = readinessRows.filter(r=>r.readinessStatus==='SUPPLY ACTION').length;
         const readinessCard = card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-                '<div><b>Member War Readiness / Equipment Optimization</b><div style="font-size:10px;color:#888;">Faction roster + armory loans are automatic. Exact battle stats/current personal equipment require member authorization. Use <b>Import Member Key</b> for a one-time local read; the key is not stored.</div></div>'+
+                '<div><b>Member War Readiness / Equipment Optimization</b><div style="font-size:10px;color:#888;">Faction roster + armory loans are automatic. Exact battle stats/current personal equipment require member authorization. Use a separate <b>Limited Access</b> Torn API key with <b>Import Member Key</b> for a one-time local read; the key is not stored and may be revoked immediately after import.</div></div>'+
                 '<button id="mm-faction-roster-sync-card" style="'+btn(true)+'">Sync Faction Roster</button>'+
             '</div>'+
             '<div style="font-size:10px;color:#999;margin-top:5px;">Last roster sync: '+escapeHtml(fmtDate(readinessStore.lastRosterSyncAt))+
