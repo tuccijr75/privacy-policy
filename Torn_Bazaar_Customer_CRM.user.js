@@ -121,14 +121,23 @@
     ]);
     const FACTION_INVENTORY_LOAN_CATEGORIES = Object.freeze(['armor','temporary']);
     const FACTION_INVENTORY_POLICY = Object.freeze({
-        scope: 'Armor, temporary weapons, medical supplies, and consumables.',
-        role: 'Regularly audit vault stock and keep the currently unlocked armories visible; source gear and weapon upgrades through travel only when leadership authorizes funds.',
-        sourcing: 'Faction member bazaars first; then trusted traders/private bazaars; then the Item Market. For medical supplies and temporary weapons, compare against the Item Market because leadership reports it is usually the most cost-effective source.',
-        pricing: 'No fixed maximum prices are established yet. Build sensible guidelines from observed market data; CRM prices are advisory references, not purchasing authorization.',
-        stock: 'No formal minimum or maximum stock levels are established yet. Track usage over time and use provisional targets only as planning aids, with Ranked War and chain levels agreed with leadership.',
-        loans: 'Members may borrow armor and temporary weapons for chains, Ranked Wars, and training. There is no fixed loan duration; prompt return is expected. Follow up on extended holdings, then flag lost or long-outstanding items to leadership. Leadership handles enforcement and borrowing privileges.',
+        faction: 'OBSIDIAN FORCE',
+        position: 'Inventory Manager',
+        appointee: 'Manic Mike',
+        objective: 'Maintain total control over faction supply and logistics so unlocked armories are accurately tracked, appropriately stocked, and ready for Ranked Wars, chains, training, and daily operations.',
+        scope: 'Active vault scope is the currently unlocked armor, temporary weapons, medical, and consumables armories, including sweets and beers. Weapon and gear upgrades are part of sourcing/planning; direct weapon-armory inventory control begins only if that armory is unlocked and access is granted.',
+        audit: 'Regularly audit vault stock, inventory movement, loans, returns, distributions, purchases, and access/readiness exceptions. Keep accurate records and flag unexplained loss or variance.',
+        readiness: 'Maintain supply readiness for scheduled Ranked Wars and faction chains, with strong availability around war starts, chain pushes, and critical combat windows.',
+        distribution: 'Respond rapidly to supply requests. Routine consumables and permitted armory gear may be supported by the Inventory Manager; high-value Ranked War equipment remains in the vault and is distributed by leadership immediately before war. Support leadership in matching gear to combat roles and assignments.',
+        access: 'Audit armory access and flag unauthorized or unsafe access conditions. Do not assume authority to change member permissions unless leadership explicitly grants it.',
+        guidance: 'Assist members with appropriate gear/loadout guidance based on their role, stats, and war assignment while escalating high-value allocation decisions to leadership.',
+        sourcing: 'Prioritize faction member bazaars to keep funds within the faction. If unavailable, use trusted traders/private bazaars and the Item Market. Medical supplies and temporary weapons should be compared against the Item Market because leadership reports it is usually the most cost-effective source.',
+        pricing: 'No fixed maximum pricing rules exist yet. Establish sensible evidence-based purchasing guidelines; CRM market prices are advisory references, not independent spending authorization.',
+        stock: 'Formal minimum and maximum stock levels are not finalized. Track usage over time and avoid over-investing so funds remain available for future faction projects. Ranked War and chain targets are to be determined collaboratively from observed usage.',
+        precedent: 'Leadership reports approximately 3,000 sweets were restocked after the September Ranked War and more than 1,800 remain, illustrating that properly managed inventory can have a long lifespan.',
+        loans: 'All members may borrow armor and temporary weapons for chains, Ranked Wars, and training. Requests are currently informal through faction chat, prompt return is expected, and no fixed loan duration exists. Follow up on extended holdings and flag lost or long-outstanding items to leadership; leadership handles enforcement and borrowing privileges.',
         highValue: 'High-value Ranked War equipment remains in the vault and is distributed by leadership immediately before war.',
-        purchasing: 'Purchases use pre-approved faction funds or reimbursement. Travel sourcing requires leadership authorization and available faction finances.'
+        purchasing: 'Purchases use pre-approved faction funds or reimbursement. Coordinate shortages and replenishment funding with Bankers/Leadership. Travel sourcing for gear and weapon upgrades requires leadership authorization and available faction finances.'
     });
     const SYNC_KEY = 'mm_bazaar_crm_logstate_v1';
     const PROCESSED_KEY = 'mm_bazaar_crm_processed_v1';
@@ -327,6 +336,7 @@
                 current: {},
                 snapshots: [],
                 events: [],
+                logisticsLedger: [],
                 thresholds: {},
                 inventoryTimestamp: null,
                 lastSyncAt: null,
@@ -9761,75 +9771,131 @@
         return { days, observedDays, events: events.length, rows };
     }
 
+    function recordFactionLogisticsEntry(entry = {}) {
+        const db = dbLoad();
+        db.factionInventory.logisticsLedger = Array.isArray(db.factionInventory.logisticsLedger) ? db.factionInventory.logisticsLedger : [];
+        const action = String(entry.action || '').trim().toUpperCase();
+        const allowed = ['PURCHASE','DISTRIBUTION','RETURN','LOAN','ADJUSTMENT','ACCESS_AUDIT','READINESS_CHECK','OTHER'];
+        if (!allowed.includes(action)) throw new Error('Unsupported faction logistics action.');
+        const quantity = Math.max(0, Number(entry.quantity || 0));
+        const unitCost = Math.max(0, Number(entry.unitCost || 0));
+        const row = {
+            id: String(entry.id || makeId('faction-log')),
+            at: String(entry.at || nowIso()),
+            action,
+            itemId: asId(entry.itemId || ''),
+            itemName: String(entry.itemName || '').trim(),
+            category: String(entry.category || '').trim(),
+            quantity,
+            memberId: asId(entry.memberId || ''),
+            memberName: String(entry.memberName || '').trim(),
+            source: String(entry.source || '').trim(),
+            unitCost,
+            totalCost: quantity * unitCost,
+            approval: String(entry.approval || '').trim(),
+            notes: String(entry.notes || '').trim()
+        };
+        db.factionInventory.logisticsLedger.push(row);
+        db.factionInventory.logisticsLedger = db.factionInventory.logisticsLedger
+            .filter(x => x && typeof x === 'object')
+            .slice(-5000);
+        dbSave(db);
+        return row;
+    }
+
+    function promptFactionLogisticsEntry() {
+        const actionRaw = prompt('Logistics action: PURCHASE, DISTRIBUTION, RETURN, LOAN, ADJUSTMENT, ACCESS_AUDIT, READINESS_CHECK, or OTHER:', 'PURCHASE');
+        if (actionRaw == null) return;
+        const action = String(actionRaw || '').trim().toUpperCase();
+        const itemName = prompt('Item / subject name (for access/readiness audits, describe the armory or check):', '') ?? '';
+        const itemId = prompt('Item ID (optional):', '') ?? '';
+        const category = prompt('Category (armor, temporary, medical, consumables, weapons/planning, access, readiness, other):', '') ?? '';
+        const quantityRaw = prompt('Quantity (0 if not applicable):', '0');
+        if (quantityRaw == null) return;
+        const quantity = Math.max(0, Number(quantityRaw || 0));
+        const counterpart = prompt('Member, supplier, banker, or counterpart name (optional):', '') ?? '';
+        const source = prompt('Source / destination / channel (optional):', '') ?? '';
+        const unitCostRaw = action === 'PURCHASE' ? prompt('Unit cost (0 if unknown/not applicable):', '0') : '0';
+        if (unitCostRaw == null) return;
+        const approval = prompt('Approval / reimbursement reference (optional):', '') ?? '';
+        const notes = prompt('Notes / reason / war-chain context (optional):', '') ?? '';
+        recordFactionLogisticsEntry({
+            action,itemId,itemName,category,quantity,memberName:counterpart,source,
+            unitCost:Math.max(0,Number(unitCostRaw||0)),approval,notes
+        });
+        statusText = 'Faction logistics entry recorded.';
+        render();
+    }
+
     function factionLeadershipQuestions(db) {
         const rows = factionInventoryRows(db);
         const configured = rows.filter(row => Number(row.threshold?.target || 0) > 0);
         const settings = db.factionInventory?.settings || {};
-        const questions = [
+        return [
             {
-                priority:'HIGH', area:'Stock targets',
-                question:'What minimum/target stock should the faction maintain for each critical medical, consumable, armor, and temporary item?',
-                current:'No formal faction-wide minimum/maximum levels are established. ' + configured.length + ' item target(s) are currently provisional in CRM.',
-                decision:'Approve item/category targets or authorize the Inventory Manager to set and revise provisional targets from observed usage.'
-            },
-            {
-                priority:'HIGH', area:'Ranked War reserve',
-                question:'What equipment and consumable reserve must remain untouched for Ranked War, chains, and other scheduled operations?',
-                current:'High-value Ranked War equipment remains leadership-controlled, but a quantified reserve is not defined.',
-                decision:'Define reserve quantities or a reserve formula by event type.'
+                priority:'HIGH', area:'Stock targets and reserves',
+                question:'What target/minimum quantities should be maintained for critical items, and what additional reserve should be protected for Ranked Wars and chains?',
+                current:'Leadership explicitly left formal minimum/maximum levels open pending usage evidence. ' + configured.length + ' provisional item target(s) are currently configured.',
+                decision:'Approve evidence-based targets/reserves or authorize the Inventory Manager to maintain provisional targets subject to leadership review.'
             },
             {
                 priority:'HIGH', area:'Purchasing authority',
-                question:'What dollar amount may the Inventory Manager spend without case-by-case leadership approval, and what reimbursement process should be used?',
-                current:'Purchases require pre-approved faction funds or reimbursement; no standing spending limit is recorded.',
-                decision:'Set per-purchase and/or weekly budget authority plus reimbursement evidence requirements.'
+                question:'What standing per-purchase or weekly amount may the Inventory Manager commit without separate approval, and what reimbursement evidence is required?',
+                current:'Purchases are authorized only through pre-approved funds or reimbursement; no standing limit is defined.',
+                decision:'Set spending/reimbursement guardrails while preserving Banker/Leadership approval for exceptions.'
             },
             {
-                priority:'MEDIUM', area:'Loan escalation',
-                question:'After how long should an armor/temporary loan be followed up, escalated, or treated as lost?',
-                current:'Prompt return is expected; no fixed duration or escalation clock is established.',
-                decision:'Set follow-up and leadership-escalation intervals, with any exceptions for war/training.'
+                priority:'HIGH', area:'Price guidelines',
+                question:'What purchase-price guardrails should trigger leadership approval for medical, temporary, armor, consumables, and travel-sourced upgrades?',
+                current:'Leadership assigned establishment of sensible pricing guidelines as an initial Inventory Manager responsibility; no fixed maximum prices exist.',
+                decision:'Approve the proposed category pricing rules after enough market evidence is collected.'
             },
             {
-                priority:'MEDIUM', area:'Approved sourcing',
-                question:'Which faction members, traders, or private bazaars are approved/preferred suppliers, and are there sources that should never be used?',
-                current:'Current policy is member bazaars first, then trusted traders/private bazaars, then Item Market.',
-                decision:'Provide approved/preferred supplier list and any restricted sources.'
+                priority:'MEDIUM', area:'Loan follow-up',
+                question:'What observed holding duration should trigger routine follow-up before an item is escalated to leadership?',
+                current:'Prompt return is expected and the Inventory Manager follows up on extended holdings, but no fixed duration exists; leadership handles enforcement.',
+                decision:'Set a follow-up interval and an escalation interval, or explicitly retain judgment-based review.'
             },
             {
-                priority:'MEDIUM', area:'Price guardrails',
-                question:'Should purchases use a maximum premium/discount versus Item Market or another reference before leadership approval is required?',
-                current:'CRM market prices are advisory; no fixed maximum purchase prices are established.',
-                decision:'Approve price guardrails by category or authorize case-by-case judgment.'
+                priority:'MEDIUM', area:'Trusted supplier register',
+                question:'Which traders/private bazaars should be treated as trusted suppliers after faction-member bazaars?',
+                current:'The sourcing order is confirmed, but the named trusted-supplier list is not recorded in CRM.',
+                decision:'Provide/approve the trusted supplier list and any prohibited sources.'
+            },
+            {
+                priority:'MEDIUM', area:'Armory access authority',
+                question:'Is the Inventory Manager authorized to change armory access levels, or only audit and recommend changes to leadership?',
+                current:'The role requires safe/correct armory access, but the supplied scope does not explicitly grant permission-management authority.',
+                decision:'Confirm audit-only versus permission-change authority.'
             },
             {
                 priority:'LOW', area:'Reporting cadence',
-                question:'How often should leadership receive the inventory workbook and which events require an immediate exception report?',
-                current:String(settings.leadershipCadence || 'No formal reporting cadence recorded.'),
+                question:'How often should leadership receive the inventory workbook, and which shortage/loss/access conditions require immediate exception reporting?',
+                current:String(settings.leadershipCadence || 'No formal reporting cadence is recorded.'),
                 decision:'Choose routine cadence and exception triggers.'
             }
         ];
-        return questions;
     }
 
     function factionInventoryManagerPlan(db) {
         const rows = factionInventoryRows(db);
         const report = factionInventoryReport(db, 7);
         const loans = factionLoanPersistenceRows(db);
+        const ledger = Array.isArray(db.factionInventory?.logisticsLedger) ? db.factionInventory.logisticsLedger : [];
         const configured = rows.filter(row => Number(row.threshold?.target || 0) > 0);
         const shortfalls = configured.filter(row => Number(row.threshold?.shortfall || 0) > 0);
         const critical = shortfalls.filter(row => row.threshold?.status === 'CRITICAL');
         const estimatedRestockCost = shortfalls.reduce((sum,row) => sum + Number(row.estimatedRestockCost || 0), 0);
         const plan = [
-            { phase:'1. Establish control', cadence:'Now / once', action:'Confirm Faction → Inventory API access; capture a clean baseline snapshot; verify the four managed categories.', owner:'Inventory Manager', status:Object.keys(db.factionInventory?.current || {}).length ? 'ACTIVE' : 'BLOCKED — API/SNAPSHOT', evidence:'Torn faction inventory snapshot + CRM local history' },
-            { phase:'2. Define policy', cadence:'Leadership decision', action:'Approve stock targets/reserves, purchasing authority, loan escalation, suppliers, price guardrails, and reporting cadence.', owner:'Leadership + Inventory Manager', status:'LEADERSHIP DECISION REQUIRED', evidence:'Leadership Questions sheet' },
-            { phase:'3. Set targets', cadence:'Initial + monthly review', action:'Set per-item planning targets using available count for loanable equipment and owned count for medical/consumables; separate operational target from war reserve.', owner:'Inventory Manager', status:configured.length ? 'IN PROGRESS' : 'NOT STARTED', evidence:configured.length + ' target(s) configured' },
-            { phase:'4. Replenish', cadence:'Daily/after material use', action:'Work the restock queue by severity, usage, market reference, and approved budget. Prefer approved faction/member sources before broader market where policy requires.', owner:'Inventory Manager', status:shortfalls.length ? 'ACTION — ' + shortfalls.length + ' shortfall(s)' : 'MONITOR', evidence:money(estimatedRestockCost) + ' estimated shortfall cost where priced' },
-            { phase:'5. Control loans', cadence:'Daily exception review', action:'Review armor/temporary loans, observed age, UID evidence, and member concentration. Follow up/escalate according to leadership-approved timing.', owner:'Inventory Manager', status:loans.length ? 'MONITOR — ' + loans.length + ' loan row(s)' : 'CLEAR', evidence:'Loan ledger + snapshot persistence' },
-            { phase:'6. Measure consumption', cadence:'Weekly', action:'Review 7-day depletion/additions and consumption/day. Adjust provisional targets only when evidence supports the change.', owner:'Inventory Manager', status:report.observedDays > 0 ? 'ACTIVE' : 'COLLECTING HISTORY', evidence:report.events + ' movement event(s), ' + report.observedDays.toFixed(1) + ' observed day(s)' },
-            { phase:'7. Report leadership', cadence:'Proposed weekly + exceptions', action:'Export the Faction Inventory Leadership Workbook; highlight critical shortages, spend estimate, aged loans, unresolved decisions, and data freshness.', owner:'Inventory Manager', status:'READY', evidence:'Faction Inventory Leadership Workbook' }
+            { phase:'1. Establish armory control', cadence:'Now / once, then verify after permission changes', action:'Confirm Faction → Inventory API access; capture a clean baseline; verify unlocked armor, temporary, medical, and consumables armories; audit access and flag unsafe/unauthorized conditions.', owner:'Inventory Manager + Leadership for permissions', status:Object.keys(db.factionInventory?.current || {}).length ? 'ACTIVE' : 'BLOCKED — API/SNAPSHOT', evidence:'Torn snapshot + access audit entry' },
+            { phase:'2. Establish accountable records', cadence:'Every material transaction', action:'Record purchases, distributions, returns, loans, adjustments, access audits, and readiness checks. Use Torn snapshots as independent reconciliation evidence.', owner:'Inventory Manager', status:ledger.length ? 'ACTIVE — ' + ledger.length + ' ledger entry(s)' : 'START NOW', evidence:'Logistics Ledger + snapshot/event history' },
+            { phase:'3. Measure usage and set targets', cadence:'Weekly analysis / monthly target review', action:'Measure depletion and replenishment by category, avoid over-investment, and build evidence-based operational targets plus separate Ranked War/chain reserves.', owner:'Inventory Manager proposes; Leadership approves reserves', status:configured.length ? 'IN PROGRESS' : 'COLLECTING BASELINE', evidence:configured.length + ' provisional target(s); ' + report.observedDays.toFixed(1) + ' observed day(s)' },
+            { phase:'4. Maintain readiness', cadence:'Before every Ranked War/chain + daily exceptions', action:'Check critical medical, blood bags, temporary items, consumables, armor availability, and shortage risk before scheduled operations; report funding needs to Bankers/Leadership.', owner:'Inventory Manager', status:critical.length ? 'CRITICAL — ' + critical.length + ' severe shortfall(s)' : shortfalls.length ? 'ACTION — ' + shortfalls.length + ' shortfall(s)' : 'MONITOR', evidence:money(estimatedRestockCost) + ' estimated priced shortfall cost' },
+            { phase:'5. Source and replenish', cadence:'After material use / when below target', action:'Prioritize faction-member bazaars, then trusted traders/private bazaars and Item Market. Compare medical/temp purchases against Item Market. Use travel for gear/weapon upgrades only with leadership authorization and available funds.', owner:'Inventory Manager within approved funds; Bankers/Leadership for authorization', status:shortfalls.length ? 'ACTION' : 'MONITOR', evidence:'Restock Plan + purchase ledger' },
+            { phase:'6. Control loans and distribution', cadence:'Daily exception review + active war/chain support', action:'Track armor/temp loans and prompt returns; respond quickly to routine supply requests. High-value Ranked War equipment remains leadership-controlled immediately before war; support leadership allocation and member loadout guidance.', owner:'Inventory Manager; Leadership controls high-value RW distribution/enforcement', status:loans.length ? 'MONITOR — ' + loans.length + ' loan row(s)' : 'CLEAR', evidence:'Loan ledger + UID/snapshot persistence' },
+            { phase:'7. Report and improve', cadence:'Proposed weekly + immediate exceptions', action:'Export the leadership workbook with inventory state, readiness, shortages, spend estimates, loans, movement, logistics records, data freshness, and unresolved leadership decisions.', owner:'Inventory Manager', status:'READY', evidence:'Faction Inventory Leadership Workbook' }
         ];
-        return { plan, rows, report, loans, configured, shortfalls, critical, estimatedRestockCost, questions:factionLeadershipQuestions(db) };
+        return { plan, rows, report, loans, ledger, configured, shortfalls, critical, estimatedRestockCost, questions:factionLeadershipQuestions(db) };
     }
 
     function factionInventoryExportDocuments(db) {
@@ -9852,6 +9918,7 @@
             { Metric:'Critical shortfalls', Value:manager.critical.length, Status:manager.critical.length ? 'CRITICAL' : 'CLEAR' },
             { Metric:'Estimated restock cost', Value:manager.estimatedRestockCost, Status:'ADVISORY — priced rows only' },
             { Metric:'Current loan rows', Value:manager.loans.length, Status:manager.loans.length ? 'MONITOR' : 'CLEAR' },
+            { Metric:'Manual logistics ledger entries', Value:manager.ledger.length, Status:manager.ledger.length ? 'ACTIVE' : 'START RECORDING' },
             { Metric:'7d movement events', Value:manager.report.events, Status:'INFO' },
             { Metric:'Observed history days', Value:manager.report.observedDays, Status:manager.report.observedDays >= 7 ? 'MATURE WEEK' : 'COLLECTING HISTORY' },
             { Metric:'Open leadership questions', Value:manager.questions.length, Status:'LEADERSHIP DECISION REQUIRED' }
@@ -9877,6 +9944,11 @@
             'Quantity':Number(row.amount||0), 'UIDs':(row.uids||[]).join(' | '), 'First Observed':row.observedSince ? new Date(row.observedSince).toISOString() : '',
             'Observed Hours':Number(row.observedHours||0), 'Disposition':'Monitor; follow up/escalate per leadership-approved loan timing.'
         }));
+        const logisticsRows = manager.ledger.slice().sort((a,b)=>String(b.at||'').localeCompare(String(a.at||''))).map(row=>({
+            'Date':String(row.at||''), 'Action':String(row.action||''), 'Category':String(row.category||''), 'Item ID':asId(row.itemId), 'Item / Subject':String(row.itemName||''),
+            'Quantity':Number(row.quantity||0), 'Member / Counterpart':String(row.memberName||''), 'Source / Destination':String(row.source||''),
+            'Unit Cost':Number(row.unitCost||0), 'Total Cost':Number(row.totalCost||0), 'Approval / Reimbursement Ref':String(row.approval||''), 'Notes':String(row.notes||'')
+        }));
         const movementRows = manager.report.rows.map(row=>({
             'Category':String(row.category||''), 'Item ID':asId(row.itemId), 'Item':String(row.name||''), 'Depleted':Number(row.depleted||0), 'Added':Number(row.added||0),
             'Available Out':Number(row.availableOut||0), 'Loaned Out':Number(row.loanedOut||0), 'Net Owned':Number(row.netOwned||0), 'Consumption / Day':Number(row.consumptionPerDay||0)
@@ -9888,7 +9960,15 @@
             'Priority':q.priority, 'Area':q.area, 'Question for Leadership':q.question, 'Current State / Assumption':q.current, 'Decision Needed':q.decision, 'Status':'LEADERSHIP DECISION REQUIRED'
         }));
         const assumptionRows = [
+            { Topic:'Faction / position', Value:FACTION_INVENTORY_POLICY.faction + ' — ' + FACTION_INVENTORY_POLICY.position + ' — appointed ' + FACTION_INVENTORY_POLICY.appointee, Classification:'OFFICIAL INDUCTION' },
+            { Topic:'Objective', Value:FACTION_INVENTORY_POLICY.objective, Classification:'OFFICIAL INDUCTION' },
             { Topic:'Scope', Value:FACTION_INVENTORY_POLICY.scope, Classification:'CONFIRMED POLICY' },
+            { Topic:'Audit/accountability', Value:FACTION_INVENTORY_POLICY.audit, Classification:'OFFICIAL INDUCTION' },
+            { Topic:'Readiness', Value:FACTION_INVENTORY_POLICY.readiness, Classification:'OFFICIAL INDUCTION' },
+            { Topic:'Distribution', Value:FACTION_INVENTORY_POLICY.distribution, Classification:'OFFICIAL INDUCTION' },
+            { Topic:'Access safety', Value:FACTION_INVENTORY_POLICY.access, Classification:'OFFICIAL INDUCTION / AUTHORITY OPEN' },
+            { Topic:'Member guidance', Value:FACTION_INVENTORY_POLICY.guidance, Classification:'OFFICIAL INDUCTION' },
+            { Topic:'Inventory lifespan precedent', Value:FACTION_INVENTORY_POLICY.precedent, Classification:'LEADERSHIP CONTEXT' },
             { Topic:'Role', Value:FACTION_INVENTORY_POLICY.role, Classification:'CONFIRMED POLICY' },
             { Topic:'Sourcing', Value:FACTION_INVENTORY_POLICY.sourcing, Classification:'CONFIRMED POLICY' },
             { Topic:'Pricing', Value:FACTION_INVENTORY_POLICY.pricing, Classification:'CONFIRMED POLICY' },
@@ -9906,6 +9986,7 @@
             inventory:makeDoc('Faction_Current_Inventory.csv',inventoryRows),
             restock:makeDoc('Faction_Restock_Plan.csv',restockRows),
             loans:makeDoc('Faction_Loans.csv',loanRows),
+            logistics:makeDoc('Faction_Logistics_Ledger.csv',logisticsRows),
             movement:makeDoc('Faction_7d_Movement.csv',movementRows),
             plan:makeDoc('Faction_Operating_Plan.csv',planRows),
             questions:makeDoc('Faction_Leadership_Questions.csv',questionRows),
@@ -9920,6 +10001,7 @@
             ['Current Inventory',docs.inventory],
             ['Restock Plan',docs.restock],
             ['Loans',docs.loans],
+            ['Logistics Ledger',docs.logistics],
             ['7d Movement',docs.movement],
             ['Operating Plan',docs.plan],
             ['Leadership Questions',docs.questions],
@@ -9981,6 +10063,7 @@
                     '<button id="mm-faction-sync" style="'+btn(true)+'">Sync Armory</button>'+
                     '<button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button>'+
                     '<button id="mm-faction-export" style="'+btn()+'">Leadership XLSX</button>'+
+                    '<button id="mm-faction-log" style="'+btn()+'">Log Activity</button>'+
                 '</div>'+
             '</div>'+
             '<div style="font-size:11px;color:#aaa;margin-top:7px;line-height:1.55;">'+
@@ -10000,8 +10083,14 @@
         const operatingPolicy = card(
             '<b>Confirmed Operating Policy</b>'+
             '<div style="font-size:11px;color:#bbb;margin-top:5px;line-height:1.55;">'+
-                '<b>Role:</b> '+escapeHtml(policy.role)+'<br>'+
+                '<b>Faction / Position:</b> '+escapeHtml(policy.faction)+' · '+escapeHtml(policy.position)+' · '+escapeHtml(policy.appointee)+'<br>'+
+                '<b>Objective:</b> '+escapeHtml(policy.objective)+'<br>'+
                 '<b>Scope:</b> '+escapeHtml(policy.scope)+'<br>'+
+                '<b>Audit & accountability:</b> '+escapeHtml(policy.audit)+'<br>'+
+                '<b>Readiness:</b> '+escapeHtml(policy.readiness)+'<br>'+
+                '<b>Distribution:</b> '+escapeHtml(policy.distribution)+'<br>'+
+                '<b>Access safety:</b> '+escapeHtml(policy.access)+'<br>'+
+                '<b>Member guidance:</b> '+escapeHtml(policy.guidance)+'<br>'+
                 '<b>Sourcing:</b> '+escapeHtml(policy.sourcing)+'<br>'+
                 '<b>Pricing:</b> '+escapeHtml(policy.pricing)+'<br>'+
                 '<b>Stock:</b> '+escapeHtml(policy.stock)+'<br>'+
@@ -12498,6 +12587,7 @@
         root.querySelector('#mm-faction-sync')?.addEventListener('click', () => syncFactionInventory({silent:false,force:true}).catch(()=>{}));
         root.querySelector('#mm-faction-market')?.addEventListener('click', () => syncMarketIntelligence(false));
         root.querySelector('#mm-faction-export')?.addEventListener('click', () => exportFactionInventoryWorkbook());
+        root.querySelector('#mm-faction-log')?.addEventListener('click', () => promptFactionLogisticsEntry());
         root.querySelector('#mm-faction-category')?.addEventListener('change', e => {
             const db=dbLoad();
             db.factionInventory.settings.selectedCategory=String(e.currentTarget.value||'all');
@@ -13313,6 +13403,7 @@
         factionInventoryManagerPlan: () => factionInventoryManagerPlan(dbLoad()),
         factionInventoryExportDocuments: () => factionInventoryExportDocuments(dbLoad()),
         exportFactionInventoryWorkbook,
+        recordFactionLogisticsEntry,
         factionInventorySelfTest,
         syncTravelStock,
         updateTravelData,
