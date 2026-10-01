@@ -10932,6 +10932,64 @@
         }
     }
 
+    async function generateAllFactionSimpleBuilds() {
+        try {
+            statusText='Building simple loadouts for all members with known battle stats…';
+            render();
+            await refreshProcurementCatalog(false,factionInventoryApiKey());
+            const db=dbLoad();
+            const rosterRows=factionMemberReadinessRows(db);
+            const eligible=rosterRows.filter(row=>row.hasStats);
+            if(!eligible.length) throw new Error('No faction members have battle stats available yet.');
+
+            let armoryDetails=[];
+            try { armoryDetails=await fetchFactionArmoryCandidateDetails(db); }
+            catch(error) {
+                const diagDb=dbLoad();
+                addFactionInventoryDiagnostic(diagDb.factionInventory,'Build All armory detail enrichment: '+(error?.message||String(error)));
+                dbSave(diagDb);
+            }
+            const db2=dbLoad();
+            const globalCandidates=factionGlobalEquipmentCandidates(db2);
+            const enrichedArmory=armoryDetails.map(item=>{
+                const price=factionProcurementPriceContext(db2,item.itemId,{marketValue:item.referencePrice||0});
+                return {
+                    ...item,
+                    source:'FACTION ARMORY INSTANCE',
+                    acquisition:'ISSUE FROM ARMORY',
+                    procurementRoute:'Faction armory',
+                    referencePrice:Number(price.price||item.referencePrice||0),
+                    priceSource:String(price.source||'Faction market reference')
+                };
+            });
+            const pool=[...globalCandidates,...enrichedArmory];
+            const latest=dbLoad();
+            let built=0;
+            for(const member of eligible) {
+                const build=factionSimpleMemberBuild(member,rosterRows,pool);
+                const id=asId(member.memberId);
+                const profile=latest.factionInventory.memberReadiness.profiles[id] || {};
+                profile.simpleBuild=build;
+                profile.simpleBuildAt=nowIso();
+                latest.factionInventory.memberReadiness.profiles[id]=profile;
+                built++;
+            }
+            latest.factionInventory.settings.updatedAt=nowIso();
+            if(!latest.factionInventory.settings.buildMemberId && eligible[0]) {
+                latest.factionInventory.settings.buildMemberId=asId(eligible[0].memberId);
+            }
+            dbSave(latest);
+            await flushDbWrites();
+            statusText='Build All complete: '+built+' member build'+(built===1?'':'s')+' generated from one shared candidate refresh.';
+            render();
+            return {built};
+        } catch(error) {
+            statusText='Build All failed: '+(error?.message||String(error));
+            render();
+            throw error;
+        }
+    }
+
     function composeFactionMemberBuildMessage(memberId) {
         const id=asId(memberId);
         const db=dbLoad();
@@ -10992,6 +11050,7 @@
                 '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
                     '<select id="mm-faction-build-member" style="'+inputCss()+'min-width:220px;">'+options+'</select>'+
                     '<button id="mm-faction-build-generate" '+(selected?.hasStats?'':'disabled')+' style="'+btn(Boolean(selected?.hasStats))+'">Generate Build</button>'+
+                    '<button id="mm-faction-build-all" '+(eligible.length?'':'disabled')+' style="'+btn(Boolean(eligible.length))+'">Build All Known</button>'+
                     '<button id="mm-faction-build-message" '+(build?'':'disabled')+' style="'+btn(Boolean(build))+'">Message Build</button>'+
                 '</div>'+
             '</div>'+
@@ -15175,6 +15234,7 @@
             const id=asId(root.querySelector('#mm-faction-build-member')?.value || dbLoad().factionInventory?.settings?.buildMemberId || '');
             generateFactionMemberSimpleBuild(id).catch(()=>{});
         });
+        root.querySelector('#mm-faction-build-all')?.addEventListener('click', () => generateAllFactionSimpleBuilds().catch(()=>{}));
         root.querySelector('#mm-faction-build-message')?.addEventListener('click', () => {
             const id=asId(root.querySelector('#mm-faction-build-member')?.value || dbLoad().factionInventory?.settings?.buildMemberId || '');
             try { composeFactionMemberBuildMessage(id); } catch(error) {
