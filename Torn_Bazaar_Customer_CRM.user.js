@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.13
+// @version      7.4.14
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.13';
+    const VERSION = '7.4.14';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -141,6 +141,8 @@
         highValue: 'High-value Ranked War equipment remains in the vault and is distributed by leadership immediately before war.',
         purchasing: 'Purchases use pre-approved faction funds or reimbursement. Coordinate shortages and replenishment funding with Bankers/Leadership. Travel sourcing for gear and weapon upgrades requires leadership authorization and available faction finances.'
     });
+    const FACTION_LEADER_TORN_ID = '3534730';
+    const FACTION_LEADER_TORN_NAME = 'Dakiller_MLM';
     const SYNC_KEY = 'mm_bazaar_crm_logstate_v1';
     const PROCESSED_KEY = 'mm_bazaar_crm_processed_v1';
     const UI_KEY = 'mm_bazaar_crm_ui_v1';
@@ -10912,6 +10914,52 @@
         });
     }
 
+    function composeFactionMemberOptimizationMessage(memberId) {
+        const id = asId(memberId);
+        const db = dbLoad();
+        const row = factionMemberReadinessRows(db).find(item => asId(item.memberId) === id);
+        if (!row) throw new Error('Faction member readiness row not found.');
+
+        const recs = Array.isArray(row.profile?.optimization?.recommendations)
+            ? row.profile.optimization.recommendations
+            : [];
+        const recLines = recs.length
+            ? recs.map((rec,index) => {
+                const action = rec.acquisition || (Number(rec.available||0)>0 ? 'ISSUE FROM ARMORY' : 'PROCURE');
+                const route = rec.procurementRoute ? ' | Route: '+rec.procurementRoute : '';
+                return (index+1)+'. '+String(rec.kind||'REVIEW')+
+                    (rec.slot?' ['+rec.slot+']':'')+
+                    (rec.current?' | Current: '+rec.current:'')+
+                    (rec.candidate?' | Target: '+rec.candidate:'')+
+                    ' | '+action+route+
+                    (rec.note?' | '+rec.note:'');
+            }).join('\n')
+            : 'No finalized equipment recommendation yet. Refresh/optimize this member before issuing gear.';
+
+        const currentGear = row.equipmentSummary || 'No current equipment summary available.';
+        const currentState =
+            'Level '+Number(row.level||0)+
+            ' | Battle stat total '+Number(row.statProfile?.total||0).toLocaleString()+
+            ' | Profile '+String(row.statProfile?.label||'UNKNOWN')+
+            ' | Readiness '+String(row.readinessStatus||'UNKNOWN')+
+            ' | Current faction loans '+Number(row.loans||0);
+
+        const subject = 'Your faction equipment optimization plan';
+        const body =
+            String(row.memberName||'Faction member')+',\n\n' +
+            'I reviewed your current readiness and equipment for faction optimization.\n\n' +
+            'CURRENT STATE\n'+currentState+'\nCurrent gear: '+currentGear+'\n\n' +
+            'OPTIMIZATION PLAN\n'+recs.length+' recommendation(s).\n'+recLines+'\n\n' +
+            'EQUIPMENT AVAILABILITY\nRecommendations are not limited to what is currently in Faction Inventory. If the best target is not available, I can procure it. Preferred sourcing is faction member bazaar first, then trusted/private suppliers, then the Item Market.\n\n' +
+            'LOAN OPTIONS / RULES\n'+FACTION_INVENTORY_POLICY.loans+'\n'+
+            'High-value Ranked War equipment: '+FACTION_INVENTORY_POLICY.highValue+'\n'+
+            'Routine permitted armor/temporary gear can be loaned when available; procurement or high-value allocation may require Leadership/Banker approval.\n\n' +
+            'If you have changed equipment or stats since the last refresh, tell me before we finalize the loadout.\n\n— Manic Mike';
+
+        composeMessage(id, subject, body);
+        statusText = 'Optimization message prepared for '+String(row.memberName||id)+' ['+id+']; Send remains manual.';
+    }
+
     function recordFactionLogisticsEntry(entry = {}) {
         const db = dbLoad();
         db.factionInventory.logisticsLedger = Array.isArray(db.factionInventory.logisticsLedger) ? db.factionInventory.logisticsLedger : [];
@@ -11208,8 +11256,30 @@
         ]);
     }
 
+    function factionLeadershipReportMessage(db) {
+        const rows = factionMemberReadinessRows(db);
+        const optimized = rows.filter(row => Array.isArray(row.profile?.optimization?.recommendations) && row.profile.optimization.recommendations.length);
+        const procure = optimized.reduce((sum,row) => sum + row.profile.optimization.recommendations.filter(rec => rec.acquisition === 'PROCURE').length, 0);
+        const armory = optimized.reduce((sum,row) => sum + row.profile.optimization.recommendations.filter(rec => rec.acquisition === 'ISSUE FROM ARMORY').length, 0);
+        const missing = rows.filter(row => row.readinessStatus === 'MISSING DATA').length;
+        const stale = rows.filter(row => row.readinessStatus === 'STALE DATA').length;
+        return {
+            subject: 'Faction Inventory Leadership Report · ' + new Date().toLocaleDateString(),
+            body:
+                'Dakiller_MLM,\n\nFaction Inventory leadership report generated by Manic Mike.\n\n' +
+                'Member readiness: ' + rows.length + ' tracked · ' + missing + ' missing data · ' + stale + ' stale.\n' +
+                'Optimized members: ' + optimized.length + '.\n' +
+                'Recommended armory issues: ' + armory + '.\n' +
+                'Recommended procurement targets: ' + procure + '.\n\n' +
+                'Optimization is not limited to current faction inventory. Missing recommended equipment can be procured using the approved route: faction member bazaar → trusted/private supplier → Item Market.\n\n' +
+                'The full XLSX was generated locally and includes Armory Allocation, current equipment, battle stats, loans, readiness, and procurement actions. Torn messaging does not provide this CRM a safe automatic file-attachment path, so the workbook must be shared manually if you want the file itself delivered.\n\n' +
+                '— Manic Mike'
+        };
+    }
+
     function exportFactionInventoryWorkbook() {
-        const bytes = buildFactionInventoryXlsx(dbLoad());
+        const reportDb = dbLoad();
+        const bytes = buildFactionInventoryXlsx(reportDb);
         const blob = new Blob([bytes], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -11220,6 +11290,9 @@
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 1500);
+        const leaderMessage = factionLeadershipReportMessage(reportDb);
+        composeMessage(FACTION_LEADER_TORN_ID, leaderMessage.subject, leaderMessage.body);
+        statusText = 'Leadership XLSX generated. Report message prepared for '+FACTION_LEADER_TORN_NAME+' ['+FACTION_LEADER_TORN_ID+']; Send remains manual.';
     }
 
     function factionInventoryStatusBadge(status) {
@@ -11258,7 +11331,9 @@
                 '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">'+
                     '<label style="font-size:10px;color:#aaa;display:flex;align-items:center;gap:4px;">Category <select id="mm-faction-category" style="'+inputCss()+'padding:5px 7px;min-width:150px;">'+
                         categories.map(cat => '<option value="'+escapeHtml(cat)+'" '+(selectedCategory===cat?'selected':'')+'>'+escapeHtml(cat==='all'?'All categories':cat)+'</option>').join('')+
-                    '</select></label>'+
+                    '</select></label>'+                    '<div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;">'+
+                        categories.map(cat => '<button type="button" data-faction-category-link="'+escapeHtml(cat)+'" style="'+btn(selectedCategory===cat)+'padding:5px 7px;">'+escapeHtml(cat==='all'?'All':cat)+'</button>').join('')+
+                    '</div>'+
                     '<button id="mm-faction-sync" style="'+btn(true)+'">Sync Armory</button>'+
                     '<button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button>'+
                     '<button id="mm-faction-export" style="'+btn()+'">Leadership XLSX</button>'+
@@ -11367,6 +11442,8 @@
                             '<button data-faction-member-edit="'+escapeHtml(row.memberId)+'" style="'+btn(row.readinessStatus==='READY FOR REVIEW')+'">Edit Readiness</button>'+
                             (row.readinessStatus==='READY FOR REVIEW'
                                 ? '<button data-faction-member-optimize="'+escapeHtml(row.memberId)+'" style="'+btn(true)+'">Optimize Loadout</button>'
+                                : '')+                            (row.profile?.optimization
+                                ? '<button data-faction-member-message="'+escapeHtml(row.memberId)+'" style="'+btn()+'">Message Plan</button>'
                                 : '')+
                             (keyVaultRaw?.entries?.[asId(row.memberId)]
                                 ? '<button data-faction-member-refresh="'+escapeHtml(row.memberId)+'" style="'+btn(true)+'">Refresh This Member</button>'+
@@ -13858,6 +13935,17 @@
         root.querySelector('#mm-faction-roster-sync-card')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
         root.querySelectorAll('[data-faction-member-edit]').forEach(button => button.addEventListener('click', () => promptFactionMemberReadiness(button.dataset.factionMemberEdit)));
         root.querySelectorAll('[data-faction-member-optimize]').forEach(button => button.addEventListener('click', () => optimizeFactionMemberLoadout(button.dataset.factionMemberOptimize).catch(()=>{})));
+        root.querySelectorAll('[data-faction-member-message]').forEach(button => button.addEventListener('click', () => {
+            try { composeFactionMemberOptimizationMessage(button.dataset.factionMemberMessage); }
+            catch (error) { statusText='Member optimization message failed: '+(error?.message||String(error)); render(); }
+        }));
+        root.querySelectorAll('[data-faction-category-link]').forEach(button => button.addEventListener('click', () => {
+            const db=dbLoad();
+            db.factionInventory.settings.selectedCategory=String(button.dataset.factionCategoryLink||'all');
+            db.factionInventory.settings.updatedAt=nowIso();
+            dbSave(db);
+            render();
+        }));
         root.querySelectorAll('[data-faction-member-refresh]').forEach(button => button.addEventListener('click', () => refreshSavedFactionMember(button.dataset.factionMemberRefresh).catch(()=>{})));
         root.querySelectorAll('[data-faction-member-remove-key]').forEach(button => button.addEventListener('click', () => removeSavedFactionMemberKey(button.dataset.factionMemberRemoveKey)));
         root.querySelector('#mm-faction-category')?.addEventListener('change', e => {
