@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.4
+// @version      7.4.5
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.4';
+    const VERSION = '7.4.5';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -9900,6 +9900,113 @@
         return { label, total, dominant, shares };
     }
 
+    function extractUserIdFromApiPayload(data) {
+        const candidates = [
+            data?.profile?.id, data?.profile?.player_id, data?.user?.id, data?.user?.player_id,
+            data?.id, data?.player_id, data?.basic?.id, data?.basic?.player_id
+        ];
+        for (const candidate of candidates) {
+            const id = asId(candidate);
+            if (id) return id;
+        }
+        return '';
+    }
+
+    function factionBattleStatsFromResponse(data) {
+        const root = (data?.battlestats && typeof data.battlestats === 'object') ? data.battlestats : (data || {});
+        const valueOf = key => {
+            const raw = root?.[key];
+            if (raw && typeof raw === 'object') return Number(raw.value ?? raw.total ?? raw.amount ?? 0) || 0;
+            return Number(raw || 0) || 0;
+        };
+        return {
+            strength:valueOf('strength'),
+            defense:valueOf('defense'),
+            speed:valueOf('speed'),
+            dexterity:valueOf('dexterity')
+        };
+    }
+
+    function factionEquipmentSummaryFromResponse(data) {
+        const rows = [];
+        const seen = new Set();
+        const push = (slot, item) => {
+            if (!item) return;
+            if (typeof item === 'string') {
+                const text = item.trim();
+                if (text && !seen.has(slot+'|'+text)) { seen.add(slot+'|'+text); rows.push((slot?slot+': ':'')+text); }
+                return;
+            }
+            if (Array.isArray(item)) { item.forEach(x=>push(slot,x)); return; }
+            if (typeof item !== 'object') return;
+            const name = String(item.name ?? item.item_name ?? item.item?.name ?? '').trim();
+            const id = asId(item.id ?? item.item_id ?? item.item?.id);
+            if (name || id) {
+                const text = (slot?slot+': ':'') + (name || ('Item '+id)) + (id ? ' ['+id+']' : '');
+                if (!seen.has(text)) { seen.add(text); rows.push(text); }
+                return;
+            }
+            for (const [key,val] of Object.entries(item)) {
+                if (['ammo','quantity','amount','uid','uids','mods','bonuses','stats'].includes(String(key).toLowerCase())) continue;
+                push(String(key),val);
+            }
+        };
+        const root = (data?.equipment ?? data?.items ?? data) || {};
+        if (Array.isArray(root)) root.forEach(x=>push('',x));
+        else if (root && typeof root === 'object') Object.entries(root).forEach(([slot,item])=>push(slot,item));
+        return rows.slice(0,30).join(' | ');
+    }
+
+    async function importFactionMemberReadinessKey(memberKey) {
+        const key = String(memberKey || '').trim();
+        if (!key) throw new Error('Member API key is required.');
+        const [basic,battlestats,equipment] = await Promise.all([
+            apiRequest('/user/basic', key),
+            apiRequest('/user/battlestats', key),
+            apiRequest('/user/equipment', key)
+        ]);
+        const memberId = extractUserIdFromApiPayload(basic);
+        if (!memberId) throw new Error('Could not determine the member ID from the supplied key.');
+        const db = dbLoad();
+        const roster = db.factionInventory.memberReadiness.roster || {};
+        if (Object.keys(roster).length && !roster[memberId]) {
+            throw new Error('This API key belongs to a player who is not in the current faction roster.');
+        }
+        const memberName = extractUsernameFromApiPayload(basic,memberId) || roster[memberId]?.memberName || memberId;
+        const stats = factionBattleStatsFromResponse(battlestats);
+        const equipmentSummary = factionEquipmentSummaryFromResponse(equipment);
+        const profile = saveFactionMemberReadinessProfile(memberId,{
+            stats,
+            equipment:{ summary:equipmentSummary, rawImported:false },
+            source:'member custom API key — one-time local import',
+            verifiedAt:nowIso()
+        });
+        const db2=dbLoad();
+        if (db2.factionInventory.memberReadiness.roster?.[memberId]) {
+            db2.factionInventory.memberReadiness.roster[memberId].memberName=memberName;
+            dbSave(db2);
+        }
+        return { memberId, memberName, profile, equipmentSummary };
+    }
+
+    async function promptFactionMemberApiImport() {
+        const key = prompt(
+            'Paste the member API custom key. Required selections: user/basic, user/battlestats, user/equipment. The key is used once in this browser and is NOT saved by the CRM:',
+            ''
+        );
+        if (key == null || !String(key).trim()) return;
+        try {
+            statusText='Importing member readiness data…';
+            render();
+            const result=await importFactionMemberReadinessKey(key);
+            statusText='Imported readiness data for '+result.memberName+' ['+result.memberId+']. API key was not saved.';
+            render();
+        } catch(error) {
+            statusText='Member API import failed: '+(error?.message||String(error));
+            render();
+        }
+    }
+
     function saveFactionMemberReadinessProfile(memberId, patch = {}) {
         const id = asId(memberId);
         if (!id) throw new Error('Member ID is required.');
@@ -10376,6 +10483,7 @@
                     '<button id="mm-faction-export" style="'+btn()+'">Leadership XLSX</button>'+
                     '<button id="mm-faction-log" style="'+btn()+'">Log Activity</button>'+
                     '<button id="mm-faction-roster-sync" style="'+btn()+'">Sync Members</button>'+
+                    '<button id="mm-faction-member-key-import" style="'+btn()+'">Import Member Key</button>'+
                 '</div>'+
             '</div>'+
             '<div style="font-size:11px;color:#aaa;margin-top:7px;line-height:1.55;">'+
@@ -10459,7 +10567,7 @@
         const readinessSupply = readinessRows.filter(r=>r.readinessStatus==='SUPPLY ACTION').length;
         const readinessCard = card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-                '<div><b>Member War Readiness / Equipment Optimization</b><div style="font-size:10px;color:#888;">Faction roster + armory loans are automatic. Exact battle stats/current personal equipment are opt-in or manually supplied.</div></div>'+
+                '<div><b>Member War Readiness / Equipment Optimization</b><div style="font-size:10px;color:#888;">Faction roster + armory loans are automatic. Exact battle stats/current personal equipment require member authorization. Use <b>Import Member Key</b> for a one-time local read; the key is not stored.</div></div>'+
                 '<button id="mm-faction-roster-sync-card" style="'+btn(true)+'">Sync Faction Roster</button>'+
             '</div>'+
             '<div style="font-size:10px;color:#999;margin-top:5px;">Last roster sync: '+escapeHtml(fmtDate(readinessStore.lastRosterSyncAt))+
@@ -12930,6 +13038,7 @@
         root.querySelector('#mm-faction-export')?.addEventListener('click', () => exportFactionInventoryWorkbook());
         root.querySelector('#mm-faction-log')?.addEventListener('click', () => promptFactionLogisticsEntry());
         root.querySelector('#mm-faction-roster-sync')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
+        root.querySelector('#mm-faction-member-key-import')?.addEventListener('click', () => promptFactionMemberApiImport());
         root.querySelector('#mm-faction-roster-sync-card')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
         root.querySelectorAll('[data-faction-member-edit]').forEach(button => button.addEventListener('click', () => promptFactionMemberReadiness(button.dataset.factionMemberEdit)));
         root.querySelector('#mm-faction-category')?.addEventListener('change', e => {
@@ -13749,6 +13858,7 @@
         exportFactionInventoryWorkbook,
         recordFactionLogisticsEntry,
         syncFactionMemberRoster,
+        importFactionMemberReadinessKey,
         saveFactionMemberReadinessProfile,
         factionMemberReadinessRows: () => factionMemberReadinessRows(dbLoad()),
         factionArmoryCandidateRows: () => factionArmoryCandidateRows(dbLoad()),
