@@ -12525,14 +12525,15 @@
         );
 
         const leadershipQuestionsCard = card(
-            '<b>Questions for Leadership</b>'+
-            '<div style="font-size:10px;color:#888;margin:3px 0 5px;">These are unresolved policy/authority inputs. CRM will not invent them.</div>'+
+            '<b>Leadership Approval / Remaining Inputs</b>'+
+            '<div style="font-size:10px;color:#888;margin:3px 0 5px;">We generate recommendations first. This section contains only items that still need Leadership approval or information that Leadership specifically controls.</div>'+
             managerPlan.questions.map(q =>
                 '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>'+escapeHtml(q.priority)+' · '+escapeHtml(q.area)+'</b> — '+escapeHtml(q.question)+
                 '<br><span style="color:#aaa;">Decision needed: '+escapeHtml(q.decision)+'</span></div>'
             ).join('')
         );
 
+        const minimumProposal = factionMinimumProposalCard(db);
         const buildBuilder = factionSimpleBuildCard(db);
         const readinessRows = factionMemberReadinessRows(db);
         const readinessStore = state.memberReadiness || {};
@@ -12629,7 +12630,7 @@
 
         const memberView = card(
             '<b>Member Loan View</b>'+
-            '<div style="font-size:10px;color:#888;margin-top:4px;">Armor and temporary weapons may be borrowed for chains, Ranked Wars, and training. Policy: 7d reminder · 10d final warning · 14d Leadership + Supervisor escalation absent prior arrangement.</div>'+
+            '<div style="font-size:10px;color:#888;margin-top:4px;">Weapons, armor, and temporary items may be borrowed for chains, Ranked Wars, and training. Policy: 7d reminder · 10d final warning · 14d Leadership + Supervisor escalation absent prior arrangement.</div>'+
             (loans.length ? loans.slice(0,40).map(member =>
                 '<details style="border-top:1px solid #303030;padding:5px 0;"><summary style="cursor:pointer;font-size:11px;"><b>'+escapeHtml(member.memberName)+'</b> ['+escapeHtml(member.memberId)+'] · '+member.amount+' item'+(member.amount===1?'':'s')+'</summary>'+
                 '<div style="font-size:10px;color:#aaa;margin-top:4px;">'+member.items.map(item => {
@@ -12638,7 +12639,7 @@
                         (item.uids?.length?' · UID '+item.uids.slice(0,10).map(escapeHtml).join(', ')+(item.uids.length>10?'…':''):'')+
                         (age?.observedSince?' · first observed '+escapeHtml(fmtDate(age.observedSince)):'');
                 }).join('<br>')+'</div></details>'
-            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No currently loaned armor/temporary rows in the latest snapshot.</div>')
+            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No currently loaned weapon/armor/temporary rows in the latest snapshot.</div>')
         );
 
         const weekly = card(
@@ -12666,7 +12667,7 @@
                 : '<div style="font-size:11px;color:#888;margin-top:5px;">No in-scope inventory changes recorded yet.</div>')
         );
 
-        return summary + operatingPolicy + buildBuilder + managerPlanCard + leadershipQuestionsCard + readinessCard + planning + armory + memberView + weekly + audit;
+        return summary + operatingPolicy + buildBuilder + minimumProposal + managerPlanCard + leadershipQuestionsCard + readinessCard + planning + armory + memberView + weekly + audit;
     }
 
     function factionInventorySelfTest() {
