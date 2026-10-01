@@ -10438,6 +10438,83 @@
         render();
     }
 
+    function factionItemDetailRows(data) {
+        const source = Array.isArray(data)
+            ? data
+            : Array.isArray(data?.itemdetails)
+                ? data.itemdetails
+                : Array.isArray(data?.items)
+                    ? data.items
+                    : [];
+        const numeric = value => {
+            if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+            if (typeof value === 'string') return Number(value.replace(/,/g,'')) || 0;
+            return 0;
+        };
+        return source.map(raw => {
+            const item = raw?.item && typeof raw.item === 'object' ? raw.item : raw;
+            const stats = item?.stats && typeof item.stats === 'object' ? item.stats : {};
+            return {
+                uid:String(raw?.uid ?? item?.uid ?? '').trim(),
+                itemId:asId(item?.id ?? raw?.item_id ?? raw?.id),
+                name:String(item?.name ?? raw?.name ?? '').trim(),
+                type:String(item?.type ?? raw?.type ?? '').trim(),
+                subType:String(item?.sub_type ?? item?.subType ?? raw?.sub_type ?? '').trim(),
+                damage:numeric(item?.damage ?? stats.damage),
+                accuracy:numeric(item?.accuracy ?? stats.accuracy),
+                armor:numeric(item?.armor ?? stats.armor ?? stats.protection),
+                quality:numeric(item?.quality ?? stats.quality),
+                bonuses:item?.bonuses && typeof item.bonuses === 'object' ? deepClone(item.bonuses) : null
+            };
+        }).filter(x=>x.uid || x.itemId || x.name);
+    }
+
+    async function fetchFactionArmoryCandidateDetails(db) {
+        const key = factionInventoryApiKey();
+        if (!key) throw new Error('No compatible faction API key is available.');
+        const inventoryRows = factionInventoryRows(db)
+            .filter(row => Number(row.availableCount||0) > 0)
+            .filter(row => ['armor','temporary'].includes(String(row.category||'')))
+            .filter(row => Array.isArray(row.availableUids) && row.availableUids.length);
+
+        const uidMap = new Map();
+        for (const row of inventoryRows) {
+            for (const uid of row.availableUids.slice(0,3)) {
+                const keyUid=String(uid||'').trim();
+                if (keyUid && !uidMap.has(keyUid)) uidMap.set(keyUid,row);
+            }
+        }
+
+        const uids=[...uidMap.keys()];
+        const details=[];
+        for(let i=0;i<uids.length;i+=25){
+            const batch=uids.slice(i,i+25);
+            const data=await apiRequest('/torn/'+batch.map(encodeURIComponent).join(',')+'/itemdetails',key);
+            details.push(...factionItemDetailRows(data));
+        }
+
+        return details.map(detail => {
+            const sourceRow=uidMap.get(String(detail.uid)) ||
+                inventoryRows.find(r=>asId(r.itemId)===asId(detail.itemId)) || {};
+            return {
+                ...detail,
+                category:String(sourceRow.category||''),
+                available:Number(sourceRow.availableCount||0),
+                referencePrice:Number(sourceRow.referencePrice||0)
+            };
+        });
+    }
+
+    function factionArmorSlot(item) {
+        const raw=[item?.subType,item?.slot,item?.type,item?.name].map(v=>String(v||'').toLowerCase()).join(' ');
+        if(/helmet|head/.test(raw)) return 'helmet';
+        if(/glove|hand/.test(raw)) return 'gloves';
+        if(/pant|leg/.test(raw)) return 'pants';
+        if(/boot|shoe|foot/.test(raw)) return 'boots';
+        if(/vest|body|armor|armour|jacket/.test(raw)) return 'body';
+        return '';
+    }
+
     function factionArmoryCandidateRows(db) {
         return factionInventoryRows(db)
             .filter(row => FACTION_INVENTORY_LOAN_CATEGORIES.includes(String(row.category||'')) && Number(row.availableCount||0) > 0)
