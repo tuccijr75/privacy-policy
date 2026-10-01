@@ -12023,6 +12023,96 @@
             }));
         });
 
+        const minimumProposal = factionMinimumStockProposal(db);
+        const minimumProposalRows = minimumProposal.proposals.map((row,index)=>({
+            'Proposal ID':'M' + String(index + 1).padStart(2,'0'),
+            'Scope':row.scope,
+            'Category':row.category,
+            'Slot':row.slot,
+            'Item / Pool':row.item,
+            'Item ID':row.itemId,
+            'Current':Number(row.current||0),
+            'Observed / Day':Number(row.observedPerDay||0),
+            'Recommended Minimum':row.recommendedMin==null?'':Number(row.recommendedMin),
+            'Working Maximum':row.recommendedMax==null?'':Number(row.recommendedMax),
+            'Shortfall':row.shortfall==null?'':Number(row.shortfall),
+            'Risk':row.risk,
+            'Confidence':row.confidence,
+            'Manager Recommendation':row.managerRecommendation,
+            'Rationale':row.rationale,
+            'Needed Input / Validation':row.neededInput,
+            'Leadership Approval':'PENDING'
+        }));
+        const proposalInputRows = factionManagerProposalInputs(db).map((row,index)=>({
+            'Input ID':'I' + String(index + 1).padStart(2,'0'),
+            'Priority':row.priority,
+            'Topic':row.topic,
+            'Current State':row.current,
+            'Manager Proposal':row.proposal,
+            'Why It Matters':row.why,
+            'Status':row.status,
+            'Leadership Response / Approval':''
+        }));
+        const simpleBuildRows = memberReadiness.flatMap(row => {
+            const build=row.profile?.simpleBuild;
+            if(!build) {
+                return [{
+                    'Member ID':asId(row.memberId),
+                    'Member':String(row.memberName||''),
+                    'Level':Number(row.level||0),
+                    'Battle Stats':Number(row.statProfile?.total||0),
+                    'Stat Profile':String(row.statProfile?.label||'UNKNOWN'),
+                    'Build Tier':'',
+                    'Weapon Bias':'',
+                    'Slot':'',
+                    'Target Item':'',
+                    'Combat Data':'',
+                    'Acquisition':'',
+                    'Available':0,
+                    'Reference Price':0,
+                    'Procurement Route':'',
+                    'Build Status':row.hasStats?'NOT GENERATED':'STATS REQUIRED'
+                }];
+            }
+            const items=Array.isArray(build.items)?build.items:[];
+            if(!items.length) {
+                return [{
+                    'Member ID':asId(row.memberId),
+                    'Member':String(row.memberName||''),
+                    'Level':Number(row.level||0),
+                    'Battle Stats':Number(row.statProfile?.total||0),
+                    'Stat Profile':String(row.statProfile?.label||'UNKNOWN'),
+                    'Build Tier':String(build.tier||''),
+                    'Weapon Bias':String(build.weaponBias||''),
+                    'Slot':'',
+                    'Target Item':'',
+                    'Combat Data':'',
+                    'Acquisition':'',
+                    'Available':0,
+                    'Reference Price':0,
+                    'Procurement Route':'',
+                    'Build Status':'NO EVIDENCE-BACKED TARGETS'
+                }];
+            }
+            return items.map(item=>({
+                'Member ID':asId(row.memberId),
+                'Member':String(row.memberName||''),
+                'Level':Number(row.level||0),
+                'Battle Stats':Number(row.statProfile?.total||0),
+                'Stat Profile':String(row.statProfile?.label||'UNKNOWN'),
+                'Build Tier':String(build.tier||''),
+                'Weapon Bias':String(build.weaponBias||''),
+                'Slot':String(item.slot||''),
+                'Target Item':String(item.name||''),
+                'Combat Data':item.category==='weapon' ? 'D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0) : item.armor ? 'Armor '+Number(item.armor||0) : '',
+                'Acquisition':String(item.acquisition||''),
+                'Available':Number(item.available||0),
+                'Reference Price':Number(item.referencePrice||0),
+                'Procurement Route':String(item.procurementRoute||''),
+                'Build Status':'GENERATED'
+            }));
+        });
+
         const readyMembers = memberReadiness.filter(row=>row.readinessStatus==='READY FOR REVIEW').length;
         const missingMembers = memberReadiness.filter(row=>row.readinessStatus==='MISSING DATA').length;
         const clearUpgradeCount = equipmentActionRows.filter(row=>String(row['Action Type']).includes('CLEAR')).length;
@@ -12032,6 +12122,8 @@
             { Section:'READINESS', Signal:'Inventory snapshot age (hours)', Current:sourceAgeHours === '' ? '' : Number(sourceAgeHours.toFixed(1)), Status:sourceAgeHours === '' ? 'MISSING' : Number(sourceAgeHours) > 2 ? 'STALE REVIEW' : 'CURRENT', 'Leader / Manager Interpretation':'Refresh before time-sensitive allocation decisions.' },
             { Section:'LOANS', Signal:'Loan exposure', Current:totalLoaned, Status:manager.loans.some(row=>row.followUpStatus==='ESCALATE — LEADERSHIP + SUPERVISOR') ? 'ESCALATE' : manager.loans.some(row=>row.followUpStatus!=='ROUTINE') ? 'ACTION' : manager.loans.length ? 'MONITOR' : 'CLEAR', 'Leader / Manager Interpretation':manager.loans.length + ' item/member loan row(s); policy is 7d reminder / 10d final warning / 14d escalation.' },
             { Section:'PLANNING', Signal:'Provisional war baseline', Current:baseline.belowTarget + ' below target / ' + baseline.dataRequired + ' data-required', Status:baseline.belowTarget ? 'ACTION' : baseline.dataRequired ? 'DATA REQUIRED' : 'READY', 'Leader / Manager Interpretation':'Leadership authorized provisional targets; formal sign-off is required before the next Ranked War.' },
+            { Section:'PROPOSAL', Signal:'Manager minimums proposal', Current:minimumProposal.actionable.length + ' shortfall(s) / ' + minimumProposal.dataRequired.length + ' data-required', Status:'APPROVAL REQUESTED', 'Leader / Manager Interpretation':'Review Minimums Proposal. These are manager-recommended numbers with methodology and confidence, not open-ended questions.' },
+            { Section:'BUILDS', Signal:'Simple member builds generated', Current:memberReadiness.filter(row=>row.profile?.simpleBuild).length + '/' + memberReadiness.length, Status:memberReadiness.every(row=>!row.hasStats || row.profile?.simpleBuild) ? 'CURRENT FOR KNOWN STATS' : 'IN PROGRESS', 'Leader / Manager Interpretation':'Build coverage will refine routine weapon/armor pool minimums as member data becomes complete.' },
             { Section:'AUTHORITY', Signal:'Routine purchase authority', Current:money(FACTION_PURCHASE_TRANSACTION_LIMIT) + ' txn / ' + money(FACTION_PURCHASE_WEEKLY_LIMIT) + ' week', Status:'AUTHORIZED', 'Leader / Manager Interpretation':'Routine replenishment only; single purchases above the per-transaction limit require Leadership or Banker approval.' },
             { Section:'AUTHORITY', Signal:'Tracked spend — last 7d', Current:money(factionSpendLast7d(db).amount), Status:factionSpendLast7d(db).amount > FACTION_PURCHASE_WEEKLY_LIMIT ? 'WEEKLY LIMIT EXCEEDED' : 'WITHIN WEEKLY LIMIT', 'Leader / Manager Interpretation':factionSpendLast7d(db).rows+' ledger purchase row(s) with recorded cost in the last 7 days.' },
             { Section:'PRICING', Signal:'Emergency premium cap', Current:FACTION_PRICE_PREMIUM_CAP_PCT + '%', Status:'AUTHORIZED', 'Leader / Manager Interpretation':'Use 7-day Item Market/Bazaar average; >5% premium requires separate approval.' },
@@ -12098,6 +12190,8 @@
             { Topic:'Inventory source', Value:'Torn API v2 faction/inventory; local CRM snapshots retain history.', Classification:'SOURCE' },
             { Topic:'Market references', Value:'Advisory only. Current CRM market evidence may include Item Market, Bazaar observations, TornW3B, or catalog fallback.', Classification:'ADVISORY' },
             { Topic:'Equipment optimization scope', Value:'Optimization may recommend equipment not currently owned by the faction. Armory availability determines acquisition path, not the target loadout. Missing items are procurement targets using faction-member bazaars first, then trusted/private suppliers, then Item Market.', Classification:'CONFIRMED OPERATING MODEL' },
+            { Topic:'Minimum-stock proposal methodology', Value:minimumProposal.methodology, Classification:'MANAGER PROPOSAL — LEADERSHIP APPROVAL REQUIRED' },
+            { Topic:'Simple Build methodology', Value:'Member build tier uses faction-relative battle-stat percentile at 75% weight and level percentile at 25%. Development favors armory stock; Standard favors armory stock within 90% of best scored candidate; Advanced selects strongest evidence-backed target. Build scoring is a logistics heuristic, not an exact combat formula.', Classification:'MANAGER MODEL' },
             { Topic:'Automation boundary', Value:'Read-only manager: no automatic faction item movement, purchase, reimbursement, trade, give, retrieve, or consumption action.', Classification:'CONTROL' }
         ];
         const makeDoc=(filename,rows)=>({filename,headers:rows.length?Object.keys(rows[0]):[],rows});
@@ -12105,6 +12199,9 @@
             dashboard:makeDoc('Faction_Leadership_Dashboard.csv',dashboardRows),
             questions:makeDoc('Faction_Leadership_Decisions.csv',questionRows),
             managerFollowUp:makeDoc('Faction_Manager_Follow_Up.csv',managerFollowUpRows),
+            minimumProposal:makeDoc('Faction_Minimums_Proposal.csv',minimumProposalRows),
+            proposalInputs:makeDoc('Faction_Proposal_Inputs.csv',proposalInputRows),
+            memberBuilds:makeDoc('Faction_Member_Builds.csv',simpleBuildRows),
             warBaseline:makeDoc('Faction_War_Readiness_Baseline.csv',warBaselineRows),
             summary:makeDoc('Faction_Executive_Summary.csv',summaryRows),
             equipmentActions:makeDoc('Faction_Equipment_Actions.csv',equipmentActionRows),
@@ -12131,6 +12228,9 @@
             ['Leadership Dashboard',docs.dashboard],
             ['Leadership Decisions',docs.questions],
             ['Manager Follow-Up',docs.managerFollowUp],
+            ['Minimums Proposal',docs.minimumProposal],
+            ['Proposal Inputs',docs.proposalInputs],
+            ['Member Builds',docs.memberBuilds],
             ['War Readiness Baseline',docs.warBaseline],
             ['Executive Summary',docs.summary],
             ['Equipment Actions',docs.equipmentActions],
