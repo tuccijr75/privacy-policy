@@ -10733,6 +10733,280 @@
         return rows;
     }
 
+    function factionBuildTier(member, rosterRows = []) {
+        const known = (Array.isArray(rosterRows) ? rosterRows : [])
+            .filter(row => Number(row?.statProfile?.total || 0) > 0);
+        const percentile = (values, value) => {
+            const clean = values.map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
+            if (!clean.length) return 0.5;
+            const atOrBelow = clean.filter(x => x <= Number(value || 0)).length;
+            return Math.max(0, Math.min(1, atOrBelow / clean.length));
+        };
+        const statPct = percentile(known.map(row=>Number(row.statProfile?.total||0)), Number(member?.statProfile?.total||0));
+        const levelPct = percentile(known.map(row=>Number(row.level||0)), Number(member?.level||0));
+        const composite = statPct * 0.75 + levelPct * 0.25;
+        const label = composite >= 0.75 ? 'ADVANCED' : composite >= 0.35 ? 'STANDARD' : 'DEVELOPMENT';
+        return { label, composite, statPercentile:statPct, levelPercentile:levelPct };
+    }
+
+    function factionBuildWeaponBias(member) {
+        const dominant = String(member?.statProfile?.dominant || '');
+        if (dominant === 'Strength') return { damage:0.65, accuracy:0.35, label:'DAMAGE-WEIGHTED' };
+        if (dominant === 'Speed') return { damage:0.35, accuracy:0.65, label:'ACCURACY-WEIGHTED' };
+        if (dominant === 'Dexterity') return { damage:0.45, accuracy:0.55, label:'BALANCED / ACCURACY LEAN' };
+        if (dominant === 'Defense') return { damage:0.50, accuracy:0.50, label:'BALANCED / DURABILITY LEAN' };
+        return { damage:0.50, accuracy:0.50, label:'BALANCED' };
+    }
+
+    function factionBuildPickCandidate(candidates, scoreFn, tierLabel) {
+        const rows = (Array.isArray(candidates) ? candidates : [])
+            .map(item => ({ item, score:Number(scoreFn(item) || 0) }))
+            .filter(row => row.score > 0)
+            .sort((a,b) => b.score-a.score || Number(b.item?.available||0)-Number(a.item?.available||0));
+        if (!rows.length) return null;
+
+        const best = rows[0];
+        const armory = rows
+            .filter(row => Number(row.item?.available || 0) > 0 || String(row.item?.acquisition || '') === 'ISSUE FROM ARMORY')
+            .sort((a,b)=>b.score-a.score || Number(b.item?.available||0)-Number(a.item?.available||0))[0] || null;
+
+        if (tierLabel === 'DEVELOPMENT' && armory) return armory.item;
+        if (tierLabel === 'STANDARD' && armory && armory.score >= best.score * 0.90) return armory.item;
+        return best.item;
+    }
+
+    function factionSimpleMemberBuild(member, rosterRows, candidateDetails) {
+        const tier = factionBuildTier(member, rosterRows);
+        const bias = factionBuildWeaponBias(member);
+        const candidates = (Array.isArray(candidateDetails) ? candidateDetails : [])
+            .filter(item => item && typeof item === 'object');
+        const result = {
+            memberId:asId(member?.memberId),
+            memberName:String(member?.memberName || ''),
+            generatedAt:nowIso(),
+            level:Number(member?.level || 0),
+            statTotal:Number(member?.statProfile?.total || 0),
+            statProfile:String(member?.statProfile?.label || 'UNKNOWN'),
+            dominantStat:String(member?.statProfile?.dominant || ''),
+            tier:tier.label,
+            tierScore:Number(tier.composite || 0),
+            weaponBias:bias.label,
+            items:[],
+            temporaryPool:[],
+            summary:'',
+            methodology:'Manager heuristic: faction-relative battle-stat percentile carries 75% of build tier and level percentile carries 25%. Development builds prefer armory stock; Standard builds prefer armory stock when it is within 90% of the best scored candidate; Advanced builds select the strongest evidence-backed target. Weapon scoring uses the displayed damage/accuracy bias. This is a logistics build recommendation, not a claim of an exact Torn combat formula.'
+        };
+
+        const weaponCandidates = candidates.filter(item =>
+            String(item.category || '') === 'weapon' &&
+            (Number(item.damage||0) > 0 || Number(item.accuracy||0) > 0)
+        );
+        for (const slot of ['primary','secondary','melee']) {
+            const slotRows = weaponCandidates.filter(item => factionWeaponSlot(item) === slot);
+            const chosen = factionBuildPickCandidate(
+                slotRows,
+                item => Number(item.damage||0) * bias.damage + Number(item.accuracy||0) * bias.accuracy + Number(item.quality||0) * 0.02,
+                tier.label
+            );
+            if (!chosen) continue;
+            result.items.push({
+                slot,
+                category:'weapon',
+                itemId:asId(chosen.itemId),
+                name:String(chosen.name || ''),
+                damage:Number(chosen.damage||0),
+                accuracy:Number(chosen.accuracy||0),
+                armor:0,
+                quality:Number(chosen.quality||0),
+                available:Number(chosen.available||0),
+                acquisition:String(chosen.acquisition || (Number(chosen.available||0)>0 ? 'ISSUE FROM ARMORY' : 'PROCURE')),
+                procurementRoute:String(chosen.procurementRoute || (Number(chosen.available||0)>0 ? 'Faction armory' : 'Faction member bazaar → trusted/private supplier → Item Market')),
+                referencePrice:Number(chosen.referencePrice||0),
+                priceSource:String(chosen.priceSource||''),
+                rationale:bias.label+' weapon score for '+slot+' slot; '+tier.label+' acquisition policy.'
+            });
+        }
+
+        const armorCandidates = candidates.filter(item => String(item.category || '') === 'armor' && factionArmorSlot(item));
+        for (const slot of ['helmet','body','gloves','pants','boots']) {
+            const slotRows = armorCandidates.filter(item => factionArmorSlot(item) === slot && Number(item.armor||0) > 0);
+            const chosen = factionBuildPickCandidate(
+                slotRows,
+                item => Number(item.armor||0) + Number(item.quality||0) * 0.02,
+                tier.label
+            );
+            if (!chosen) continue;
+            result.items.push({
+                slot,
+                category:'armor',
+                itemId:asId(chosen.itemId),
+                name:String(chosen.name || ''),
+                damage:0,
+                accuracy:0,
+                armor:Number(chosen.armor||0),
+                quality:Number(chosen.quality||0),
+                available:Number(chosen.available||0),
+                acquisition:String(chosen.acquisition || (Number(chosen.available||0)>0 ? 'ISSUE FROM ARMORY' : 'PROCURE')),
+                procurementRoute:String(chosen.procurementRoute || (Number(chosen.available||0)>0 ? 'Faction armory' : 'Faction member bazaar → trusted/private supplier → Item Market')),
+                referencePrice:Number(chosen.referencePrice||0),
+                priceSource:String(chosen.priceSource||''),
+                rationale:'Highest evidence-backed armor score for '+slot+' under '+tier.label+' acquisition policy.'
+            });
+        }
+
+        const coreTemporaryNames = ['Flash Grenade','Smoke Grenade','Tear Gas','HEG','Grenade','Pepper Spray'];
+        const temporaryCandidates = candidates.filter(item => String(item.category || '') === 'temporary');
+        result.temporaryPool = coreTemporaryNames.map(name => {
+            const armory = temporaryCandidates
+                .filter(item => String(item.name||'').toLowerCase() === name.toLowerCase())
+                .sort((a,b)=>Number(b.available||0)-Number(a.available||0))[0] || null;
+            return {
+                name,
+                available:Number(armory?.available||0),
+                acquisition:armory && Number(armory.available||0)>0 ? 'ISSUE FROM ARMORY' : 'PROCURE AS NEEDED'
+            };
+        });
+
+        const armoryCount = result.items.filter(item=>item.acquisition==='ISSUE FROM ARMORY').length;
+        const procureCount = result.items.filter(item=>item.acquisition!=='ISSUE FROM ARMORY').length;
+        result.summary = result.items.length
+            ? tier.label+' build · '+result.items.length+' equipment slot'+(result.items.length===1?'':'s')+
+              ' · '+armoryCount+' armory · '+procureCount+' procurement.'
+            : 'No evidence-backed weapon/armor candidates are available yet. Sync Weapons/Armor and refresh catalog data.';
+        return result;
+    }
+
+    async function generateFactionMemberSimpleBuild(memberId) {
+        const id = asId(memberId);
+        if (!id) throw new Error('Select a faction member first.');
+        try {
+            statusText='Building simple level/stat loadout for member '+id+'…';
+            render();
+            await refreshProcurementCatalog(false,factionInventoryApiKey());
+            const db = dbLoad();
+            const rosterRows = factionMemberReadinessRows(db);
+            const member = rosterRows.find(row=>asId(row.memberId)===id);
+            if (!member) throw new Error('Member is not present in the current faction roster.');
+            if (!member.hasStats) throw new Error('Battle stats are required. Import or refresh this member first.');
+
+            let armoryDetails = [];
+            try { armoryDetails = await fetchFactionArmoryCandidateDetails(db); }
+            catch (error) {
+                addFactionInventoryDiagnostic(db.factionInventory,'Build Builder armory detail enrichment: '+(error?.message||String(error)));
+            }
+            const db2 = dbLoad();
+            const globalCandidates = factionGlobalEquipmentCandidates(db2);
+            const enrichedArmory = armoryDetails.map(item => {
+                const price=factionProcurementPriceContext(db2,item.itemId,{marketValue:item.referencePrice||0});
+                return {
+                    ...item,
+                    source:'FACTION ARMORY INSTANCE',
+                    acquisition:'ISSUE FROM ARMORY',
+                    procurementRoute:'Faction armory',
+                    referencePrice:Number(price.price||item.referencePrice||0),
+                    priceSource:String(price.source||'Faction market reference')
+                };
+            });
+            const build = factionSimpleMemberBuild(member,rosterRows,[...globalCandidates,...enrichedArmory]);
+
+            const latest=dbLoad();
+            const profile=latest.factionInventory.memberReadiness.profiles[id] || {};
+            profile.simpleBuild=build;
+            profile.simpleBuildAt=nowIso();
+            latest.factionInventory.memberReadiness.profiles[id]=profile;
+            latest.factionInventory.settings.buildMemberId=id;
+            latest.factionInventory.settings.updatedAt=nowIso();
+            dbSave(latest);
+            await flushDbWrites();
+
+            statusText='Build created for '+member.memberName+': '+build.summary;
+            render();
+            return build;
+        } catch(error) {
+            statusText='Build Builder failed: '+(error?.message||String(error));
+            render();
+            throw error;
+        }
+    }
+
+    function composeFactionMemberBuildMessage(memberId) {
+        const id=asId(memberId);
+        const db=dbLoad();
+        const member=factionMemberReadinessRows(db).find(row=>asId(row.memberId)===id);
+        const build=member?.profile?.simpleBuild;
+        if (!member) throw new Error('Faction member not found.');
+        if (!build) throw new Error('Generate a Build first.');
+
+        const lines=(build.items||[]).map(item =>
+            String(item.slot||'slot').toUpperCase()+': '+String(item.name||'')+
+            (item.category==='weapon' ? ' (D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0)+')' : item.armor ? ' (Armor '+Number(item.armor||0)+')' : '')+
+            ' — '+String(item.acquisition||'REVIEW')+
+            (item.procurementRoute ? ' — '+item.procurementRoute : '')
+        );
+        const temps=(build.temporaryPool||[]).map(item=>item.name+' ('+item.acquisition+')').join(', ');
+        const body =
+            String(member.memberName||'Faction member')+',\n\n' +
+            'I built a simple faction loadout from your current level and battle-stat profile.\n\n' +
+            'Level: '+Number(member.level||0)+'\n' +
+            'Battle stats: '+Number(member.statProfile?.total||0).toLocaleString()+' total · '+String(member.statProfile?.label||'UNKNOWN')+'\n' +
+            'Build tier: '+String(build.tier||'')+' · '+String(build.weaponBias||'')+'\n\n' +
+            'TARGET BUILD\n'+(lines.length?lines.join('\n'):'No evidence-backed weapon/armor targets yet.')+'\n\n' +
+            'TEMPORARY POOL\n'+(temps||'Assignment-dependent; review before war.')+'\n\n' +
+            'Armory items can be loaned when permitted. Missing targets can be procured. High-value Ranked War gear remains Leadership-controlled.\n\n' +
+            '— Manic Mike';
+        composeMessage(id,'Faction build recommendation',body);
+        statusText='Build message prepared for '+String(member.memberName||id)+' ['+id+']; Send remains manual.';
+    }
+
+    function factionSimpleBuildCard(db) {
+        const members=factionMemberReadinessRows(db);
+        const eligible=members.filter(row=>row.hasStats);
+        const selectedId=asId(db.factionInventory?.settings?.buildMemberId || eligible[0]?.memberId || members[0]?.memberId || '');
+        const selected=members.find(row=>asId(row.memberId)===selectedId) || eligible[0] || members[0] || null;
+        const build=selected?.profile?.simpleBuild || null;
+        const options=members.map(row =>
+            '<option value="'+escapeHtml(row.memberId)+'" '+(asId(row.memberId)===asId(selected?.memberId)?'selected':'')+'>'+
+            escapeHtml(row.memberName)+' · Lv '+Number(row.level||0)+' · '+(row.hasStats?Number(row.statProfile?.total||0).toLocaleString()+' stats':'stats missing')+
+            '</option>'
+        ).join('');
+        const buildRows=build?.items?.length
+            ? build.items.map(item =>
+                '<div style="border-top:1px solid #303030;padding:5px 0;font-size:10px;">'+
+                    '<b>'+escapeHtml(String(item.slot||'').toUpperCase())+'</b> · '+escapeHtml(item.name)+
+                    (item.category==='weapon'?' · D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0):item.armor?' · Armor '+Number(item.armor||0):'')+
+                    ' · <b>'+escapeHtml(item.acquisition)+'</b>'+
+                    (item.available?' · '+Number(item.available)+' available':'')+
+                    (item.referencePrice?' · Est. '+money(item.referencePrice):'')+
+                    '<br><span style="color:#888;">'+escapeHtml(item.rationale||'')+'</span>'+
+                '</div>'
+              ).join('')
+            : '<div style="font-size:10px;color:#888;margin-top:6px;">'+
+                (selected?.hasStats ? 'Select the member and click Generate Build.' : 'This member needs battle stats before a build can be generated.')+
+              '</div>';
+        return card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+                '<div><b>Simple Member Build Builder</b><div style="font-size:10px;color:#888;margin-top:2px;">Pick a member → Generate Build. Uses level + battle stats. Current equipped gear is not required.</div></div>'+
+                '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
+                    '<select id="mm-faction-build-member" style="'+inputCss()+'min-width:220px;">'+options+'</select>'+
+                    '<button id="mm-faction-build-generate" '+(selected?.hasStats?'':'disabled')+' style="'+btn(Boolean(selected?.hasStats))+'">Generate Build</button>'+
+                    '<button id="mm-faction-build-message" '+(build?'':'disabled')+' style="'+btn(Boolean(build))+'">Message Build</button>'+
+                '</div>'+
+            '</div>'+
+            (selected ? '<div style="font-size:11px;color:#bbb;margin-top:7px;"><b>'+escapeHtml(selected.memberName)+'</b> · Lv '+Number(selected.level||0)+
+                ' · STR '+Number(selected.stats?.strength||0).toLocaleString()+
+                ' · DEF '+Number(selected.stats?.defense||0).toLocaleString()+
+                ' · SPD '+Number(selected.stats?.speed||0).toLocaleString()+
+                ' · DEX '+Number(selected.stats?.dexterity||0).toLocaleString()+
+                ' · <b>'+escapeHtml(selected.statProfile?.label||'UNKNOWN')+'</b>'+
+                (build?' · Build <b>'+escapeHtml(build.tier)+'</b> / '+escapeHtml(build.weaponBias):'')+
+              '</div>' : '<div style="font-size:10px;color:#888;margin-top:6px;">Sync the roster first.</div>')+
+            buildRows+
+            (build?.temporaryPool?.length ? '<div style="border-top:1px solid #303030;margin-top:6px;padding-top:6px;font-size:10px;"><b>Temporary pool:</b> '+
+                build.temporaryPool.map(item=>escapeHtml(item.name)+' — '+escapeHtml(item.acquisition)).join(' · ')+'</div>' : '')+
+            (build ? '<div style="font-size:9px;color:#777;margin-top:6px;">'+escapeHtml(build.methodology||'')+'</div>' : '')
+        );
+    }
+
     function factionLoadoutOptimization(member, candidateDetails) {
         const equipped = Array.isArray(member?.profile?.equipment?.items)
             ? member.profile.equipment.items
