@@ -11152,9 +11152,47 @@
         const planRows = manager.plan.map(row=>({
             'Phase':row.phase, 'Cadence':row.cadence, 'Action':row.action, 'Owner':row.owner, 'Status':row.status, 'Evidence / Definition of Done':row.evidence
         }));
-        const questionRows = manager.questions.map(q=>({
-            'Priority':q.priority, 'Area':q.area, 'Question for Leadership':q.question, 'Current State / Assumption':q.current, 'Decision Needed':q.decision, 'Status':'LEADERSHIP DECISION REQUIRED'
+        const managerProposalForDecision = area => {
+            const key = String(area || '');
+            if (key === 'Stock targets and reserves') return 'Approve the target-setting method now; use observed consumption plus a separate Ranked War/chain reserve once the history window is mature.';
+            if (key === 'Purchasing authority') return 'Set standing purchase/reimbursement limits and require leadership approval above them.';
+            if (key === 'Price guidelines') return 'Use category-specific guardrails against a verified market reference; exceptions require leadership approval.';
+            if (key === 'Loan follow-up') return 'Define both a routine follow-up interval and a separate escalation interval; leadership retains enforcement.';
+            if (key === 'Trusted supplier register') return 'Approve a named supplier list after faction-member bazaars, plus prohibited/exception sources.';
+            if (key === 'Armory access authority') return 'Audit and recommend by default; permission changes only when leadership explicitly grants that authority.';
+            if (key === 'Reporting cadence') return 'Weekly routine report; immediate exception report for critical shortage, unexplained loss, access risk, or major funding need.';
+            return '';
+        };
+        const questionRows = manager.questions.map((q,index)=>({
+            'Decision ID':'D' + String(index + 1).padStart(2,'0'),
+            'Priority':q.priority,
+            'Area':q.area,
+            'Question':q.question,
+            'Current State / Assumption':q.current,
+            'Decision Needed':q.decision,
+            'Manager Proposal / Structure':managerProposalForDecision(q.area),
+            'Leader Decision':'',
+            'Leader Notes / Limits':'',
+            'Decision Status':'AWAITING LEADER'
         }));
+        const loanExposureMap = new Map();
+        for (const loan of manager.loans) {
+            const memberId = asId(loan.memberId);
+            const prior = loanExposureMap.get(memberId) || { memberId, memberName:String(loan.memberName || memberId), units:0, rows:0 };
+            prior.units += Number(loan.amount || 0);
+            prior.rows += 1;
+            loanExposureMap.set(memberId, prior);
+        }
+        const loanExposureRows = [...loanExposureMap.values()]
+            .sort((a,b)=>b.units-a.units || a.memberName.localeCompare(b.memberName))
+            .map(row=>({
+                'Member ID':row.memberId,
+                'Member':row.memberName,
+                'Units Out':row.units,
+                'Loan Rows':row.rows,
+                'Review Signal':row.units >= 10 ? 'HIGH EXPOSURE REVIEW' : row.units >= 5 ? 'MONITOR' : 'ROUTINE'
+            }));
+
         const memberReadiness = factionMemberReadinessRows(db);
         const memberReadinessRows = memberReadiness.map(row=>({
             'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Position':String(row.position||''),
@@ -11198,6 +11236,81 @@
                 : '',
             'Authority':'Candidate planning only; high-value Ranked War allocation remains leadership-controlled.'
         }));
+
+        const equipmentActionRows = memberReadiness.filter(row=>row.hasStats&&row.hasEquipment).flatMap(row => {
+            const recs = Array.isArray(row.profile?.optimization?.recommendations) ? row.profile.optimization.recommendations : [];
+            if (!recs.length) {
+                return [{
+                    'Member ID':asId(row.memberId),
+                    'Member':String(row.memberName || ''),
+                    'Level':Number(row.level || 0),
+                    'Battle Profile':String(row.statProfile?.label || 'UNKNOWN'),
+                    'Priority':'MEDIUM',
+                    'Action Type':'REVIEW',
+                    'Slot':'',
+                    'Current':'',
+                    'Candidate':'',
+                    'Delta':'',
+                    'Acquisition':'',
+                    'Reference Price':0,
+                    'Price Source':'',
+                    'Procurement Route':'',
+                    'Rationale / Review Note':String(row.profile?.optimization?.summary || row.equipmentPlan || 'Manual review required.'),
+                    'Decision Status':'AWAITING DECISION'
+                }];
+            }
+            return recs.map(rec => ({
+                'Member ID':asId(row.memberId),
+                'Member':String(row.memberName || ''),
+                'Level':Number(row.level || 0),
+                'Battle Profile':String(row.statProfile?.label || 'UNKNOWN'),
+                'Priority':String(rec.kind || '').includes('CLEAR') ? 'HIGH' : 'MEDIUM',
+                'Action Type':String(rec.kind || 'REVIEW'),
+                'Slot':String(rec.slot || ''),
+                'Current':String(rec.current || ''),
+                'Candidate':String(rec.candidate || ''),
+                'Delta':rec.delta == null ? '' : Number(rec.delta),
+                'Acquisition':String(rec.acquisition || ''),
+                'Reference Price':Number(rec.referencePrice || 0),
+                'Price Source':String(rec.priceSource || ''),
+                'Procurement Route':String(rec.procurementRoute || ''),
+                'Rationale / Review Note':String(rec.note || ''),
+                'Decision Status':'AWAITING DECISION'
+            }));
+        });
+
+        const readyMembers = memberReadiness.filter(row=>row.readinessStatus==='READY FOR REVIEW').length;
+        const missingMembers = memberReadiness.filter(row=>row.readinessStatus==='MISSING DATA').length;
+        const clearUpgradeCount = equipmentActionRows.filter(row=>String(row['Action Type']).includes('CLEAR')).length;
+        const dashboardRows = [
+            { Section:'READINESS', Signal:'Readiness coverage', Current:readyMembers + '/' + memberReadiness.length, Status:missingMembers ? 'ACTION' : 'READY', 'Leader / Manager Interpretation':missingMembers + ' member(s) still missing readiness data.' },
+            { Section:'READINESS', Signal:'Inventory snapshot age (hours)', Current:sourceAgeHours === '' ? '' : Number(sourceAgeHours.toFixed(1)), Status:sourceAgeHours === '' ? 'MISSING' : Number(sourceAgeHours) > 2 ? 'STALE REVIEW' : 'CURRENT', 'Leader / Manager Interpretation':'Refresh before time-sensitive allocation decisions.' },
+            { Section:'LOANS', Signal:'Loan exposure', Current:totalLoaned, Status:manager.loans.length ? 'MONITOR' : 'CLEAR', 'Leader / Manager Interpretation':manager.loans.length + ' item/member loan row(s).' },
+            { Section:'PLANNING', Signal:'Configured planning targets', Current:manager.configured.length, Status:manager.configured.length ? 'ACTIVE' : 'DECISION REQUIRED', 'Leader / Manager Interpretation':'Restock shortfalls are not meaningful until targets/reserves are approved.' },
+            { Section:'DECISIONS', Signal:'Open leadership decisions', Current:questionRows.length, Status:'DECISION REQUIRED', 'Leader / Manager Interpretation':'Reply using D01–D' + String(Math.max(questionRows.length,1)).padStart(2,'0') + '.' },
+            { Section:'HISTORY', Signal:'Observed history days', Current:Number(manager.report.observedDays || 0).toFixed(1), Status:manager.report.observedDays >= 7 ? 'MATURE WEEK' : 'COLLECTING HISTORY', 'Leader / Manager Interpretation':'Target setting becomes stronger with a longer usage baseline.' },
+            { Section:'EQUIPMENT', Signal:'Clear equipment upgrades', Current:clearUpgradeCount, Status:clearUpgradeCount ? 'REVIEW / APPROVE' : 'NONE', 'Leader / Manager Interpretation':'Review Equipment Actions for per-member candidate, acquisition, and rationale.' }
+        ];
+        for (const row of questionRows) {
+            dashboardRows.push({
+                Section:'DECISION',
+                Signal:row['Decision ID'] + ' · ' + row.Area,
+                Current:row.Priority,
+                Status:row['Decision Status'],
+                'Leader / Manager Interpretation':row['Decision Needed'] + ' Manager proposal: ' + row['Manager Proposal / Structure']
+            });
+        }
+
+        const managerFollowUpRows = questionRows.map(row=>({
+            'Decision ID':row['Decision ID'],
+            'Area':row.Area,
+            'Leader Decision':'',
+            'Manager Assessment':'',
+            'Next Action':'',
+            'Owner':'',
+            'Due Date':'',
+            'Follow-Up Status':'AWAITING LEADER'
+        }));
         const assumptionRows = [
             { Topic:'Faction / position', Value:FACTION_INVENTORY_POLICY.faction + ' — ' + FACTION_INVENTORY_POLICY.position + ' — appointed ' + FACTION_INVENTORY_POLICY.appointee, Classification:'OFFICIAL INDUCTION' },
             { Topic:'Objective', Value:FACTION_INVENTORY_POLICY.objective, Classification:'OFFICIAL INDUCTION' },
@@ -11222,42 +11335,50 @@
         ];
         const makeDoc=(filename,rows)=>({filename,headers:rows.length?Object.keys(rows[0]):[],rows});
         return {
+            dashboard:makeDoc('Faction_Leadership_Dashboard.csv',dashboardRows),
+            questions:makeDoc('Faction_Leadership_Decisions.csv',questionRows),
+            managerFollowUp:makeDoc('Faction_Manager_Follow_Up.csv',managerFollowUpRows),
             summary:makeDoc('Faction_Executive_Summary.csv',summaryRows),
-            inventory:makeDoc('Faction_Current_Inventory.csv',inventoryRows),
-            restock:makeDoc('Faction_Restock_Plan.csv',restockRows),
-            loans:makeDoc('Faction_Loans.csv',loanRows),
-            logistics:makeDoc('Faction_Logistics_Ledger.csv',logisticsRows),
-            movement:makeDoc('Faction_7d_Movement.csv',movementRows),
-            plan:makeDoc('Faction_Operating_Plan.csv',planRows),
-            questions:makeDoc('Faction_Leadership_Questions.csv',questionRows),
-            assumptions:makeDoc('Faction_Data_Assumptions.csv',assumptionRows),
-            memberReadiness:makeDoc('Faction_Member_Readiness.csv',memberReadinessRows),
-            battleStats:makeDoc('Faction_Battle_Stats.csv',battleStatRows),
-            currentEquipment:makeDoc('Faction_Current_Equipment.csv',equipmentRows),
+            equipmentActions:makeDoc('Faction_Equipment_Actions.csv',equipmentActionRows),
             armoryAllocation:makeDoc('Faction_Armory_Allocation.csv',armoryAllocationRows),
+            loanExposure:makeDoc('Faction_Loan_Exposure.csv',loanExposureRows),
             missingMemberData:makeDoc('Faction_Missing_Member_Data.csv',missingRows),
-            warPrep:makeDoc('Faction_War_Prep_Checklist.csv',warPrepRows)
+            memberReadiness:makeDoc('Faction_Member_Readiness.csv',memberReadinessRows),
+            warPrep:makeDoc('Faction_War_Prep_Checklist.csv',warPrepRows),
+            loans:makeDoc('Faction_Loans.csv',loanRows),
+            inventory:makeDoc('Faction_Current_Inventory.csv',inventoryRows),
+            movement:makeDoc('Faction_7d_Movement.csv',movementRows),
+            restock:makeDoc('Faction_Restock_Plan.csv',restockRows),
+            plan:makeDoc('Faction_Operating_Plan.csv',planRows),
+            logistics:makeDoc('Faction_Logistics_Ledger.csv',logisticsRows),
+            assumptions:makeDoc('Faction_Data_Assumptions.csv',assumptionRows),
+            battleStats:makeDoc('Faction_Battle_Stats.csv',battleStatRows),
+            currentEquipment:makeDoc('Faction_Current_Equipment.csv',equipmentRows)
         };
     }
 
     function buildFactionInventoryXlsx(db) {
         const docs = factionInventoryExportDocuments(db);
         return buildXlsxWorkbook([
+            ['Leadership Dashboard',docs.dashboard],
+            ['Leadership Decisions',docs.questions],
+            ['Manager Follow-Up',docs.managerFollowUp],
             ['Executive Summary',docs.summary],
-            ['Current Inventory',docs.inventory],
-            ['Restock Plan',docs.restock],
-            ['Loans',docs.loans],
-            ['Logistics Ledger',docs.logistics],
-            ['7d Movement',docs.movement],
-            ['Operating Plan',docs.plan],
-            ['Leadership Questions',docs.questions],
-            ['Data Assumptions',docs.assumptions],
-            ['Member Readiness',docs.memberReadiness],
-            ['Battle Stats',docs.battleStats],
-            ['Current Equipment',docs.currentEquipment],
+            ['Equipment Actions',docs.equipmentActions],
             ['Armory Allocation',docs.armoryAllocation],
+            ['Loan Exposure',docs.loanExposure],
             ['Missing Member Data',docs.missingMemberData],
-            ['War Prep Checklist',docs.warPrep]
+            ['Member Readiness',docs.memberReadiness],
+            ['War Prep Checklist',docs.warPrep],
+            ['Loans',docs.loans],
+            ['Current Inventory',docs.inventory],
+            ['7d Movement',docs.movement],
+            ['Restock Plan',docs.restock],
+            ['Operating Plan',docs.plan],
+            ['Logistics Ledger',docs.logistics],
+            ['Data Assumptions',docs.assumptions],
+            ['Battle Stats',docs.battleStats],
+            ['Current Equipment',docs.currentEquipment]
         ]);
     }
 
