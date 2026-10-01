@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.7
+// @version      7.4.8
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.7';
+    const VERSION = '7.4.8';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -9244,6 +9244,8 @@
             current: newState.current && typeof newState.current === 'object' ? newState.current : {},
             snapshots: Array.isArray(newState.snapshots) ? newState.snapshots : [],
             events: Array.isArray(newState.events) ? newState.events : [],
+            logisticsLedger: Array.isArray(newState.logisticsLedger) ? newState.logisticsLedger : [],
+            memberReadiness: newState.memberReadiness && typeof newState.memberReadiness === 'object' ? newState.memberReadiness : {},
             thresholds: newState.thresholds && typeof newState.thresholds === 'object' ? newState.thresholds : {},
             inventoryTimestamp: newState.inventoryTimestamp || null,
             lastSyncAt: newState.lastSyncAt || null,
@@ -9312,6 +9314,71 @@
         out.diagnostics = [...diagnosticMap.values()]
             .sort((a,b) => (Date.parse(b.at||'')||0) - (Date.parse(a.at||'')||0))
             .slice(0,40);
+
+        // Logistics ledger is append-only operational evidence. Merge by durable ID so
+        // a stale tab cannot erase entries recorded in another tab.
+        const logisticsMap = new Map();
+        for (const row of [...(oldState.logisticsLedger || []), ...(out.logisticsLedger || [])]) {
+            if (!row || typeof row !== 'object') continue;
+            const key = String(row.id || [row.at,row.action,row.itemId,row.memberId,row.quantity].join('|'));
+            if (!key) continue;
+            const prior = logisticsMap.get(key);
+            const priorAt = Date.parse(prior?.at || '') || 0;
+            const rowAt = Date.parse(row.at || '') || 0;
+            if (!prior || rowAt >= priorAt) logisticsMap.set(key, deepClone(row));
+        }
+        out.logisticsLedger = [...logisticsMap.values()]
+            .sort((a,b) => (Date.parse(a.at||'')||0) - (Date.parse(b.at||'')||0))
+            .slice(-5000);
+
+        // Member readiness is independent of inventory snapshots and must survive
+        // roster/inventory refreshes and cross-tab persistence merges.
+        const oldReady = oldState.memberReadiness && typeof oldState.memberReadiness === 'object' ? oldState.memberReadiness : {};
+        const newReady = out.memberReadiness && typeof out.memberReadiness === 'object' ? out.memberReadiness : {};
+        const mergedReady = {
+            roster:{},
+            profiles:{},
+            lastRosterSyncAt:newReady.lastRosterSyncAt || oldReady.lastRosterSyncAt || null,
+            diagnostics:[],
+            settings:{ ...(oldReady.settings || {}), ...(newReady.settings || {}) }
+        };
+
+        const oldRosterAt = Date.parse(oldReady.lastRosterSyncAt || '') || 0;
+        const newRosterAt = Date.parse(newReady.lastRosterSyncAt || '') || 0;
+        mergedReady.roster = deepClone(
+            newRosterAt >= oldRosterAt
+                ? (newReady.roster || oldReady.roster || {})
+                : (oldReady.roster || newReady.roster || {})
+        );
+        mergedReady.lastRosterSyncAt = newRosterAt >= oldRosterAt
+            ? (newReady.lastRosterSyncAt || oldReady.lastRosterSyncAt || null)
+            : (oldReady.lastRosterSyncAt || newReady.lastRosterSyncAt || null);
+
+        const profileIds = new Set([
+            ...Object.keys(oldReady.profiles || {}),
+            ...Object.keys(newReady.profiles || {})
+        ]);
+        for (const id of profileIds) {
+            const oldProfile = oldReady.profiles?.[id];
+            const newProfile = newReady.profiles?.[id];
+            if (!oldProfile) { mergedReady.profiles[id] = deepClone(newProfile); continue; }
+            if (!newProfile) { mergedReady.profiles[id] = deepClone(oldProfile); continue; }
+            const oldAt = Date.parse(oldProfile.verifiedAt || oldProfile.updatedAt || '') || 0;
+            const newAt = Date.parse(newProfile.verifiedAt || newProfile.updatedAt || '') || 0;
+            mergedReady.profiles[id] = deepClone(newAt >= oldAt ? newProfile : oldProfile);
+        }
+
+        const readyDiagMap = new Map();
+        for (const d of [...(oldReady.diagnostics || []), ...(newReady.diagnostics || [])]) {
+            if (!d || typeof d !== 'object') continue;
+            const key = String(d.at || '') + '|' + String(d.message || d.text || '');
+            readyDiagMap.set(key, deepClone(d));
+        }
+        mergedReady.diagnostics = [...readyDiagMap.values()]
+            .sort((a,b) => (Date.parse(b.at||'')||0) - (Date.parse(a.at||'')||0))
+            .slice(-40);
+
+        out.memberReadiness = mergedReady;
 
         return out;
     }
