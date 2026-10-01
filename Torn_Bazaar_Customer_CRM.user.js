@@ -9729,22 +9729,67 @@
 
     function factionInventoryReferencePrice(db, itemId) {
         const id = asId(itemId);
+        const cutoff = Date.now() - 7 * 86400000;
+        const history = Array.isArray(db.procurement?.marketHistory?.[id]) ? db.procurement.marketHistory[id] : [];
+        const values = [];
+        for (const row of history) {
+            const at = Date.parse(row?.at || '') || 0;
+            if (at < cutoff) continue;
+            const itemMarket = Number(row?.itemMarketLowest || 0);
+            const bazaar = Number(row?.bazaarLowest || 0);
+            if (itemMarket > 0) values.push(itemMarket);
+            if (bazaar > 0) values.push(bazaar);
+        }
+        if (values.length) {
+            const price = Math.round(values.reduce((sum,value)=>sum+value,0) / values.length);
+            return {
+                price,
+                source:'7d Item Market/Bazaar avg ('+values.length+' sample'+(values.length===1?'':'s')+')',
+                baselineReady: history.filter(row => (Date.parse(row?.at || '') || 0) >= cutoff).length >= 2,
+                maxAuthorizedPrice:Math.round(price * (1 + FACTION_PRICE_PREMIUM_CAP_PCT / 100)),
+                sampleCount:values.length
+            };
+        }
+
         const snapshot = db.procurement?.marketSnapshots?.[id] || {};
         const live = [
-            ['Bazaar', Number(snapshot?.bazaar?.lowest || 0)],
-            ['Item Market', Number(snapshot?.itemMarket?.lowest || 0)]
+            ['Bazaar current fallback', Number(snapshot?.bazaar?.lowest || 0)],
+            ['Item Market current fallback', Number(snapshot?.itemMarket?.lowest || 0)]
         ].filter(([,price]) => price > 0).sort((a,b) => a[1] - b[1]);
-        if (live.length) return { price: live[0][1], source: live[0][0] };
+        if (live.length) {
+            const price=live[0][1];
+            return { price, source:live[0][0]+' — 7d baseline immature', baselineReady:false, maxAuthorizedPrice:Math.round(price*(1+FACTION_PRICE_PREMIUM_CAP_PCT/100)), sampleCount:0 };
+        }
 
         const global = db.marketIntel?.marketplace?.[id] || {};
         const candidates = [
-            ['TornW3B lowest', Number(global.lowestPrice || 0)],
-            ['TornW3B market', Number(global.marketPrice || 0)],
-            ['TornW3B bazaar avg', Number(global.bazaarAverage || 0)],
-            ['Torn catalog', Number(db.procurement?.catalog?.[id]?.marketValue || 0)]
+            ['TornW3B bazaar avg fallback', Number(global.bazaarAverage || 0)],
+            ['TornW3B lowest fallback', Number(global.lowestPrice || 0)],
+            ['TornW3B market fallback', Number(global.marketPrice || 0)],
+            ['Torn catalog fallback', Number(db.procurement?.catalog?.[id]?.marketValue || 0)]
         ];
         const found = candidates.find(([,price]) => price > 0);
-        return found ? { price: found[1], source: found[0] } : { price: 0, source: 'Unavailable' };
+        if (!found) return { price:0, source:'Unavailable', baselineReady:false, maxAuthorizedPrice:0, sampleCount:0 };
+        return {
+            price:found[1],
+            source:found[0]+' — 7d baseline immature',
+            baselineReady:false,
+            maxAuthorizedPrice:Math.round(found[1]*(1+FACTION_PRICE_PREMIUM_CAP_PCT/100)),
+            sampleCount:0
+        };
+    }
+
+    function factionSpendLast7d(db) {
+        const cutoff = Date.now() - 7 * 86400000;
+        const ledger = Array.isArray(db.factionInventory?.logisticsLedger) ? db.factionInventory.logisticsLedger : [];
+        const rows = ledger.filter(row => {
+            const at = Date.parse(row?.at || '') || 0;
+            return at >= cutoff && Number(row?.totalCost || 0) > 0;
+        });
+        return {
+            amount:rows.reduce((sum,row)=>sum+Number(row.totalCost||0),0),
+            rows:rows.length
+        };
     }
 
     function factionInventoryThresholdState(db, item) {
@@ -9813,6 +9858,9 @@
                 threshold,
                 referencePrice: price.price,
                 priceSource: price.source,
+                priceBaselineReady:Boolean(price.baselineReady),
+                maxAuthorizedPrice:Number(price.maxAuthorizedPrice || 0),
+                priceSampleCount:Number(price.sampleCount || 0),
                 estimatedRestockCost: threshold.shortfall * price.price
             };
         }).sort((a,b) => {
@@ -11317,7 +11365,8 @@
             'Owned':Number(row.amountOwned||0), 'Available':Number(row.availableCount||0), 'Loaned':Number(row.loanedCount||0),
             'Planning Basis':String(row.threshold?.basis||''), 'Planning Current':Number(row.threshold?.current||0),
             'Target':Number(row.threshold?.target||0), 'Shortfall':Number(row.threshold?.shortfall||0), 'Status':String(row.threshold?.status||'UNSET'),
-            'Reference Price':Number(row.referencePrice||0), 'Price Source':String(row.priceSource||''), 'Estimated Restock Cost':Number(row.estimatedRestockCost||0),
+            'Reference Price':Number(row.referencePrice||0), 'Price Source':String(row.priceSource||''), '7d Baseline Ready':row.priceBaselineReady?'YES':'NO',
+            '5% Authorized Price Cap':Number(row.maxAuthorizedPrice||0), 'Estimated Restock Cost':Number(row.estimatedRestockCost||0),
             'Loan Members':(row.loans||[]).map(x=>String(x.memberName||x.memberId||'')).join(' | '),
             'Source Snapshot':String(state.inventoryTimestamp||''), 'Last Fetch':String(state.lastSyncAt||'')
         }));
@@ -11325,8 +11374,10 @@
             'Priority':index+1, 'Status':String(row.threshold.status||''), 'Category':String(row.category||''), 'Item ID':asId(row.itemId), 'Item':String(row.name||''),
             'Current':Number(row.threshold.current||0), 'Basis':String(row.threshold.basis||''), 'Target':Number(row.threshold.target||0),
             'Shortfall':Number(row.threshold.shortfall||0), 'Reference Price':Number(row.referencePrice||0), 'Price Source':String(row.priceSource||''),
+            '7d Baseline Ready':row.priceBaselineReady?'YES':'NO', '5% Authorized Price Cap':Number(row.maxAuthorizedPrice||0),
             'Estimated Cost':Number(row.estimatedRestockCost||0),
-            'Action':'Source ' + Number(row.threshold.shortfall||0) + ' unit(s) within approved budget/price guardrails; leadership approval still governs spending.'
+            'Purchase Authority':Number(row.estimatedRestockCost||0) > FACTION_PURCHASE_TRANSACTION_LIMIT ? 'LEADERSHIP/BANKER APPROVAL REQUIRED' : 'WITHIN PER-TRANSACTION LIMIT',
+            'Action':'Source ' + Number(row.threshold.shortfall||0) + ' unit(s). Use the 7-day market/bazaar average as baseline; urgent price may not exceed the 5% cap without separate approval.'
         }));
         const loanRows = manager.loans.map(row=>({
             'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Category':String(row.category||''), 'Item ID':asId(row.itemId), 'Item':String(row.name||''),
@@ -11471,6 +11522,7 @@
             { Section:'LOANS', Signal:'Loan exposure', Current:totalLoaned, Status:manager.loans.some(row=>row.followUpStatus==='ESCALATE — LEADERSHIP + SUPERVISOR') ? 'ESCALATE' : manager.loans.some(row=>row.followUpStatus!=='ROUTINE') ? 'ACTION' : manager.loans.length ? 'MONITOR' : 'CLEAR', 'Leader / Manager Interpretation':manager.loans.length + ' item/member loan row(s); policy is 7d reminder / 10d final warning / 14d escalation.' },
             { Section:'PLANNING', Signal:'Provisional war baseline', Current:baseline.belowTarget + ' below target / ' + baseline.dataRequired + ' data-required', Status:baseline.belowTarget ? 'ACTION' : baseline.dataRequired ? 'DATA REQUIRED' : 'READY', 'Leader / Manager Interpretation':'Leadership authorized provisional targets; formal sign-off is required before the next Ranked War.' },
             { Section:'AUTHORITY', Signal:'Routine purchase authority', Current:money(FACTION_PURCHASE_TRANSACTION_LIMIT) + ' txn / ' + money(FACTION_PURCHASE_WEEKLY_LIMIT) + ' week', Status:'AUTHORIZED', 'Leader / Manager Interpretation':'Routine replenishment only; single purchases above the per-transaction limit require Leadership or Banker approval.' },
+            { Section:'AUTHORITY', Signal:'Tracked spend — last 7d', Current:money(factionSpendLast7d(db).amount), Status:factionSpendLast7d(db).amount > FACTION_PURCHASE_WEEKLY_LIMIT ? 'WEEKLY LIMIT EXCEEDED' : 'WITHIN WEEKLY LIMIT', 'Leader / Manager Interpretation':factionSpendLast7d(db).rows+' ledger purchase row(s) with recorded cost in the last 7 days.' },
             { Section:'PRICING', Signal:'Emergency premium cap', Current:FACTION_PRICE_PREMIUM_CAP_PCT + '%', Status:'AUTHORIZED', 'Leader / Manager Interpretation':'Use 7-day Item Market/Bazaar average; >5% premium requires separate approval.' },
             { Section:'POLICY', Signal:'Open policy decisions', Current:0, Status:'AUTHORIZED', 'Leader / Manager Interpretation':'D01–D07 answered. Preferred external partner names remain a pending dependency.' },
             { Section:'DEPENDENCY', Signal:'Preferred supplier names', Current:manager.questions.length, Status:manager.questions.length ? 'WAITING — LEADERSHIP' : 'COMPLETE', 'Leader / Manager Interpretation':manager.questions.length ? manager.questions[0].decision : 'Preferred supplier register complete.' },
@@ -12050,7 +12102,8 @@
                     '</div>'+
                     '<div style="color:#bbb;margin-top:4px;">Owned <b>'+Number(row.amountOwned||0).toLocaleString()+'</b> · Available <b>'+Number(row.availableCount||0).toLocaleString()+'</b>'+loanSummary+uidText+'<br>'+
                     'Planning metric '+escapeHtml(t.basis)+': '+t.current.toLocaleString()+(t.target>0?' / '+t.target.toLocaleString()+' · Shortfall '+t.shortfall.toLocaleString():' · target not set')+'<br>'+
-                    'Market reference (advisory): '+(row.referencePrice?money(row.referencePrice)+' · '+escapeHtml(row.priceSource):'—')+
+                    'Policy price reference: '+(row.referencePrice?money(row.referencePrice)+' · '+escapeHtml(row.priceSource):'—')+
+                    (row.maxAuthorizedPrice?' · +5% ceiling <b>'+money(row.maxAuthorizedPrice)+'</b>':'')+
                     (t.shortfall&&row.referencePrice?' · Planning estimate <b>'+money(row.estimatedRestockCost)+'</b>':'')+
                     '</div>'+
                     (row.loans.length ? '<details style="margin-top:4px;"><summary style="cursor:pointer;color:#aaa;">Loan details</summary><div style="margin-top:3px;">'+
