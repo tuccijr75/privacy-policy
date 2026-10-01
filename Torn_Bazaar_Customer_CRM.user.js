@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.2
+// @version      7.4.3
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.2';
+    const VERSION = '7.4.3';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -9803,11 +9803,27 @@
             const status = raw?.status && typeof raw.status === 'object'
                 ? String(raw.status.state || raw.status.description || raw.status.color || '')
                 : String(raw?.status || '');
+            const memberName = [
+                raw?.name,
+                raw?.player_name,
+                raw?.username,
+                raw?.user_name,
+                raw?.user?.name,
+                raw?.player?.name,
+                raw?.profile?.name
+            ].map(v=>String(v ?? '').trim()).find(Boolean) || id;
+            const position = [
+                raw?.position,
+                raw?.role,
+                raw?.position_name,
+                raw?.faction_position,
+                raw?.user?.position
+            ].map(v=>String(v ?? '').trim()).find(Boolean) || '';
             return {
                 memberId:id,
-                memberName:String(raw?.name ?? raw?.player_name ?? raw?.user?.name ?? id),
-                level:Math.max(0,Number(raw?.level || 0)),
-                position:String(raw?.position || raw?.role || ''),
+                memberName,
+                level:Math.max(0,Number(raw?.level ?? raw?.user?.level ?? 0)),
+                position,
                 status,
                 lastActionAt:Number(raw?.last_action?.timestamp || raw?.last_action?.relative || raw?.lastActionAt || 0) || 0,
                 joinedAt:Number(raw?.joined_at || raw?.joined || 0) || 0,
@@ -9823,6 +9839,23 @@
             const data = await apiRequest('/faction/members', key);
             const rows = factionMembersFromResponse(data);
             if (!rows.length) throw new Error('Faction members response contained no members.');
+
+            // v2 field shapes can vary over time. Resolve only still-anonymous rows through
+            // the existing public/basic lookup, and only when a primary CRM key is present.
+            const unresolved = rows.filter(row => !String(row.memberName||'').trim() || String(row.memberName) === String(row.memberId));
+            if (unresolved.length && getApiKey()) {
+                for (let i = 0; i < unresolved.length; i += 4) {
+                    const batch = unresolved.slice(i,i+4);
+                    const results = await Promise.allSettled(batch.map(row => publicApiRequestV1(row.memberId)));
+                    results.forEach((result,index) => {
+                        if (result.status !== 'fulfilled') return;
+                        const row = batch[index];
+                        const resolved = extractUsernameFromApiPayload(result.value,row.memberId);
+                        if (resolved) row.memberName = resolved;
+                    });
+                }
+            }
+
             const db = dbLoad();
             const readiness = db.factionInventory.memberReadiness;
             const next = {};
