@@ -11133,7 +11133,15 @@
             'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Battle Profile':String(row.statProfile?.label||'UNKNOWN'),
             'Current Equipment':String(row.equipmentSummary||''), 'Current Faction Loans':Number(row.loans||0), 'Candidate / Review Plan':String(row.profile?.optimization?.summary || row.equipmentPlan),
             'Optimization Details':Array.isArray(row.profile?.optimization?.recommendations)
-                ? row.profile.optimization.recommendations.map(x=>[x.kind,x.slot,x.current,x.candidate,x.delta!=null?'Δ '+x.delta:'',x.note].filter(Boolean).join(' · ')).join(' | ')
+                ? row.profile.optimization.recommendations.map(x=>[
+                    x.kind,x.slot,x.current,x.candidate,
+                    x.delta!=null?'Δ '+x.delta:'',
+                    x.acquisition,
+                    x.referencePrice?'Est. '+money(Number(x.referencePrice)):'',
+                    x.priceSource,
+                    x.procurementRoute,
+                    x.note
+                ].filter(Boolean).join(' · ')).join(' | ')
                 : '',
             'Authority':'Candidate planning only; high-value Ranked War allocation remains leadership-controlled.'
         }));
@@ -11156,6 +11164,7 @@
             { Topic:'Purchasing', Value:FACTION_INVENTORY_POLICY.purchasing, Classification:'PARTIAL POLICY' },
             { Topic:'Inventory source', Value:'Torn API v2 faction/inventory; local CRM snapshots retain history.', Classification:'SOURCE' },
             { Topic:'Market references', Value:'Advisory only. Current CRM market evidence may include Item Market, Bazaar observations, TornW3B, or catalog fallback.', Classification:'ADVISORY' },
+            { Topic:'Equipment optimization scope', Value:'Optimization may recommend equipment not currently owned by the faction. Armory availability determines acquisition path, not the target loadout. Missing items are procurement targets using faction-member bazaars first, then trusted/private suppliers, then Item Market.', Classification:'CONFIRMED OPERATING MODEL' },
             { Topic:'Automation boundary', Value:'Read-only manager: no automatic faction item movement, purchase, reimbursement, trade, give, retrieve, or consumption action.', Classification:'CONTROL' }
         ];
         const makeDoc=(filename,rows)=>({filename,headers:rows.length?Object.keys(rows[0]):[],rows});
@@ -11380,7 +11389,10 @@
                               (rec.current?' · Current: '+escapeHtml(rec.current):'')+
                               (rec.candidate?' · Candidate: '+escapeHtml(rec.candidate):'')+
                               (rec.delta!=null && Number(rec.delta)!==0?' · Δ '+escapeHtml(String(rec.delta)):'')+
-                              (rec.available!=null?' · Available '+Number(rec.available):'')+
+                              (rec.acquisition?' · <b>'+escapeHtml(rec.acquisition)+'</b>':'')+
+                              (rec.available!=null && Number(rec.available)>0?' · Available '+Number(rec.available):'')+
+                              (rec.referencePrice?' · Est. '+money(Number(rec.referencePrice))+(rec.priceSource?' ('+escapeHtml(rec.priceSource)+')':''):'')+
+                              (rec.procurementRoute?'<br><span style="color:#999;">Route: '+escapeHtml(rec.procurementRoute)+'</span>':'')+
                               (rec.note?'<br><span style="color:#888;">'+escapeHtml(rec.note)+'</span>':'')+
                               '</div>'
                           ).join('')+
