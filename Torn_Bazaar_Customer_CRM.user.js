@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.12
+// @version      7.4.13
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.12';
+    const VERSION = '7.4.13';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -2208,10 +2208,26 @@
             const id = asId(row.id ?? row.ID ?? row.item_id);
             if (!id) continue;
             const value = row.value || {};
+            const details = row.details && typeof row.details === 'object' ? row.details : {};
+            const stats = row.stats && typeof row.stats === 'object'
+                ? row.stats
+                : (row.base_stats && typeof row.base_stats === 'object' ? row.base_stats : {});
+            const weapon = row.weapon && typeof row.weapon === 'object'
+                ? row.weapon
+                : (details.weapon && typeof details.weapon === 'object' ? details.weapon : {});
+            const armor = row.armor && typeof row.armor === 'object'
+                ? row.armor
+                : (details.armor && typeof details.armor === 'object' ? details.armor : {});
             next[id] = {
                 id,
                 name: String(row.name || row.item_name || `Item ${id}`),
                 type: String(row.type || row.category || ''),
+                subType: String(row.sub_type ?? row.subType ?? weapon.type ?? armor.type ?? ''),
+                category: String(row.category ?? details.category ?? ''),
+                damage: Number(row.damage ?? weapon.damage ?? stats.damage ?? 0) || 0,
+                accuracy: Number(row.accuracy ?? weapon.accuracy ?? stats.accuracy ?? 0) || 0,
+                armor: Number(row.armor_rating ?? armor.rating ?? armor.armor ?? stats.armor ?? stats.protection ?? 0) || 0,
+                quality: Number(row.quality ?? stats.quality ?? 0) || 0,
                 marketValue: Number(value.market_price ?? value.market_value ?? row.market_value ?? row.market_price ?? 0) || 0,
                 vendorBuy: Number(value.buy_price ?? row.buy_price ?? 0) || 0,
                 vendorSell: Number(value.sell_price ?? row.sell_price ?? 0) || 0,
