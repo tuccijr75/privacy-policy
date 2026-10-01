@@ -12296,6 +12296,7 @@
             ).join('')
         );
 
+        const buildBuilder = factionSimpleBuildCard(db);
         const readinessRows = factionMemberReadinessRows(db);
         const readinessStore = state.memberReadiness || {};
         const keyVault = factionMemberKeyVaultSummary();
@@ -12319,7 +12320,7 @@
                         '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
                             '<button data-faction-member-edit="'+escapeHtml(row.memberId)+'" style="'+btn(row.readinessStatus==='READY FOR REVIEW')+'">Edit Readiness</button>'+
                             (row.readinessStatus==='READY FOR REVIEW'
-                                ? '<button data-faction-member-optimize="'+escapeHtml(row.memberId)+'" style="'+btn(true)+'">Optimize Loadout</button>'
+                                ? '<button data-faction-member-optimize="'+escapeHtml(row.memberId)+'" style="'+btn(true)+'">Advanced Compare</button>'
                                 : '')+                            (row.profile?.optimization
                                 ? '<button data-faction-member-message="'+escapeHtml(row.memberId)+'" style="'+btn()+'">Message Plan</button>'
                                 : '')+
@@ -12428,7 +12429,7 @@
                 : '<div style="font-size:11px;color:#888;margin-top:5px;">No in-scope inventory changes recorded yet.</div>')
         );
 
-        return summary + operatingPolicy + managerPlanCard + leadershipQuestionsCard + readinessCard + planning + armory + memberView + weekly + audit;
+        return summary + operatingPolicy + buildBuilder + managerPlanCard + leadershipQuestionsCard + readinessCard + planning + armory + memberView + weekly + audit;
     }
 
     function factionInventorySelfTest() {
@@ -14814,6 +14815,24 @@
         root.querySelector('#mm-faction-export')?.addEventListener('click', () => exportFactionInventoryWorkbook().catch(()=>{}));
         root.querySelector('#mm-faction-war-baseline')?.addEventListener('click', () => applyFactionWarReadinessBaseline());
         root.querySelector('#mm-faction-report-storage')?.addEventListener('click', () => configureFactionReportStorage());
+        root.querySelector('#mm-faction-build-member')?.addEventListener('change', e => {
+            const db=dbLoad();
+            db.factionInventory.settings.buildMemberId=asId(e.currentTarget.value);
+            db.factionInventory.settings.updatedAt=nowIso();
+            dbSave(db);
+            render();
+        });
+        root.querySelector('#mm-faction-build-generate')?.addEventListener('click', () => {
+            const id=asId(root.querySelector('#mm-faction-build-member')?.value || dbLoad().factionInventory?.settings?.buildMemberId || '');
+            generateFactionMemberSimpleBuild(id).catch(()=>{});
+        });
+        root.querySelector('#mm-faction-build-message')?.addEventListener('click', () => {
+            const id=asId(root.querySelector('#mm-faction-build-member')?.value || dbLoad().factionInventory?.settings?.buildMemberId || '');
+            try { composeFactionMemberBuildMessage(id); } catch(error) {
+                statusText='Build message failed: '+(error?.message||String(error));
+                render();
+            }
+        });
         root.querySelector('#mm-faction-followup')?.addEventListener('click', () => openLatestFactionReport());
         root.querySelector('#mm-faction-log')?.addEventListener('click', () => promptFactionLogisticsEntry());
         root.querySelector('#mm-faction-roster-sync')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
