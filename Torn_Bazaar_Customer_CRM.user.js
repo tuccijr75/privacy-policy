@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.3
+// @version      7.4.4
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -27,7 +27,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.3';
+    const VERSION = '7.4.4';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -9840,13 +9840,17 @@
             const rows = factionMembersFromResponse(data);
             if (!rows.length) throw new Error('Faction members response contained no members.');
 
-            // v2 field shapes can vary over time. Resolve only still-anonymous rows through
-            // the existing public/basic lookup, and only when a primary CRM key is present.
+            // Resolve only still-anonymous rows through Torn's public v2 user/basic endpoint.
+            // Use the same compatible key that succeeded for faction data; custom/limited keys
+            // also include public access. This avoids requiring a separate primary CRM key.
             const unresolved = rows.filter(row => !String(row.memberName||'').trim() || String(row.memberName) === String(row.memberId));
-            if (unresolved.length && getApiKey()) {
+            const publicKey = factionInventoryApiKey();
+            if (unresolved.length && publicKey) {
                 for (let i = 0; i < unresolved.length; i += 4) {
                     const batch = unresolved.slice(i,i+4);
-                    const results = await Promise.allSettled(batch.map(row => publicApiRequestV1(row.memberId)));
+                    const results = await Promise.allSettled(batch.map(row =>
+                        apiRequest('/user/' + encodeURIComponent(row.memberId) + '/basic', publicKey)
+                    ));
                     results.forEach((result,index) => {
                         if (result.status !== 'fulfilled') return;
                         const row = batch[index];
