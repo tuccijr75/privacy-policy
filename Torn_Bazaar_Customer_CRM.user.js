@@ -11234,12 +11234,14 @@ function factionSimpleMemberBuild(member, rosterRows, candidateDetails) {
             const targetScore=Number(scoreFn(chosen)||0);
             const currentHasBonus=Boolean(current?.bonuses && Object.keys(current.bonuses||{}).length);
             const requiredFactor=currentHasBonus ? 1.15 : 1.01;
-            const keepCurrent = Boolean(current && currentScore>0 && (!chosen || targetScore <= currentScore * requiredFactor));
-            const item = keepCurrent ? current : chosen;
-            if (!item) return null;
-            const available=keepCurrent ? 0 : Number(chosen?.available||0);
-            const decision=keepCurrent ? 'KEEP' : (current ? 'UPGRADE' : 'TARGET');
-            const fulfillment=keepCurrent ? 'OWNED' : (available>0 ? 'AVAILABLE' : 'BUY');
+            const currentComparable=Boolean(current && currentScore>0);
+            const reviewCurrent=Boolean(current && !currentComparable);
+            const keepCurrent=Boolean(currentComparable && (!chosen || targetScore <= currentScore * requiredFactor));
+            const item=reviewCurrent ? (chosen||current) : keepCurrent ? current : chosen;
+            if(!item) return null;
+            const available=(keepCurrent || (reviewCurrent&&!chosen)) ? 0 : Number(chosen?.available||0);
+            const decision=reviewCurrent ? 'REVIEW' : keepCurrent ? 'KEEP' : (current ? 'UPGRADE' : 'TARGET');
+            const fulfillment=(keepCurrent || (reviewCurrent&&!chosen)) ? 'OWNED' : (available>0 ? 'AVAILABLE' : 'BUY');
             const deltaPct=currentScore>0 && targetScore>0
                 ? ((targetScore/currentScore)-1)*100
                 : null;
@@ -11259,16 +11261,18 @@ function factionSimpleMemberBuild(member, rosterRows, candidateDetails) {
                 quality:Number(item?.quality||0),
                 bonuses:item?.bonuses||null,
                 available,
-                referencePrice:keepCurrent?0:Number(chosen?.referencePrice||0),
-                priceSource:keepCurrent?'':String(chosen?.priceSource||''),
-                upgradeDeltaPct:keepCurrent?0:deltaPct,
-                rationale:keepCurrent
-                    ? (currentHasBonus
-                        ? 'Keep current gear; no materially stronger catalog target clears the bonus-safe threshold.'
-                        : 'Keep current gear; the best catalog target does not beat it.')
-                    : (current
-                        ? 'Upgrade only because the selected game-wide target scores above current equipped gear.'
-                        : 'No current equipped item was available for comparison; this is the best game-wide target found.')
+                referencePrice:(keepCurrent || (reviewCurrent&&!chosen))?0:Number(chosen?.referencePrice||0),
+                priceSource:(keepCurrent || (reviewCurrent&&!chosen))?'':String(chosen?.priceSource||''),
+                upgradeDeltaPct:(keepCurrent||reviewCurrent)?0:deltaPct,
+                rationale:reviewCurrent
+                    ? 'Current item was reported, but comparable combat stats were not available. Review before replacing it.'
+                    : keepCurrent
+                        ? (currentHasBonus
+                            ? 'Keep current gear; no materially stronger catalog target clears the bonus-safe threshold.'
+                            : 'Keep current gear; the best catalog target does not beat it.')
+                        : (current
+                            ? 'Upgrade only because the selected game-wide target scores above current equipped gear.'
+                            : 'No current equipped item was available for comparison; this is the best game-wide target found.')
             };
         };
 
@@ -11314,9 +11318,10 @@ function factionSimpleMemberBuild(member, rosterRows, candidateDetails) {
 
         const keep=result.items.filter(item=>item.decision==='KEEP').length;
         const upgrade=result.items.filter(item=>item.decision==='UPGRADE').length;
+        const review=result.items.filter(item=>item.decision==='REVIEW').length;
         const targets=result.items.filter(item=>item.decision==='TARGET').length;
         result.summary = result.items.length
-            ? keep+' keep · '+upgrade+' upgrade · '+targets+' target'+(targets===1?'':'s')+
+            ? keep+' keep · '+upgrade+' upgrade · '+review+' review · '+targets+' target'+(targets===1?'':'s')+
               (result.currentEquipmentKnown?'':' · current equipment incomplete')
             : 'No weapon or armor candidates are available yet.';
         return result;
@@ -11425,11 +11430,13 @@ function composeFactionMemberBuildMessage(memberId) {
                 ? 'D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0)
                 : item.armor ? 'Armor '+Number(item.armor||0) : '';
             const current=item.currentName ? 'Current: '+item.currentName+' → ' : '';
-            const action=item.decision==='KEEP'
-                ? 'KEEP'
-                : item.fulfillment==='AVAILABLE'
-                    ? 'UPGRADE — AVAILABLE'
-                    : 'UPGRADE — BUY';
+            const action=item.decision==='REVIEW'
+                ? 'REVIEW BEFORE REPLACING'
+                : item.decision==='KEEP'
+                    ? 'KEEP'
+                    : item.fulfillment==='AVAILABLE'
+                        ? 'UPGRADE — AVAILABLE'
+                        : 'UPGRADE — BUY';
             return String(item.slot||'slot').toUpperCase()+': '+current+String(item.name||'')+
                 (stats?' ('+stats+')':'')+' — '+action;
         });
@@ -11437,7 +11444,7 @@ function composeFactionMemberBuildMessage(memberId) {
             String(member.memberName||'Faction member')+',\n\n' +
             'I compared your current equipment against game-wide weapon and armor options using your level and battle-stat profile.\n\n' +
             (lines.length?lines.join('\n'):'No equipment targets are available yet.')+'\n\n' +
-            'KEEP means your current item already meets or beats the available target. BUY means the target is not currently in faction stock.\n\n' +
+            'KEEP means your current item already meets or beats the target. REVIEW means the current item needs a verified stat comparison before replacement. BUY means the target must be acquired.\n\n' +
             '— Manic Mike';
         composeMessage(id,'Faction equipment build',body);
         statusText='Build message prepared for '+String(member.memberName||id)+' ['+id+']; Send remains manual.';
@@ -12997,6 +13004,76 @@ function factionLeadershipReportMessage(db, reportUrl = '') {
         };
         return '<span style="' + (styles[status] || styles.UNSET) + 'padding:2px 6px;border-radius:10px;font-size:10px;font-weight:bold;">' + escapeHtml(status) + '</span>';
     }
+
+function factionSimpleBuildCard(db) {
+        const members=factionMemberReadinessRows(db);
+        const eligible=members.filter(row=>row.hasStats);
+        const selectedId=asId(
+            db.factionInventory?.settings?.buildMemberId ||
+            eligible[0]?.memberId ||
+            members[0]?.memberId ||
+            ''
+        );
+        const selected=members.find(row=>asId(row.memberId)===selectedId) || eligible[0] || members[0] || null;
+        const build=selected?.profile?.simpleBuild || null;
+        const options=members.map(row=>
+            '<option value="'+escapeHtml(row.memberId)+'" '+(asId(row.memberId)===asId(selected?.memberId)?'selected':'')+'>'+
+            escapeHtml(row.memberName)+' · Lv '+Number(row.level||0)+' · '+
+            (row.hasStats?Number(row.statProfile?.total||0).toLocaleString()+' stats':'needs data')+
+            '</option>'
+        ).join('');
+
+        const buildRows=build?.items?.length
+            ? build.items.map(item=>{
+                const stats=item.category==='weapon'
+                    ? 'D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0)
+                    : 'Armor '+Number(item.armor||0);
+                const route=item.decision==='REVIEW'
+                    ? 'REVIEW'
+                    : item.decision==='KEEP'
+                        ? 'KEEP'
+                        : item.fulfillment==='AVAILABLE'
+                            ? 'AVAILABLE'
+                            : 'BUY';
+                const current=item.currentName
+                    ? '<span style="color:#999;">'+escapeHtml(item.currentName)+'</span> → '
+                    : '';
+                return '<div style="display:grid;grid-template-columns:80px minmax(0,1fr) auto;gap:7px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+                    '<b>'+escapeHtml(String(item.slot||'').toUpperCase())+'</b>'+
+                    '<div>'+current+'<b>'+escapeHtml(item.name)+'</b>'+
+                        '<div style="font-size:10px;color:#888;">'+escapeHtml(stats)+
+                        (item.referencePrice?' · ~'+money(item.referencePrice):'')+
+                        (item.rationale?' · '+escapeHtml(item.rationale):'')+
+                        '</div></div>'+
+                    '<b style="white-space:nowrap;">'+escapeHtml(route)+'</b>'+
+                '</div>';
+            }).join('')
+            : '<div style="font-size:11px;color:#888;margin-top:8px;">'+
+                (selected?.hasStats
+                    ? 'Press Build to compare reported current gear against game-wide weapon and armor targets.'
+                    : 'This member needs battle stats before a build can be created.')+
+              '</div>';
+
+        return card(
+            '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
+                '<select id="mm-faction-build-member" style="'+inputCss()+'flex:1;min-width:220px;">'+options+'</select>'+
+                '<button id="mm-faction-build-generate" '+(selected?.hasStats?'':'disabled')+' style="'+btn(Boolean(selected?.hasStats))+'">Build</button>'+
+                '<button id="mm-faction-build-message" '+(build?'':'disabled')+' style="'+btn(Boolean(build))+'">Message</button>'+
+            '</div>'+
+            (selected
+                ? '<div style="font-size:10px;color:#999;margin-top:6px;">'+
+                    escapeHtml(selected.memberName)+' · Lv '+Number(selected.level||0)+
+                    ' · STR '+Number(selected.stats?.strength||0).toLocaleString()+
+                    ' · DEF '+Number(selected.stats?.defense||0).toLocaleString()+
+                    ' · SPD '+Number(selected.stats?.speed||0).toLocaleString()+
+                    ' · DEX '+Number(selected.stats?.dexterity||0).toLocaleString()+
+                    (build?' · '+escapeHtml(build.summary):'')+
+                  '</div>'
+                : '')+
+            buildRows
+        );
+    }
+
 
     
 function factionInventoryHtml(db) {
