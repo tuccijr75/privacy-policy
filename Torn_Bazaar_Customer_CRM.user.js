@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.20
+// @version      7.5.0
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
-// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
-// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
+// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.5-workflow-overhaul/Torn_Bazaar_Customer_CRM.user.js
+// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.5-workflow-overhaul/Torn_Bazaar_Customer_CRM.user.js
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
@@ -29,7 +29,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.20';
+    const VERSION = '7.5.0';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -105,7 +105,7 @@
     const TRAVEL_FEED_KEY = 'mm_bazaar_crm_travel_feed_v1';
     const TRAVEL_RETURN_KEY = 'mm_bazaar_crm_travel_return_v1';
     const TRAVEL_CAPTURE_STATUS_KEY = 'mm_bazaar_crm_travel_capture_status_v1';
-    const CRM_UPDATE_URL = 'https://raw.githubusercontent.com/tuccijr75/privacy-policy/torn-bazaar-crm/Torn_Bazaar_Customer_CRM.user.js';
+    const CRM_UPDATE_URL = 'https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.5-workflow-overhaul/Torn_Bazaar_Customer_CRM.user.js';
     const CRM_UPDATE_STATUS_KEY = 'mm_bazaar_crm_update_status_v1';
 
     const CASHBACK_TIERS = [
@@ -169,8 +169,11 @@
     const ROOT_ID = 'mm-bazaar-crm';
     const LAUNCHER_ID = 'mm-bazaar-crm-launcher';
 
-    let simpleMode = GM_getValue(UI_MODE_KEY, 'simple') !== 'advanced';
-    let activeTab = simpleMode ? 'home' : 'ops';
+    let simpleMode = true;
+    let activeTab = 'home';
+    let customerWorkflow = 'list';
+    let reportWorkflow = 'summary';
+    let factionWorkflow = 'inventory';
     const customerFilters = { message: 'all', contacted: 'all', restock: 'all', cashback: 'all' };
     let statusText = 'Ready.';
     let syncRunning = false;
@@ -5848,7 +5851,7 @@
         };
     }
 
-    async function syncBusinessData({ silent = false, force = false, full = false, includeFaction = true } = {}) {
+    async function syncBusinessData({ silent = false, force = false, full = false, includeFaction = false } = {}) {
         if (unifiedSyncRunning) return { skipped: true, reason: 'running' };
 
         const effectiveForce = Boolean(force || full);
@@ -5985,7 +5988,7 @@
                 result.errors.push('Travel: ' + (error?.message || String(error)));
             }
 
-            if (getFactionApiKey()) {
+            if (includeFaction && getFactionApiKey()) {
                 try {
                     const db = dbLoad();
                     plan = businessRefreshPlan(db, { force: effectiveForce });
@@ -6029,7 +6032,7 @@
     function ensureDataForTab(tab) {
         // Navigation is intentionally read-only. Data refresh occurs only when the
         // operator presses Smart Refresh or a targeted Advanced maintenance action.
-        return ['home','stock','deals','customers','reports'].includes(String(tab || ''));
+        return ['home','stock','deals','customers','faction','reports','settings'].includes(String(tab || ''));
     }
 
 
@@ -9767,6 +9770,23 @@
         }
     }
 
+    async function refreshFactionWorkspace() {
+        if (factionInventoryRunning) return;
+        statusText='Refreshing faction data…';
+        const status=document.getElementById('mm-status');
+        if(status) status.textContent=statusText;
+        const problems=[];
+        try { await syncFactionInventory({silent:true,force:true}); }
+        catch(error){ problems.push('inventory: '+(error?.message||String(error))); }
+        try { await syncFactionMemberRoster({silent:true}); }
+        catch(error){ problems.push('members: '+(error?.message||String(error))); }
+        statusText=problems.length
+            ? 'Faction refresh completed with issues: '+problems.join('; ')
+            : 'Faction data refreshed.';
+        render();
+    }
+
+
     function factionInventoryReferencePrice(db, itemId) {
         const id = asId(itemId);
         const cutoff = Date.now() - 7 * 86400000;
@@ -10735,7 +10755,8 @@
         return { price:0, source:'' };
     }
 
-    function factionGlobalEquipmentCandidates(db) {
+    
+function factionGlobalEquipmentCandidates(db) {
         const catalog=db.procurement?.catalog || {};
         const armoryRows=factionInventoryRows(db);
         const armoryById=new Map(armoryRows.map(row=>[asId(row.itemId),row]));
@@ -10762,9 +10783,9 @@
                 bonuses:null,
                 available,
                 uid:'',
-                source:available>0?'FACTION ARMORY':'GLOBAL CATALOG',
-                acquisition:available>0?'ISSUE FROM ARMORY':'PROCURE',
-                procurementRoute:available>0?'Faction armory':'Faction member bazaar → trusted/private supplier → Item Market',
+                source:available>0?'FACTION STOCK':'GAME CATALOG',
+                acquisition:available>0?'AVAILABLE':'BUY',
+                procurementRoute:available>0?'':'Market / Bazaar',
                 referencePrice:Number(price.price||0),
                 priceSource:String(price.source||'')
             });
@@ -10800,28 +10821,45 @@
         return { damage:0.50, accuracy:0.50, label:'BALANCED' };
     }
 
-    function factionBuildPickCandidate(candidates, scoreFn, tierLabel) {
+    
+function factionBuildPickCandidate(candidates, scoreFn) {
         const rows = (Array.isArray(candidates) ? candidates : [])
             .map(item => ({ item, score:Number(scoreFn(item) || 0) }))
             .filter(row => row.score > 0)
-            .sort((a,b) => b.score-a.score || Number(b.item?.available||0)-Number(a.item?.available||0));
-        if (!rows.length) return null;
-
-        const best = rows[0];
-        const armory = rows
-            .filter(row => Number(row.item?.available || 0) > 0 || String(row.item?.acquisition || '') === 'ISSUE FROM ARMORY')
-            .sort((a,b)=>b.score-a.score || Number(b.item?.available||0)-Number(a.item?.available||0))[0] || null;
-
-        if (tierLabel === 'DEVELOPMENT' && armory) return armory.item;
-        if (tierLabel === 'STANDARD' && armory && armory.score >= best.score * 0.90) return armory.item;
-        return best.item;
+            .sort((a,b) =>
+                b.score-a.score ||
+                Number(b.item?.quality||0)-Number(a.item?.quality||0) ||
+                Number(b.item?.available||0)-Number(a.item?.available||0)
+            );
+        return rows[0]?.item || null;
     }
 
-    function factionSimpleMemberBuild(member, rosterRows, candidateDetails) {
+    
+function factionSimpleMemberBuild(member, rosterRows, candidateDetails) {
         const tier = factionBuildTier(member, rosterRows);
         const bias = factionBuildWeaponBias(member);
         const candidates = (Array.isArray(candidateDetails) ? candidateDetails : [])
             .filter(item => item && typeof item === 'object');
+        const currentItems = Array.isArray(member?.profile?.equipment?.items)
+            ? member.profile.equipment.items.filter(item => item && typeof item === 'object')
+            : [];
+
+        const weaponScore = item =>
+            Number(item?.damage||0) * bias.damage +
+            Number(item?.accuracy||0) * bias.accuracy +
+            Number(item?.quality||0) * 0.02;
+        const armorScore = item =>
+            Number(item?.armor||0) +
+            Number(item?.quality||0) * 0.02;
+
+        const currentForSlot = (category,slot) => currentItems
+            .filter(item => category === 'weapon'
+                ? factionWeaponSlot(item) === slot
+                : factionArmorSlot(item) === slot)
+            .sort((a,b) =>
+                (category === 'weapon' ? weaponScore(b)-weaponScore(a) : armorScore(b)-armorScore(a))
+            )[0] || null;
+
         const result = {
             memberId:asId(member?.memberId),
             memberName:String(member?.memberName || ''),
@@ -10833,10 +10871,54 @@
             tier:tier.label,
             tierScore:Number(tier.composite || 0),
             weaponBias:bias.label,
+            currentEquipmentKnown:currentItems.length>0,
             items:[],
             temporaryPool:[],
-            summary:'',
-            methodology:'Manager heuristic: faction-relative battle-stat percentile carries 75% of build tier and level percentile carries 25%; until at least four members have known stats, tier defaults to Standard. Development builds prefer armory stock; Standard builds prefer armory stock when it is within 90% of the best scored candidate; Advanced builds select the strongest evidence-backed target. Weapon scoring uses the displayed damage/accuracy bias. This is a logistics build recommendation, not a claim of an exact Torn combat formula.'
+            summary:''
+        };
+
+        const buildRow = (slot,category,current,chosen,scoreFn) => {
+            if (!chosen && !current) return null;
+            const currentScore=Number(scoreFn(current)||0);
+            const targetScore=Number(scoreFn(chosen)||0);
+            const currentHasBonus=Boolean(current?.bonuses && Object.keys(current.bonuses||{}).length);
+            const requiredFactor=currentHasBonus ? 1.15 : 1.01;
+            const keepCurrent = Boolean(current && currentScore>0 && (!chosen || targetScore <= currentScore * requiredFactor));
+            const item = keepCurrent ? current : chosen;
+            if (!item) return null;
+            const available=keepCurrent ? 0 : Number(chosen?.available||0);
+            const decision=keepCurrent ? 'KEEP' : (current ? 'UPGRADE' : 'TARGET');
+            const fulfillment=keepCurrent ? 'OWNED' : (available>0 ? 'AVAILABLE' : 'BUY');
+            const deltaPct=currentScore>0 && targetScore>0
+                ? ((targetScore/currentScore)-1)*100
+                : null;
+            return {
+                slot,
+                category,
+                decision,
+                fulfillment,
+                currentName:String(current?.name||''),
+                currentItemId:asId(current?.itemId),
+                currentScore,
+                itemId:asId(item?.itemId),
+                name:String(item?.name||''),
+                damage:Number(item?.damage||0),
+                accuracy:Number(item?.accuracy||0),
+                armor:Number(item?.armor||0),
+                quality:Number(item?.quality||0),
+                bonuses:item?.bonuses||null,
+                available,
+                referencePrice:keepCurrent?0:Number(chosen?.referencePrice||0),
+                priceSource:keepCurrent?'':String(chosen?.priceSource||''),
+                upgradeDeltaPct:keepCurrent?0:deltaPct,
+                rationale:keepCurrent
+                    ? (currentHasBonus
+                        ? 'Keep current gear; no materially stronger catalog target clears the bonus-safe threshold.'
+                        : 'Keep current gear; the best catalog target does not beat it.')
+                    : (current
+                        ? 'Upgrade only because the selected game-wide target scores above current equipped gear.'
+                        : 'No current equipped item was available for comparison; this is the best game-wide target found.')
+            };
         };
 
         const weaponCandidates = candidates.filter(item =>
@@ -10844,112 +10926,74 @@
             (Number(item.damage||0) > 0 || Number(item.accuracy||0) > 0)
         );
         for (const slot of ['primary','secondary','melee']) {
-            const slotRows = weaponCandidates.filter(item => factionWeaponSlot(item) === slot);
             const chosen = factionBuildPickCandidate(
-                slotRows,
-                item => Number(item.damage||0) * bias.damage + Number(item.accuracy||0) * bias.accuracy + Number(item.quality||0) * 0.02,
-                tier.label
+                weaponCandidates.filter(item => factionWeaponSlot(item) === slot),
+                weaponScore
             );
-            if (!chosen) continue;
-            result.items.push({
-                slot,
-                category:'weapon',
-                itemId:asId(chosen.itemId),
-                name:String(chosen.name || ''),
-                damage:Number(chosen.damage||0),
-                accuracy:Number(chosen.accuracy||0),
-                armor:0,
-                quality:Number(chosen.quality||0),
-                available:Number(chosen.available||0),
-                acquisition:String(chosen.acquisition || (Number(chosen.available||0)>0 ? 'ISSUE FROM ARMORY' : 'PROCURE')),
-                procurementRoute:String(chosen.procurementRoute || (Number(chosen.available||0)>0 ? 'Faction armory' : 'Faction member bazaar → trusted/private supplier → Item Market')),
-                referencePrice:Number(chosen.referencePrice||0),
-                priceSource:String(chosen.priceSource||''),
-                rationale:bias.label+' weapon score for '+slot+' slot; '+tier.label+' acquisition policy.'
-            });
+            const row=buildRow(slot,'weapon',currentForSlot('weapon',slot),chosen,weaponScore);
+            if(row) result.items.push(row);
         }
 
-        const armorCandidates = candidates.filter(item => String(item.category || '') === 'armor' && factionArmorSlot(item));
+        const armorCandidates = candidates.filter(item =>
+            String(item.category || '') === 'armor' &&
+            factionArmorSlot(item) &&
+            Number(item.armor||0) > 0
+        );
         for (const slot of ['helmet','body','gloves','pants','boots']) {
-            const slotRows = armorCandidates.filter(item => factionArmorSlot(item) === slot && Number(item.armor||0) > 0);
             const chosen = factionBuildPickCandidate(
-                slotRows,
-                item => Number(item.armor||0) + Number(item.quality||0) * 0.02,
-                tier.label
+                armorCandidates.filter(item => factionArmorSlot(item) === slot),
+                armorScore
             );
-            if (!chosen) continue;
-            result.items.push({
-                slot,
-                category:'armor',
-                itemId:asId(chosen.itemId),
-                name:String(chosen.name || ''),
-                damage:0,
-                accuracy:0,
-                armor:Number(chosen.armor||0),
-                quality:Number(chosen.quality||0),
-                available:Number(chosen.available||0),
-                acquisition:String(chosen.acquisition || (Number(chosen.available||0)>0 ? 'ISSUE FROM ARMORY' : 'PROCURE')),
-                procurementRoute:String(chosen.procurementRoute || (Number(chosen.available||0)>0 ? 'Faction armory' : 'Faction member bazaar → trusted/private supplier → Item Market')),
-                referencePrice:Number(chosen.referencePrice||0),
-                priceSource:String(chosen.priceSource||''),
-                rationale:'Highest evidence-backed armor score for '+slot+' under '+tier.label+' acquisition policy.'
-            });
+            const row=buildRow(slot,'armor',currentForSlot('armor',slot),chosen,armorScore);
+            if(row) result.items.push(row);
         }
 
         const coreTemporaryNames = ['Flash Grenade','Smoke Grenade','Tear Gas','HEG','Grenade','Pepper Spray'];
         const temporaryCandidates = candidates.filter(item => String(item.category || '') === 'temporary');
         result.temporaryPool = coreTemporaryNames.map(name => {
-            const armory = temporaryCandidates
+            const match = temporaryCandidates
                 .filter(item => String(item.name||'').toLowerCase() === name.toLowerCase())
                 .sort((a,b)=>Number(b.available||0)-Number(a.available||0))[0] || null;
             return {
                 name,
-                available:Number(armory?.available||0),
-                acquisition:armory && Number(armory.available||0)>0 ? 'ISSUE FROM ARMORY' : 'PROCURE AS NEEDED'
+                available:Number(match?.available||0),
+                status:match && Number(match.available||0)>0 ? 'AVAILABLE' : 'RESTOCK IF NEEDED'
             };
         });
 
-        const armoryCount = result.items.filter(item=>item.acquisition==='ISSUE FROM ARMORY').length;
-        const procureCount = result.items.filter(item=>item.acquisition!=='ISSUE FROM ARMORY').length;
+        const keep=result.items.filter(item=>item.decision==='KEEP').length;
+        const upgrade=result.items.filter(item=>item.decision==='UPGRADE').length;
+        const targets=result.items.filter(item=>item.decision==='TARGET').length;
         result.summary = result.items.length
-            ? tier.label+' build · '+result.items.length+' equipment slot'+(result.items.length===1?'':'s')+
-              ' · '+armoryCount+' armory · '+procureCount+' procurement.'
-            : 'No evidence-backed weapon/armor candidates are available yet. Sync Weapons/Armor and refresh catalog data.';
+            ? keep+' keep · '+upgrade+' upgrade · '+targets+' target'+(targets===1?'':'s')+
+              (result.currentEquipmentKnown?'':' · current equipment incomplete')
+            : 'No weapon or armor candidates are available yet.';
         return result;
     }
 
-    async function generateFactionMemberSimpleBuild(memberId) {
+    
+async function generateFactionMemberSimpleBuild(memberId) {
         const id = asId(memberId);
         if (!id) throw new Error('Select a faction member first.');
         try {
-            statusText='Building simple level/stat loadout for member '+id+'…';
-            render();
-            await refreshProcurementCatalog(false,factionInventoryApiKey());
+            statusText='Building loadout for member '+id+'…';
+            const status=document.getElementById('mm-status');
+            if(status) status.textContent=statusText;
+
+            const before=dbLoad();
+            const catalogAt=Date.parse(before.procurement?.lastCatalogAt || '') || 0;
+            if (!catalogAt || Date.now()-catalogAt > PROCUREMENT_CATALOG_MAX_AGE_MS) {
+                await refreshProcurementCatalog(false,factionInventoryApiKey());
+            }
+
             const db = dbLoad();
             const rosterRows = factionMemberReadinessRows(db);
             const member = rosterRows.find(row=>asId(row.memberId)===id);
             if (!member) throw new Error('Member is not present in the current faction roster.');
-            if (!member.hasStats) throw new Error('Battle stats are required. Import or refresh this member first.');
+            if (!member.hasStats) throw new Error('Battle stats are required. Update this member first.');
 
-            let armoryDetails = [];
-            try { armoryDetails = await fetchFactionArmoryCandidateDetails(db); }
-            catch (error) {
-                addFactionInventoryDiagnostic(db.factionInventory,'Build Builder armory detail enrichment: '+(error?.message||String(error)));
-            }
-            const db2 = dbLoad();
-            const globalCandidates = factionGlobalEquipmentCandidates(db2);
-            const enrichedArmory = armoryDetails.map(item => {
-                const price=factionProcurementPriceContext(db2,item.itemId,{marketValue:item.referencePrice||0});
-                return {
-                    ...item,
-                    source:'FACTION ARMORY INSTANCE',
-                    acquisition:'ISSUE FROM ARMORY',
-                    procurementRoute:'Faction armory',
-                    referencePrice:Number(price.price||item.referencePrice||0),
-                    priceSource:String(price.source||'Faction market reference')
-                };
-            });
-            const build = factionSimpleMemberBuild(member,rosterRows,[...globalCandidates,...enrichedArmory]);
+            const globalCandidates = factionGlobalEquipmentCandidates(db);
+            const build = factionSimpleMemberBuild(member,rosterRows,globalCandidates);
 
             const latest=dbLoad();
             const profile=latest.factionInventory.memberReadiness.profiles[id] || {};
@@ -10961,47 +11005,34 @@
             dbSave(latest);
             await flushDbWrites();
 
-            statusText='Build created for '+member.memberName+': '+build.summary;
+            statusText='Build ready for '+member.memberName+': '+build.summary;
             render();
             return build;
         } catch(error) {
-            statusText='Build Builder failed: '+(error?.message||String(error));
+            statusText='Build failed: '+(error?.message||String(error));
             render();
             throw error;
         }
     }
 
-    async function generateAllFactionSimpleBuilds() {
+    
+async function generateAllFactionSimpleBuilds() {
         try {
-            statusText='Building simple loadouts for all members with known battle stats…';
-            render();
-            await refreshProcurementCatalog(false,factionInventoryApiKey());
+            statusText='Building member loadouts…';
+            const status=document.getElementById('mm-status');
+            if(status) status.textContent=statusText;
+
+            const before=dbLoad();
+            const catalogAt=Date.parse(before.procurement?.lastCatalogAt || '') || 0;
+            if (!catalogAt || Date.now()-catalogAt > PROCUREMENT_CATALOG_MAX_AGE_MS) {
+                await refreshProcurementCatalog(false,factionInventoryApiKey());
+            }
+
             const db=dbLoad();
             const rosterRows=factionMemberReadinessRows(db);
             const eligible=rosterRows.filter(row=>row.hasStats);
             if(!eligible.length) throw new Error('No faction members have battle stats available yet.');
-
-            let armoryDetails=[];
-            try { armoryDetails=await fetchFactionArmoryCandidateDetails(db); }
-            catch(error) {
-                const diagDb=dbLoad();
-                addFactionInventoryDiagnostic(diagDb.factionInventory,'Build All armory detail enrichment: '+(error?.message||String(error)));
-                dbSave(diagDb);
-            }
-            const db2=dbLoad();
-            const globalCandidates=factionGlobalEquipmentCandidates(db2);
-            const enrichedArmory=armoryDetails.map(item=>{
-                const price=factionProcurementPriceContext(db2,item.itemId,{marketValue:item.referencePrice||0});
-                return {
-                    ...item,
-                    source:'FACTION ARMORY INSTANCE',
-                    acquisition:'ISSUE FROM ARMORY',
-                    procurementRoute:'Faction armory',
-                    referencePrice:Number(price.price||item.referencePrice||0),
-                    priceSource:String(price.source||'Faction market reference')
-                };
-            });
-            const pool=[...globalCandidates,...enrichedArmory];
+            const pool=factionGlobalEquipmentCandidates(db);
             const latest=dbLoad();
             let built=0;
             for(const member of eligible) {
@@ -11019,11 +11050,11 @@
             }
             dbSave(latest);
             await flushDbWrites();
-            statusText='Build All complete: '+built+' member build'+(built===1?'':'s')+' generated from one shared candidate refresh.';
+            statusText='Builds updated for '+built+' member'+(built===1?'':'s')+'.';
             render();
             return {built};
         } catch(error) {
-            statusText='Build All failed: '+(error?.message||String(error));
+            statusText='Builds failed: '+(error?.message||String(error));
             render();
             throw error;
         }
@@ -11058,7 +11089,8 @@
         statusText='Build message prepared for '+String(member.memberName||id)+' ['+id+']; Send remains manual.';
     }
 
-    function factionSimpleBuildCard(db) {
+    
+function factionSimpleBuildCard(db) {
         const members=factionMemberReadinessRows(db);
         const eligible=members.filter(row=>row.hasStats);
         const selectedId=asId(db.factionInventory?.settings?.buildMemberId || eligible[0]?.memberId || members[0]?.memberId || '');
@@ -11066,45 +11098,46 @@
         const build=selected?.profile?.simpleBuild || null;
         const options=members.map(row =>
             '<option value="'+escapeHtml(row.memberId)+'" '+(asId(row.memberId)===asId(selected?.memberId)?'selected':'')+'>'+
-            escapeHtml(row.memberName)+' · Lv '+Number(row.level||0)+' · '+(row.hasStats?Number(row.statProfile?.total||0).toLocaleString()+' stats':'stats missing')+
+            escapeHtml(row.memberName)+' · Lv '+Number(row.level||0)+' · '+(row.hasStats?Number(row.statProfile?.total||0).toLocaleString()+' stats':'needs data')+
             '</option>'
         ).join('');
         const buildRows=build?.items?.length
-            ? build.items.map(item =>
-                '<div style="border-top:1px solid #303030;padding:5px 0;font-size:10px;">'+
-                    '<b>'+escapeHtml(String(item.slot||'').toUpperCase())+'</b> · '+escapeHtml(item.name)+
-                    (item.category==='weapon'?' · D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0):item.armor?' · Armor '+Number(item.armor||0):'')+
-                    ' · <b>'+escapeHtml(item.acquisition)+'</b>'+
-                    (item.available?' · '+Number(item.available)+' available':'')+
-                    (item.referencePrice?' · Est. '+money(item.referencePrice):'')+
-                    '<br><span style="color:#888;">'+escapeHtml(item.rationale||'')+'</span>'+
-                '</div>'
-              ).join('')
-            : '<div style="font-size:10px;color:#888;margin-top:6px;">'+
-                (selected?.hasStats ? 'Select the member and click Generate Build.' : 'This member needs battle stats before a build can be generated.')+
+            ? build.items.map(item => {
+                const stats=item.category==='weapon'
+                    ? 'D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0)
+                    : 'Armor '+Number(item.armor||0);
+                const route=item.decision==='KEEP'
+                    ? 'KEEP'
+                    : item.fulfillment==='AVAILABLE'
+                        ? 'AVAILABLE'
+                        : 'BUY';
+                const current=item.currentName
+                    ? '<span style="color:#999;">'+escapeHtml(item.currentName)+'</span> → '
+                    : '';
+                return '<div style="display:grid;grid-template-columns:80px 1fr auto;gap:7px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+                    '<b>'+escapeHtml(String(item.slot||'').toUpperCase())+'</b>'+
+                    '<div>'+current+'<b>'+escapeHtml(item.name)+'</b><div style="font-size:10px;color:#888;">'+escapeHtml(stats)+
+                    (item.referencePrice?' · ~'+money(item.referencePrice):'')+'</div></div>'+
+                    '<b style="white-space:nowrap;">'+escapeHtml(route)+'</b>'+
+                '</div>';
+              }).join('')
+            : '<div style="font-size:11px;color:#888;margin-top:8px;">'+
+                (selected?.hasStats ? 'Press Build to compare current gear against game-wide weapon and armor options.' : 'This member needs battle stats before a build can be created.')+
               '</div>';
         return card(
-            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-                '<div><b>Simple Member Build Builder</b><div style="font-size:10px;color:#888;margin-top:2px;">Pick a member → Generate Build. Uses level + battle stats. Current equipped gear is not required.</div></div>'+
-                '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
-                    '<select id="mm-faction-build-member" style="'+inputCss()+'min-width:220px;">'+options+'</select>'+
-                    '<button id="mm-faction-build-generate" '+(selected?.hasStats?'':'disabled')+' style="'+btn(Boolean(selected?.hasStats))+'">Generate Build</button>'+
-                    '<button id="mm-faction-build-all" '+(eligible.length?'':'disabled')+' style="'+btn(Boolean(eligible.length))+'">Build All Known</button>'+
-                    '<button id="mm-faction-build-message" '+(build?'':'disabled')+' style="'+btn(Boolean(build))+'">Message Build</button>'+
-                '</div>'+
+            '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
+                '<select id="mm-faction-build-member" style="'+inputCss()+'flex:1;min-width:220px;">'+options+'</select>'+
+                '<button id="mm-faction-build-generate" '+(selected?.hasStats?'':'disabled')+' style="'+btn(Boolean(selected?.hasStats))+'">Build</button>'+
+                '<button id="mm-faction-build-message" '+(build?'':'disabled')+' style="'+btn(Boolean(build))+'">Message</button>'+
             '</div>'+
-            (selected ? '<div style="font-size:11px;color:#bbb;margin-top:7px;"><b>'+escapeHtml(selected.memberName)+'</b> · Lv '+Number(selected.level||0)+
+            (selected ? '<div style="font-size:10px;color:#999;margin-top:6px;">'+escapeHtml(selected.memberName)+' · Lv '+Number(selected.level||0)+
                 ' · STR '+Number(selected.stats?.strength||0).toLocaleString()+
                 ' · DEF '+Number(selected.stats?.defense||0).toLocaleString()+
                 ' · SPD '+Number(selected.stats?.speed||0).toLocaleString()+
                 ' · DEX '+Number(selected.stats?.dexterity||0).toLocaleString()+
-                ' · <b>'+escapeHtml(selected.statProfile?.label||'UNKNOWN')+'</b>'+
-                (build?' · Build <b>'+escapeHtml(build.tier)+'</b> / '+escapeHtml(build.weaponBias):'')+
-              '</div>' : '<div style="font-size:10px;color:#888;margin-top:6px;">Sync the roster first.</div>')+
-            buildRows+
-            (build?.temporaryPool?.length ? '<div style="border-top:1px solid #303030;margin-top:6px;padding-top:6px;font-size:10px;"><b>Temporary pool:</b> '+
-                build.temporaryPool.map(item=>escapeHtml(item.name)+' — '+escapeHtml(item.acquisition)).join(' · ')+'</div>' : '')+
-            (build ? '<div style="font-size:9px;color:#777;margin-top:6px;">'+escapeHtml(build.methodology||'')+'</div>' : '')
+                (build?' · '+escapeHtml(build.summary):'')+
+              '</div>' : '')+
+            buildRows
         );
     }
 
@@ -12673,274 +12706,76 @@
         return '<span style="' + (styles[status] || styles.UNSET) + 'padding:2px 6px;border-radius:10px;font-size:10px;font-weight:bold;">' + escapeHtml(status) + '</span>';
     }
 
-    function factionInventoryHtml(db) {
-        const state = db.factionInventory;
-        const allRows = factionInventoryRows(db);
-        const selectedCategory = String(state.settings?.selectedCategory || 'all');
-        const rows = selectedCategory === 'all' ? allRows : allRows.filter(row => row.category === selectedCategory);
-        const loans = factionLoanMemberRows(db);
-        const loanReview = factionLoanPersistenceRows(db);
-        const loanAgeMap = new Map(loanReview.map(row => [row.key+'|'+row.memberId,row]));
-        const configured = allRows.filter(row => row.threshold.target > 0);
-        const restock = configured.filter(row => row.threshold.shortfall > 0);
-        const critical = configured.filter(row => row.threshold.status === 'CRITICAL');
-        const report = factionInventoryReport(db, 7);
-        const totalOwned = allRows.reduce((sum,row) => sum + Number(row.amountOwned || 0), 0);
-        const equipmentAvailable = allRows.filter(row => FACTION_INVENTORY_LOAN_CATEGORIES.includes(row.category)).reduce((sum,row) => sum + Number(row.availableCount || 0), 0);
-        const equipmentLoaned = allRows.filter(row => FACTION_INVENTORY_LOAN_CATEGORIES.includes(row.category)).reduce((sum,row) => sum + Number(row.loanedCount || 0), 0);
-        const keyMode = getFactionApiKey() ? 'Dedicated faction key' : getApiKey() ? 'Primary CRM key fallback — may lack Faction → Inventory access' : 'No key';
-        const nextRefresh = state.nextUsefulRefreshAt ? fmtDate(state.nextUsefulRefreshAt) : '—';
-        const categories = ['all',...FACTION_INVENTORY_CATEGORIES];
-        const sourceCategorySummary = state.sourceCategorySummary && typeof state.sourceCategorySummary === 'object'
-            ? state.sourceCategorySummary
-            : {};
-        const currentCategoryCounts = Object.fromEntries(
-            FACTION_INVENTORY_CATEGORIES.map(category => [
-                category,
-                allRows.filter(row => String(row.category || '') === category).length
-            ])
-        );
-        const sourceCountText = FACTION_INVENTORY_CATEGORIES
-            .map(category => {
-                const source = sourceCategorySummary[category] || {};
-                return category + ' ' + Number(source.rows || 0) + '/' + Number(source.metadataTotal || 0);
-            })
-            .join(' · ');
-        const policy = FACTION_INVENTORY_POLICY;
+    
+function factionInventoryHtml(db) {
+        const rows=factionInventoryRows(db);
+        const members=factionMemberReadinessRows(db);
+        const selectedCategory=String(db.factionInventory?.settings?.selectedCategory||'all');
+        const categories=['all',...FACTION_INVENTORY_CATEGORIES];
+        const categoryRows=selectedCategory==='all'?rows:rows.filter(row=>String(row.category||'')===selectedCategory);
+        const taskButtons=[
+            ['inventory','Inventory'],
+            ['builds','Builds'],
+            ['minimums','Minimums'],
+            ['members','Members']
+        ];
 
-        const summary = card(
-            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-                '<div><b style="font-size:15px;">Faction Inventory Manager</b><div style="font-size:10px;color:#888;">Read-only armory operations · confirmed scope: weapons, armor, temporary, medical, consumables</div></div>'+
-                '<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">'+
-                    '<label style="font-size:10px;color:#aaa;display:flex;align-items:center;gap:4px;">Category <select id="mm-faction-category" style="'+inputCss()+'padding:5px 7px;min-width:150px;">'+
-                        categories.map(cat => '<option value="'+escapeHtml(cat)+'" '+(selectedCategory===cat?'selected':'')+'>'+escapeHtml(cat==='all'?'All categories':cat)+'</option>').join('')+
-                    '</select></label>'+                    '<div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;">'+
-                        categories.map(cat => '<button type="button" data-faction-category-link="'+escapeHtml(cat)+'" style="'+btn(selectedCategory===cat)+'padding:5px 7px;">'+escapeHtml(cat==='all'?'All ('+allRows.length+')':cat+' ('+Number(currentCategoryCounts[cat]||0)+')')+'</button>').join('')+
-                    '</div>'+
-                    '<button id="mm-faction-sync" style="'+btn(true)+'">Sync Armory</button>'+
-                    '<button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button>'+
-                    '<button id="mm-faction-export" style="'+btn()+'">Leadership XLSX</button>'+
-                    '<button id="mm-faction-war-baseline" style="'+btn(true)+'">Apply War Baseline</button>'+
-                    '<button id="mm-faction-report-storage" style="'+btn(factionReportUploadConfigured())+'">Report Storage</button>'+
-                    '<button id="mm-faction-followup" '+(getLatestFactionReport().url?'':'disabled')+' style="'+btn(Boolean(getLatestFactionReport().url))+'">Leadership Follow-Up</button>'+
-                    '<button id="mm-faction-log" style="'+btn()+'">Log Activity</button>'+
-                    '<button id="mm-faction-roster-sync" style="'+btn()+'">Sync Members</button>'+
-                    '<button id="mm-faction-member-key-import" style="'+btn()+'">Import Member Key</button>'+
-                    '<button id="mm-faction-member-key-save" style="'+btn()+'">Import + Save Key</button>'+
-                    '<button id="mm-faction-member-key-refresh" style="'+btn()+'">Refresh Saved Keys</button>'+
-                '</div>'+
-            '</div>'+
-            '<div style="font-size:11px;color:#aaa;margin-top:7px;line-height:1.55;">'+
-                'API: <b>'+escapeHtml(keyMode)+'</b> · Torn source snapshot: <b>'+escapeHtml(fmtDate(state.inventoryTimestamp))+'</b> · Last fetch: '+escapeHtml(fmtDate(state.lastSyncAt))+'<br>'+
-                'Source rows / metadata: <b>'+escapeHtml(sourceCountText || 'No source-category diagnostics yet')+'</b><br>'+
-                'Next useful refresh: ~'+escapeHtml(nextRefresh)+' because Torn caches the inventory selection for one hour. CRM snapshots remain local and historical.<br>'+
-                'Planning basis: available for armor/temporary weapons, owned for medical/consumables. <b>Read-only:</b> this module never gives, retrieves, moves, buys, or consumes faction items.'+
-            '</div>'+
-            '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin-top:8px;">'+
-                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+allRows.length+'</b><br><span style="font-size:9px;color:#888;">ITEM TYPES</span></div>'+
-                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+totalOwned.toLocaleString()+'</b><br><span style="font-size:9px;color:#888;">OWNED UNITS</span></div>'+
-                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+equipmentAvailable.toLocaleString()+'</b><br><span style="font-size:9px;color:#888;">LOANABLE AVAILABLE</span></div>'+
-                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+equipmentLoaned.toLocaleString()+'</b><br><span style="font-size:9px;color:#888;">LOANABLE OUT</span></div>'+
-                '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+restock.length+'</b><br><span style="font-size:9px;color:#888;">PLANNING SHORTFALLS</span></div>'+
-            '</div>'
-        );
-
-        const operatingPolicy = card(
-            '<b>Confirmed Operating Policy</b>'+
-            '<div style="font-size:11px;color:#bbb;margin-top:5px;line-height:1.55;">'+
-                '<b>Faction / Position:</b> '+escapeHtml(policy.faction)+' · '+escapeHtml(policy.position)+' · '+escapeHtml(policy.appointee)+'<br>'+
-                '<b>Objective:</b> '+escapeHtml(policy.objective)+'<br>'+
-                '<b>Scope:</b> '+escapeHtml(policy.scope)+'<br>'+
-                '<b>Audit & accountability:</b> '+escapeHtml(policy.audit)+'<br>'+
-                '<b>Readiness:</b> '+escapeHtml(policy.readiness)+'<br>'+
-                '<b>Distribution:</b> '+escapeHtml(policy.distribution)+'<br>'+
-                '<b>Access safety:</b> '+escapeHtml(policy.access)+'<br>'+
-                '<b>Member guidance:</b> '+escapeHtml(policy.guidance)+'<br>'+
-                '<b>Sourcing:</b> '+escapeHtml(policy.sourcing)+'<br>'+
-                '<b>Pricing:</b> '+escapeHtml(policy.pricing)+'<br>'+
-                '<b>Stock:</b> '+escapeHtml(policy.stock)+'<br>'+
-                '<b>Loans:</b> '+escapeHtml(policy.loans)+'<br>'+
-                '<b>High-value RW gear:</b> '+escapeHtml(policy.highValue)+'<br>'+
-                '<b>Purchasing:</b> '+escapeHtml(policy.purchasing)+'<br>'+
-                '<b>Reporting:</b> '+escapeHtml(policy.reporting)+
-            '</div>'
-        );
-
-        const planning = card(
-            '<b>Stock Planning / Restock Queue</b>'+
-            (configured.length
-                ? '<div style="font-size:11px;color:#bbb;margin-top:5px;">Provisional targets: '+configured.length+' · At/above '+configured.filter(r=>r.threshold.status==='GREEN').length+' · Below '+configured.filter(r=>r.threshold.status==='LOW').length+' · Severe shortfall '+critical.length+'</div>'
-                : '<div style="font-size:11px;color:#888;margin-top:5px;">Leadership authorized provisional minimums and war reserves. Use <b>Apply War Baseline</b> to load the first medical/Ipecac/core-temp targets; formal sign-off is required before the next Ranked War.</div>')+
-            (restock.length
-                ? restock.slice(0,20).map(row => '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;">'+
-                    factionInventoryStatusBadge(row.threshold.status)+' <b>'+escapeHtml(row.name)+'</b> · '+escapeHtml(row.category)+' · '+
-                    row.threshold.current.toLocaleString()+'/'+row.threshold.target.toLocaleString()+' '+escapeHtml(row.threshold.basis)+' · Planning shortfall <b>'+row.threshold.shortfall.toLocaleString()+'</b>'+
-                    (row.referencePrice ? ' · Est. market cost '+money(row.estimatedRestockCost)+' @ '+money(row.referencePrice)+' ('+escapeHtml(row.priceSource)+')' : ' · Market price unavailable')+
-                '</div>').join('')
-                : configured.length ? '<div style="font-size:11px;color:#9fe3a8;margin-top:5px;">All provisional planning targets are currently met.</div>' : '')+
-            (loanReview.length
-                ? '<div style="border-top:1px solid #303030;margin-top:6px;padding-top:6px;font-size:11px;"><b>Loan age observations</b><div style="font-size:10px;color:#888;margin:2px 0 4px;">Leadership policy: 7d courteous reminder · 10d final warning · 14d Leadership + Supervisor escalation unless a prior arrangement is documented.</div>'+
-                    loanReview.slice(0,12).map(row =>
-                        '<b>'+escapeHtml(row.followUpStatus||'ROUTINE')+'</b> · '+escapeHtml(row.memberName)+' · '+escapeHtml(row.name)+' × '+row.amount+' · observed '+Number(row.observedDays||0).toFixed(1)+'d'
-                    ).join('<br>')+
-                  '</div>'
-                : '')
-        );
-
-        const managerPlan = factionInventoryManagerPlan(db);
-        const managerPlanCard = card(
-            '<b>Inventory Manager Plan</b>'+
-            '<div style="font-size:10px;color:#888;margin:3px 0 5px;">Operational sequence: establish control → define policy → set targets → replenish → control loans → measure consumption → report leadership.</div>'+
-            managerPlan.plan.map(row =>
-                '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>'+escapeHtml(row.phase)+'</b> · '+escapeHtml(row.status)+
-                '<br><span style="color:#bbb;">'+escapeHtml(row.action)+'</span><br><span style="font-size:10px;color:#888;">Cadence: '+escapeHtml(row.cadence)+' · Owner: '+escapeHtml(row.owner)+' · Evidence: '+escapeHtml(row.evidence)+'</span></div>'
-            ).join('')
-        );
-
-        const leadershipQuestionsCard = card(
-            '<b>Leadership Approval / Remaining Inputs</b>'+
-            '<div style="font-size:10px;color:#888;margin:3px 0 5px;">We generate recommendations first. This section contains only items that still need Leadership approval or information that Leadership specifically controls.</div>'+
-            managerPlan.questions.map(q =>
-                '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>'+escapeHtml(q.priority)+' · '+escapeHtml(q.area)+'</b> — '+escapeHtml(q.question)+
-                '<br><span style="color:#aaa;">Decision needed: '+escapeHtml(q.decision)+'</span></div>'
-            ).join('')
-        );
-
-        const minimumProposal = factionMinimumProposalCard(db);
-        const buildBuilder = factionSimpleBuildCard(db);
-        const readinessRows = factionMemberReadinessRows(db);
-        const readinessStore = state.memberReadiness || {};
-        const keyVault = factionMemberKeyVaultSummary();
-        const keyVaultRaw = getFactionMemberKeyVault();
-        const readinessMissing = readinessRows.filter(r=>r.readinessStatus==='MISSING DATA').length;
-        const readinessStale = readinessRows.filter(r=>r.readinessStatus==='STALE DATA').length;
-        const readinessSupply = readinessRows.filter(r=>r.readinessStatus==='SUPPLY ACTION').length;
-        const readinessCard = card(
-            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-                '<div><b>Member War Readiness / Equipment Optimization</b><div style="font-size:10px;color:#888;">Faction roster + armory loans are automatic. Exact battle stats/current personal equipment require member authorization. <b>Import Member Key</b> performs a one-time read without retention. <b>Import + Save Key</b> stores that member key encrypted in the local vault for future refreshes. Saved-key status is shown on each member row.</div></div>'+
-                '<button id="mm-faction-roster-sync-card" style="'+btn(true)+'">Sync Faction Roster</button>'+
-            '</div>'+
-            '<div style="font-size:10px;color:#999;margin-top:5px;">Last roster sync: '+escapeHtml(fmtDate(readinessStore.lastRosterSyncAt))+
-                ' · Members '+readinessRows.length+' · Missing '+readinessMissing+' · Stale '+readinessStale+' · Supply action '+readinessSupply+
-                ' · Encrypted saved keys '+keyVault.savedMembers+(keyVault.unlocked?' (vault unlocked)':'')+
-                '<br>Optimization rule: never infer equipment strength from market price. Candidate assignments require combat metadata or manual comparison; high-value RW allocation remains leadership-controlled.</div>'+
-            (readinessRows.length ? readinessRows.slice(0,60).map(row =>
-                '<div style="border-top:1px solid #303030;padding:6px 0;font-size:10px;">'+
-                    '<div style="display:flex;justify-content:space-between;gap:6px;align-items:flex-start;">'+
-                        '<div><b>'+escapeHtml(row.memberName)+'</b> ['+escapeHtml(row.memberId)+'] · Lv '+Number(row.level||0)+' · '+escapeHtml(row.statProfile.label)+' · <b>'+escapeHtml(row.readinessStatus)+'</b></div>'+
-                        '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
-                            '<button data-faction-member-edit="'+escapeHtml(row.memberId)+'" style="'+btn(row.readinessStatus==='READY FOR REVIEW')+'">Edit Readiness</button>'+
-                            (row.readinessStatus==='READY FOR REVIEW'
-                                ? '<button data-faction-member-optimize="'+escapeHtml(row.memberId)+'" style="'+btn(true)+'">Advanced Compare</button>'
-                                : '')+                            (row.profile?.optimization
-                                ? '<button data-faction-member-message="'+escapeHtml(row.memberId)+'" style="'+btn()+'">Message Plan</button>'
-                                : '')+
-                            (keyVaultRaw?.entries?.[asId(row.memberId)]
-                                ? '<button data-faction-member-refresh="'+escapeHtml(row.memberId)+'" style="'+btn(true)+'">Refresh This Member</button>'+
-                                  '<button data-faction-member-remove-key="'+escapeHtml(row.memberId)+'" style="'+btn()+'">Remove Saved Key</button>'
-                                : '')+
-                        '</div>'+
-                    '</div>'+
-                    '<div style="color:#aaa;margin-top:2px;">Stats total: '+Number(row.statProfile.total||0).toLocaleString()+
-                    ' · Faction loans: '+Number(row.loans||0)+' · Medical: '+escapeHtml(row.profile?.medicalStatus||'UNKNOWN')+' · Ipecac: '+escapeHtml(row.profile?.ipecacStatus||'UNKNOWN')+
-                    (keyVaultRaw?.entries?.[asId(row.memberId)]
-                        ? ' · <b>Saved key: ENCRYPTED</b> · Last key refresh: '+escapeHtml(fmtDate(keyVaultRaw.entries[asId(row.memberId)].lastUsedAt))
-                        : ' · Saved key: none')+
-                    (row.profile?.warRole?' · Role: '+escapeHtml(row.profile.warRole):'')+
-                    '<br>Current gear: '+escapeHtml(row.equipmentSummary||'—')+
-                    '<br><b>Plan:</b> '+escapeHtml(row.profile?.optimization?.summary || row.equipmentPlan)+
-                    (Array.isArray(row.profile?.optimization?.recommendations) && row.profile.optimization.recommendations.length
-                        ? '<div style="margin-top:3px;padding-left:8px;border-left:2px solid #444;">'+
-                          row.profile.optimization.recommendations.map(rec =>
-                              '<div><b>'+escapeHtml(rec.kind)+'</b> · '+escapeHtml(rec.slot||'')+
-                              (rec.current?' · Current: '+escapeHtml(rec.current):'')+
-                              (rec.candidate?' · Candidate: '+escapeHtml(rec.candidate):'')+
-                              (rec.delta!=null && Number(rec.delta)!==0?' · Δ '+escapeHtml(String(rec.delta)):'')+
-                              (rec.acquisition?' · <b>'+escapeHtml(rec.acquisition)+'</b>':'')+
-                              (rec.available!=null && Number(rec.available)>0?' · Available '+Number(rec.available):'')+
-                              (rec.referencePrice?' · Est. '+money(Number(rec.referencePrice))+(rec.priceSource?' ('+escapeHtml(rec.priceSource)+')':''):'')+
-                              (rec.procurementRoute?'<br><span style="color:#999;">Route: '+escapeHtml(rec.procurementRoute)+'</span>':'')+
-                              (rec.note?'<br><span style="color:#888;">'+escapeHtml(rec.note)+'</span>':'')+
-                              '</div>'
-                          ).join('')+
-                          '</div>'
-                        : '')+
-                    '</div>'+
-                '</div>'
-            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">Sync the faction roster to begin member readiness planning.</div>')
-        );
-
-        const armory = card(
-            '<b>Armory Dashboard</b>'+
-            (rows.length ? rows.map(row => {
-                const t = row.threshold;
-                const loanSummary = row.loanedCount
-                    ? ' · Loaned '+Number(row.loanedCount).toLocaleString()+' to '+row.loans.length+' member'+(row.loans.length===1?'':'s')
-                    : '';
-                const uidText = FACTION_INVENTORY_LOAN_CATEGORIES.includes(row.category)
-                    ? ' · UID coverage '+Number(row.uidCount||0).toLocaleString()
-                    : '';
-                return '<div style="border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
-                    '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">'+
-                        '<div><b>'+escapeHtml(row.name)+'</b> <span style="color:#777">['+escapeHtml(row.itemId)+']</span> '+factionInventoryStatusBadge(t.status)+
-                        '<br><span style="color:#aaa;">'+escapeHtml(row.category)+' · '+escapeHtml(row.type||'')+'</span></div>'+
-                        '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;"><button data-faction-action="threshold" data-item="'+escapeHtml(row.itemId)+'" data-name="'+escapeHtml(row.name)+'" style="'+btn(t.target>0)+'">'+(t.target>0?'Target '+t.target:'Set Target')+'</button></div>'+
-                    '</div>'+
-                    '<div style="color:#bbb;margin-top:4px;">Owned <b>'+Number(row.amountOwned||0).toLocaleString()+'</b> · Available <b>'+Number(row.availableCount||0).toLocaleString()+'</b>'+loanSummary+uidText+'<br>'+
-                    'Planning metric '+escapeHtml(t.basis)+': '+t.current.toLocaleString()+(t.target>0?' / '+t.target.toLocaleString()+' · Shortfall '+t.shortfall.toLocaleString():' · target not set')+'<br>'+
-                    'Policy price reference: '+(row.referencePrice?money(row.referencePrice)+' · '+escapeHtml(row.priceSource):'—')+
-                    (row.maxAuthorizedPrice?' · +5% ceiling <b>'+money(row.maxAuthorizedPrice)+'</b>':'')+
-                    (t.shortfall&&row.referencePrice?' · Planning estimate <b>'+money(row.estimatedRestockCost)+'</b>':'')+
-                    '</div>'+
-                    (row.loans.length ? '<details style="margin-top:4px;"><summary style="cursor:pointer;color:#aaa;">Loan details</summary><div style="margin-top:3px;">'+
-                        row.loans.map(loan => escapeHtml(loan.memberName)+' ['+escapeHtml(loan.memberId)+'] × '+Number(loan.amount||0).toLocaleString()+
-                            (loan.uids?.length?' · UID '+loan.uids.slice(0,8).map(escapeHtml).join(', ')+(loan.uids.length>8?'…':''):'')
-                        ).join('<br>')+
-                    '</div></details>' : '')+
-                '</div>';
-            }).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No in-scope faction inventory snapshot yet. Ask leadership to enable Faction API Access for your position, then sync with your own Limited/custom key that includes Faction → Inventory.</div>')
-        );
-
-        const memberView = card(
-            '<b>Member Loan View</b>'+
-            '<div style="font-size:10px;color:#888;margin-top:4px;">Weapons, armor, and temporary items may be borrowed for chains, Ranked Wars, and training. Policy: 7d reminder · 10d final warning · 14d Leadership + Supervisor escalation absent prior arrangement.</div>'+
-            (loans.length ? loans.slice(0,40).map(member =>
-                '<details style="border-top:1px solid #303030;padding:5px 0;"><summary style="cursor:pointer;font-size:11px;"><b>'+escapeHtml(member.memberName)+'</b> ['+escapeHtml(member.memberId)+'] · '+member.amount+' item'+(member.amount===1?'':'s')+'</summary>'+
-                '<div style="font-size:10px;color:#aaa;margin-top:4px;">'+member.items.map(item => {
-                    const age=loanAgeMap.get(factionInventoryKey(item.category,item.itemId)+'|'+member.memberId);
-                    return escapeHtml(item.name)+' × '+item.amount+
-                        (item.uids?.length?' · UID '+item.uids.slice(0,10).map(escapeHtml).join(', ')+(item.uids.length>10?'…':''):'')+
-                        (age?.observedSince?' · first observed '+escapeHtml(fmtDate(age.observedSince)):'');
-                }).join('<br>')+'</div></details>'
-            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">No currently loaned weapon/armor/temporary rows in the latest snapshot.</div>')
-        );
-
-        const weekly = card(
-            '<b>7-Day Inventory Report</b>'+
-            '<div style="font-size:11px;color:#aaa;margin-top:5px;">Observed span '+(report.observedDays?report.observedDays.toFixed(1)+'d':'—')+' · '+report.events+' in-scope inventory change event'+(report.events===1?'':'s')+'. Use observed movement to build data-driven Ranked War/chain targets. Negative owned deltas are treated as observed depletion, not attributed to a specific cause.</div>'+
-            (report.rows.length ? report.rows.slice(0,15).map(row =>
-                '<div style="border-top:1px solid #303030;padding:5px 0;font-size:10px;"><b>'+escapeHtml(row.name)+'</b> · '+escapeHtml(row.category)+
-                ' · Depleted '+row.depleted.toLocaleString()+' · Added '+row.added.toLocaleString()+' · Net '+(row.netOwned>=0?'+':'')+row.netOwned.toLocaleString()+
-                (row.consumptionPerDay>0?' · Gross depletion rate '+row.consumptionPerDay.toFixed(1)+'/day':'')+
-                (row.loanedOut>0?' · Loan increases '+row.loanedOut.toLocaleString():'')+
-                '</div>'
-            ).join('') : '<div style="font-size:11px;color:#888;margin-top:5px;">A second distinct Torn source snapshot is required before movement reporting begins.</div>')
-        );
-
-        const audit = card(
-            '<b>Inventory Audit Log</b>'+
-            ((state.events||[]).filter(event => FACTION_INVENTORY_CATEGORIES.includes(String(event.category || ''))).length
-                ? (state.events||[]).filter(event => FACTION_INVENTORY_CATEGORIES.includes(String(event.category || ''))).slice().sort((a,b)=>Number(b.observedAt||0)-Number(a.observedAt||0)).slice(0,30).map(event =>
-                    '<div style="border-top:1px solid #303030;padding:5px 0;font-size:10px;">'+
-                    escapeHtml(fmtDate(event.observedAt))+' · <b>'+escapeHtml(event.name)+'</b> · Owned '+(event.deltaOwned>=0?'+':'')+Number(event.deltaOwned||0)+
-                    ' · Available '+(event.deltaAvailable>=0?'+':'')+Number(event.deltaAvailable||0)+
-                    ' · Loaned '+(event.deltaLoaned>=0?'+':'')+Number(event.deltaLoaned||0)+
+        let body='';
+        if(factionWorkflow==='builds') {
+            body=factionSimpleBuildCard(db);
+        } else if(factionWorkflow==='minimums') {
+            const proposal=factionMinimumStockProposal(db);
+            const shortages=proposal.actionable.slice().sort((a,b)=>Number(b.shortfall||0)-Number(a.shortfall||0)).slice(0,15);
+            body=card(
+                '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><div><b>Minimum Stock Plan</b><div style="font-size:10px;color:#888;">'+
+                Number(proposal.observedDays||0).toFixed(1)+' days observed · '+escapeHtml(proposal.confidence)+' confidence</div></div>'+
+                '<button id="mm-faction-war-baseline" style="'+btn()+'">Apply Baseline</button></div>'+
+                (shortages.length?shortages.map(row=>
+                    '<div style="display:grid;grid-template-columns:1fr auto;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+                        '<div><b>'+escapeHtml(row.item)+'</b><div style="color:#888;">Current '+Number(row.current||0)+' · Min '+Number(row.recommendedMin||0)+' · Max '+Number(row.recommendedMax||0)+'</div></div>'+
+                        '<b>Need '+Number(row.shortfall||0)+'</b>'+
                     '</div>'
-                ).join('')
-                : '<div style="font-size:11px;color:#888;margin-top:5px;">No in-scope inventory changes recorded yet.</div>')
-        );
+                ).join(''):'<div style="font-size:11px;color:#888;margin-top:7px;">No current shortage against the proposed minimums.</div>')
+            );
+        } else if(factionWorkflow==='members') {
+            const visible=members.slice(0,20);
+            body=card(
+                '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-faction-member-key-import" style="'+btn()+'">Import Member Data</button>'+
+                '<button id="mm-faction-member-key-save" style="'+btn()+'">Import & Save Key</button>'+
+                '<button id="mm-faction-member-key-refresh" style="'+btn()+'">Refresh Saved</button></div>'+
+                (visible.length?visible.map(member=>
+                    '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+                        '<div><b>'+escapeHtml(member.memberName)+'</b> · Lv '+Number(member.level||0)+'<div style="color:#888;">'+escapeHtml(member.readinessStatus)+' · '+(member.hasStats?Number(member.statProfile?.total||0).toLocaleString()+' stats':'stats missing')+'</div></div>'+
+                        '<button data-faction-member-edit="'+escapeHtml(member.memberId)+'" style="'+btn()+'">Edit</button>'+
+                    '</div>'
+                ).join(''):'<div style="font-size:11px;color:#888;margin-top:7px;">Refresh faction data to load members.</div>')
+            );
+        } else {
+            const counts=Object.fromEntries(FACTION_INVENTORY_CATEGORIES.map(cat=>[cat,rows.filter(row=>String(row.category||'')===cat).length]));
+            body=card(
+                '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px;">'+
+                    categories.map(cat=>'<button data-faction-category-link="'+cat+'" style="'+btn(selectedCategory===cat)+'">'+(cat==='all'?'All':cat)+' ('+(cat==='all'?rows.length:Number(counts[cat]||0))+')</button>').join('')+
+                '</div>'+
+                (categoryRows.length?categoryRows.slice(0,20).map(row=>
+                    '<div style="display:grid;grid-template-columns:1fr auto auto;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+                        '<div><b>'+escapeHtml(row.name)+'</b><div style="color:#888;">'+escapeHtml(row.category)+'</div></div>'+
+                        '<span>'+Number(row.amountOwned||0)+' owned</span>'+
+                        '<span>'+Number(row.availableCount||0)+' available</span>'+
+                    '</div>'
+                ).join(''):'<div style="font-size:11px;color:#888;margin-top:7px;">No items in this category.</div>')
+            );
+        }
 
-        return summary + operatingPolicy + buildBuilder + minimumProposal + managerPlanCard + leadershipQuestionsCard + readinessCard + planning + armory + memberView + weekly + audit;
+        return card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
+                '<div><b>Faction</b><div style="font-size:10px;color:#888;">'+rows.length+' item types · '+members.length+' members · last refresh '+escapeHtml(fmtDate(db.factionInventory?.lastSyncAt))+'</div></div>'+
+                '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-faction-refresh" style="'+btn(true)+'">Refresh Faction</button><button id="mm-faction-export" style="'+btn()+'">Leadership XLSX</button></div>'+
+            '</div>'+
+            '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;">'+
+                taskButtons.map(([id,label])=>'<button data-faction-workflow="'+id+'" style="'+btn(factionWorkflow===id)+'">'+label+'</button>').join('')+
+            '</div>'
+        )+
+        '<div style="max-height:470px;overflow:auto;padding-right:2px;">'+body+'</div>';
     }
 
     function factionInventorySelfTest() {
@@ -12999,22 +12834,22 @@
         return `<div style="background:#181818;border:1px solid #444;border-radius:7px;padding:10px;margin:8px 0;">${content}</div>`;
     }
 
-    function tabsHtml() {
-        const db = dbLoad();
-        const factionReady = Boolean(getFactionApiKey()) || Object.keys(db.factionInventory?.current || {}).length > 0;
-        const simpleTabs = [['home','Today'],['stock','Stock & List'],['deals','Buy'],['customers','Customers'],['reports','Reports']];
-        if (factionReady) simpleTabs.push(['faction','Faction']);
-        const advancedTabs = [['ops','Operations'],['customers','Customers'],['inventory','Inventory'],['faction','Faction Inv'],['procurement','Procure'],['intel','Market Intel'],['analytics','Analytics'],['coupons','Coupons'],['subscribers','Restock'],['refunds','Refunds'],['sales','Sales'],['settings','Settings']];
-        const tabs = simpleMode ? simpleTabs : advancedTabs;
-        const toolsButton = simpleMode
-            ? `<button data-tab="more" style="${btn(activeTab === 'more')}${activeTab === 'more' ? 'border-color:#d7ad4b;' : ''}font-size:10px;">Tools</button>`
-            : '';
-        return `<div style="display:flex;gap:5px;flex-wrap:wrap;margin:8px 0;align-items:center;">
-            ${tabs.map(([id,label]) => `<button data-tab="${id}" style="${btn(activeTab === id)}${activeTab === id ? 'border-color:#d7ad4b;' : ''}">${label}</button>`).join('')}
-            <span style="flex:1;"></span>
-            ${toolsButton}
-            <button id="mm-ui-mode-toggle" style="${btn()}font-size:10px;">${simpleMode ? 'Advanced' : 'Simple'} mode</button>
-        </div>`;
+    
+function tabsHtml() {
+        const tabs = [
+            ['home','Today'],
+            ['stock','Sell'],
+            ['deals','Buy'],
+            ['customers','Customers'],
+            ['faction','Faction'],
+            ['reports','Reports'],
+            ['settings','Settings']
+        ];
+        return '<div style="display:flex;gap:5px;flex-wrap:wrap;margin:7px 0;">'+
+            tabs.map(([id,label]) =>
+                '<button data-tab="'+id+'" style="'+btn(activeTab===id)+(activeTab===id?'border-color:#d7ad4b;':'')+'">'+label+'</button>'
+            ).join('')+
+        '</div>';
     }
 
     function customerMatchesFilters(db, c) {
@@ -14000,237 +13835,105 @@
         return db.syncState.dashboardSnapshot;
     }
 
-    function homeHtml(db) {
-        const snapshot = db.syncState?.dashboardSnapshot || null;
-        const rawSales = snapshot ? null : lightweightSalesSummary(db, 30);
-        const urgent = Array.isArray(snapshot?.urgent) ? snapshot.urgent : [];
-        const pendingAlerts = snapshot
-            ? Number(snapshot.pendingAlerts || 0)
-            : Object.values(db.subscribers || {}).filter(s => s.pendingNotification).length;
-
-        const fresh = businessDataFreshness(db);
-        const readiness = businessRefreshPlan(db, { force:false });
-        const hasApi = Boolean(getApiKey());
-        const refresh = card(
-            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">' +
-                '<div><b>Data Readiness</b>' +
-                    '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:5px;">' +
-                        sourceReadinessChip('Sales', fresh.salesAt, readiness.sales, hasApi) +
-                        sourceReadinessChip('Market', fresh.marketAt, readiness.market, true) +
-                        sourceReadinessChip('$1', fresh.dollarAt, readiness.dollar, true) +
-                        sourceReadinessChip('Procure', fresh.procurementAt, readiness.procurement, hasApi) +
-                        sourceReadinessChip('Travel', fresh.travelAt, readiness.travel, true) +
-                    '</div>' +
-                    (fresh.unifiedError ? '<div style="font-size:10px;color:#ff9b9b;margin-top:5px;">Last refresh error: ' + escapeHtml(fresh.unifiedError) + '</div>' : '') +
-                '</div>' +
-                '<button data-smart-refresh style="' + btn(true) + '">Smart Refresh</button>' +
-            '</div>'
-        );
-
-        const metrics = '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">' +
-            simpleMetric('30d Revenue', money(snapshot ? snapshot.revenue : rawSales.revenue)) +
-            simpleMetric(
-                'Tracked Profit',
-                !snapshot || snapshot.profitCoverage === 'UNAVAILABLE' ? '—' : money(snapshot.grossProfit),
-                !snapshot
-                    ? 'Smart Refresh to calculate'
-                    : snapshot.profitCoverage === 'COMPLETE'
-                        ? 'complete FIFO cost basis'
-                        : snapshot.profitCoverage === 'PARTIAL'
-                            ? Number(snapshot.costCoveragePct || 0).toFixed(0) + '% cost coverage — partial'
-                            : 'cost basis unavailable'
-            ) +
-            simpleMetric('Restock', snapshot ? String(snapshot.needRestock || 0) : '—', snapshot ? 'items need stock' : 'Smart Refresh to calculate') +
-            simpleMetric('Need Listing', snapshot ? String(snapshot.needListing || 0) : '—', snapshot ? 'ready for Bazaar' : 'Smart Refresh to calculate') +
+    
+function homeHtml(db) {
+        const snapshot=db.syncState?.dashboardSnapshot || null;
+        const fresh=businessDataFreshness(db);
+        const urgent=Array.isArray(snapshot?.urgent)?snapshot.urgent.slice(0,5):[];
+        const metrics='<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">'+
+            simpleMetric('30d Revenue',snapshot?money(snapshot.revenue):'—')+
+            simpleMetric('Profit',snapshot?.profitCoverage && snapshot.profitCoverage!=='UNAVAILABLE'?money(snapshot.grossProfit):'—')+
+            simpleMetric('Restock',snapshot?String(snapshot.needRestock||0):'—')+
+            simpleMetric('List',snapshot?String(snapshot.needListing||0):'—')+
         '</div>';
-
-        const attention = snapshot
-            ? Number(snapshot.needRestock || 0) + ' restock · ' +
-              Number(snapshot.needListing || 0) + ' listing · ' +
-              Number(snapshot.goodDeals || 0) + ' seller-verifiable deal(s)'
-            : 'Smart Refresh to calculate inventory actions';
-
-        const actions = card(
-            '<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;">' +
-                '<div><b style="font-size:15px;">What needs attention</b><div style="font-size:11px;color:#999;margin-top:3px;">' +
-                    escapeHtml(attention) + ' · ' + pendingAlerts + ' customer alert(s)</div></div>' +
-                '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
-                    simpleActionButton('Restock','stock',true) +
-                    simpleActionButton('List Bazaar','stock') +
-                    simpleActionButton('Find Deals','deals') +
-                    simpleActionButton('Customers','customers') +
-                '</div>' +
+        const actions=card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
+                '<div><b>Today</b><div style="font-size:10px;color:#888;margin-top:2px;">Last refresh '+escapeHtml(fmtDate(fresh.unifiedAt||fresh.salesAt||fresh.marketAt))+'</div></div>'+
+                '<button data-smart-refresh style="'+btn(true)+'">Refresh Data</button>'+
+            '</div>'+
+            '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:8px;">'+
+                simpleActionButton('Sell','stock',true)+
+                simpleActionButton('Buy','deals')+
+                simpleActionButton('Customers','customers')+
+                simpleActionButton('Faction','faction')+
             '</div>'
         );
-
-        const queue = card(
-            '<b>Priority Actions</b>' +
-            (snapshot
-                ? (urgent.length
-                    ? urgent.map(r => {
-                        const label = ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)
-                            ? 'Restock'
-                            : r.state === 'NEEDS LISTING' ? 'List' : 'Review';
-                        const detail = r.state === 'NEEDS LISTING'
-                            ? 'Stock ' + r.stock + ' · Add ' + r.addToBazaar + ' @ ' + (r.plannedPrice ? money(r.plannedPrice) : '—')
-                            : 'Stock ' + r.stock + ' · Need ' + r.shortage + ' · Buy target ' + (r.buyTarget ? money(r.buyTarget) : '—');
-                        return '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;align-items:flex-start;">' +
-                            '<div style="min-width:0;font-size:11px;"><div><b>' + escapeHtml(r.name) + '</b> ' + opsStateBadge(r.state) + '</div>' +
-                            '<div style="color:#aaa;margin-top:3px;">' + escapeHtml(detail) + ' · Forecast ' + Number(r.forecastDaily || 0).toFixed(2) + '/day</div></div>' +
-                            '<button data-simple-go="stock" style="' + btn(true) + 'white-space:nowrap;">' + label + '</button></div>';
-                    }).join('')
-                    : '<div style="font-size:11px;color:#888;margin-top:6px;">No urgent inventory actions right now.</div>')
-                : '<div style="font-size:11px;color:#888;margin-top:6px;">Run Smart Refresh to build the priority queue.</div>')
+        const queue=card('<b>Next Actions</b>'+
+            (urgent.length?urgent.map(r=>
+                '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+                    '<div><b>'+escapeHtml(r.name)+'</b> · '+escapeHtml(r.state)+'<div style="color:#888;">Stock '+Number(r.stock||0)+' · Need '+Number(r.shortage||0)+'</div></div>'+
+                    '<button data-simple-go="'+(['NEEDS LISTING'].includes(r.state)?'stock':'deals')+'" style="'+btn()+'">Open</button>'+
+                '</div>'
+            ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">Refresh Data to build the action queue.</div>')
         );
-
-        const health = card(
-            '<b>Business Health</b><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:6px;">' +
-                simpleMetric('Lost Profit', snapshot ? money(snapshot.lostProfit) : '—') +
-                simpleMetric('Dead Capital', snapshot ? money(snapshot.deadCapital) : '—') +
-                simpleMetric('Stockouts', snapshot ? String(snapshot.stockouts || 0) : '—') +
-                simpleMetric('Best SKU', snapshot ? snapshot.bestName : '—') +
-            '</div><div style="margin-top:7px;"><button data-simple-go="reports" style="' + btn() + '">Open Reports</button></div>'
-        );
-
-        return refresh + metrics + actions + queue + health;
+        return actions+metrics+queue;
     }
 
-    function stockSimpleHtml(db) {
-        const rows = advancedInventoryRows(db);
-        const session = getActiveRestockSession(db);
-        // Rendering is read-only. Persist plans only when the operator explicitly
-        // requests a plan or opens the Bazaar listing assistant.
-        const plans = listingPlanPreview(db);
-        const restockRows = rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state));
-        const listingRows = rows.filter(r => r.addToBazaar > 0);
-        const priceReviewRows = listingRows.filter(r => r.state === 'PRICE REVIEW');
-        const trustedPlans = Object.values(plans);
-
-        const presetBar = businessRulesCard(db, true);
-
-        const quickRestock = card(`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
-            <div><b style="font-size:15px;">Quick Restock</b><div style="font-size:11px;color:#999;margin-top:2px;">${restockRows.length} item(s) need sourcing · Budget ${money(db.procurement.settings.procurementBudget || 0)}</div></div>
-            ${session ? `<span style="font-size:11px;color:#e7c46d;">Session active</span>` : `<button data-start-restock-session style="${btn(true)}">Start Restock Session</button>`}
-        </div>
-        ${session ? (() => {
-            const q = session.queue[session.activeIndex];
-            return q ? `<div style="border-top:1px solid #333;margin-top:7px;padding-top:7px;font-size:12px;"><b>${escapeHtml(q.itemName)}</b><br>
-                Need ${q.need} · Buy ${q.buyPrice ? money(q.buyPrice) : '—'} · Max ${q.buyTarget ? money(q.buyTarget) : '—'} · Exit ${q.exit ? money(q.exit) : '—'} · ROI ${Number(q.roiPct||0).toFixed(1)}%
-                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;">${q.sellerId?`<button data-ops-action="seller" data-item="${q.itemId}" data-seller="${q.sellerId}" data-price="${Number(q.buyPrice||0)}" style="${btn()}">Verify Seller</button>`:''}<button data-restock-log-purchase style="${btn(true)}">Log Purchase</button><button data-restock-skip style="${btn()}">Skip</button></div>
-            </div>` : '';
-        })() : ''}
-        ${restockRows.length ? restockRows.slice(0,12).map(r => `<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;">
-            <div style="font-size:11px;"><b>${escapeHtml(r.name)}</b> ${opsStateBadge(r.state)}<br>Need <b>${r.adaptiveShortage}</b> · Best buy ${r.bestBuyPrice?money(r.bestBuyPrice):'—'} · Max ${r.buyTarget?money(r.buyTarget):'—'} · Forecast ${r.forecastDaily.toFixed(2)}/day${compactItemDetails(r)}</div>
-            <details><summary style="${btn()}list-style:none;">•••</summary><div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;"><button data-proc-action="market" data-item="${r.id}" style="${btn()}">Refresh Market</button><button data-proc-action="log-buy" data-item="${r.id}" data-name="${escapeHtml(r.name)}" style="${btn()}">Log Buy</button><button data-open-advanced="inventory" style="${btn()}">Full Inventory</button></div></details>
-        </div>`).join('') : `<div style="font-size:11px;color:#888;margin-top:7px;">No restock action required.</div>`}`);
-
-        const listing = card(`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b style="font-size:15px;">List Bazaar</b><div style="font-size:11px;color:#999;margin-top:2px;">${trustedPlans.length} trusted recommendation(s) · ${priceReviewRows.length} price review(s)</div></div><button data-open-bazaar-add style="${btn(true)}">Open Bazaar Add</button></div>
-            ${trustedPlans.slice(0,20).map(p=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(p.itemName)}</b> · Add ${p.quantity} @ <b>${money(p.price)}</b> · Margin ${p.expectedMarginPct.toFixed(1)}%</div>`).join('') || `<div style="font-size:11px;color:#888;margin-top:7px;">No trusted listing recommendation currently available.</div>`}
-            ${priceReviewRows.slice(0,15).map(r=>`<div style="font-size:10px;border-top:1px solid #303030;padding:5px 0;color:#ffd18a;"><b>${escapeHtml(r.name)}</b> · PRICE REVIEW · ${escapeHtml(r.pricingDecision?.source || 'No trusted market evidence')} · confidence ${Number(r.pricingDecision?.confidence||0).toFixed(0)}%</div>`).join('')}
-            <div style="font-size:10px;color:#777;margin-top:6px;">Only TRUSTED price decisions enter the listing plan. Anything else stays in Price Review until stronger evidence is available.</div>`);
-
-        return presetBar + quickRestock + listing + `<div style="display:flex;gap:5px;flex-wrap:wrap;"><button data-open-advanced="ops" style="${btn()}">Full Operations</button><button data-open-advanced="inventory" style="${btn()}">Inventory Detail</button><button data-open-advanced="procurement" style="${btn()}">Procurement Detail</button></div>`;
-    }
-
-    function dealsSimpleHtml(db) {
-        const deals = globalOpportunityRows(db);
-        const instant = instantArbitrageRows(db);
-        const travel = travelOpportunityRows(db).filter(r => r.profit > 0).slice(0, 5);
-        const actionable = deals.filter(r => r.listingVerified).slice(0, 25);
-        const discovery = deals.filter(r => !r.listingVerified).slice(0, 25);
-        const dollars = (db.marketIntel.dollarItems || [])
-            .slice()
-            .sort((a,b) => Number(b.totalValue || 0) - Number(a.totalValue || 0))
-            .slice(0, 30);
-        const freshness = freshnessInfo(db.marketIntel.marketplaceGeneratedAt, businessRules(db).maxListingAgeSec);
-
-        const controls = card(
-            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">' +
-                '<div><b style="font-size:15px;">Best Deals Now</b><div style="font-size:11px;color:#999;margin-top:2px;">' +
-                    actionable.length + ' seller-verifiable deal(s) · ' + discovery.length + ' research lead(s) · feed ' + escapeHtml(freshness.label) +
-                    (Number.isFinite(freshness.ageSeconds) ? ' · ' + Math.round(freshness.ageSeconds) + 's old' : '') +
-                '</div></div>' +
-                '<button data-smart-refresh style="' + btn(true) + '">Smart Refresh</button>' +
+    
+function stockSimpleHtml(db) {
+        const rows=advancedInventoryRows(db);
+        const session=getActiveRestockSession(db);
+        const plans=listingPlanPreview(db);
+        const restockRows=rows.filter(r=>['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)).slice(0,6);
+        const listingRows=Object.values(plans).slice(0,8);
+        return card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
+                '<div><b>Sell</b><div style="font-size:10px;color:#888;">Restock what is missing, then list what is ready.</div></div>'+
+                '<button data-smart-refresh style="'+btn()+'">Refresh Data</button>'+
+            '</div>'+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;">'+
+                '<div style="border:1px solid #333;border-radius:6px;padding:8px;"><b>1. Restock</b>'+
+                    '<div style="font-size:10px;color:#888;margin:3px 0 7px;">'+restockRows.length+' urgent item'+(restockRows.length===1?'':'s')+'</div>'+
+                    (session?'<button data-restock-log-purchase style="'+btn(true)+'">Log Current Purchase</button>':'<button data-start-restock-session style="'+btn(Boolean(restockRows.length))+'" '+(restockRows.length?'':'disabled')+'>Start Restock</button>')+
+                '</div>'+
+                '<div style="border:1px solid #333;border-radius:6px;padding:8px;"><b>2. List</b>'+
+                    '<div style="font-size:10px;color:#888;margin:3px 0 7px;">'+listingRows.length+' ready recommendation'+(listingRows.length===1?'':'s')+'</div>'+
+                    '<button data-open-bazaar-add style="'+btn(true)+'">Open Bazaar Add</button>'+
+                '</div>'+
             '</div>'
+        )+
+        card('<b>Restock Queue</b>'+
+            (restockRows.length?restockRows.map(r=>
+                '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>'+escapeHtml(r.name)+'</b> · Need '+Number(r.adaptiveShortage||0)+
+                ' · Max buy '+(r.buyTarget?money(r.buyTarget):'—')+'</div>'
+            ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">Nothing needs restocking.</div>')
+        )+
+        card('<b>Ready to List</b>'+
+            (listingRows.length?listingRows.map(p=>
+                '<div style="border-top:1px solid #303030;padding:6px 0;font-size:11px;"><b>'+escapeHtml(p.itemName)+'</b> · '+Number(p.quantity||0)+' @ '+money(p.price)+'</div>'
+            ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No trusted listing recommendation right now.</div>')
         );
+    }
 
-        const actionableHtml = card(
-            '<div><b>Seller-Verifiable Deals</b><div style="font-size:10px;color:#888;margin-top:2px;">Only fresh seller-level opportunities appear here. Verify immediately before opening the Bazaar.</div></div>' +
-            (actionable.length
-                ? actionable.map((r,i) => {
-                    const sellerAction = r.sellerId
-                        ? '<button data-intel-action="verify-seller" data-item="' + escapeHtml(r.id) + '" data-seller="' + escapeHtml(r.sellerId) + '" data-price="' + Number(r.buyPrice||0) + '" style="' + btn() + '">Verify Seller</button>'
-                        : '';
-                    const verifiedText = ' · Seller listing observed ' + Math.round(Number(r.listingAgeSeconds || 0)) + 's ago';
-                    return '<div style="display:flex;justify-content:space-between;gap:8px;border-top:' + (i ? '1px solid #303030' : '0') + ';padding:7px 0;">' +
-                        '<div style="font-size:11px;min-width:0;"><b>#' + (i+1) + ' ' + escapeHtml(r.name) + '</b> · ROI <b>' + r.roiPct.toFixed(1) + '%</b> · Profit ' + money(r.profit) + ' · Confidence ' + r.confidence.toFixed(0) + '%<br>' +
-                        'Buy ' + money(r.buyPrice) + ' → ' + money(r.bestExit) + ' via ' + escapeHtml(r.bestExitRoute) + verifiedText +
-                        '<details style="margin-top:4px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Score ' + r.score.toFixed(0) +
-                        ' · Sellers ' + r.sellerCount + ' · Personal demand ' + Number(r.personalDemandDaily || 0).toFixed(2) + '/day' +
-                        ' · Bazaar aggregate ' + (r.bazaarAverage ? money(r.bazaarAverage) : '—') +
-                        ' · Torn market ' + (r.marketPrice ? money(r.marketPrice) : '—') + ' · History ' + r.history.samples + '</div></details></div>' +
-                        '<div style="display:flex;gap:4px;align-items:flex-start;"><button data-intel-action="enrich" data-item="' + escapeHtml(r.id) + '" style="' + btn(true) + '">' + (r.enriched ? 'Refresh' : 'Analyze') + '</button>' +
-                        '<details><summary style="' + btn() + 'list-style:none;">•••</summary><div style="display:flex;flex-direction:column;gap:4px;margin-top:4px;">' +
-                        sellerAction + '<button data-open-advanced="intel" style="' + btn() + '">Full Market Intel</button></div></details></div>' +
-                    '</div>';
-                }).join('')
-                : '<div style="font-size:11px;color:#888;margin-top:6px;">No seller-verifiable deals currently meet your CRM-wide rules.</div>') 
-        );
-
-        const discoveryHtml = card(
-            '<details><summary style="cursor:pointer;font-weight:700;">Market Leads — Research Before Buying (' + discovery.length + ')</summary>' +
-            '<div style="font-size:10px;color:#888;margin:5px 0 3px;">These pass ROI/profit screening using aggregate market evidence but do not currently have a fresh seller-level listing. They are discovery leads, not buy recommendations.</div>' +
-            (discovery.length
-                ? discovery.map((r,i) =>
-                    '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:6px 0;">' +
-                        '<div style="font-size:10px;min-width:0;"><b>#' + (i+1) + ' ' + escapeHtml(r.name) + '</b> · Indicative ROI ' + r.roiPct.toFixed(1) + '% · Profit ' + money(r.profit) +
-                        '<br>Aggregate buy ' + money(r.buyPrice) + ' → ' + money(r.bestExit) + ' via ' + escapeHtml(r.bestExitRoute) +
-                        ' · Sellers ' + r.sellerCount + ' · Confidence ' + r.confidence.toFixed(0) + '%</div>' +
-                        '<button data-intel-action="enrich" data-item="' + escapeHtml(r.id) + '" style="' + btn(true) + '">Find Live Seller</button>' +
-                    '</div>'
-                ).join('')
-                : '<div style="font-size:11px;color:#888;margin-top:6px;">No aggregate research leads currently qualify.</div>') +
-            '</details>'
-        );
-
-        const dollarHtml = card(
-            '<div><b>$1 Bazaar Watch</b><div style="font-size:10px;color:#888;">Showing up to 30 latest scanner rows from Smart Refresh. Verify the seller in Torn before opening; $1 eligibility/availability can change immediately.</div></div>' +
-            (dollars.length
-                ? dollars.map(d =>
-                    '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:5px 0;font-size:10px;">' +
-                        '<div><b>' + escapeHtml(d.itemName) + '</b> × ' + Number(d.quantity || 0).toLocaleString() +
-                        ' · Market ' + money(d.marketPrice || 0) + ' · Value ' + money(d.totalValue || 0) +
-                        ' · ' + escapeHtml(freshnessAgeText(d.lastUpdated)) +
-                        ' · ' + escapeHtml(d.source || 'TornW3B') + '<br>' +
-                        escapeHtml(d.sellerName) + ' [' + escapeHtml(d.sellerId) + ']</div>' +
-                        '<button data-intel-action="verify-seller" data-item="' + escapeHtml(d.itemId) + '" data-seller="' + escapeHtml(d.sellerId) + '" data-price="1" style="' + btn() + '">Verify & Open</button>' +
-                    '</div>'
-                ).join('')
-                : '<div style="font-size:11px;color:#888;margin-top:6px;">No $1 scanner rows loaded.</div>')
-        );
-
-        const travelHtml = card(
-            '<div style="display:flex;justify-content:space-between;align-items:center;gap:6px;"><b>Best Travel Opportunities</b><button data-open-advanced="procurement" style="' + btn() + '">Travel Command</button></div>' +
-            (travel.length
-                ? travel.map(r =>
-                    '<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>' + escapeHtml(r.country) + ' · ' + escapeHtml(r.itemName) + '</b> ' + travelRecommendationBadge(r.recommendation) + '<br>' +
-                    'Live stock ' + Number(r.stock || 0).toLocaleString() + ' · Profit/item ' + money(r.profit) + ' · Risk-adjusted <b>' + money(r.riskAdjustedProfitPerHour) + '/hr</b></div>'
-                ).join('')
-                : '<div style="font-size:11px;color:#888;margin-top:5px;">Travel Stock has not loaded yet.</div>')
-        );
-
-        const scanners = card(
-            '<details><summary style="cursor:pointer;font-weight:700;">More Scanners</summary><div style="margin-top:7px;">' +
-            '<div style="font-size:11px;"><b>Instant Trader Arbitrage:</b> ' + instant.length + ' verified positive spread(s)</div>' +
-            instant.slice(0,8).map(r =>
-                '<div style="font-size:10px;border-top:1px solid #303030;padding:4px 0;">' + escapeHtml(r.name) +
-                ' · Buy ' + money(r.buyPrice) + ' → Trader ' + money(r.traderExit) + ' · ROI ' + r.instantRoiPct.toFixed(1) + '%</div>'
-            ).join('') +
-            '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;"><button data-intel-ranked style="' + btn() + '">Ranked/Auction</button><button data-open-advanced="intel" style="' + btn() + '">Supplier Baskets + Full Scanners</button></div>' +
-            '</div></details>'
-        );
-
-        return controls + businessRulesCard(db, true) + actionableHtml + discoveryHtml + dollarHtml + travelHtml + scanners;
+    
+function dealsSimpleHtml(db) {
+        const deals=globalOpportunityRows(db);
+        const actionable=deals.filter(r=>r.listingVerified).slice(0,8);
+        const research=deals.filter(r=>!r.listingVerified).slice(0,8);
+        const dollars=(db.marketIntel?.dollarItems||[]).slice().sort((a,b)=>Number(b.totalValue||0)-Number(a.totalValue||0)).slice(0,6);
+        return card(
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
+                '<div><b>Buy</b><div style="font-size:10px;color:#888;">Only seller-verifiable opportunities are treated as ready to act on.</div></div>'+
+                '<button data-smart-refresh style="'+btn(true)+'">Refresh Deals</button>'+
+            '</div>'
+        )+
+        card('<b>Best Deals</b>'+
+            (actionable.length?actionable.map((r,i)=>
+                '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+                    '<div><b>#'+(i+1)+' '+escapeHtml(r.name)+'</b> · ROI '+Number(r.roiPct||0).toFixed(1)+'% · Profit '+money(r.profit||0)+
+                    '<div style="color:#888;">Buy '+money(r.buyPrice||0)+' → '+money(r.bestExit||0)+'</div></div>'+
+                    (r.sellerId?'<button data-intel-action="verify-seller" data-item="'+escapeHtml(r.id)+'" data-seller="'+escapeHtml(r.sellerId)+'" data-price="'+Number(r.buyPrice||0)+'" style="'+btn(true)+'">Verify & Open</button>':'')+
+                '</div>'
+            ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No verified deal currently meets your rules.</div>')
+        )+
+        '<details style="margin:8px 0;"><summary style="cursor:pointer;font-weight:700;">Research Leads ('+research.length+')</summary>'+
+            research.map(r=>'<div style="font-size:10px;border-top:1px solid #303030;padding:6px 0;"><b>'+escapeHtml(r.name)+'</b> · indicative ROI '+Number(r.roiPct||0).toFixed(1)+'% <button data-intel-action="enrich" data-item="'+escapeHtml(r.id)+'" style="'+btn()+'padding:3px 6px;float:right;">Check</button></div>').join('')+
+        '</details>'+
+        '<details style="margin:8px 0;"><summary style="cursor:pointer;font-weight:700;">$1 Watch ('+dollars.length+')</summary>'+
+            dollars.map(d=>'<div style="font-size:10px;border-top:1px solid #303030;padding:6px 0;"><b>'+escapeHtml(d.itemName)+'</b> × '+Number(d.quantity||0).toLocaleString()+' · value '+money(d.totalValue||0)+
+                (d.sellerId?' <button data-intel-action="verify-seller" data-item="'+escapeHtml(d.itemId)+'" data-seller="'+escapeHtml(d.sellerId)+'" data-price="1" style="'+btn()+'padding:3px 6px;float:right;">Verify</button>':'')+
+            '</div>').join('')+
+        '</details>';
     }
 
     function csvCell(value) {
@@ -14785,85 +14488,32 @@
         );
     }
 
-    function reportsSimpleHtml(db) {
-        const rows = advancedInventoryRows(db);
-        const brief = ownerBriefing(db, rows);
-        const grossCogs = rows.reduce((sum, r) => sum + Number(r.realized?.cogs || 0), 0);
-        const grossRevenue = rows.reduce((sum, r) => sum + Number(r.realized?.revenue || 0), 0);
-        const inventoryCost = rows.reduce((sum, r) => sum + Number(r.realized?.ledger?.remainingCost || 0), 0);
-        const refunds = Object.values(db.refunds || {}).reduce((sum, r) => sum + Number(r.amount || 0), 0);
-
-        const demand = rows.slice()
-            .filter(r => Number(r.sold30d || 0) > 0)
-            .sort((a,b) => Number(b.daily || 0) - Number(a.daily || 0))
-            .slice(0, 12);
-
-        const roi = rows.slice()
-            .filter(r => Number(r.realized?.cogs || 0) > 0)
-            .map(r => ({ ...r, realizedRoiPct: Number(r.realized.grossProfit || 0) / Math.max(1, Number(r.realized.cogs || 0)) * 100 }))
-            .sort((a,b) => b.realizedRoiPct - a.realizedRoiPct)
-            .slice(0, 12);
-
-        const summary =
-            '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">' +
-                simpleMetric('30d Revenue', money(grossRevenue)) +
-                simpleMetric('Tracked COGS', money(grossCogs)) +
-                simpleMetric('Tracked Gross Profit', money(brief.grossProfit)) +
-                simpleMetric('COGS Coverage', brief.costCoveragePct.toFixed(0) + '%') +
-            '</div>';
-
-        const demandHtml = card(
-            '<b>Highest Personal Demand</b>' +
-            '<div style="font-size:10px;color:#888;margin:3px 0 5px;">Ranked from your own Bazaar sales. These observations increasingly drive procurement as your sample grows.</div>' +
-            (demand.length
-                ? demand.map((r,i) =>
-                    '<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>#' + (i+1) + ' ' + escapeHtml(r.name) + '</b> · ' +
-                    Number(r.daily || 0).toFixed(2) + '/day · 7d ' + Number(r.sold7d || 0) + ' · 30d ' + Number(r.sold30d || 0) +
-                    ' · Gross ' + money(r.realized?.grossProfit || 0) + '</div>'
-                ).join('')
-                : '<div style="font-size:11px;color:#888;">More sales history is needed.</div>')
-        );
-
-        const roiHtml = card(
-            '<b>Highest Realized ROI</b>' +
-            '<div style="font-size:10px;color:#888;margin:3px 0 5px;">Uses matched FIFO purchase cost against your realized 30-day Bazaar sales.</div>' +
-            (roi.length
-                ? roi.map((r,i) =>
-                    '<div style="font-size:11px;border-top:1px solid #303030;padding:5px 0;"><b>#' + (i+1) + ' ' + escapeHtml(r.name) + '</b> · ROI <b>' +
-                    r.realizedRoiPct.toFixed(1) + '%</b> · Revenue ' + money(r.realized?.revenue || 0) +
-                    ' · Gross ' + money(r.realized?.grossProfit || 0) + '</div>'
-                ).join('')
-                : '<div style="font-size:11px;color:#888;">Matched purchase-cost history is needed.</div>')
-        );
-
-        const health = card(
-            '<b>Financial Health</b>' +
-            '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin-top:6px;">' +
-                simpleMetric('Dead Capital', money(brief.deadCapital)) +
-                simpleMetric('Lost Profit Est.', money(brief.lostProfit)) +
-                simpleMetric('Refunds/Cashback', money(refunds)) +
-                simpleMetric('Stockouts', String(brief.stockouts)) +
-            '</div>' +
-            '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;"><button data-open-advanced="analytics" style="' + btn() + '">Deep Analytics</button><button data-open-advanced="settings" style="' + btn(true) + '">Settings & Diagnostics</button></div>'
-        );
-
-        return summary + businessRulesCard(db, false) + financialExportCard() + demandHtml + roiHtml + health;
-    }
-
-    function customersSimpleHtml(db) {
-        const rfm = customerRfmRows(db);
-        // Keep the simple Customers tab fast: rank by tracked spend here instead of
-        // recomputing full inventory gross-margin/CLV analytics on every tab click.
-        const topBySpend = rfm.slice().sort((a,b)=>b.monetary-a.monetary);
-        const counts = {};
-        for (const c of rfm) counts[c.segment] = (counts[c.segment] || 0) + 1;
-        const pending = Object.values(db.subscribers || {}).filter(s => s.pendingNotification);
-        const eligible = Object.values(db.coupons || {}).filter(c => couponQualification(db,c).qualified);
-        const top = topBySpend.slice(0,10);
-        const summary = `<div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:5px;">${['VIP','LOYAL','REGULAR','NEW','AT RISK','DORMANT'].map(s=>simpleMetric(s,String(counts[s]||0))).join('')}</div>`;
-        const actions = card(`<b>Customer Actions</b><div style="font-size:10px;color:#888;margin:3px 0 7px;">Customer data refreshes through Smart Refresh when this tab opens.</div><div style="display:flex;gap:6px;flex-wrap:wrap;"><button data-open-advanced="customers" style="${btn()}">View Customers</button><button data-open-advanced="subscribers" style="${btn()}">Restock Alerts ${pending.length?`(${pending.length})`:''}</button><button data-open-advanced="coupons" style="${btn()}">Coupons ${eligible.length?`(${eligible.length} eligible)`:''}</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button></div>`);
-        const values = card(`<b>Top Customer Value</b>${top.map(c=>`<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>${escapeHtml(c.name)} [${escapeHtml(c.id)}]</b> · ${escapeHtml(c.segment)} · Spend ${money(c.monetary)}<details style="margin-top:3px;"><summary style="cursor:pointer;color:#999;font-size:10px;">Details</summary><div style="font-size:10px;color:#aaa;margin-top:3px;">Recency ${c.recencyDays.toFixed(1)}d · Purchases ${c.frequency} · Affinity ${c.topProducts.map(x=>`${escapeHtml(x[0])}×${x[1]}`).join(', ')||'—'}</div></details></div>`).join('')||'<div style="font-size:11px;color:#888;">No customer history yet.</div>'}`);
-        return summary + actions + values;
+    
+function reportsSimpleHtml(db) {
+        const tasks=[['summary','Summary'],['exports','Exports'],['sales','Sales'],['analytics','Analytics']];
+        let body='';
+        if(reportWorkflow==='exports') body=financialExportCard();
+        else if(reportWorkflow==='sales') body=salesHtml(db);
+        else if(reportWorkflow==='analytics') body=analyticsHtml(db);
+        else {
+            const rows=advancedInventoryRows(db);
+            const brief=ownerBriefing(db,rows);
+            const grossRevenue=rows.reduce((sum,r)=>sum+Number(r.realized?.revenue||0),0);
+            const grossCogs=rows.reduce((sum,r)=>sum+Number(r.realized?.cogs||0),0);
+            const demand=rows.filter(r=>Number(r.sold30d||0)>0).sort((a,b)=>Number(b.daily||0)-Number(a.daily||0)).slice(0,6);
+            body='<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">'+
+                simpleMetric('Revenue',money(grossRevenue))+
+                simpleMetric('COGS',money(grossCogs))+
+                simpleMetric('Gross Profit',money(brief.grossProfit))+
+                simpleMetric('Stockouts',String(brief.stockouts))+
+            '</div>'+
+            card('<b>Highest Demand</b>'+
+                (demand.length?demand.map((r,i)=>'<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>#'+(i+1)+' '+escapeHtml(r.name)+'</b> · '+Number(r.daily||0).toFixed(2)+'/day · Gross '+money(r.realized?.grossProfit||0)+'</div>').join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">More sales history is needed.</div>')
+            );
+        }
+        return '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px;">'+
+            tasks.map(([id,label])=>'<button data-report-workflow="'+id+'" style="'+btn(reportWorkflow===id)+'">'+label+'</button>').join('')+
+        '</div><div style="max-height:470px;overflow:auto;padding-right:2px;">'+body+'</div>';
     }
 
     function moreSimpleHtml(db) {
@@ -14963,158 +14613,61 @@
         '</div>';
     }
 
-    function settingsHtml() {
-        const hasKey = Boolean(getApiKey());
-        const hasFactionKey = Boolean(getFactionApiKey());
-        const db = dbLoad();
-        const audit = db.meta?.lastSalesAudit;
-        const auditText = audit
-            ? `${audit.ok ? 'PASS' : 'FAIL'} · ${Number(audit.sales || 0).toLocaleString()} sales · ${Number(audit.customersWithSales || 0).toLocaleString()} customers · ${escapeHtml(fmtDate(audit.at))}`
-            : 'Not run yet';
-
-        return card(`
-            <b>Torn API</b>
-            <div style="font-size:12px;color:${hasKey ? '#9fe3a8' : '#ff9b9b'};margin:4px 0 8px;font-weight:700;">${hasKey ? 'API STATUS: CONNECTED' : 'API STATUS: NOT CONFIGURED — sales and customer sync are stopped'}</div>
-            <div style="font-size:12px;color:#bbb;margin:4px 0 8px;">
-                The CRM uses Torn directly for <b>User → Basic</b>, <b>User → Log</b> (Bazaar Sell 1226, Bazaar Buy 1225, Item Market Buy 1112),
-                your own <b>User → Bazaar</b> and <b>User → Item Market</b>, <b>Torn → Items</b>, and <b>Market → Item Market</b>.
-                Seller verification uses Torn API v1 <b>User → Bazaar</b> immediately before navigation and blocks API snapshots older than 120 seconds. Torn globally caches Bazaar data, so this is a recency check rather than a guaranteed real-time read.
-                <b>User → Inventory</b> remains optional but improves personal stock counts. Optional <b>Faction → Inventory</b> remains isolated from the normal business workflow.
-            </div>
-            <div style="display:flex;gap:6px;">
-                <input id="mm-api-key" type="password" autocomplete="off"
-                    placeholder="${hasKey ? 'API key saved — enter a new key to replace it' : 'Paste Torn API key'}"
-                    style="${inputCss()}flex:1">
-                <button id="mm-save-api" style="${btn(true)}">Save</button>
-                <button id="mm-clear-api" style="${btn()}">Clear</button>
-            </div>
-            <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;">
-                <button data-smart-refresh style="${btn(true)}">Smart Refresh Business Data</button>
-            </div>
-            <div style="margin-top:8px;padding:7px;border:1px solid #333;border-radius:6px;background:#151515;">
-                <label style="font-size:11px;"><input id="mm-background-refresh" type="checkbox" ${db.syncState.backgroundRefreshEnabled ? 'checked' : ''}> Enable low-frequency background refresh while one visible CRM tab is open</label>
-                <div style="font-size:10px;color:#888;margin-top:4px;">Off by default. Normal operation is manual Smart Refresh. Background mode uses one coordinator tab and never runs from hidden/minimized CRM tabs.</div>
-            </div>
-            <details style="margin-top:7px;">
-                <summary style="cursor:pointer;font-size:11px;color:#aaa;">Maintenance & targeted syncs</summary>
-                <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
-                    <button id="mm-sync-now" style="${btn()}">Sync Sales Only</button>
-                    <button data-proc-sync style="${btn()}">Sync Procurement Only</button>
-                    <button id="mm-rebuild-sales" style="${btn()}">Rebuild Sales History</button>
-                    <button data-rebuild-acquisitions style="${btn()}">Rebuild Cost Basis</button>
-                    <button id="mm-repair-names" style="${btn()}">Repair Usernames</button>
-                    <button id="mm-repair-sales-integrity" style="${btn()}">Repair Sales Integrity</button>
-                </div>
-            </details>
-            <div style="font-size:12px;color:#aaa;margin-top:8px;">
-                Sales integrity: ${auditText}<br>
-                Last full sales rebuild: ${escapeHtml(fmtDate(db.meta?.salesRebuiltAt))}<br>
-                Last acquisition rebuild: ${escapeHtml(fmtDate(db.procurement?.lastAcquisitionRebuildAt))}<br>
-                Acquisition lots: ${Number(db.procurement?.acquisitions?.length || 0).toLocaleString()}<br>
-                Filtered customers: ${Object.values(db.removedCustomers || {}).filter(isRemovalRecordActive).length}
-            </div>
-            <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;">
-                <b>Faction Inventory API</b>
-                <div style="font-size:11px;color:#aaa;margin:4px 0 7px;">
-                    Recommended dedicated key for <b>Faction → Inventory</b>. Leadership must enable <b>Faction API Access</b> for your faction position; then use your own Limited key or a custom key containing that selection.
-                    Do not ask leadership to share another player's API key. This key is stored only in Tampermonkey GM storage and excluded from sanitized GitHub backups.
-                    If blank, manual armory sync can fall back to the primary CRM key when that key has the same faction permission.
-                </div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                    <input id="mm-faction-api-key" type="password" autocomplete="off"
-                        placeholder="${hasFactionKey ? 'Faction API key saved — enter to replace' : 'Dedicated faction inventory API key'}"
-                        style="${inputCss()}flex:1;min-width:260px;">
-                    <button id="mm-save-faction-api" style="${btn(true)}">Save Faction Key</button>
-                    <button id="mm-clear-faction-api" style="${btn()}">Clear</button>
-                </div>
-                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px;font-size:11px;">
-                    <label><input id="mm-faction-auto-sync" type="checkbox" ${db.factionInventory.settings.autoSync ? 'checked' : ''}> Include faction inventory when opt-in background refresh is enabled</label>
-                    <button id="mm-faction-sync-settings" style="${btn()}">Sync Armory Now</button>
-                </div>
-                <div style="font-size:10px;color:#888;margin-top:6px;">
-                    Source snapshot: ${escapeHtml(fmtDate(db.factionInventory.inventoryTimestamp))} · Last fetch: ${escapeHtml(fmtDate(db.factionInventory.lastSyncAt))}
-                </div>
-            </div>
-            <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;">
-                <b>Operations</b>
-                <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:5px;">
-                    <label style="font-size:10px;color:#aaa;">Listing hours<input id="mm-ops-listing-hours" type="number" min="1" value="${Number(db.operations.settings.listingHours||DEFAULT_LISTING_HOURS)}" style="${inputCss()}width:100%;"></label>
-                    <label style="font-size:10px;color:#aaa;">Lead hours<input id="mm-ops-lead-hours" type="number" min="1" value="${Number(db.operations.settings.defaultLeadHours||6)}" style="${inputCss()}width:100%;"></label>
-                    <label style="font-size:10px;color:#aaa;">Dead stock days<input id="mm-ops-dead-days" type="number" min="1" value="${Number(db.operations.settings.deadStockDays||DEAD_STOCK_DAYS)}" style="${inputCss()}width:100%;"></label>
-                    <label style="font-size:10px;color:#aaa;">Overstock ×<input id="mm-ops-overstock" type="number" min="1" step=".1" value="${Number(db.operations.settings.overstockMultiplier||1.5)}" style="${inputCss()}width:100%;"></label>
-                </div>
-                <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;"><button id="mm-save-ops-settings" style="${btn()}">Save Operations</button><button id="mm-enable-notifications" style="${btn()}">Enable Browser Alerts</button></div>
-            </div>
-            <div style="margin-top:10px;border-top:1px solid #333;padding-top:8px;">
-                <b>Data Storage & GitHub Backup</b>
-                <div style="margin:6px 0;">
-                    <button id="mm-repair-contact-state" style="${btn()}">Repair Contacted Status</button>
-                    <span style="font-size:10px;color:#888;margin-left:6px;">Restores previously contacted customers from durable contact/coupon evidence.</span>
-                </div>
-                <div style="font-size:11px;color:#aaa;margin:4px 0 7px;">
-                    Primary database: <b>IndexedDB</b>. GitHub sync runs hourly when configured.
-                    Sanitized backup excludes customer records, API keys, refunds, coupons, private notes, acquisitions, account-specific inventory, and faction armory data.
-                    Optional encrypted full backup protects the complete CRM database.
-                </div>
-                <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;">
-                    <input id="mm-gh-owner" placeholder="GitHub owner" value="${escapeHtml(getGithubSettings().owner)}" style="${inputCss()}">
-                    <input id="mm-gh-repo" placeholder="Repository" value="${escapeHtml(getGithubSettings().repo)}" style="${inputCss()}">
-                    <input id="mm-gh-branch" placeholder="Branch" value="${escapeHtml(getGithubSettings().branch)}" style="${inputCss()}">
-                    <input id="mm-gh-folder" placeholder="Folder" value="${escapeHtml(getGithubSettings().folder)}" style="${inputCss()}">
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:5px;">
-                    <input id="mm-gh-token" type="password" autocomplete="off" placeholder="${getGithubToken() ? 'GitHub fine-grained token saved — enter to replace' : 'GitHub fine-grained PAT (Contents read/write)'}" style="${inputCss()}">
-                    <input id="mm-gh-passphrase" type="password" autocomplete="off" placeholder="${getGithubBackupPassphrase() ? 'Encrypted backup passphrase saved — enter to replace' : 'Optional encrypted full-backup passphrase'}" style="${inputCss()}">
-                </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px;font-size:11px;">
-                    <label><input id="mm-gh-auto" type="checkbox" ${getGithubSettings().autoSync ? 'checked' : ''}> Hourly sync</label>
-                    <label><input id="mm-gh-full" type="checkbox" ${getGithubSettings().encryptedFullBackup ? 'checked' : ''}> Encrypted full backup</label>
-                    <button id="mm-gh-save" style="${btn(true)}">Save GitHub</button>
-                    <button id="mm-gh-sync-now" style="${btn()}">Sync Now</button>
-                    <button id="mm-gh-restore" style="${btn()}">Restore from GitHub</button>
-                </div>
-                <div style="font-size:10px;color:#888;margin-top:6px;">
-                    Last GitHub sync: ${escapeHtml(fmtDate(getGithubSettings().lastSyncAt))} · Status: ${escapeHtml(getGithubSettings().lastStatus || 'Not run')}<br>
-                    Local backend: IndexedDB · Last local save: ${escapeHtml(fmtDate(db.meta?.storage?.lastSavedAt))}
-                </div>
-            </div>
-            ${updateCenterHtml()}
-            <div style="font-size:12px;color:#888;margin-top:8px;">
-                CRM v${VERSION}. Simple mode is task-first; Advanced mode exposes every detailed page. Torn data and TornW3B public market intelligence are normalized locally; scoring, ROI, liquidity, supplier, allocation, customer, demand, and realized-profit calculations run in this userscript.
-                Messages, purchases, Bazaar submissions, trades, and money transfers are never auto-submitted.
-            </div>
-        `);
+    
+function settingsHtml() {
+        const hasKey=Boolean(getApiKey());
+        const hasFactionKey=Boolean(getFactionApiKey());
+        const db=dbLoad();
+        const gh=getGithubSettings();
+        return card(
+            '<b>Connections</b>'+
+            '<div style="font-size:10px;color:#888;margin:4px 0 6px;">Business data: '+(hasKey?'connected':'not connected')+' · Faction data: '+(hasFactionKey?'connected':'uses primary key when permitted')+'</div>'+
+            '<div style="display:grid;grid-template-columns:1fr auto auto;gap:5px;">'+
+                '<input id="mm-api-key" type="password" autocomplete="off" placeholder="'+(hasKey?'Primary Torn key saved — enter to replace':'Primary Torn API key')+'" style="'+inputCss()+'">'+
+                '<button id="mm-save-api" style="'+btn(true)+'">Save</button><button id="mm-clear-api" style="'+btn()+'">Clear</button>'+
+                '<input id="mm-faction-api-key" type="password" autocomplete="off" placeholder="'+(hasFactionKey?'Faction key saved — enter to replace':'Optional faction API key')+'" style="'+inputCss()+'">'+
+                '<button id="mm-save-faction-api" style="'+btn(true)+'">Save</button><button id="mm-clear-faction-api" style="'+btn()+'">Clear</button>'+
+            '</div>'+
+            '<div style="margin-top:7px;"><button data-smart-refresh style="'+btn()+'">Refresh Business Data</button> <button id="mm-faction-refresh" style="'+btn()+'">Refresh Faction</button></div>'
+        )+
+        businessRulesCard(db,false)+
+        '<details style="margin:8px 0;"><summary style="cursor:pointer;font-weight:700;">Preferences</summary>'+
+            card('<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;">'+
+                '<label style="font-size:10px;">Listing hours<input id="mm-ops-listing-hours" type="number" min="1" value="'+Number(db.operations.settings.listingHours||DEFAULT_LISTING_HOURS)+'" style="'+inputCss()+'width:100%;"></label>'+
+                '<label style="font-size:10px;">Lead hours<input id="mm-ops-lead-hours" type="number" min="1" value="'+Number(db.operations.settings.defaultLeadHours||6)+'" style="'+inputCss()+'width:100%;"></label>'+
+                '<label style="font-size:10px;">Dead stock days<input id="mm-ops-dead-days" type="number" min="1" value="'+Number(db.operations.settings.deadStockDays||DEAD_STOCK_DAYS)+'" style="'+inputCss()+'width:100%;"></label>'+
+                '<label style="font-size:10px;">Overstock ×<input id="mm-ops-overstock" type="number" min="1" step=".1" value="'+Number(db.operations.settings.overstockMultiplier||1.5)+'" style="'+inputCss()+'width:100%;"></label>'+
+            '</div><button id="mm-save-ops-settings" style="'+btn(true)+'margin-top:6px;">Save Preferences</button>')+
+        '</details>'+
+        '<details style="margin:8px 0;"><summary style="cursor:pointer;font-weight:700;">Backup</summary>'+
+            card('<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;">'+
+                '<input id="mm-gh-owner" placeholder="GitHub owner" value="'+escapeHtml(gh.owner)+'" style="'+inputCss()+'">'+
+                '<input id="mm-gh-repo" placeholder="Repository" value="'+escapeHtml(gh.repo)+'" style="'+inputCss()+'">'+
+                '<input id="mm-gh-branch" placeholder="Branch" value="'+escapeHtml(gh.branch)+'" style="'+inputCss()+'">'+
+                '<input id="mm-gh-folder" placeholder="Folder" value="'+escapeHtml(gh.folder)+'" style="'+inputCss()+'">'+
+                '<input id="mm-gh-token" type="password" autocomplete="off" placeholder="'+(getGithubToken()?'Token saved — enter to replace':'GitHub token')+'" style="'+inputCss()+'">'+
+                '<input id="mm-gh-passphrase" type="password" autocomplete="off" placeholder="'+(getGithubBackupPassphrase()?'Backup passphrase saved — enter to replace':'Optional backup passphrase')+'" style="'+inputCss()+'">'+
+            '</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;"><button id="mm-gh-save" style="'+btn(true)+'">Save Backup Settings</button><button id="mm-gh-sync-now" style="'+btn()+'">Backup Now</button><button id="mm-gh-restore" style="'+btn()+'">Restore</button></div>')+
+        '</details>';
     }
 
-    function panelBody(db) {
-        if (simpleMode) {
-            if (activeTab === 'home') return homeHtml(db);
-            if (activeTab === 'stock') return stockSimpleHtml(db);
-            if (activeTab === 'faction') return factionInventoryHtml(db);
-            if (activeTab === 'deals') return dealsSimpleHtml(db);
-            if (activeTab === 'customers') return customersSimpleHtml(db);
-            if (activeTab === 'reports') return reportsSimpleHtml(db);
-            if (activeTab === 'more') return moreSimpleHtml(db);
-        }
-        if (activeTab === 'ops') return operationsHtml(db);
-        if (activeTab === 'customers') return customersHtml(db);
-        if (activeTab === 'inventory') return inventoryHtml(db);
+    
+function panelBody(db) {
+        if (activeTab === 'stock') return stockSimpleHtml(db);
+        if (activeTab === 'deals') return dealsSimpleHtml(db);
+        if (activeTab === 'customers') return customersSimpleHtml(db);
         if (activeTab === 'faction') return factionInventoryHtml(db);
-        if (activeTab === 'procurement') return procurementHtml(db);
-        if (activeTab === 'intel') return marketIntelHtml(db);
-        if (activeTab === 'analytics') return analyticsHtml(db);
-        if (activeTab === 'coupons') return couponsHtml(db);
-        if (activeTab === 'subscribers') return subscribersHtml(db);
-        if (activeTab === 'refunds') return refundsHtml(db);
-        if (activeTab === 'sales') return salesHtml(db);
-        return settingsHtml();
+        if (activeTab === 'reports') return reportsSimpleHtml(db);
+        if (activeTab === 'settings') return settingsHtml();
+        return homeHtml(db);
     }
 
-    function createPanel() {
+    
+function createPanel() {
         if (document.getElementById(ROOT_ID)) return;
         const root = document.createElement('div');
         root.id = ROOT_ID;
-        root.style.cssText = 'position:fixed;z-index:2147483646;width:min(660px,calc(100vw - 24px));max-height:calc(100vh - 100px);overflow:auto;background:#101010;color:#eee;border:1px solid #6b5a2e;border-radius:9px;box-shadow:0 12px 35px #000b;font:13px/1.35 Arial,sans-serif;';
+        root.style.cssText = 'position:fixed;z-index:2147483646;width:min(740px,calc(100vw - 20px));max-height:calc(100vh - 20px);overflow:hidden;background:#101010;color:#eee;border:1px solid #6b5a2e;border-radius:9px;box-shadow:0 12px 35px #000b;font:13px/1.35 Arial,sans-serif;';
         document.body.appendChild(root);
     }
 
@@ -15131,13 +14684,25 @@
         document.body.appendChild(b);
     }
 
-    function render() {
+    
+function render() {
         const root = document.getElementById(ROOT_ID);
         if (!root) return;
         const ui = getUI();
         if (ui.minimized) return;
         const db = dbLoad();
-        root.innerHTML = `<div id="mm-drag" style="position:sticky;top:0;z-index:2;background:#111;border-bottom:1px solid #4b4024;cursor:move;"><div style="height:76px;background:linear-gradient(90deg,#0008,#0002),url('${BANNER_URL}') center/cover;border-radius:8px 8px 0 0;display:flex;align-items:flex-end;justify-content:space-between;padding:8px;box-sizing:border-box;"><div><b style="font-size:17px;text-shadow:0 2px 4px #000;">${SHOP_NAME}</b><div style="font-size:11px;text-shadow:0 1px 3px #000;">Bazaar Customer CRM v${VERSION}</div></div><div style="display:flex;gap:5px;"><button id="mm-minimize" style="${btn()}">−</button><button id="mm-close" style="${btn()}">×</button></div></div></div><div style="padding:9px;">${tabsHtml()}<div id="mm-status" style="padding:6px 8px;background:#151515;border:1px solid #333;border-radius:5px;color:#d7ad4b;margin-bottom:7px;">${escapeHtml(statusText)}</div>${panelBody(db)}</div>`;
+        root.innerHTML =
+            '<div id="mm-drag" style="position:sticky;top:0;z-index:2;background:#111;border-bottom:1px solid #4b4024;cursor:move;">'+
+                '<div style="height:54px;background:linear-gradient(90deg,#0008,#0002),url(\''+BANNER_URL+'\') center/cover;border-radius:8px 8px 0 0;display:flex;align-items:flex-end;justify-content:space-between;padding:7px;box-sizing:border-box;">'+
+                    '<div><b style="font-size:16px;text-shadow:0 2px 4px #000;">'+SHOP_NAME+'</b><div style="font-size:10px;text-shadow:0 1px 3px #000;">CRM v'+VERSION+'</div></div>'+
+                    '<div style="display:flex;gap:5px;"><button id="mm-minimize" style="'+btn()+'">−</button><button id="mm-close" style="'+btn()+'">×</button></div>'+
+                '</div>'+
+            '</div>'+
+            '<div style="padding:8px;display:flex;flex-direction:column;max-height:calc(100vh - 88px);box-sizing:border-box;">'+
+                tabsHtml()+
+                '<div id="mm-status" style="padding:5px 7px;background:#151515;border:1px solid #333;border-radius:5px;color:#d7ad4b;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+escapeHtml(statusText)+'</div>'+
+                '<div id="mm-page" style="overflow:auto;min-height:0;padding-right:2px;">'+panelBody(db)+'</div>'+
+            '</div>';
         bindPanelEvents(root);
         enableDragging(root);
     }
@@ -15195,26 +14760,35 @@
     }
 
     function bindPanelEvents(root) {
-        root.querySelector('#mm-ui-mode-toggle')?.addEventListener('click', () => {
-            simpleMode = !simpleMode;
-            GM_setValue(UI_MODE_KEY, simpleMode ? 'simple' : 'advanced');
-            activeTab = simpleMode ? 'home' : 'ops';
-            statusText = simpleMode ? 'Simple mode enabled.' : 'Advanced mode enabled.';
-            render();
-        });
-
         root.querySelectorAll('[data-simple-go]').forEach(button => button.addEventListener('click', () => {
-            simpleMode = true;
-            GM_setValue(UI_MODE_KEY, 'simple');
             activeTab = button.dataset.simpleGo || 'home';
             render();
-            ensureDataForTab(activeTab);
         }));
 
         root.querySelectorAll('[data-open-advanced]').forEach(button => button.addEventListener('click', () => {
-            simpleMode = false;
-            GM_setValue(UI_MODE_KEY, 'advanced');
-            activeTab = button.dataset.openAdvanced || 'ops';
+            const legacy=String(button.dataset.openAdvanced||'');
+            const map={
+                ops:'stock',inventory:'stock',
+                procurement:'deals',intel:'deals',
+                customers:'customers',subscribers:'customers',coupons:'customers',refunds:'customers',
+                faction:'faction',
+                analytics:'reports',sales:'reports',
+                settings:'settings'
+            };
+            activeTab=map[legacy]||'home';
+            render();
+        }));
+
+        root.querySelectorAll('[data-customer-workflow]').forEach(button => button.addEventListener('click', () => {
+            customerWorkflow=String(button.dataset.customerWorkflow||'list');
+            render();
+        }));
+        root.querySelectorAll('[data-report-workflow]').forEach(button => button.addEventListener('click', () => {
+            reportWorkflow=String(button.dataset.reportWorkflow||'summary');
+            render();
+        }));
+        root.querySelectorAll('[data-faction-workflow]').forEach(button => button.addEventListener('click', () => {
+            factionWorkflow=String(button.dataset.factionWorkflow||'inventory');
             render();
         }));
 
@@ -15321,7 +14895,8 @@
             render();
         });
         root.querySelector('#mm-travel-save')?.addEventListener('click', () => saveTravelSettings(root));
-        root.querySelector('#mm-faction-sync')?.addEventListener('click', () => syncFactionInventory({silent:false,force:true}).catch(()=>{}));
+        root.querySelector('#mm-faction-sync')?.addEventListener('click', () => refreshFactionWorkspace().catch(()=>{}));
+        root.querySelector('#mm-faction-refresh')?.addEventListener('click', () => refreshFactionWorkspace().catch(()=>{}));
         root.querySelector('#mm-faction-market')?.addEventListener('click', () => syncMarketIntelligence(false));
         root.querySelector('#mm-faction-export')?.addEventListener('click', () => exportFactionInventoryWorkbook().catch(()=>{}));
         root.querySelector('#mm-faction-war-baseline')?.addEventListener('click', () => applyFactionWarReadinessBaseline());
