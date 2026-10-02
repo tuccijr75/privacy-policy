@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Market Scout
 // @namespace    manic-mike.torn.market-scout
-// @version      8.0.0-alpha.5
+// @version      8.0.0-alpha.6
 // @description  Modular acquisition tool for verified Bazaar, Item Market and cached Travel opportunities.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -480,7 +480,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM Market Scout</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.5 · task-first acquisition</div></div>'+
+        '<div><b style="font-size:15px;">MM Market Scout</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.6 · task-first acquisition</div></div>'+
         '<button id="mm-scout-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -526,27 +526,42 @@
 
   function open(){
     createPanel();
-    const root=document.getElementById(ROOT_ID),launcher=document.getElementById(LAUNCHER_ID);
+    const root=document.getElementById(ROOT_ID);
     root.style.display='block';
-    if(launcher)launcher.style.display='none';
+    core?.setDockLauncherActive?.('scout',true);
     render();
     reloadCachedState();
     startWatcher();
   }
 
   function close(){
-    const root=document.getElementById(ROOT_ID),launcher=document.getElementById(LAUNCHER_ID);
+    const root=document.getElementById(ROOT_ID);
     if(root)root.style.display='none';
-    if(launcher)launcher.style.display='block';
+    core?.setDockLauncherActive?.('scout',false);
     stopWatcher();
   }
 
   function createLauncher(){
-    if(!document.body||document.getElementById(LAUNCHER_ID))return;
+    if(!document.body)return;
+    if(core?.registerDockLauncher){
+      const b=core.registerDockLauncher({
+        id:'scout',
+        label:'MM Market Scout',
+        accent:'#287f85',
+        onClick:()=>{
+          const root=document.getElementById(ROOT_ID);
+          if(root&&root.style.display!=='none')close(); else open();
+        }
+      });
+      if(b)b.id=LAUNCHER_ID;
+      core.adoptLegacyCrmLauncher?.();
+      return;
+    }
+    if(document.getElementById(LAUNCHER_ID))return;
     const b=document.createElement('button');
     b.id=LAUNCHER_ID;
     b.textContent='Scout';
-    b.style.cssText='position:fixed;right:0;top:205px;z-index:2147483647;'+button(true)+'border-radius:6px 0 0 6px;';
+    b.style.cssText='position:fixed;right:52px;bottom:6px;z-index:2147483647;'+button(true);
     b.addEventListener('click',open);
     document.body.appendChild(b);
   }
