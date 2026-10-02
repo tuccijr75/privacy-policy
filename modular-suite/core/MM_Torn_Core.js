@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.3';
+  const CORE_VERSION = '8.0.0-alpha.4';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -349,12 +349,46 @@
       const r=el.getBoundingClientRect();
       if(r.width<120||r.width>700||r.height<30||r.height>90)continue;
       if(window.innerHeight-r.bottom>18||r.bottom<window.innerHeight-100)continue;
-      const children=[...el.querySelectorAll('a,button')].filter(node=>{
-        const rr=node.getBoundingClientRect();
-        return rr.width>=28&&rr.width<=64&&rr.height>=28&&rr.height<=64;
+
+      const controls=[...el.querySelectorAll('a,button')]
+        .map(node=>({node,r:node.getBoundingClientRect()}))
+        .filter(entry=>{
+          const rr=entry.r;
+          return rr.width>=28&&rr.width<=64&&rr.height>=28&&rr.height<=64
+            && rr.bottom<=window.innerHeight+2
+            && rr.top>=window.innerHeight-110;
+        })
+        .sort((a,b)=>a.r.left-b.r.left);
+
+      if(controls.length<4)continue;
+
+      const rowTop=Math.min(...controls.map(entry=>entry.r.top));
+      const rowBottom=Math.max(...controls.map(entry=>entry.r.bottom));
+      const rowSpread=rowBottom-rowTop;
+      if(rowSpread>72)continue;
+
+      const first=controls[0];
+      const gaps=[];
+      for(let i=1;i<controls.length;i++){
+        const gap=controls[i].r.left-controls[i-1].r.right;
+        if(gap>=0&&gap<=14)gaps.push(gap);
+      }
+      const nativeGap=gaps.length
+        ? gaps.slice().sort((a,b)=>a-b)[Math.floor(gaps.length/2)]
+        : 3;
+
+      const heights=controls.map(entry=>entry.r.height).sort((a,b)=>a-b);
+      const nativeHeight=heights[Math.floor(heights.length/2)]||first.r.height;
+
+      candidates.push({
+        el,
+        r,
+        controls,
+        firstRect:first.r,
+        nativeGap:clamp(nativeGap,2,7),
+        nativeHeight,
+        score:controls.length*10-Math.abs(nativeHeight-42)-Math.abs(window.innerHeight-first.r.bottom)
       });
-      if(children.length<4)continue;
-      candidates.push({el,r,score:children.length*10-Math.abs(r.height-44)});
     }
     return candidates.sort((a,b)=>b.score-a.score)[0]||null;
   }
@@ -363,23 +397,30 @@
     const dock=document.getElementById(DOCK_ID);
     if(!dock||!dock.children.length)return;
     const native=visibleBottomToolbarCandidate();
+
     if(native){
-      const r=native.r;
-      const gap=4;
-      const desiredLeft=r.left-dock.offsetWidth-gap;
+      const first=native.firstRect;
+      const gap=Math.round(native.nativeGap||3);
+      const desiredLeft=first.left-dock.offsetWidth-gap;
+      const desiredTop=first.top+(first.height-dock.offsetHeight)/2;
+
+      dock.style.right='auto';
+      dock.style.bottom='auto';
+
       if(desiredLeft>=4){
+        // Exact target: immediately left of Torn's first native button, same centerline.
         dock.style.left=Math.round(desiredLeft)+'px';
-        dock.style.right='auto';
-        dock.style.bottom=Math.max(2,Math.round(window.innerHeight-r.bottom))+'px';
+        dock.style.top=Math.round(clamp(desiredTop,4,window.innerHeight-dock.offsetHeight-4))+'px';
       }else{
-        // Narrow-screen fallback: keep the MM controls clear of Torn controls instead of overlapping them.
-        dock.style.left=Math.max(4,Math.round(r.left))+'px';
-        dock.style.right='auto';
-        dock.style.bottom=Math.max(2,Math.round(window.innerHeight-r.top+4))+'px';
+        // Narrow-screen fallback: same left edge as Torn, one native-button row above.
+        dock.style.left=Math.max(4,Math.round(first.left))+'px';
+        const aboveTop=first.top-dock.offsetHeight-gap;
+        dock.style.top=Math.round(clamp(aboveTop,4,window.innerHeight-dock.offsetHeight-4))+'px';
       }
     }else{
       dock.style.right='6px';
       dock.style.left='auto';
+      dock.style.top='auto';
       dock.style.bottom='6px';
     }
   }
