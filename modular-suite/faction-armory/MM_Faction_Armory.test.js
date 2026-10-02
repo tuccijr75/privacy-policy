@@ -20,7 +20,8 @@ assert.deepStrictEqual(
 const profile=logic.battleProfile({strength:100,defense:50,speed:25,dexterity:25});
 assert.strictEqual(profile.total,200);
 assert.strictEqual(profile.dominant,'strength');
-assert.strictEqual(profile.bias,'damage');
+assert.strictEqual(profile.bias,'accuracy');
+assert.strictEqual(profile.offensiveNeed,'accuracy');
 
 const factionInventory={
   current:{
@@ -77,7 +78,8 @@ assert.strictEqual(summarySlots.primary?.name,'AK-47');
 const build=logic.compareMemberBuild(rows[0],factionInventory);
 const primary=build.items.find(x=>x.slot==='primary');
 assert(primary);
-assert.strictEqual(primary.decision,'KEEP','must never recommend weaker faction primary');
+assert.strictEqual(primary.route,'KEEP','must never replace a stronger known current primary');
+assert.notStrictEqual(primary.targetName,'Weak Rifle','faction stock must not define the objective baseline');
 
 const missingMember={
   memberId:'101',
@@ -86,10 +88,9 @@ const missingMember={
   profile:{stats:{strength:10,defense:10,speed:10,dexterity:10},equipment:{items:[]}}
 };
 const missingBuild=logic.compareMemberBuild(missingMember,factionInventory);
-assert.strictEqual(
-  missingBuild.items.find(x=>x.slot==='primary').decision,
-  'REVIEW CURRENT GEAR',
-  'unknown current gear must not be treated as an upgrade authorization'
+assert(
+  ['ISSUE','ACQUIRE'].includes(missingBuild.items.find(x=>x.slot==='primary').route),
+  'missing current gear should create a provisioning route against the general baseline'
 );
 
 const twentyRoster={};
@@ -148,10 +149,19 @@ assert.strictEqual(
   'manual item without parsed performance stats must never be auto-replaced'
 );
 
-const tier=logic.readinessTier(rows[0],rows);
-assert(['DEVELOPMENT','STANDARD','FRONTLINE'].includes(tier.label));
+const priority=logic.readinessPriority(rows[0],rows);
+assert(['DEVELOPING','NORMAL','HIGH'].includes(priority.label));
 const standard=logic.warReadinessStandard(rows[0],factionInventory,rows);
-assert(standard.floors.primary.score>0,'war readiness should derive a primary floor from faction stock');
+assert(standard.floors.primary.score>0,'war readiness should derive an objective generally-available primary floor');
+assert(standard.targets.secondary?.name,'secondary target must always be present in the objective catalog');
+assert.strictEqual(logic.equipmentSlot({name:'Qsz-92',type:'Weapon',subType:'SMG'}),'secondary');
+
+const acquisition=logic.acquisitionPlan({
+  ...factionInventory,
+  memberReadiness:{...factionInventory.memberReadiness,roster:twentyRoster}
+},{mode:'war',participants:20});
+assert(acquisition.list.some(row=>row.category==='equipment'),'acquisition plan must contain named equipment requirements');
+assert(acquisition.list.some(row=>row.category==='provisions'),'acquisition plan must contain provision requirements');
 
 const snapState=logic.recordSnapshot(
   {snapshots:[],events:[]},
