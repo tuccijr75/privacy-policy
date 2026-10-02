@@ -1,6 +1,6 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.6**
+Status: **NON-PRODUCTION / alpha.7**
 
 ## Scope implemented
 
@@ -185,5 +185,73 @@ Normal minimum item rolls are used as readiness floors; midpoint stats rank choi
 - [ ] Confirm Acquire list reflects the live 20-member faction state and current loans.
 - [ ] Confirm unresolved REVIEW slots are excluded from buy quantity.
 - [ ] Export/open Leadership workbook with Acquire sheet.
+
+Production remains unchanged.
+
+
+## Alpha.7 dock + owned-inventory budget acquisition — 2026-10-02
+
+### Shared Torn-style module dock
+- MM Torn Core now exposes a shared bottom module dock.
+- Modular launchers use 42x42 compact buttons with original line icons, dark Torn-adjacent gradients, and separate muted accent colors.
+- No Torn sprites, artwork, or official icon assets are copied.
+- The dock attempts to position immediately beside the currently visible Torn bottom toolbar; it falls back to the lower-right edge if no suitable toolbar is found.
+- Module icons can be dragged to reorder within the dock; order is stored as non-sensitive local UI state only.
+- Armory and Scout now register with the shared dock.
+- Core can adopt the legacy CRM launcher into the same dock as a migration bridge.
+- Docking is DOM-only on the currently loaded Torn page and generates no additional Torn network request.
+
+### Torn rules / API compliance
+- Launchers are interface enhancements only; they do not scrape unfocused pages or trigger hidden non-API Torn requests.
+- Faction/member data continues to come from Torn API selections or the currently loaded page.
+- Member Limited Access key input now visibly states: local-only storage, no sharing, readiness-only purpose, one-time vs encrypted-save behavior, and Limited Access requirement.
+- The implementation continues to request no Torn password or login credentials.
+
+### Member-owned inventory acquisition logic
+Acquisition route order is now:
+1. current equipped gear;
+2. adequate member-owned combat inventory;
+3. adequate faction loan already assigned to that member;
+4. adequate unloaned faction inventory;
+5. acquire the reference item;
+6. unresolved / defer if current data is insufficient.
+
+Member inventory processing covers at least Primary, Secondary, Melee, Helmet, Body, Gloves, Pants, and Boots.
+Faction-owned/loaned rows are excluded from the member-owned pool when identifiable, preventing duplicate coverage.
+
+Existing member-key profiles must be refreshed once after alpha.7 so their new `ownedEquipment` summary is populated.
+
+### Small-faction acquisition controls
+- Procurement modes: **Budget / Standard / Ideal**.
+- Default mode: **Budget**.
+- Default known-cost cap: **$15,000,000**.
+- Buy list now separates Required Qty, Buy Now Qty, and Deferred Qty.
+- Known-cost funded amount cannot exceed the configured cap.
+- Missing member stats or member inventory are unresolved rather than converted into speculative full loadouts.
+- Budget mode uses lower-cost common equipment references before higher-cost standard/premium options.
+- Acquire worksheet in the leadership export includes buy-now/deferred quantities and buy-now costs.
+
+### Static acceptance
+- [x] Core syntax PASS.
+- [x] Market Scout syntax PASS.
+- [x] Faction Armory logic syntax PASS.
+- [x] Faction Armory userscript syntax PASS.
+- [x] Member-owned Qsz-92 satisfies a Secondary slot without generating a duplicate member purchase.
+- [x] Known-cost funded acquisition stays at/below $15M fixture cap.
+- [x] Missing member stats are unresolved rather than mass-purchased.
+- [x] Missing member inventory defers unknown slot purchasing.
+- [x] Budget-mode primary and body reference fixtures use low-cost generally available targets.
+
+### Live acceptance remaining
+- [ ] Update/install Armory alpha.7 and Scout alpha.6.
+- [ ] Reload Torn and confirm Armory / Scout / legacy CRM launchers appear in one bottom dock beside Torn controls.
+- [ ] Drag module icons to reorder; reload and confirm order persists.
+- [ ] Confirm launchers do not obscure Torn bottom controls at desktop and mobile widths.
+- [ ] Refresh saved member keys once; confirm Owned Combat Gear populates for API-backed members.
+- [ ] Verify a member-owned equal/better Secondary resolves to OWNED and reduces Acquire quantity.
+- [ ] Verify Stock → Weapons → Secondary still populates correctly.
+- [ ] Verify Budget mode / $15M default cap produces a realistic small-faction Buy Now list and a Deferred list instead of an unrestricted total.
+- [ ] Verify Standard and Ideal are clearly planning alternatives only.
+- [ ] Export/open Leadership workbook and confirm budget/acquisition columns.
 
 Production remains unchanged.
