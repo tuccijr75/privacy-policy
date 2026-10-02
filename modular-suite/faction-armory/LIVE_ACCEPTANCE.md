@@ -35,13 +35,17 @@ Status: **NON-PRODUCTION / alpha.1**
 
 ## Static acceptance
 
-- [ ] JavaScript syntax check.
-- [ ] Pure logic fixture.
-- [ ] Nine category constant exact.
-- [ ] No-downgrade fixture.
-- [ ] Unknown-current-gear review fixture.
-- [ ] 20-member equipment minimum = 7, maximum/war band = 11.
-- [ ] Snapshot delta fixture.
+- [x] JavaScript syntax check.
+- [x] Pure logic fixture.
+- [x] Nine category constant exact.
+- [x] No-downgrade fixture.
+- [x] Unknown-current-gear review fixture.
+- [x] 20-member equipment minimum = 7, maximum/war band = 11.
+- [x] Snapshot delta fixture.
+
+Static fixture also covers:
+- Structured message-reply parser for STR/DEF/SPD/DEX, gear and blood type.
+- Manual gear without parsed performance stats remains review-required rather than being auto-replaced.
 
 ## Live browser acceptance
 
