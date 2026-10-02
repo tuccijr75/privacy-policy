@@ -129,6 +129,7 @@
     const FACTION_INVENTORY_SYNC_INTERVAL_MS = 60 * 60 * 1000;
     const FACTION_INVENTORY_SNAPSHOT_MAX = 192;
     const FACTION_INVENTORY_EVENT_MAX = 2500;
+    const FACTION_INVENTORY_CONCURRENCY = 3;
     const FACTION_INVENTORY_CATEGORIES = Object.freeze([
         'weapons','armor','temporary','medical','consumables',
         'drugs','boosters','utilities','loot'
@@ -9846,10 +9847,21 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
         }
 
         try {
-            const groups = [];
-            for (const category of FACTION_INVENTORY_CATEGORIES) {
-                groups.push(await fetchFactionInventoryCategory(category));
+            const categoryResults=await mapWithConcurrency(
+                FACTION_INVENTORY_CATEGORIES,
+                FACTION_INVENTORY_CONCURRENCY,
+                category=>fetchFactionInventoryCategory(category)
+            );
+            const failures=categoryResults
+                .map((result,index)=>({result,category:FACTION_INVENTORY_CATEGORIES[index]}))
+                .filter(row=>row.result?.status==='rejected');
+            if(failures.length) {
+                throw new Error(
+                    'Faction inventory category fetch failed: '+
+                    failures.map(row=>row.category+' — '+(row.result.reason?.message||String(row.result.reason))).join('; ')
+                );
             }
+            const groups=categoryResults.map(result=>result.value);
 
             const sourceTimes = [...new Set(groups.map(group => Number(group.inventoryTimestamp || 0)).filter(value => value > 0))];
             if (sourceTimes.length !== 1) {
@@ -9939,10 +9951,12 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
         const status=document.getElementById('mm-status');
         if(status) status.textContent=statusText;
         const problems=[];
-        try { await syncFactionInventory({silent:true,force:true}); }
-        catch(error){ problems.push('inventory: '+(error?.message||String(error))); }
-        try { await syncFactionMemberRoster({silent:true}); }
-        catch(error){ problems.push('members: '+(error?.message||String(error))); }
+        const [inventoryResult,membersResult]=await Promise.allSettled([
+            syncFactionInventory({silent:true,force:true}),
+            syncFactionMemberRoster({silent:true})
+        ]);
+        if(inventoryResult.status==='rejected') problems.push('inventory: '+(inventoryResult.reason?.message||String(inventoryResult.reason)));
+        if(membersResult.status==='rejected') problems.push('members: '+(membersResult.reason?.message||String(membersResult.reason)));
         statusText=problems.length
             ? 'Faction refresh completed with issues: '+problems.join('; ')
             : 'Faction data refreshed.';
