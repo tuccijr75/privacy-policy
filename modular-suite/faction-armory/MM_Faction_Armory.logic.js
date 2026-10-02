@@ -35,23 +35,23 @@
   // Research-backed, non-live procurement reference. These are normal shop/abroad
   // items with high circulation; this module deliberately does not search Item Market/Bazaars.
   const GENERAL_EQUIPMENT_CATALOG=Object.freeze([
-    {name:'Benelli M4 Super',slot:'primary',damage:61.5,accuracy:57.5,marketValue:20739,source:'Big Al\'s Gun Shop',availability:'COMMON',class:'routine'},
-    {name:'Mag 7',slot:'primary',damage:58.5,accuracy:64.5,marketValue:52460,source:'South Africa',availability:'COMMON',class:'routine'},
-    {name:'AK-47',slot:'primary',damage:58.5,accuracy:54.5,marketValue:9791,source:'Mexico',availability:'VERY COMMON',class:'routine'},
-    {name:'Jackhammer',slot:'primary',damage:71.5,accuracy:54.5,marketValue:4025949,source:'Switzerland',availability:'COMMON',class:'routine'},
-    {name:'ArmaLite M-15A4',slot:'primary',damage:70.5,accuracy:59.5,marketValue:21571985,source:'Mexico',availability:'GENERAL / PREMIUM',class:'premium'},
+    {name:'Benelli M4 Super',slot:'primary',damage:61.5,accuracy:57.5,baselineDamage:59,baselineAccuracy:55,marketValue:20739,source:'Big Al\'s Gun Shop',availability:'COMMON',class:'routine'},
+    {name:'Mag 7',slot:'primary',damage:58.5,accuracy:64.5,baselineDamage:56,baselineAccuracy:62,marketValue:52460,source:'South Africa',availability:'COMMON',class:'routine'},
+    {name:'AK-47',slot:'primary',damage:58.5,accuracy:54.5,baselineDamage:56,baselineAccuracy:52,marketValue:9791,source:'Mexico',availability:'VERY COMMON',class:'routine'},
+    {name:'Jackhammer',slot:'primary',damage:71.5,accuracy:54.5,baselineDamage:69,baselineAccuracy:52,marketValue:4025949,source:'Switzerland',availability:'COMMON',class:'routine'},
+    {name:'ArmaLite M-15A4',slot:'primary',damage:70.5,accuracy:59.5,baselineDamage:68,baselineAccuracy:57,marketValue:21571985,source:'Mexico',availability:'GENERAL / PREMIUM',class:'premium'},
 
-    {name:'BT MP9',slot:'secondary',damage:63.5,accuracy:57.5,marketValue:47954,source:'Japan',availability:'VERY COMMON',class:'routine'},
-    {name:'Qsz-92',slot:'secondary',damage:64.5,accuracy:55.5,marketValue:69906,source:'China',availability:'VERY COMMON',class:'routine'},
+    {name:'BT MP9',slot:'secondary',damage:63.5,accuracy:57.5,baselineDamage:61,baselineAccuracy:55,marketValue:47954,source:'Japan',availability:'VERY COMMON',class:'routine'},
+    {name:'Qsz-92',slot:'secondary',damage:64.5,accuracy:55.5,baselineDamage:62,baselineAccuracy:53,marketValue:69906,source:'China',availability:'VERY COMMON',class:'routine'},
 
-    {name:'Macana',slot:'melee',damage:59.5,accuracy:67.5,marketValue:118822,source:'Argentina',availability:'VERY COMMON',class:'routine'},
-    {name:'Diamond Bladed Knife',slot:'melee',damage:62.5,accuracy:64.5,marketValue:913906,source:'Cayman Islands',availability:'VERY COMMON',class:'routine'},
+    {name:'Macana',slot:'melee',damage:59.5,accuracy:67.5,baselineDamage:57,baselineAccuracy:65,marketValue:118822,source:'Argentina',availability:'VERY COMMON',class:'routine'},
+    {name:'Diamond Bladed Knife',slot:'melee',damage:62.5,accuracy:64.5,baselineDamage:60,baselineAccuracy:62,marketValue:913906,source:'Cayman Islands',availability:'VERY COMMON',class:'routine'},
 
-    {name:'Combat Helmet',slot:'helmet',armorRating:40.5,marketValue:3389173,source:'South Africa',availability:'VERY COMMON',class:'routine'},
-    {name:'Combat Vest',slot:'body',armorRating:40.5,marketValue:3559659,source:'South Africa',availability:'VERY COMMON',class:'routine'},
-    {name:'Combat Gloves',slot:'gloves',armorRating:40.5,marketValue:2151411,source:'South Africa',availability:'VERY COMMON',class:'routine'},
-    {name:'Combat Pants',slot:'pants',armorRating:40.5,marketValue:3157386,source:'South Africa',availability:'VERY COMMON',class:'routine'},
-    {name:'Combat Boots',slot:'boots',armorRating:40.5,marketValue:2594040,source:'South Africa',availability:'VERY COMMON',class:'routine'}
+    {name:'Combat Helmet',slot:'helmet',armorRating:40.5,baselineArmor:38,marketValue:3389173,source:'South Africa',availability:'VERY COMMON',class:'routine'},
+    {name:'Combat Vest',slot:'body',armorRating:40.5,baselineArmor:38,marketValue:3559659,source:'South Africa',availability:'VERY COMMON',class:'routine'},
+    {name:'Combat Gloves',slot:'gloves',armorRating:40.5,baselineArmor:38,marketValue:2151411,source:'South Africa',availability:'VERY COMMON',class:'routine'},
+    {name:'Combat Pants',slot:'pants',armorRating:40.5,baselineArmor:38,marketValue:3157386,source:'South Africa',availability:'VERY COMMON',class:'routine'},
+    {name:'Combat Boots',slot:'boots',armorRating:40.5,baselineArmor:38,marketValue:2594040,source:'South Africa',availability:'VERY COMMON',class:'routine'}
   ]);
   const CATALOG_BY_NAME=new Map(GENERAL_EQUIPMENT_CATALOG.map(item=>[String(item.name).toLowerCase(),item]));
 
@@ -165,6 +165,21 @@
     return base;
   }
 
+  function readinessFloorScore(item,bias='balanced'){
+    const enriched=enrichCatalogItem(item)||{};
+    const slot=equipmentSlot(enriched);
+    if(['helmet','body','gloves','pants','boots'].includes(slot)){
+      return n(enriched.baselineArmor)||n(enriched.armorRating)||n(enriched.armor);
+    }
+    const damage=n(enriched.baselineDamage)||n(enriched.damage);
+    const accuracy=n(enriched.baselineAccuracy)||n(enriched.accuracy);
+    if(!damage||!accuracy)return 0;
+    const base=damage*(accuracy/100);
+    if(bias==='accuracy')return base*(1+Math.max(-0.10,Math.min(0.10,(accuracy-57.5)/100)));
+    if(bias==='damage')return base*(1+Math.max(-0.10,Math.min(0.10,(damage-62.5)/100)));
+    return base;
+  }
+
   function generalCandidates(slot,{includePremium=false}={}){
     return GENERAL_EQUIPMENT_CATALOG
       .filter(item=>item.slot===slot&&(includePremium||item.class!=='premium'))
@@ -271,7 +286,7 @@
       const premiumOption=premiumOptionForSlot(slot,bp);
       targets[slot]=target;
       premium[slot]=premiumOption;
-      floors[slot]={score:target?equipmentScore(target,bp.offensiveNeed):0};
+      floors[slot]={score:target?readinessFloorScore(target,bp.offensiveNeed):0};
     }
     return {
       priority:readinessPriority({...memberRow,statProfile:bp},rosterRows),
@@ -307,6 +322,14 @@
     const profile=battleProfile(stats);
     const currentRaw=profileEquipmentSlots(memberRow?.profile||{});
     const current=Object.fromEntries(Object.entries(currentRaw).map(([slot,item])=>[slot,enrichCatalogItem(item)]));
+    const assignedLoans={};
+    for(const loan of memberRow?.loanItems||[]){
+      const item=enrichCatalogItem({name:loan?.name,amount:loan?.amount,source:'Faction loan'});
+      const slot=equipmentSlot(item);
+      if(!slot)continue;
+      const prior=assignedLoans[slot];
+      if(!prior||equipmentScore(item,profile.offensiveNeed)>equipmentScore(prior,profile.offensiveNeed))assignedLoans[slot]=item;
+    }
     const faction=availableFactionCandidates(factionInventory);
     const standard=warReadinessStandard({...memberRow,stats,statProfile:profile},factionInventory,rosterRows);
     const items=[];
@@ -315,8 +338,10 @@
       const currentItem=current[slot]||null;
       const target=standard.targets[slot]||null;
       const premium=standard.premium[slot]||null;
-      const floor=target?equipmentScore(target,profile.offensiveNeed):0;
+      const floor=target?readinessFloorScore(target,profile.offensiveNeed):0;
       const currentScore=currentItem?equipmentScore(currentItem,profile.offensiveNeed):0;
+      const assignedLoan=assignedLoans[slot]||null;
+      const assignedLoanScore=assignedLoan?equipmentScore(assignedLoan,profile.offensiveNeed):0;
       const factionOptions=(faction[slot]||[]).map(item=>({
         ...item,score:equipmentScore(item,profile.offensiveNeed)
       })).filter(item=>item.score>=floor&&item.score>0).sort((a,b)=>b.score-a.score);
@@ -332,6 +357,10 @@
         route='KEEP';
         ready=true;
         suggested=currentItem;
+      }else if(assignedLoan&&assignedLoanScore>=floor){
+        decision='PROVISIONED — VERIFY EQUIPPED';
+        route='LOANED';
+        suggested=assignedLoan;
       }else if(factionOption){
         decision=currentItem?'UPGRADE — ISSUE FACTION':'PROVISION — ISSUE FACTION';
         route='ISSUE';
@@ -358,6 +387,7 @@
         suggestedMarketValue:n(suggested?.marketValue),
         factionOptionName:String(factionOption?.name||''),
         factionAvailableCount:n(factionOption?.availableCount),
+        assignedLoanName:String(assignedLoan?.name||''),
         premiumOptionName:String(premium?.name||''),
         currentItem:clone(currentItem),
         targetItem:clone(target),
@@ -418,7 +448,7 @@
     };
 
     function allocateFaction(slot,target,bias){
-      const floor=target?equipmentScore(target,bias):0;
+      const floor=target?readinessFloorScore(target,bias):0;
       const candidates=(poolState[slot]||[])
         .filter(item=>item.remaining>0&&equipmentScore(item,bias)>=floor)
         .sort((a,b)=>equipmentScore(b,bias)-equipmentScore(a,bias));
@@ -430,7 +460,7 @@
     for(const member of selected){
       const build=compareMemberBuild(member,factionInventory,rows);
       for(const item of build.items){
-        if(item.ready)continue;
+        if(item.ready||item.route==='LOANED')continue;
         const target=item.targetItem;
         if(!target)continue;
         const factionPick=allocateFaction(item.slot,target,build.offensiveNeed);
@@ -891,6 +921,7 @@
     catalogItemByName,
     enrichCatalogItem,
     equipmentScore,
+    readinessFloorScore,
     generalCandidates,
     generalTargetForSlot,
     premiumOptionForSlot,
