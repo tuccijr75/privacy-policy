@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.1
+// @version      8.0.0-alpha.2
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,13 +17,15 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.1';
+  const VERSION='8.0.0-alpha.2';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
   const FACTION_API_KEY='mm_faction_armory_api_v1';
   const MEMBER_VAULT_KEY='mm_faction_armory_member_vault_v1';
   const MEMBER_VAULT_ITERATIONS=250000;
+  const STOCK_MODE_KEY='mm_faction_armory_stock_mode_v1';
+  const WAR_PARTICIPANTS=20;
   const API_BASE='https://api.torn.com/v2';
   const CHANNEL='mm_bazaar_crm_cross_tab_v1';
 
@@ -36,6 +38,7 @@
   let loadError='';
   let busy=false;
   let selectedCategory='all';
+  let stockMode=String(GM_getValue(STOCK_MODE_KEY,'war')||'war').toLowerCase()==='peace'?'peace':'war';
   let vaultSession=null;
   let channel=null;
 
@@ -721,17 +724,24 @@
   function buildsHtml(){
     const rows=memberRows();
     if(!rows.length)return card('No member roster is loaded.');
-    return rows.map(row=>{
-      const build=logic.compareMemberBuild(row,state?.factionInventory||{});
+    return card(
+      '<b>War-ready build standard</b>'+
+      '<div class="mm-fa-muted">Each member is evaluated by level + relative battle-stat tier + stat style. Strength leans damage; Speed/Dexterity lean accuracy; defensive/balanced builds require stronger armor coverage. Known personal gear is never replaced by a weaker faction item.</div>'
+    )+
+    rows.map(row=>{
+      const build=logic.compareMemberBuild(row,state?.factionInventory||{},rows);
+      const tierClass=build.warReady?'mm-fa-good':row.hasStats?'mm-fa-warn':'mm-fa-bad';
       return card(
-        '<div><b>'+esc(row.memberName)+'</b> · Lv '+num(row.level)+' · '+(row.hasStats?fmt(row.statProfile.total)+' total stats':'stats missing')+'</div>'+
-        '<div class="mm-fa-muted">'+esc(build.summary)+' · bias '+esc(build.bias)+'</div>'+
-        '<details style="margin-top:5px;"><summary class="mm-fa-mini" style="cursor:pointer;">Current vs faction-stock target</summary>'+
+        '<div><b>'+esc(row.memberName)+'</b> · Lv '+num(row.level)+' · '+(row.hasStats?fmt(row.statProfile.total)+' total stats':'stats missing')+
+          ' · <span class="'+tierClass+'">'+esc(build.tier)+' '+(build.warReady?'WAR READY':'REVIEW')+'</span></div>'+
+        '<div class="mm-fa-muted">'+esc(build.summary)+' · build style '+esc(build.bias)+(build.dominant?' · dominant '+esc(build.dominant):'')+'</div>'+
+        '<details style="margin-top:5px;"><summary class="mm-fa-mini" style="cursor:pointer;">Current vs war-ready standard</summary>'+
           '<div style="margin-top:5px;">'+build.items.map(item=>{
-            const cls=item.decision==='UPGRADE AVAILABLE'?'mm-fa-good':item.decision==='KEEP'?'':'mm-fa-warn';
+            const cls=item.ready?'mm-fa-good':item.decision==='UPGRADE AVAILABLE'?'mm-fa-warn':'mm-fa-bad';
             return '<div class="mm-fa-row" style="padding:5px 0;">'+
               '<div class="mm-fa-main"><b>'+esc(item.slot.toUpperCase())+'</b> · <span class="'+cls+'">'+esc(item.decision)+'</span>'+
-                '<div class="mm-fa-muted">Current: '+esc(item.currentName||'—')+' · Target: '+esc(item.targetName||'—')+'</div></div>'+
+                '<div class="mm-fa-muted">Current: <b>'+esc(item.currentName||'—')+'</b> · Ready floor '+(item.readinessFloor?fmt(item.readinessFloor):'—')+
+                ' · Faction target: '+esc(item.targetName||'—')+'</div></div>'+
             '</div>';
           }).join('')+'</div>'+
         '</details>'
@@ -760,14 +770,22 @@
   }
 
   function minimumsHtml(){
-    const proposal=logic.minimumProposal(state?.factionInventory||{});
+    const proposal=logic.minimumProposal(state?.factionInventory||{},{
+      mode:stockMode,
+      participants:WAR_PARTICIPANTS
+    });
     const rows=proposal.proposals.slice().sort((a,b)=>(b.shortfall||0)-(a.shortfall||0)||String(a.category).localeCompare(String(b.category)));
+    const modeLabel=stockMode==='war'?'WAR — '+WAR_PARTICIPANTS+' PARTICIPANTS':'PEACE';
     return card(
       '<div class="mm-fa-actions" style="justify-content:space-between;">'+
-        '<div><b>Provisional minimums</b><div class="mm-fa-muted">'+proposal.rosterCount+' members · '+proposal.observedDays.toFixed(1)+' observed days · '+proposal.confidence+' confidence</div></div>'+
+        '<div><b>Inventory minimums</b><div class="mm-fa-muted">'+modeLabel+' · '+proposal.observedDays.toFixed(1)+' observed days · '+proposal.confidence+' history confidence</div></div>'+
         '<button id="mm-fa-export" style="'+button(true)+'">Leadership Excel</button>'+
       '</div>'+
-      '<div class="mm-fa-mini" style="margin-top:6px;">Routine equipment pool: <b>'+proposal.poolMin+'</b> available per standard slot; proposed upper/war band <b>'+proposal.poolMax+'</b>. Stackables use 14-day observed depletion; critical medical/temp adds one-per-member reserve. Filled blood bags remain data-required.</div>'
+      '<div class="mm-fa-actions" style="margin-top:8px;">'+
+        '<button data-stock-mode="peace" style="'+button(stockMode==='peace')+'">Peace</button>'+
+        '<button data-stock-mode="war" style="'+button(stockMode==='war')+'">War</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:7px;">'+esc(proposal.assumptions)+'</div>'
     )+
     (rows.length?rows.map(row=>card(
       '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.item)+'</b><div class="mm-fa-muted">'+esc(row.category)+(row.slot?' · '+esc(row.slot):'')+' · '+esc(row.rationale)+'</div></div>'+
@@ -828,6 +846,12 @@
     root.querySelector('#mm-fa-close')?.addEventListener('click',close);
     root.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.view||'members';render();}));
     root.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click',()=>{selectedCategory=b.dataset.cat||'all';render();}));
+    root.querySelectorAll('[data-stock-mode]').forEach(b=>b.addEventListener('click',()=>{
+      stockMode=b.dataset.stockMode==='peace'?'peace':'war';
+      GM_setValue(STOCK_MODE_KEY,stockMode);
+      statusText='Inventory minimum mode: '+(stockMode==='war'?'WAR ('+WAR_PARTICIPANTS+' participants)':'PEACE')+'.';
+      render();
+    }));
     root.querySelector('#mm-fa-refresh-faction')?.addEventListener('click',refreshFaction);
     root.querySelector('#mm-fa-copy-request')?.addEventListener('click',()=>copyText(missingDataRequest()).then(()=>{statusText='Member data request copied.';render();}));
     root.querySelector('#mm-fa-import-once')?.addEventListener('click',()=>importFromField(false));
@@ -904,11 +928,16 @@
   function exportLeadershipExcel(){
     if(!state){statusText='Load shared state first.';render();return;}
     const members=memberRows();
-    const minimums=logic.minimumProposal(state.factionInventory||{});
+    const minimums=logic.minimumProposal(state.factionInventory||{},{
+      mode:stockMode,
+      participants:WAR_PARTICIPANTS
+    });
     const inventory=Object.values(state.factionInventory?.current||{});
     const summaryHeaders=['Metric','Value'];
     const summary=[
       {Metric:'Generated',Value:new Date().toISOString()},
+      {Metric:'Stock mode',Value:stockMode.toUpperCase()},
+      {Metric:'War participants assumption',Value:stockMode==='war'?WAR_PARTICIPANTS:''},
       {Metric:'Faction members',Value:members.length},
       {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
       {Metric:'Missing / stale',Value:members.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length},
@@ -918,12 +947,16 @@
       {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
       {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length}
     ];
-    const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
-    const memberData=members.map(r=>({
-      'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'API Saved':r.apiSaved?'YES':'NO','Readiness':r.readinessStatus,
-      'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
-      'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
-    }));
+    const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','War Tier','War Ready','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberData=members.map(r=>{
+      const build=logic.compareMemberBuild(r,state.factionInventory||{},members);
+      return {
+        'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'API Saved':r.apiSaved?'YES':'NO','Readiness':r.readinessStatus,
+        'War Tier':build.tier,'War Ready':build.warReady?'YES':'NO',
+        'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
+        'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
+      };
+    });
     const invHeaders=['Category','Item ID','Item','Owned','Available','Loaned','Damage','Accuracy','Armor'];
     const invData=inventory.map(r=>({'Category':r.category,'Item ID':r.itemId,'Item':r.name,'Owned':num(r.amountOwned),'Available':num(r.availableCount),'Loaned':num(r.loanedCount),'Damage':num(r.damage),'Accuracy':num(r.accuracy),'Armor':num(r.armorRating)}));
     const minHeaders=['Category','Item / Pool','Current','Loaned','Proposed Min','Proposed Max','Shortfall','Data Required','Rationale'];
