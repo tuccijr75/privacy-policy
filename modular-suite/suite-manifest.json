@@ -1,0 +1,53 @@
+{
+  "suiteVersion": "8.0.0-alpha.1",
+  "status": "non-production",
+  "baseVersion": "7.5.3",
+  "branch": "crm-v8-modular-suite",
+  "legacyState": {
+    "dbName": "mm_bazaar_crm_idb",
+    "store": "state",
+    "key": "main",
+    "localStorageKey": "mm_bazaar_crm_v1"
+  },
+  "products": [
+    {
+      "id": "core",
+      "name": "MM Torn Core",
+      "role": "credential-api-storage-contracts",
+      "visible": false
+    },
+    {
+      "id": "bazaar-manager",
+      "name": "MM Bazaar Manager",
+      "role": "sell-list-customers"
+    },
+    {
+      "id": "market-scout",
+      "name": "MM Market Scout",
+      "role": "acquire-market-travel"
+    },
+    {
+      "id": "faction-armory",
+      "name": "MM Faction Armory",
+      "role": "faction-inventory-builds-readiness"
+    },
+    {
+      "id": "business-intelligence",
+      "name": "MM Business Intelligence",
+      "role": "analytics-finance-exports"
+    }
+  ],
+  "migrationOrder": [
+    "core",
+    "market-scout",
+    "faction-armory",
+    "bazaar-manager",
+    "business-intelligence"
+  ],
+  "productionPromotionRequires": [
+    "data-preservation-pass",
+    "static-tests-pass",
+    "live-browser-acceptance",
+    "explicit-owner-approval"
+  ]
+}
