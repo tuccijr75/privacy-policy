@@ -24,6 +24,13 @@
     ])
   });
 
+  const WRITABLE_DOMAIN_PATHS = Object.freeze({
+    core: DOMAIN_PATHS.core,
+    bazaar: DOMAIN_PATHS.bazaar,
+    market: DOMAIN_PATHS.market,
+    faction: DOMAIN_PATHS.faction
+  });
+
   const TOP_LEVEL_TYPES = Object.freeze({
     customers: 'object',
     sales: 'object',
@@ -125,6 +132,41 @@
     return out;
   }
 
+  function freshnessSnapshot(state) {
+    const safe = state && typeof state === 'object' ? state : {};
+    return Object.freeze({
+      unified: safe.syncState?.lastUnifiedSyncAt || null,
+      acquisitions: safe.procurement?.lastAcquisitionSyncAt || null,
+      itemMarket: safe.procurement?.lastItemMarketAt || null,
+      marketGlobal: safe.marketIntel?.lastGlobalSyncAt || null,
+      weav3rGeneratedAt: safe.marketIntel?.marketplaceGeneratedAt || null,
+      travel: safe.travelIntel?.lastSyncAt || null,
+      faction: safe.factionInventory?.lastSyncAt || null,
+      roster: safe.factionInventory?.memberReadiness?.lastRosterSyncAt || null
+    });
+  }
+
+  function applyDomainSlice(latestState, domain, nextSlice) {
+    const key = String(domain || '').toLowerCase();
+    const paths = WRITABLE_DOMAIN_PATHS[key];
+    if (!paths) throw new Error(`Domain is not writable through Core: ${domain}`);
+    if (!latestState || typeof latestState !== 'object' || Array.isArray(latestState)) {
+      throw new Error('Latest shared state is invalid.');
+    }
+    if (!nextSlice || typeof nextSlice !== 'object' || Array.isArray(nextSlice)) {
+      throw new Error('Domain update must be an object slice.');
+    }
+
+    const merged = deepClone(latestState);
+    for (const path of paths) {
+      if (Object.prototype.hasOwnProperty.call(nextSlice, path)) {
+        merged[path] = deepClone(nextSlice[path]);
+      }
+    }
+    merged.schema = Number(latestState.schema || LEGACY.schema) || LEGACY.schema;
+    return merged;
+  }
+
   function openLegacyDb() {
     if (typeof indexedDB === 'undefined') {
       return Promise.reject(new Error('IndexedDB is unavailable in this runtime.'));
@@ -158,6 +200,53 @@
     }
   }
 
+  async function updateDomainState(domain, updater) {
+    if (typeof updater !== 'function') throw new Error('updateDomainState requires a synchronous updater function.');
+    const key = String(domain || '').toLowerCase();
+    if (!WRITABLE_DOMAIN_PATHS[key]) throw new Error(`Domain is not writable through Core: ${domain}`);
+
+    const db = await openLegacyDb();
+    try {
+      if (!db.objectStoreNames.contains(LEGACY.store)) {
+        throw new Error(`Legacy IndexedDB store '${LEGACY.store}' is missing.`);
+      }
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction(LEGACY.store, 'readwrite');
+        const store = tx.objectStore(LEGACY.store);
+        const getReq = store.get(LEGACY.key);
+        let output = null;
+
+        getReq.onerror = () => {
+          try { tx.abort(); } catch {}
+          reject(getReq.error || new Error('Shared state read failed.'));
+        };
+        getReq.onsuccess = () => {
+          try {
+            const latest = getReq.result;
+            const validation = validateLegacyState(latest);
+            if (!validation.ok) throw new Error('Shared state failed validation: ' + validation.errors.join('; '));
+            const draft = getDomainSlice(latest, key);
+            const maybeNext = updater(draft);
+            if (maybeNext && typeof maybeNext.then === 'function') {
+              throw new Error('Domain updater must be synchronous to preserve IndexedDB transaction atomicity.');
+            }
+            const nextSlice = maybeNext === undefined ? draft : maybeNext;
+            output = applyDomainSlice(latest, key, nextSlice);
+            store.put(output, LEGACY.key);
+          } catch (error) {
+            try { tx.abort(); } catch {}
+            reject(error);
+          }
+        };
+        tx.oncomplete = () => resolve(deepClone(output));
+        tx.onerror = () => reject(tx.error || new Error('Shared state update failed.'));
+        tx.onabort = () => reject(tx.error || new Error('Shared state update aborted.'));
+      });
+    } finally {
+      try { db.close(); } catch {}
+    }
+  }
+
   async function inspectLegacyState() {
     const state = await readLegacyState();
     const validation = validateLegacyState(state);
@@ -165,7 +254,8 @@
       coreVersion: CORE_VERSION,
       legacy: LEGACY,
       validation,
-      summary: summarizeState(state)
+      summary: summarizeState(state),
+      freshness: freshnessSnapshot(state)
     });
   }
 
@@ -173,11 +263,15 @@
     version: CORE_VERSION,
     legacy: LEGACY,
     domainPaths: DOMAIN_PATHS,
+    writableDomainPaths: WRITABLE_DOMAIN_PATHS,
     validateLegacyState,
     summarizeState,
+    freshnessSnapshot,
     getDomainSlice,
+    applyDomainSlice,
     readLegacyState,
     inspectLegacyState,
+    updateDomainState,
     deepClone
   });
 
