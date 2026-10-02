@@ -801,11 +801,11 @@
   function buildsHtml(){
     const rows=memberRows();
     if(!rows.length)return card('No member roster is loaded.');
-    return '<div class="mm-fa-card mm-fa-compact"><b>War-ready build baseline</b> <span class="mm-fa-muted">General availability baseline; faction stock decides KEEP / ISSUE / ACQUIRE, never the readiness standard.</span></div>'+
+    return '<div class="mm-fa-card mm-fa-compact"><b>War-ready build baseline</b> <span class="mm-fa-muted">General '+procurementMode.toUpperCase()+' baseline; member-owned gear and faction stock decide KEEP / OWNED / LOANED / ISSUE / ACQUIRE.</span></div>'+
     rows.map(row=>{
-      const build=logic.compareMemberBuild(row,state?.factionInventory||{},rows);
+      const build=logic.compareMemberBuild(row,state?.factionInventory||{},rows,{procurementMode});
       const statusClass=build.warReady?'mm-fa-good':'mm-fa-warn';
-      const unresolved=build.items.filter(item=>!item.ready).length;
+      const unresolved=build.items.filter(item=>!item.ready&&item.route!=='OWNED'&&item.route!=='LOANED').length;
       return '<details class="mm-fa-build-member">'+
         '<summary>'+
           '<span class="mm-fa-build-summary-main">'+
@@ -813,7 +813,7 @@
             '<span class="mm-fa-pill">Lv '+num(row.level)+'</span>'+
             '<span class="'+statusClass+'">'+(build.warReady?'WAR READY':'ACTION NEEDED')+'</span>'+
           '</span>'+
-          '<span class="mm-fa-muted">'+(build.warReady?'ready':unresolved+' slot'+(unresolved===1?'':'s')+' open')+'</span>'+
+          '<span class="mm-fa-muted">'+(build.warReady?'ready':unresolved+' actionable slot'+(unresolved===1?'':'s'))+'</span>'+
         '</summary>'+
         '<div class="mm-fa-build-body">'+
           '<div class="mm-fa-tiles">'+
@@ -822,10 +822,11 @@
             tile('OFFENSE NEED',build.offensiveNeed||'balanced')+
             tile('DEFENSE STYLE',build.defensiveStyle||'balanced')+
             tile('PREMIUM PRIORITY',build.priority?.label||'—')+
+            tile('PROCUREMENT',String(build.procurementMode||procurementMode).toUpperCase())+
           '</div>'+
           '<div class="mm-fa-muted" style="margin-top:4px;">'+esc(build.summary)+'</div>'+
           '<div class="mm-fa-slot-grid">'+build.items.map(item=>{
-            const cls=item.ready?'mm-fa-good':item.route==='ISSUE'?'mm-fa-warn':'mm-fa-bad';
+            const cls=item.ready||item.route==='OWNED'||item.route==='LOANED'?'mm-fa-good':item.route==='ISSUE'?'mm-fa-warn':'mm-fa-bad';
             return '<div class="mm-fa-slot">'+
               '<div><b>'+esc(item.slot.toUpperCase())+'</b> <span class="'+cls+'">'+esc(item.decision)+'</span></div>'+
               '<div class="mm-fa-tiles">'+
@@ -833,6 +834,9 @@
                 tile('BASELINE',item.targetName||'—',{wide:true})+
                 tile('ROUTE',item.route||'—')+
                 tile('SUGGEST',item.suggestedName||'—',{wide:true})+
+                (item.ownedOptionName?tile('OWNED',item.ownedOptionName+(item.ownedOptionQuantity?' x'+item.ownedOptionQuantity:''),{wide:true}):'')+
+                (item.assignedLoanName?tile('LOAN',item.assignedLoanName,{wide:true}):'')+
+                (item.factionOptionName?tile('FACTION',item.factionOptionName+' x'+item.factionAvailableCount,{wide:true}):'')+
                 (item.suggestedSource?tile('SOURCE',item.suggestedSource,{wide:true}):'')+
                 (item.premiumOptionName&&item.premiumOptionName!==item.targetName?tile('PREMIUM OPTION',item.premiumOptionName,{wide:true}):'')+
               '</div>'+
