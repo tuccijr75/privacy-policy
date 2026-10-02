@@ -963,7 +963,16 @@
         '<button id="mm-fa-save-faction-key" style="'+button(true)+'">Save</button>'+
         '<button id="mm-fa-clear-faction-key" style="'+button()+'">Clear</button>'+
       '</div>'+
-      '<div class="mm-fa-mini" style="margin-top:8px;">Member API keys use a separate encrypted Armory vault. Existing readiness profiles from the legacy CRM are read from shared Core state immediately; member keys are not copied between userscript namespaces as plaintext.</div>'
+      '<div class="mm-fa-mini" style="margin-top:6px;">API use: stored locally only, shared with nobody, used only for faction inventory/readiness, and never sent to another service. Member keys remain in the encrypted Armory vault.</div>'+
+      '<div style="border-top:1px solid #333;margin-top:8px;padding-top:7px;"><b>Procurement policy</b></div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+        '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+        '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '<label class="mm-fa-muted">Acquisition cap $ <input id="mm-fa-settings-budget" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:140px;"></label>'+
+        '<button id="mm-fa-settings-budget-save" style="'+button(true)+'">Save</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:5px;">Budget is the default for a small/growing faction. It chooses lower-cost acceptable reference equipment, then counts member-owned gear, existing loans, and faction stock before creating purchases. Standard/Ideal are planning alternatives, not purchase authorization.</div>'
     );
   }
 
