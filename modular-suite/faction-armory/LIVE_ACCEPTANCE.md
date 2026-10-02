@@ -1,6 +1,6 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.3**
+Status: **NON-PRODUCTION / alpha.4**
 
 ## Scope implemented
 
@@ -107,3 +107,19 @@ Live UI feedback: member cards used excessive vertical space and a two-column co
 - responsive mobile widths retain wrapping without forcing tall two-column rows.
 
 Static syntax acceptance: PASS.
+
+
+## Alpha.4 collapsed build list — 2026-10-02
+
+Repository-boundary audit completed before mutation:
+- CRM control state is authoritative only under `Projects/torn-crm/**` in MM-Torn;
+- implementation source remains in `tuccijr75/privacy-policy` on `crm-v8-modular-suite`;
+- no Torn Dev Studio, Faction OS, root tools, workflows, or shared registry files were changed for this refinement.
+
+Build-screen refinement:
+- each faction member is now one compact collapsed clickable row;
+- closed state shows member name, level, readiness tier/status, and unresolved-slot count;
+- clicking the member opens the build summary and Current / Floor / Target slot boxes;
+- all rows start collapsed to minimize scrolling.
+
+Static JavaScript syntax: PASS.
