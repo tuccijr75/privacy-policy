@@ -787,6 +787,7 @@
           '<div class="mm-fa-tiles" style="margin-top:4px;">'+
             tile('EQUIPPED',gear||'—',{wide:true})+
             tile('FACTION LOANS',row.loanItems.length?row.loanItems.map(i=>i.name+' x'+num(i.amount)).join(' | '):'—',{wide:true})+
+            tile('OWNED COMBAT GEAR',Array.isArray(row.profile?.ownedEquipment?.items)&&row.profile.ownedEquipment.items.length?row.profile.ownedEquipment.items.map(i=>String(i.name||'')+' x'+num(i.quantity||1)).join(' | '):'—',{wide:true})+
             tile('SFAK',med.sfak??'—')+
             tile('FAK',med.fak??'—')+
             tile('MORPHINE',med.morphine??'—')+
