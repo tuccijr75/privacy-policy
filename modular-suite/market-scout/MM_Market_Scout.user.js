@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Market Scout
 // @namespace    manic-mike.torn.market-scout
-// @version      8.0.0-alpha.2
+// @version      8.0.0-alpha.3
 // @description  Modular acquisition tool for verified Bazaar, Item Market and cached Travel opportunities.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -153,6 +153,28 @@
     }
   }
 
+  async function saveBusinessRules(root){
+    if(!state)return;
+    const read=id=>Number(root.querySelector(id)?.value||0);
+    const minPrice=Math.max(0,read('#mm-scout-rule-min-price'));
+    const values={
+      minRoiPct:Math.max(0,read('#mm-scout-rule-min-roi')),
+      minDemandPerDay:Math.max(0,read('#mm-scout-rule-min-demand')),
+      minPrice,
+      maxPrice:Math.max(minPrice,read('#mm-scout-rule-max-price')),
+      minAbsoluteProfit:Math.max(0,read('#mm-scout-rule-min-profit')),
+      minSellerCount:Math.max(0,Math.round(read('#mm-scout-rule-min-sellers'))),
+      maxListingAgeSec:Math.max(30,Math.round(read('#mm-scout-rule-max-age')))
+    };
+    await core.updateDomainState('core',draft=>{
+      draft.businessRules={...(draft.businessRules||{}),...values,updatedAt:new Date().toISOString()};
+      return draft;
+    });
+    state=await core.readLegacyState();
+    statusText='Shared business rules saved.';
+    render();
+  }
+
   async function acquire(itemId){
     if(busy)return;
     if(!apiKey()){
@@ -243,6 +265,7 @@
   }
 
   function settingsHtml(){
+    const r=state?.businessRules||{};
     return card(
       '<b>Market Scout Connection</b>'+
       '<div style="font-size:10px;color:#888;margin:4px 0 7px;">The API key is stored only in this userscript\'s Tampermonkey GM storage. It is not copied to shared IndexedDB/localStorage.</div>'+
@@ -252,6 +275,20 @@
         '<button id="mm-scout-clear-key" style="'+button()+'">Clear</button>'+
       '</div>'+
       '<div style="font-size:10px;color:#888;margin-top:7px;">No background polling is enabled. Network calls occur only after <b>Refresh Opportunities</b> or <b>Verify & Buy</b>.</div>'
+    )+
+    card(
+      '<b>Shared Acquisition Rules</b>'+
+      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">These are the same shared rules used by the legacy CRM. Market Scout writes only the Core configuration domain.</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;">'+
+        '<label style="font-size:10px;color:#aaa;">Min ROI %<input id="mm-scout-rule-min-roi" type="number" min="0" step="0.1" value="'+Number(r.minRoiPct||0)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Min demand/day<input id="mm-scout-rule-min-demand" type="number" min="0" step="0.01" value="'+Number(r.minDemandPerDay||0)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Min buy<input id="mm-scout-rule-min-price" type="number" min="0" value="'+Number(r.minPrice||0)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Max buy<input id="mm-scout-rule-max-price" type="number" min="0" value="'+Number(r.maxPrice||0)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Min profit/unit<input id="mm-scout-rule-min-profit" type="number" min="0" value="'+Number(r.minAbsoluteProfit||0)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Min sellers<input id="mm-scout-rule-min-sellers" type="number" min="0" value="'+Number(r.minSellerCount||0)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Max listing age sec<input id="mm-scout-rule-max-age" type="number" min="30" value="'+Number(r.maxListingAgeSec||180)+'" style="'+inputCss()+'width:100%;"></label>'+
+      '</div>'+
+      '<button id="mm-scout-save-rules" style="'+button(true)+'margin-top:7px;">Save Shared Rules</button>'
     );
   }
 
@@ -269,7 +306,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM Market Scout</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.2 · explicit live actions only</div></div>'+
+        '<div><b style="font-size:15px;">MM Market Scout</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.3 · explicit live actions only</div></div>'+
         '<button id="mm-scout-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -302,6 +339,10 @@
       statusText='Market Scout API key cleared.';
       render();
     });
+    root.querySelector('#mm-scout-save-rules')?.addEventListener('click',()=>saveBusinessRules(root).catch(error=>{
+      statusText='Could not save rules: '+(error?.message||String(error));
+      render();
+    }));
   }
 
   function open(){
