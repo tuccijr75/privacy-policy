@@ -880,14 +880,15 @@
   function minimumsHtml(){
     const proposal=logic.minimumProposal(state?.factionInventory||{},{
       mode:stockMode,
-      participants:WAR_PARTICIPANTS
+      participants:WAR_PARTICIPANTS,
+      procurementMode
     });
     const categories=[...new Set(proposal.proposals.map(row=>String(row.category||'other')))];
     const modeLabel=stockMode==='war'?'WAR · '+WAR_PARTICIPANTS+' PARTICIPANTS':'PEACE';
     const groups=categories.map(cat=>{
       const rows=proposal.proposals.filter(row=>String(row.category||'other')===cat)
         .sort((a,b)=>(b.shortfall||0)-(a.shortfall||0)||String(a.item).localeCompare(String(b.item)));
-      const short=rows.reduce((sum,row)=>sum+n(row.shortfall),0);
+      const short=rows.reduce((sum,row)=>sum+num(row.shortfall),0);
       return '<details class="mm-fa-build-member">'+
         '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' lines</span></span><span class="mm-fa-muted">'+short+' short</span></summary>'+
         '<div class="mm-fa-build-body">'+rows.map(row=>
@@ -897,7 +898,7 @@
       '</details>';
     }).join('');
     return '<div class="mm-fa-card mm-fa-compact">'+
-      '<div class="mm-fa-module-head"><div><b>Inventory minimums</b> <span class="mm-fa-muted">'+modeLabel+' · '+proposal.observedDays.toFixed(1)+'d history · '+proposal.confidence+'</span></div>'+
+      '<div class="mm-fa-module-head"><div><b>Inventory minimums</b> <span class="mm-fa-muted">'+modeLabel+' · '+procurementMode.toUpperCase()+' equipment baseline · '+proposal.observedDays.toFixed(1)+'d history · '+proposal.confidence+'</span></div>'+
       '<div class="mm-fa-actions"><button data-stock-mode="peace" style="'+button(stockMode==='peace')+'">Peace</button><button data-stock-mode="war" style="'+button(stockMode==='war')+'">War</button><button id="mm-fa-export" style="'+button(true)+'">Leadership Excel</button></div></div>'+
       '<div class="mm-fa-muted">'+esc(proposal.assumptions)+'</div>'+
     '</div>'+groups;
