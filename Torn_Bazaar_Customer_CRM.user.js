@@ -5431,71 +5431,154 @@ function globalOpportunityRows(db) {
         };
     }
 
-    async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0) {
-        statusText = 'Checking seller Bazaar directly in Torn…';
-        render();
+function itemMarketPurchaseUrl(itemId,itemName='',itemType='') {
+        const id=encodeURIComponent(asId(itemId));
+        const name=String(itemName||'').trim();
+        const type=String(itemType||'').trim();
+        let url='https://www.torn.com/page.php?sid=ItemMarket#/market/view=search&itemID='+id+'&sortField=price&sortOrder=ASC';
+        if(name) url+='&itemName='+encodeURIComponent(name);
+        if(type) url+='&itemType='+encodeURIComponent(type);
+        return url;
+    }
+
+async function acquireOpportunity(itemId) {
+        const id=asId(itemId);
+        if(!/^\d+$/.test(id)) return false;
+        statusText='Finding the best live purchase for item '+id+'…';
+        const status=document.getElementById('mm-status');
+        if(status) status.textContent=statusText;
+
         try {
-            const result = await verifyBazaarSellerForItem(itemId, sellerId, expectedPrice);
-            const db = dbLoad();
-            const id = asId(itemId);
-            const seller = asId(sellerId);
-            const detail = db.marketIntel?.details?.[id];
-            if (!result.verified) {
-                const disproved = result.reason === 'bazaar-closed' || result.reason === 'item-gone';
-                if (detail && disproved) {
-                    const keep = row => asId(row?.sellerId) !== seller;
-                    detail.organicListings = (detail.organicListings || []).filter(keep);
-                    detail.listings = (detail.listings || []).filter(keep);
-                    detail.fetchedAt = nowIso();
-                    addIntelDiagnostic(db.marketIntel, 'Bazaar recency check removed disproved seller ' + seller + ' for item ' + id + ' (' + result.reason + ').');
+            await enrichWeavItem(id,{force:true});
+        } catch(error) {
+            const db=dbLoad();
+            addIntelDiagnostic(db.marketIntel,'Live acquisition detail '+id+': '+(error?.message||String(error)));
+            dbSave(db);
+        }
+
+        if(getApiKey()) {
+            try { await refreshMarketSnapshot(id); }
+            catch(error) {
+                const db=dbLoad();
+                addProcurementDiagnostic(db.procurement,'Live acquisition market '+id+': '+(error?.message||String(error)));
+                dbSave(db);
+            }
+        }
+
+        let db=dbLoad();
+        const opportunity=globalOpportunityRows(db).find(row=>asId(row.id)===id);
+        if(!opportunity) {
+            statusText='No current purchase meets your ROI and minimum-profit rules for this item.';
+            render();
+            return false;
+        }
+
+        const maxBuy=Math.max(0,Number(opportunity.maxBuyPrice||0));
+        const detail=db.marketIntel?.details?.[id];
+        const bazaarCandidates=freshOrganicListings(db,detail?.organicListings||[])
+            .filter(row=>Number(row.price||0)>0 && (!maxBuy || Number(row.price||0)<=maxBuy))
+            .slice(0,ACQUISITION_VERIFY_SELLERS);
+
+        const snap=db.procurement?.marketSnapshots?.[id]||{};
+        const itemMarketFresh=Boolean(snap.fetchedAt)&&ageSeconds(snap.fetchedAt)<=businessRules(db).maxListingAgeSec;
+        const itemMarketPrice=itemMarketFresh?Number(snap?.itemMarket?.lowest||0):0;
+        const itemMarketCandidate=itemMarketPrice>0&&(!maxBuy||itemMarketPrice<=maxBuy)
+            ? {source:'Item Market',price:itemMarketPrice}
+            : null;
+
+        const candidates=[
+            ...bazaarCandidates.map(row=>({source:'Bazaar',price:Number(row.price||0),row})),
+            ...(itemMarketCandidate?[itemMarketCandidate]:[])
+        ].sort((a,b)=>a.price-b.price);
+
+        for(const candidate of candidates) {
+            if(candidate.source==='Bazaar') {
+                const ok=await verifyAndOpenBazaarSeller(id,candidate.row.sellerId,candidate.row.price,maxBuy);
+                if(ok) return true;
+                continue;
+            }
+
+            if(getApiKey()) {
+                try {
+                    const freshSnap=await refreshMarketSnapshot(id);
+                    const livePrice=Number(freshSnap?.itemMarket?.lowest||0);
+                    if(!(livePrice>0)||(maxBuy>0&&livePrice>maxBuy)) continue;
+                } catch {
+                    continue;
+                }
+            }
+
+            db=dbLoad();
+            const catalog=db.procurement?.catalog?.[id]||{};
+            statusText='Current Item Market price is inside the buy ceiling. Opening the item listing.';
+            if(status) status.textContent=statusText;
+            navigateFromCRM(itemMarketPurchaseUrl(id,opportunity.name,catalog.type||opportunity.itemType));
+            return true;
+        }
+
+        statusText='No live Bazaar seller or Item Market listing remains inside the '+money(maxBuy)+' buy ceiling.';
+        render();
+        return false;
+    }
+
+async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, maxBuyPrice = 0) {
+        statusText='Checking live Bazaar listing…';
+        const status=document.getElementById('mm-status');
+        if(status) status.textContent=statusText;
+        try {
+            const result=await verifyBazaarSellerForItem(itemId,sellerId,expectedPrice);
+            const db=dbLoad();
+            const id=asId(itemId), seller=asId(sellerId);
+            const detail=db.marketIntel?.details?.[id];
+
+            if(!result.verified) {
+                if(detail&&(result.reason==='bazaar-closed'||result.reason==='item-gone')) {
+                    const keep=row=>asId(row?.sellerId)!==seller;
+                    detail.organicListings=(detail.organicListings||[]).filter(keep);
+                    detail.listings=(detail.listings||[]).filter(keep);
+                    detail.fetchedAt=nowIso();
                     dbSave(db);
                 }
-                const reason = result.reason === 'bazaar-closed'
-                    ? 'Seller Bazaar is closed.'
-                    : result.reason === 'item-gone'
-                        ? 'Item is no longer in that Bazaar.'
-                        : result.reason === 'snapshot-stale'
-                            ? 'Torn Bazaar snapshot is too old to verify safely' + (Number.isFinite(result.snapshotAgeSec) ? ' (' + Math.round(result.snapshotAgeSec) + 's old).' : '.')
-                            : 'Listing could not be verified.';
-                statusText = disproved
-                    ? reason + ' The disproved opportunity was removed locally and was not opened.'
-                    : reason + ' Local opportunity data was preserved, but automatic navigation was blocked.';
-                render();
                 return false;
             }
 
-            if (detail) {
-                const previous = (detail.organicListings || []).find(row => asId(row?.sellerId) === seller) || {};
-                const verifiedRow = {
-                    ...previous,
-                    itemId:id,
-                    sellerId:seller,
-                    sellerName:String(previous.sellerName || seller),
-                    price:result.actualPrice,
-                    quantity:result.quantity,
-                    sponsored:false,
-                    lastChecked:Date.now(),
-                    contentUpdated:Number(previous.contentUpdated || Date.now())
+            const limit=Math.max(0,Number(maxBuyPrice||0));
+            if(limit>0&&Number(result.actualPrice||0)>limit) {
+                if(detail) {
+                    const previous=(detail.organicListings||[]).find(row=>asId(row?.sellerId)===seller)||{};
+                    const updated={...previous,price:Number(result.actualPrice||0),quantity:Number(result.quantity||0),lastChecked:Date.now()};
+                    const keep=row=>asId(row?.sellerId)!==seller;
+                    detail.organicListings=[updated,...(detail.organicListings||[]).filter(keep)].sort((a,b)=>Number(a.price||0)-Number(b.price||0));
+                    detail.listings=[updated,...(detail.listings||[]).filter(keep)].sort((a,b)=>Number(a.price||0)-Number(b.price||0));
+                    detail.fetchedAt=nowIso();
+                    dbSave(db);
+                }
+                statusText='Seller moved to '+money(result.actualPrice)+', above the '+money(limit)+' ceiling. Trying another source…';
+                if(status) status.textContent=statusText;
+                return false;
+            }
+
+            if(detail) {
+                const previous=(detail.organicListings||[]).find(row=>asId(row?.sellerId)===seller)||{};
+                const verifiedRow={
+                    ...previous,itemId:id,sellerId:seller,sellerName:String(previous.sellerName||seller),
+                    price:result.actualPrice,quantity:result.quantity,sponsored:false,lastChecked:Date.now(),
+                    contentUpdated:Number(previous.contentUpdated||Date.now())
                 };
-                const keep = row => asId(row?.sellerId) !== seller;
-                detail.organicListings = [verifiedRow, ...(detail.organicListings || []).filter(keep)].sort((a,b)=>Number(a.price||0)-Number(b.price||0));
-                detail.listings = [verifiedRow, ...(detail.listings || []).filter(keep)].sort((a,b)=>Number(a.price||0)-Number(b.price||0));
-                detail.fetchedAt = nowIso();
+                const keep=row=>asId(row?.sellerId)!==seller;
+                detail.organicListings=[verifiedRow,...(detail.organicListings||[]).filter(keep)].sort((a,b)=>Number(a.price||0)-Number(b.price||0));
+                detail.listings=[verifiedRow,...(detail.listings||[]).filter(keep)].sort((a,b)=>Number(a.price||0)-Number(b.price||0));
+                detail.fetchedAt=nowIso();
                 dbSave(db);
             }
 
-            const dollarNote = result.actualPrice === 1
-                ? ' Torn $1 access is buyer-specific; the Bazaar page is the final eligibility check.'
-                : '';
-            statusText = result.priceChanged
-                ? 'Listing still exists, but price changed from ' + money(result.expectedPrice) + ' to ' + money(result.actualPrice) + '. Local cache updated; opening current Bazaar.' + dollarNote
-                : 'Listing verified: ' + result.quantity.toLocaleString() + ' available @ ' + money(result.actualPrice) + '. Opening Bazaar.' + dollarNote;
-            render();
-            navigateFromCRM('https://www.torn.com/bazaar.php?userId=' + encodeURIComponent(sellerId));
+            statusText='Verified '+result.quantity.toLocaleString()+' @ '+money(result.actualPrice)+'. Opening seller Bazaar.';
+            if(status) status.textContent=statusText;
+            navigateFromCRM('https://www.torn.com/bazaar.php?userId='+encodeURIComponent(seller));
             return true;
-        } catch (error) {
-            statusText = 'Seller Bazaar verification failed: ' + (error?.message || String(error));
-            render();
+        } catch(error) {
+            statusText='Bazaar verification failed: '+(error?.message||String(error));
+            if(status) status.textContent=statusText;
             return false;
         }
     }
@@ -13885,29 +13968,37 @@ function stockSimpleHtml(db) {
         );
     }
 
-    
 function dealsSimpleHtml(db) {
         const deals=globalOpportunityRows(db);
-        const actionable=deals.filter(r=>r.listingVerified).slice(0,8);
-        const research=deals.filter(r=>!r.listingVerified).slice(0,8);
+        const actionable=deals.filter(r=>r.purchaseReady).slice(0,12);
+        const research=deals.filter(r=>!r.purchaseReady).slice(0,10);
         const dollars=(db.marketIntel?.dollarItems||[]).slice().sort((a,b)=>Number(b.totalValue||0)-Number(a.totalValue||0)).slice(0,6);
+        const sourceAge=freshnessInfo(db.marketIntel?.marketplaceGeneratedAt,businessRules(db).maxListingAgeSec);
+
         return card(
             '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
-                '<div><b>Buy</b><div style="font-size:10px;color:#888;">Only seller-verifiable opportunities are treated as ready to act on.</div></div>'+
-                '<button data-smart-refresh style="'+btn(true)+'">Refresh Deals</button>'+
+                '<div><b>Buy</b><div style="font-size:10px;color:#888;">ROI + estimated sell-through + profit velocity · Weav3r '+escapeHtml(sourceAge.label)+'</div></div>'+
+                '<button data-smart-refresh style="'+btn()+'">Refresh Now</button>'+
             '</div>'
         )+
-        card('<b>Best Deals</b>'+
+        card('<b>Best Buyable Deals</b>'+
             (actionable.length?actionable.map((r,i)=>
-                '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
-                    '<div><b>#'+(i+1)+' '+escapeHtml(r.name)+'</b> · ROI '+Number(r.roiPct||0).toFixed(1)+'% · Profit '+money(r.profit||0)+
-                    '<div style="color:#888;">Buy '+money(r.buyPrice||0)+' → '+money(r.bestExit||0)+'</div></div>'+
-                    (r.sellerId?'<button data-intel-action="verify-seller" data-item="'+escapeHtml(r.id)+'" data-seller="'+escapeHtml(r.sellerId)+'" data-price="'+Number(r.buyPrice||0)+'" style="'+btn(true)+'">Verify & Open</button>':'')+
+                '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
+                    '<div style="min-width:0;"><b>#'+(i+1)+' '+escapeHtml(r.name)+'</b> · '+escapeHtml(r.purchaseSource)+
+                    '<div style="margin-top:2px;">Buy <b>'+money(r.buyPrice)+'</b> · Max '+money(r.maxBuyPrice)+' · Exit '+money(r.bestExit)+' · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
+                    '<div style="color:#888;">Sell-through 3d '+Number(r.sellThrough3dPct||0).toFixed(0)+'% ('+escapeHtml(r.conversionSource)+') · Qty '+Number(r.recommendedQty||1)+' · Expected 3d profit '+money(r.expectedProfit3d||0)+'</div></div>'+
+                    '<button data-acquire-item="'+escapeHtml(r.id)+'" style="'+btn(true)+'white-space:nowrap;">Buy Now</button>'+
                 '</div>'
-            ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No verified deal currently meets your rules.</div>')
+            ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No currently buyable opportunity meets your ROI/profit rules.</div>')
         )+
-        '<details style="margin:8px 0;"><summary style="cursor:pointer;font-weight:700;">Research Leads ('+research.length+')</summary>'+
-            research.map(r=>'<div style="font-size:10px;border-top:1px solid #303030;padding:6px 0;"><b>'+escapeHtml(r.name)+'</b> · indicative ROI '+Number(r.roiPct||0).toFixed(1)+'% <button data-intel-action="enrich" data-item="'+escapeHtml(r.id)+'" style="'+btn()+'padding:3px 6px;float:right;">Check</button></div>').join('')+
+        '<details style="margin:8px 0;"><summary style="cursor:pointer;font-weight:700;">Find More Deals ('+research.length+')</summary>'+
+            '<div style="font-size:10px;color:#888;margin:4px 0;">These pass aggregate screening but need a live seller or current Item Market price. CRM verifies before routing.</div>'+
+            research.map(r=>
+                '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:6px 0;font-size:10px;">'+
+                    '<div><b>'+escapeHtml(r.name)+'</b> · ROI '+Number(r.roiPct||0).toFixed(1)+'% · Sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% · score '+Number(r.score||0).toFixed(0)+'</div>'+
+                    '<button data-acquire-item="'+escapeHtml(r.id)+'" style="'+btn()+'padding:4px 7px;">Find & Buy</button>'+
+                '</div>'
+            ).join('')+
         '</details>'+
         '<details style="margin:8px 0;"><summary style="cursor:pointer;font-weight:700;">$1 Watch ('+dollars.length+')</summary>'+
             dollars.map(d=>'<div style="font-size:10px;border-top:1px solid #303030;padding:6px 0;"><b>'+escapeHtml(d.itemName)+'</b> × '+Number(d.quantity||0).toLocaleString()+' · value '+money(d.totalValue||0)+
@@ -15152,6 +15243,13 @@ function render() {
             render();
         });
 
+        root.querySelectorAll('[data-acquire-item]').forEach(button=>button.addEventListener('click',()=>{
+            acquireOpportunity(button.dataset.acquireItem).catch(error=>{
+                statusText='Acquisition failed: '+(error?.message||String(error));
+                render();
+            });
+        }));
+
         root.querySelectorAll('[data-intel-action]').forEach(button => button.addEventListener('click', async () => {
             const action = button.dataset.intelAction;
             if (action === 'profile') {
@@ -15660,6 +15758,61 @@ function render() {
         return true;
     }
 
+function claimWeavLiveCoordinator() {
+        if(document.visibilityState!=='visible') return false;
+        const now=Date.now();
+        let current=null;
+        try { current=JSON.parse(localStorage.getItem(WEAV3R_LIVE_COORDINATOR_KEY)||'null'); } catch {}
+        if(current&&current.owner&&current.owner!==tabInstanceId&&Number(current.expiresAt||0)>now) return false;
+        try {
+            localStorage.setItem(WEAV3R_LIVE_COORDINATOR_KEY,JSON.stringify({
+                owner:tabInstanceId,
+                expiresAt:now+Math.max(75_000,WEAV3R_LIVE_POLL_MS+15_000)
+            }));
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+async function weavLiveTick() {
+        if(weavLiveRunning||procurementRunning||unifiedSyncRunning) return;
+        if(!claimWeavLiveCoordinator()) return;
+        weavLiveRunning=true;
+        try {
+            const before=String(dbLoad().marketIntel?.marketplaceGeneratedAt||'');
+            const data=await weav3rRequest('/marketplace');
+            const applied=applyWeavMarketplacePayload(data);
+            if(!applied.changed||String(applied.generatedAt||'')===before) return;
+
+            await enrichTopGlobalOpportunities(WEAV3R_LIVE_ENRICH_LIMIT);
+
+            if(getApiKey()) {
+                const candidates=globalOpportunityRows(dbLoad()).slice(0,WEAV3R_LIVE_MARKET_LIMIT);
+                await mapWithConcurrency(candidates,PROCUREMENT_MARKET_CONCURRENCY,row=>refreshMarketSnapshot(row.id));
+            }
+
+            const root=document.getElementById(ROOT_ID);
+            if(root&&!getUI().minimized) {
+                statusText='Market updated automatically from the latest Weav3r snapshot.';
+                render();
+            }
+        } catch(error) {
+            const db=dbLoad();
+            addIntelDiagnostic(db.marketIntel,'Weav3r live refresh: '+(error?.message||String(error)));
+            dbSave(db);
+        } finally {
+            weavLiveRunning=false;
+        }
+    }
+
+function scheduleWeavLiveSync() {
+        if(weavLiveTimer) clearInterval(weavLiveTimer);
+        weavLiveTimer=setInterval(()=>weavLiveTick().catch(()=>{}),WEAV3R_LIVE_POLL_MS);
+        setTimeout(()=>weavLiveTick().catch(()=>{}),5_000);
+    }
+
+
     function scheduleBackgroundRefresh() {
         if (backgroundRefreshTimer) {
             clearInterval(backgroundRefreshTimer);
@@ -15721,6 +15874,7 @@ function render() {
         }
         window.addEventListener('resize', clampPanel);
         scheduleBackgroundRefresh();
+        scheduleWeavLiveSync();
 
         if (getApiKey()) {
             statusText = 'Ready. Smart Refresh is manual.';
