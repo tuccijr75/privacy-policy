@@ -1024,6 +1024,22 @@
       statusText='Inventory minimum mode: '+(stockMode==='war'?'WAR ('+WAR_PARTICIPANTS+' participants)':'PEACE')+'.';
       render();
     }));
+    root.querySelectorAll('[data-procurement-mode]').forEach(b=>b.addEventListener('click',()=>{
+      procurementMode=['budget','standard','ideal'].includes(b.dataset.procurementMode)?b.dataset.procurementMode:'budget';
+      GM_setValue(PROCUREMENT_MODE_KEY,procurementMode);
+      statusText='Procurement mode: '+procurementMode.toUpperCase()+'.';
+      render();
+    }));
+    const saveBudget=value=>{
+      const next=Math.max(0,Number(value)||0);
+      acquisitionBudget=next;
+      GM_setValue(ACQUISITION_BUDGET_KEY,next);
+      statusText='Acquisition budget saved: $'+Math.round(next).toLocaleString()+'.';
+      render();
+    };
+    root.querySelector('#mm-fa-save-budget')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-budget-cap')?.value));
+    root.querySelector('#mm-fa-settings-budget-save')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-settings-budget')?.value));
+
     root.querySelector('#mm-fa-refresh-faction')?.addEventListener('click',refreshFaction);
     root.querySelector('#mm-fa-copy-request')?.addEventListener('click',()=>copyText(missingDataRequest()).then(()=>{statusText='Member data request copied.';render();}));
     root.querySelector('#mm-fa-import-once')?.addEventListener('click',()=>importFromField(false));
