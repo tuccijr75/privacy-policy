@@ -1,6 +1,6 @@
 # MM Market Scout v8.0.0-alpha.5 — Live Acceptance
 
-**Status:** INSTALLATION / LIVE ACCEPTANCE PENDING  
+**Status:** INSTALLED / LIVE ACCEPTANCE IN PROGRESS  
 **Branch:** `crm-v8-modular-suite`  
 **Userscript:** `modular-suite/market-scout/MM_Market_Scout.user.js`  
 **Install URL:**  
@@ -47,10 +47,19 @@ Manual actions:
 
 Authenticated Torn travel page is open.
 
-Opening the raw userscript URL successfully triggered Tampermonkey's Script Installation page. Browser accessibility control does not expose the extension's final Install button, so installation is a human boundary.
+Opening the raw userscript URL successfully triggered Tampermonkey installation. The installer then closed and Tampermonkey exposed a dedicated **MM Torn Market Scout** script settings tab.
+
+After reloading the authenticated Torn Travel Agency page:
+- legacy **CRM** launcher is present;
+- new **Scout** launcher is present as a real pressable button;
+- therefore script installation and Torn-page injection are confirmed live.
+
+Current control boundary:
+- Opera Browser Connector can read the Scout button and reports it as pressable, but its available API exposes no click/press action;
+- JavaScript URL execution is explicitly blocked by the connector;
+- authorized Desktop Commander exposes terminal/filesystem tools but no GUI click primitive.
 
 Exact next:
-1. click **Install** in the Tampermonkey installer tab;
-2. reload `https://www.torn.com/page.php?sid=travel`;
-3. confirm **Scout** launcher;
-4. continue live acceptance before starting Faction Armory.
+1. human clicks **Scout** on the right side of the authenticated Torn page;
+2. continue live acceptance inside the open Scout panel;
+3. do not begin Faction Armory until Scout acceptance completes.
