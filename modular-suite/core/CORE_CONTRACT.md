@@ -4,12 +4,12 @@
 
 `MM_Torn_Core.js` is a shared `@require` library used by the separate domain userscripts. It is not a fifth heavy UI application.
 
-Current alpha is deliberately read-only:
+Current alpha has no automatic side effects:
 - opens the existing CRM IndexedDB without specifying a higher version;
 - aborts rather than creating the legacy DB if it does not exist;
-- reads only `mm_bazaar_crm_idb/state/main`;
-- performs no writes;
-- performs no network calls;
+- reads `mm_bazaar_crm_idb/state/main` on explicit request;
+- writes only when a domain tool explicitly calls the atomic domain update API;
+- performs no network calls by itself;
 - starts no timers;
 - exposes no raw credential value.
 
@@ -62,9 +62,11 @@ Read-only consumer across all domains by default.
 
 ## Concurrency rule
 
-A future write contract must be field/domain aware. No domain tool may replace the entire legacy state with a stale snapshot.
+Writes use a single IndexedDB `readwrite` transaction: read the freshest `state/main`, provide the caller only its owned domain slice, then merge only owned top-level paths back into that fresh state before `put`.
 
-Until that merge contract exists, v8 Core remains read-only.
+This prevents Market Scout, Bazaar Manager or Faction Armory from replacing unrelated newer domains with stale snapshots. The updater is synchronous so the IndexedDB transaction cannot close between read and write.
+
+Business Intelligence remains read-only. Shared Core configuration uses the `core` domain.
 
 ## Phase 1 acceptance
 
@@ -75,3 +77,7 @@ Until that merge contract exists, v8 Core remains read-only.
 - Missing legacy DB is not created by inspection.
 - No page-load network work exists in Core.
 - No shared plaintext credential path exists.
+
+## Freshness observability
+
+Core exposes a read-only freshness snapshot for unified refresh, acquisitions, Item Market, Weav3r generation/global market, travel, faction inventory and faction roster timestamps. This is observability only; Core does not automatically refresh any source.
