@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.7
+// @version      8.0.0-alpha.8
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.7';
+  const VERSION='8.0.0-alpha.8';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -1019,6 +1019,12 @@
         '<div class="mm-fa-scroll">'+viewHtml+'</div>'+
       '</div>';
 
+    core?.makePanelDraggable?.(
+      root,
+      root.querySelector('.mm-fa-head'),
+      'faction-armory',
+      window.innerWidth<=620?{right:'4px',top:'54px'}:{right:'12px',top:'72px'}
+    );
     root.querySelector('#mm-fa-close')?.addEventListener('click',close);
     root.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.view||'members';render();}));
     root.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click',()=>{selectedCategory=b.dataset.cat||'all';render();}));
