@@ -10740,6 +10740,8 @@ function factionMemberDataRequestTemplate(member) {
                 'DRUGS: Xanax / other relevant drugs + quantities\n' +
                 'BOOSTERS: relevant booster items + quantities\n' +
                 'UTILITIES / OTHER WAR SUPPLIES:\n' +
+                'AMMO: type + quantity\n' +
+                'WEAPON MODS / ATTACHMENTS:\n' +
                 'WAR ROLE / PREFERENCE:\nNOTES:\n\n' +
                 'If a field is unknown, leave it blank. This is only for faction readiness/build planning.\n\n' +
                 '— Manic Mike'
@@ -10879,6 +10881,8 @@ function importFactionMemberMessageReply(memberId,rawReply) {
             drugs:String(map.DRUGS||map.DRUG||'').trim(),
             boosters:String(map.BOOSTERS||map.BOOSTER||'').trim(),
             utilities:String(map.UTILITIES_OTHER_WAR_SUPPLIES||map.UTILITIES||map.UTILITY||'').trim(),
+            ammo:String(map.AMMO||'').trim(),
+            weaponMods:String(map.WEAPON_MODS_ATTACHMENTS||map.WEAPON_MODS||map.ATTACHMENTS||'').trim(),
             updatedAt:nowIso()
         };
         const ipecacCount=supply.medical.ipecac;
@@ -12080,6 +12084,8 @@ function composeFactionMemberBuildMessage(memberId) {
             'Drugs':String(row.profile?.supplyReadiness?.drugs||''),
             'Boosters':String(row.profile?.supplyReadiness?.boosters||''),
             'Utilities / Other':String(row.profile?.supplyReadiness?.utilities||''),
+            'Ammo':String(row.profile?.supplyReadiness?.ammo||''),
+            'Weapon Mods / Attachments':String(row.profile?.supplyReadiness?.weaponMods||''),
             'Faction Loans':Number(row.loans||0), 'Action':row.action
         }));
         const battleStatRows = memberReadiness.map(row=>({
@@ -12103,6 +12109,7 @@ function composeFactionMemberBuildMessage(memberId) {
             'Blood Type':String(row.profile?.bloodType||''), 'Temporary Stock':String(row.profile?.supplyReadiness?.temporaryStock||''),
             'Consumables':String(row.profile?.supplyReadiness?.consumables||''), 'Drugs':String(row.profile?.supplyReadiness?.drugs||''),
             'Boosters':String(row.profile?.supplyReadiness?.boosters||''), 'Utilities / Other':String(row.profile?.supplyReadiness?.utilities||''),
+            'Ammo':String(row.profile?.supplyReadiness?.ammo||''), 'Weapon Mods / Attachments':String(row.profile?.supplyReadiness?.weaponMods||''),
             'Faction Loans':Number(row.loans||0),
             'Equipment Plan':row.equipmentPlan, 'Readiness':row.readinessStatus, 'War Role':String(row.profile?.warRole||'')
         }));
