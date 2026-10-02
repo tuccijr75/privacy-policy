@@ -66,6 +66,14 @@ assert.strictEqual(rows.length,1);
 assert.strictEqual(rows[0].apiSaved,true);
 assert.strictEqual(rows[0].readinessStatus,'READY FOR REVIEW');
 
+const summaryOnly={
+  stats:{strength:100,defense:100,speed:100,dexterity:100},
+  equipment:{summary:'PRIMARY: AK-47 | SECONDARY: Qsz-92 | MELEE: Diamond Bladed Knife'}
+};
+const summarySlots=logic.profileEquipmentSlots(summaryOnly);
+assert.strictEqual(summarySlots.secondary?.name,'Qsz-92','secondary must be recovered from stored equipment summary');
+assert.strictEqual(summarySlots.primary?.name,'AK-47');
+
 const build=logic.compareMemberBuild(rows[0],factionInventory);
 const primary=build.items.find(x=>x.slot==='primary');
 assert(primary);
@@ -86,22 +94,38 @@ assert.strictEqual(
 
 const twentyRoster={};
 for(let i=1;i<=20;i++)twentyRoster[String(i)]={memberId:String(i),memberName:'M'+i};
-const minimums=logic.minimumProposal({
+const peaceMinimums=logic.minimumProposal({
   current:factionInventory.current,
   memberReadiness:{roster:twentyRoster},
   snapshots:[],
   events:[]
-});
-assert.strictEqual(minimums.poolMin,7);
-assert.strictEqual(minimums.poolMax,11);
-const primaryMin=minimums.proposals.find(x=>x.slot==='primary');
+},{mode:'peace'});
+assert.strictEqual(peaceMinimums.peacePoolMin,7);
+assert.strictEqual(peaceMinimums.peacePoolMax,11);
+const primaryMin=peaceMinimums.proposals.find(x=>x.slot==='primary');
 assert(primaryMin);
 assert.strictEqual(primaryMin.recommendedMin,7);
 assert.strictEqual(primaryMin.recommendedMax,11);
 
-const faks=minimums.proposals.find(x=>x.item==='First Aid Kit');
-assert(faks);
-assert.strictEqual(faks.recommendedMin,20,'critical medical reserve should include one per member with no observed depletion');
+const peaceFaks=peaceMinimums.proposals.find(x=>x.item==='First Aid Kit');
+assert(peaceFaks);
+assert.strictEqual(peaceFaks.recommendedMin,20,'peace critical medical reserve should include one per member with no observed depletion');
+
+const warMinimums=logic.minimumProposal({
+  current:factionInventory.current,
+  memberReadiness:{roster:twentyRoster},
+  snapshots:[],
+  events:[]
+},{mode:'war',participants:20});
+const warPrimary=warMinimums.proposals.find(x=>x.slot==='primary');
+assert(warPrimary);
+assert.strictEqual(warPrimary.recommendedMin,22,'20 unknown participants require full primary coverage plus two spares');
+const warFaks=warMinimums.proposals.find(x=>x.item==='First Aid Kit');
+assert(warFaks);
+assert.strictEqual(warFaks.recommendedMin,200,'war FAK target should provision 10 per member for 20 participants');
+const warXanax=warMinimums.proposals.find(x=>x.category==='drugs'&&x.item==='Xanax');
+assert(warXanax);
+assert.strictEqual(warXanax.recommendedMin,60,'war Xanax target should provision 3 per member');
 
 
 const parsedReply=logic.parseMemberReply(
@@ -123,6 +147,11 @@ assert.strictEqual(
   'REVIEW CURRENT GEAR',
   'manual item without parsed performance stats must never be auto-replaced'
 );
+
+const tier=logic.readinessTier(rows[0],rows);
+assert(['DEVELOPMENT','STANDARD','FRONTLINE'].includes(tier.label));
+const standard=logic.warReadinessStandard(rows[0],factionInventory,rows);
+assert(standard.floors.primary.score>0,'war readiness should derive a primary floor from faction stock');
 
 const snapState=logic.recordSnapshot(
   {snapshots:[],events:[]},
