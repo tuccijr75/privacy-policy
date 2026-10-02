@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "8.0.0-alpha.10",
+  "suiteVersion": "8.0.0-alpha.11",
   "status": "non-production",
   "baseVersion": "7.5.3",
   "branch": "crm-v8-modular-suite",
@@ -21,7 +21,9 @@
     {
       "id": "bazaar-manager",
       "name": "MM Bazaar Manager",
-      "role": "sell-list-customers"
+      "role": "sell-list-customers",
+      "version": "8.0.0-alpha.1",
+      "status": "implemented-non-production"
     },
     {
       "id": "market-scout",
