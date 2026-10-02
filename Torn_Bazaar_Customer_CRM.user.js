@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.5.1
+// @version      7.5.2
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.5-workflow-overhaul/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.5-workflow-overhaul/Torn_Bazaar_Customer_CRM.user.js
@@ -29,7 +29,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.5.1';
+    const VERSION = '7.5.2';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -1725,7 +1725,7 @@
     async function repairRecentSalesCoverage({ lookbackMs = CUSTOMER_REFRESH_LOOKBACK_MS, silent = false } = {}) {
         if (!getApiKey()) {
             if (!silent) {
-                statusText = 'Torn API key missing. Open More → Settings, paste your Torn API key, and Save. Customer refresh cannot run without User → Log access.';
+                statusText = 'Torn API key missing. Open Settings, paste your Torn API key, and Save. Customer refresh cannot run without User → Log access.';
                 render();
             }
             return { imported: 0, checked: 0, repaired: false, rejected: 0, missingApiKey: true };
@@ -2071,7 +2071,7 @@
         if (syncRunning) return;
         if (!getApiKey()) {
             if (!silent) {
-                statusText = 'Torn API key missing. Sales sync is paused. Open More → Settings, paste your Torn API key, and Save.';
+                statusText = 'Torn API key missing. Sales sync is paused. Open Settings, paste your Torn API key, and Save.';
                 render();
             }
             return;
@@ -6180,7 +6180,7 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
 
     function ensureDataForTab(tab) {
         // Navigation is intentionally read-only. Data refresh occurs only when the
-        // operator presses Smart Refresh or a targeted Advanced maintenance action.
+        // operator presses Smart Refresh or a targeted maintenance action.
         return ['home','stock','deals','customers','faction','reports','settings'].includes(String(tab || ''));
     }
 
@@ -9827,7 +9827,7 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
 
         factionInventoryRunning = true;
         if (!silent) {
-            statusText = 'Syncing faction armory categories from Torn…';
+            statusText = 'Refreshing faction inventory…';
             render();
         }
 
@@ -10721,6 +10721,210 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
         }
     }
 
+function factionMemberDataRequestTemplate(member) {
+        const name=String(member?.memberName||'Faction member');
+        return {
+            subject:'OBSIDIAN FORCE readiness data request',
+            body:
+                name+',\n\n' +
+                'I am updating faction readiness and equipment-build records. You do NOT need to send me an API key. Please copy this block into your reply and fill in what you know. Exact item names matter. For special/RW gear, add quality and bonus text after the item name.\n\n' +
+                'STR:\nDEF:\nSPD:\nDEX:\nBLOOD TYPE:\n\n' +
+                'PRIMARY:\nSECONDARY:\nMELEE:\nHELMET:\nBODY:\nGLOVES:\nPANTS:\nBOOTS:\nTEMP EQUIPPED:\n\n' +
+                'Gear format: Item name | Q## | bonus text\n' +
+                'Example: ArmaLite M-15A4 Rifle | Q37 | Powerful 14%\n\n' +
+                'SFAK:\nFAK:\nMORPHINE:\nIPECAC:\nEMPTY BLOOD BAGS:\n' +
+                'FILLED BLOOD BAGS: type + count\n' +
+                'TEMP STOCK: Flash / Smoke / Tear Gas / HEG / Grenade / Pepper Spray + quantities\n' +
+                'CONSUMABLES: energy drinks / sweets / alcohol / other useful war supplies + quantities\n' +
+                'WAR ROLE / PREFERENCE:\nNOTES:\n\n' +
+                'If a field is unknown, leave it blank. This is only for faction readiness/build planning.\n\n' +
+                '— Manic Mike'
+        };
+    }
+
+function composeFactionMemberDataRequest(memberId) {
+        const id=asId(memberId);
+        const db=dbLoad();
+        const member=db.factionInventory?.memberReadiness?.roster?.[id];
+        if(!member) throw new Error('Faction member not found.');
+        const profile=db.factionInventory.memberReadiness.profiles[id]||{};
+        db.factionInventory.memberReadiness.profiles[id]={
+            ...profile,
+            memberId:id,
+            dataRequestAt:nowIso(),
+            source:String(profile.source||'member message request')
+        };
+        dbSave(db);
+        const msg=factionMemberDataRequestTemplate(member);
+        composeMessage(id,msg.subject,msg.body);
+        statusText='Readiness-data message prepared for '+String(member.memberName||id)+'. Send remains manual.';
+    }
+
+function factionMemberReplyKey(value) {
+        return String(value||'').trim().toUpperCase()
+            .replace(/[^A-Z0-9]+/g,'_')
+            .replace(/^_+|_+$/g,'');
+    }
+
+function factionMemberReplyMap(raw) {
+        const out={};
+        for(const line of String(raw||'').split(/\r?\n/)) {
+            const match=line.match(/^\s*([^:=]{2,40})\s*[:=]\s*(.*?)\s*$/);
+            if(!match) continue;
+            const key=factionMemberReplyKey(match[1]);
+            if(key) out[key]=String(match[2]||'').trim();
+        }
+        return out;
+    }
+
+function factionMemberReplyNumber(map,keys) {
+        for(const key of keys) {
+            const normalized=factionMemberReplyKey(key);
+            if(!Object.prototype.hasOwnProperty.call(map,normalized)) continue;
+            const raw=String(map[normalized]||'').replace(/,/g,'').trim();
+            if(!raw) return null;
+            const n=Number(raw.replace(/[^0-9.\-]/g,''));
+            return Number.isFinite(n)?Math.max(0,n):null;
+        }
+        return null;
+    }
+
+function factionCatalogItemByName(db,name) {
+        const target=normalizeItemName(name);
+        if(!target) return null;
+        return Object.values(db.procurement?.catalog||{})
+            .find(row=>normalizeItemName(row?.name)===target) || null;
+    }
+
+function factionManualEquipmentItem(db,slot,value) {
+        const raw=String(value||'').trim();
+        if(!raw) return null;
+        const parts=raw.split('|').map(x=>x.trim()).filter(Boolean);
+        const name=parts.shift()||'';
+        if(!name) return null;
+        let reportedQuality=0;
+        const bonusParts=[];
+        for(const part of parts) {
+            const qm=part.match(/^(?:Q|QUALITY)\s*[:#-]?\s*([0-9]+(?:\.[0-9]+)?)/i);
+            if(qm) { reportedQuality=Math.max(0,Number(qm[1]||0)); continue; }
+            bonusParts.push(part);
+        }
+        const catalog=factionCatalogItemByName(db,name)||{};
+        return {
+            itemId:asId(catalog.id||''),
+            name,
+            type:String(catalog.type||''),
+            subType:String(catalog.subType||''),
+            category:String(catalog.category||''),
+            slot:String(slot||''),
+            damage:Number(catalog.damage||0),
+            accuracy:Number(catalog.accuracy||0),
+            armor:Number(catalog.armor||0),
+            quality:reportedQuality||Number(catalog.quality||0),
+            bonuses:bonusParts.length?{manual:bonusParts.join(' | ')}:null,
+            source:'member message'
+        };
+    }
+
+function importFactionMemberMessageReply(memberId,rawReply) {
+        const id=asId(memberId);
+        const db=dbLoad();
+        const member=db.factionInventory?.memberReadiness?.roster?.[id];
+        if(!member) throw new Error('Faction member not found.');
+        const map=factionMemberReplyMap(rawReply);
+        if(!Object.keys(map).length) throw new Error('No KEY: value fields were found in the pasted reply.');
+
+        const stat=(shortName,longName)=>factionMemberReplyNumber(map,[shortName,longName])??0;
+        const stats={
+            strength:stat('STR','STRENGTH'),
+            defense:stat('DEF','DEFENSE'),
+            speed:stat('SPD','SPEED'),
+            dexterity:stat('DEX','DEXTERITY')
+        };
+
+        const slotKeys={
+            primary:['PRIMARY'], secondary:['SECONDARY'], melee:['MELEE'],
+            helmet:['HELMET','HEAD'], body:['BODY','BODY_ARMOR','BODY_ARMOUR'],
+            gloves:['GLOVES','HANDS'], pants:['PANTS','LEGS'], boots:['BOOTS','FEET'],
+            temporary:['TEMP_EQUIPPED','TEMPORARY_EQUIPPED']
+        };
+        const items=[];
+        for(const [slot,keys] of Object.entries(slotKeys)) {
+            let value='';
+            for(const key of keys) {
+                const k=factionMemberReplyKey(key);
+                if(map[k]) { value=map[k]; break; }
+            }
+            const item=factionManualEquipmentItem(db,slot,value);
+            if(item) items.push(item);
+        }
+
+        const equipmentSummary=items.map(item=>String(item.slot||'').toUpperCase()+': '+String(item.name||'')).join(' | ');
+        const supply={
+            bloodType:String(map.BLOOD_TYPE||map.BLOOD||'').trim().toUpperCase(),
+            medical:{
+                sfak:factionMemberReplyNumber(map,['SFAK','SMALL_FIRST_AID_KIT','SMALL_FIRST_AID_KITS']),
+                fak:factionMemberReplyNumber(map,['FAK','FIRST_AID_KIT','FIRST_AID_KITS']),
+                morphine:factionMemberReplyNumber(map,['MORPHINE']),
+                ipecac:factionMemberReplyNumber(map,['IPECAC']),
+                emptyBloodBags:factionMemberReplyNumber(map,['EMPTY_BLOOD_BAGS','EMPTY_BLOOD_BAG']),
+                filledBloodBags:String(map.FILLED_BLOOD_BAGS||map.FILLED_BLOOD_BAG||'').trim()
+            },
+            temporaryStock:String(map.TEMP_STOCK||map.TEMPORARY_STOCK||'').trim(),
+            consumables:String(map.CONSUMABLES||map.CONSUMABLE||'').trim(),
+            updatedAt:nowIso()
+        };
+        const ipecacCount=supply.medical.ipecac;
+        const medicalKnown=[supply.medical.sfak,supply.medical.fak,supply.medical.morphine,supply.medical.emptyBloodBags]
+            .some(value=>value!=null);
+        const existing=db.factionInventory.memberReadiness.profiles[id]||{};
+
+        saveFactionMemberReadinessProfile(id,{
+            stats,
+            equipment:{
+                summary:equipmentSummary||String(existing.equipment?.summary||''),
+                items:items.length?items:(existing.equipment?.items||[])
+            },
+            bloodType:supply.bloodType||String(existing.bloodType||''),
+            supplyReadiness:supply,
+            warRole:String(map.WAR_ROLE_PREFERENCE||map.WAR_ROLE||map.ROLE||existing.warRole||'').trim(),
+            medicalStatus:medicalKnown?'DECLARED':String(existing.medicalStatus||'UNKNOWN'),
+            ipecacStatus:ipecacCount==null?String(existing.ipecacStatus||'UNKNOWN'):(ipecacCount>0?'READY':'NEEDS IPECAC'),
+            notes:String(map.NOTES||existing.notes||'').trim(),
+            source:'member message reply',
+            verifiedAt:nowIso(),
+            dataReplyImportedAt:nowIso()
+        });
+
+        return {
+            memberId:id,
+            memberName:String(member.memberName||id),
+            statsTotal:Object.values(stats).reduce((sum,value)=>sum+Number(value||0),0),
+            equipmentCount:items.length,
+            bloodType:supply.bloodType,
+            supply
+        };
+    }
+
+async function promptFactionMemberDataReply(memberId) {
+        const id=asId(memberId);
+        const db=dbLoad();
+        const member=db.factionInventory?.memberReadiness?.roster?.[id];
+        if(!member) throw new Error('Faction member not found.');
+        const raw=prompt('Paste '+String(member.memberName||id)+'\'s completed readiness reply exactly as received:','');
+        if(raw==null||!String(raw).trim()) return null;
+
+        if(!Object.keys(db.procurement?.catalog||{}).length&&(getApiKey()||factionInventoryApiKey())) {
+            try { await refreshProcurementCatalog(false,factionInventoryApiKey()||getApiKey()); } catch {}
+        }
+
+        const result=importFactionMemberMessageReply(id,raw);
+        statusText='Imported member reply for '+result.memberName+': '+result.equipmentCount+' equipped item'+(result.equipmentCount===1?'':'s')+' parsed.';
+        render();
+        return result;
+    }
+
+
     function saveFactionMemberReadinessProfile(memberId, patch = {}) {
         const id = asId(memberId);
         if (!id) throw new Error('Member ID is required.');
@@ -10751,37 +10955,35 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
         return readiness.profiles[id];
     }
 
-    function promptFactionMemberReadiness(memberId) {
-        const db = dbLoad();
-        const id = asId(memberId);
-        const member = db.factionInventory.memberReadiness.roster[id] || {};
-        const existing = db.factionInventory.memberReadiness.profiles[id] || {};
-        const stats = existing.stats || {};
-        const rawStats = prompt(
-            'Battle stats for ' + String(member.memberName || id) + ' as Strength,Defense,Speed,Dexterity. Leave blank to keep unknown:',
+function promptFactionMemberReadiness(memberId) {
+        const db=dbLoad();
+        const id=asId(memberId);
+        const member=db.factionInventory.memberReadiness.roster[id]||{};
+        const existing=db.factionInventory.memberReadiness.profiles[id]||{};
+        const stats=existing.stats||{};
+        const rawStats=prompt(
+            'Battle stats for '+String(member.memberName||id)+' as Strength,Defense,Speed,Dexterity. Leave blank values as 0:',
             [stats.strength||'',stats.defense||'',stats.speed||'',stats.dexterity||''].join(',')
         );
-        if (rawStats == null) return;
-        const parts = String(rawStats).split(',').map(v=>Math.max(0,Number(String(v).replace(/[^0-9.]/g,''))||0));
-        const equipmentSummary = prompt(
-            'Currently equipped personal gear summary (weapon + armor; plain text is fine):',
-            String(existing.equipment?.summary || '')
+        if(rawStats==null) return;
+        const parts=String(rawStats).split(',').map(v=>Math.max(0,Number(String(v).replace(/[^0-9.]/g,''))||0));
+        const equipmentSummary=prompt(
+            'Current equipment summary. Use Request Data / Paste Reply for structured gear comparison:',
+            String(existing.equipment?.summary||'')
         );
-        if (equipmentSummary == null) return;
-        const warRole = prompt('War role / assignment (optional):', String(existing.warRole || '')) ?? '';
-        const med = prompt('Medical readiness: READY, NEEDS SUPPLY, or UNKNOWN:', String(existing.medicalStatus || 'UNKNOWN')) ?? 'UNKNOWN';
-        const ipecac = prompt('Ipecac readiness: READY, NOT NEEDED, NEEDS IPECAC, or UNKNOWN:', String(existing.ipecacStatus || 'UNKNOWN')) ?? 'UNKNOWN';
-        const notes = prompt('Inventory Manager notes (optional):', String(existing.notes || '')) ?? '';
+        if(equipmentSummary==null) return;
+        const warRole=prompt('War role / preference (optional):',String(existing.warRole||''))??'';
+        const bloodType=prompt('In-game blood type (optional):',String(existing.bloodType||''))??'';
+        const notes=prompt('Inventory Manager notes (optional):',String(existing.notes||''))??'';
         saveFactionMemberReadinessProfile(id,{
-            stats:{ strength:parts[0]||0, defense:parts[1]||0, speed:parts[2]||0, dexterity:parts[3]||0 },
-            equipment:{ summary:String(equipmentSummary || '').trim() },
-            warRole:String(warRole || '').trim(),
-            medicalStatus:String(med || 'UNKNOWN').trim().toUpperCase(),
-            ipecacStatus:String(ipecac || 'UNKNOWN').trim().toUpperCase(),
+            stats:{strength:parts[0]||0,defense:parts[1]||0,speed:parts[2]||0,dexterity:parts[3]||0},
+            equipment:{summary:String(equipmentSummary||'').trim()},
+            warRole:String(warRole||'').trim(),
+            bloodType:String(bloodType||'').trim().toUpperCase(),
             notes,
-            source:'manual/opt-in'
+            source:'manual entry'
         });
-        statusText = 'Readiness profile updated for ' + String(member.memberName || id) + '.';
+        statusText='Readiness profile updated for '+String(member.memberName||id)+'.';
         render();
     }
 
@@ -11502,10 +11704,10 @@ function composeFactionMemberBuildMessage(memberId) {
             const loan = loanMap.get(id) || null;
             const stale = ageHours != null && ageHours > staleHours;
             let readinessStatus = 'READY FOR REVIEW';
-            let action = 'Review against war assignment and armory availability.';
+            let action = 'Review current build and war role.';
             if (!hasStats || !hasEquipment) {
                 readinessStatus = 'MISSING DATA';
-                action = 'Collect opt-in battle stats and current equipped gear before issuing upgrades.';
+                action = 'Send the readiness-data request, then import the member reply.';
             } else if (stale) {
                 readinessStatus = 'STALE DATA';
                 action = 'Refresh member stats/equipment before war loadout decisions.';
@@ -11516,10 +11718,9 @@ function composeFactionMemberBuildMessage(memberId) {
             const knownCandidates = candidates.filter(x=>x.metadataComplete);
             const candidate = knownCandidates[0] || null;
             let equipmentPlan = '';
-            if (!hasStats || !hasEquipment) equipmentPlan = 'No optimization until member data is complete.';
-            else if (loan?.amount) equipmentPlan = 'Member already holds ' + loan.amount + ' faction item(s); compare current faction loans to declared personal gear before issuing more.';
-            else if (candidate) equipmentPlan = 'Armory candidate for comparison: ' + candidate.name + ' ('+candidate.category+', '+candidate.available+' available). Candidate only; leadership/manager review required.';
-            else equipmentPlan = 'Armory item combat metadata is incomplete; perform manual item comparison before assignment. Do not use market price as a strength proxy.';
+            if (!hasStats || !hasEquipment) equipmentPlan = 'Member data incomplete.';
+            else if (profile.simpleBuild) equipmentPlan = String(profile.simpleBuild.summary||'Build generated.');
+            else equipmentPlan = 'Generate a build from current gear, level, and battle stats.';
             return {
                 ...member,
                 profile,
@@ -12829,17 +13030,31 @@ function factionInventoryHtml(db) {
                 ).join(''):'<div style="font-size:11px;color:#888;margin-top:7px;">No current shortage against the proposed minimums.</div>')
             );
         } else if(factionWorkflow==='members') {
-            const visible=members.slice(0,20);
+            const visible=members.slice(0,30);
+            const nextMissing=members.find(member=>member.readinessStatus==='MISSING DATA'||member.readinessStatus==='STALE DATA');
             body=card(
-                '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-faction-member-key-import" style="'+btn()+'">Import Member Data</button>'+
-                '<button id="mm-faction-member-key-save" style="'+btn()+'">Import & Save Key</button>'+
-                '<button id="mm-faction-member-key-refresh" style="'+btn()+'">Refresh Saved</button></div>'+
-                (visible.length?visible.map(member=>
-                    '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
-                        '<div><b>'+escapeHtml(member.memberName)+'</b> · Lv '+Number(member.level||0)+'<div style="color:#888;">'+escapeHtml(member.readinessStatus)+' · '+(member.hasStats?Number(member.statProfile?.total||0).toLocaleString()+' stats':'stats missing')+'</div></div>'+
-                        '<button data-faction-member-edit="'+escapeHtml(member.memberId)+'" style="'+btn()+'">Edit</button>'+
-                    '</div>'
-                ).join(''):'<div style="font-size:11px;color:#888;margin-top:7px;">Refresh faction data to load members.</div>')
+                '<div style="display:flex;justify-content:space-between;gap:6px;align-items:center;flex-wrap:wrap;">'+
+                    '<div><b>Member Data</b><div style="font-size:10px;color:#888;">API keys are optional. Request a structured reply and paste it back into CRM.</div></div>'+
+                    '<button id="mm-faction-request-next" '+(nextMissing?'':'disabled')+' style="'+btn(Boolean(nextMissing))+'">Request Next Missing</button>'+
+                '</div>'+
+                (visible.length?visible.map(member=>{
+                    const requested=member.profile?.dataRequestAt ? ' · requested '+escapeHtml(fmtDate(member.profile.dataRequestAt)) : '';
+                    const blood=member.profile?.bloodType ? ' · blood '+escapeHtml(member.profile.bloodType) : '';
+                    return '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+                        '<div><b>'+escapeHtml(member.memberName)+'</b> · Lv '+Number(member.level||0)+
+                        '<div style="color:#888;">'+escapeHtml(member.readinessStatus)+' · '+(member.hasStats?Number(member.statProfile?.total||0).toLocaleString()+' stats':'stats missing')+blood+requested+'</div></div>'+
+                        '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
+                            '<button data-faction-member-request="'+escapeHtml(member.memberId)+'" style="'+btn(member.readinessStatus!=='READY FOR REVIEW')+'">Request Data</button>'+
+                            '<button data-faction-member-import-reply="'+escapeHtml(member.memberId)+'" style="'+btn()+'">Paste Reply</button>'+
+                            '<button data-faction-member-edit="'+escapeHtml(member.memberId)+'" style="'+btn()+'">Edit</button>'+
+                        '</div>'+
+                    '</div>';
+                }).join(''):'<div style="font-size:11px;color:#888;margin-top:7px;">Refresh faction data to load members.</div>')+
+                '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:10px;color:#999;">Optional API import</summary>'+
+                    '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;"><button id="mm-faction-member-key-import" style="'+btn()+'">One-time Key</button>'+
+                    '<button id="mm-faction-member-key-save" style="'+btn()+'">Save Encrypted Key</button>'+
+                    '<button id="mm-faction-member-key-refresh" style="'+btn()+'">Refresh Saved Keys</button></div>'+
+                '</details>'
             );
         } else {
             const counts=Object.fromEntries(FACTION_INVENTORY_CATEGORIES.map(cat=>[cat,rows.filter(row=>String(row.category||'')===cat).length]));
@@ -15085,6 +15300,22 @@ function render() {
         root.querySelector('#mm-faction-followup')?.addEventListener('click', () => openLatestFactionReport());
         root.querySelector('#mm-faction-log')?.addEventListener('click', () => promptFactionLogisticsEntry());
         root.querySelector('#mm-faction-roster-sync')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
+        root.querySelector('#mm-faction-request-next')?.addEventListener('click', () => {
+            const member=factionMemberReadinessRows(dbLoad()).find(row=>row.readinessStatus==='MISSING DATA'||row.readinessStatus==='STALE DATA');
+            if(!member) return;
+            try { composeFactionMemberDataRequest(member.memberId); }
+            catch(error){ statusText='Data request failed: '+(error?.message||String(error)); render(); }
+        });
+        root.querySelectorAll('[data-faction-member-request]').forEach(button => button.addEventListener('click', () => {
+            try { composeFactionMemberDataRequest(button.dataset.factionMemberRequest); }
+            catch(error){ statusText='Data request failed: '+(error?.message||String(error)); render(); }
+        }));
+        root.querySelectorAll('[data-faction-member-import-reply]').forEach(button => button.addEventListener('click', () => {
+            promptFactionMemberDataReply(button.dataset.factionMemberImportReply).catch(error=>{
+                statusText='Reply import failed: '+(error?.message||String(error));
+                render();
+            });
+        }));
         root.querySelector('#mm-faction-member-key-import')?.addEventListener('click', () => promptFactionMemberApiImport());
         root.querySelector('#mm-faction-member-key-save')?.addEventListener('click', () => importAndSaveFactionMemberKey());
         root.querySelector('#mm-faction-member-key-refresh')?.addEventListener('click', () => refreshFactionMemberKeyVault().catch(()=>{}));
@@ -15919,7 +16150,7 @@ function scheduleWeavLiveSync() {
             statusText = 'Ready. Smart Refresh is manual.';
             render();
         } else {
-            statusText = 'Torn API key missing. Sales/customer sync is paused. Open More → Settings, paste your Torn API key, and Save.';
+            statusText = 'Torn API key missing. Sales/customer sync is paused. Open Settings, paste your Torn API key, and Save.';
             render();
         }
 
@@ -16005,6 +16236,8 @@ function scheduleWeavLiveSync() {
         removeSavedFactionMemberKey,
         saveFactionMemberReadinessProfile,
         factionMemberReadinessRows: () => factionMemberReadinessRows(dbLoad()),
+        requestFactionMemberData: composeFactionMemberDataRequest,
+        importFactionMemberReply: importFactionMemberMessageReply,
         optimizeFactionMemberLoadout,
         factionLoadoutOptimization,
         factionArmoryCandidateRows: () => factionArmoryCandidateRows(dbLoad()),
