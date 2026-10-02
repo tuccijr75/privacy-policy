@@ -2,6 +2,8 @@
   'use strict';
 
   const CORE_VERSION = '8.0.0-alpha.1';
+  const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
+  const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
     dbName: 'mm_bazaar_crm_idb',
     store: 'state',
@@ -200,6 +202,15 @@
     }
   }
 
+  function notifyStateChanged(domain) {
+    if (typeof BroadcastChannel === 'undefined') return;
+    try {
+      const channel = new BroadcastChannel(LEGACY_CHANNEL);
+      channel.postMessage({ source: CORE_INSTANCE_ID, type: 'state-updated', domain:String(domain||''), at:Date.now() });
+      channel.close();
+    } catch {}
+  }
+
   async function updateDomainState(domain, updater) {
     if (typeof updater !== 'function') throw new Error('updateDomainState requires a synchronous updater function.');
     const key = String(domain || '').toLowerCase();
@@ -210,7 +221,7 @@
       if (!db.objectStoreNames.contains(LEGACY.store)) {
         throw new Error(`Legacy IndexedDB store '${LEGACY.store}' is missing.`);
       }
-      return await new Promise((resolve, reject) => {
+      const result = await new Promise((resolve, reject) => {
         const tx = db.transaction(LEGACY.store, 'readwrite');
         const store = tx.objectStore(LEGACY.store);
         const getReq = store.get(LEGACY.key);
@@ -242,6 +253,8 @@
         tx.onerror = () => reject(tx.error || new Error('Shared state update failed.'));
         tx.onabort = () => reject(tx.error || new Error('Shared state update aborted.'));
       });
+      notifyStateChanged(key);
+      return result;
     } finally {
       try { db.close(); } catch {}
     }
@@ -272,6 +285,7 @@
     readLegacyState,
     inspectLegacyState,
     updateDomainState,
+    notifyStateChanged,
     deepClone
   });
 
