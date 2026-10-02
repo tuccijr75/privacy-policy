@@ -153,3 +153,41 @@ Faction Inventory API v2 returns each armory item's specialized market `type`. T
 - The Inventory Manager still verifies price and availability outside this module before purchasing.
 
 These limitations are intentional: the module determines **what** is needed; procurement tooling determines **where and at what price** to buy it.
+
+
+## Member-owned inventory before acquisition
+
+Acquisition is shortfall-based, not standardization-based. For each standard slot the route order is:
+
+1. known equipped item;
+2. adequate member-owned personal inventory item;
+3. adequate faction item already loaned to that member;
+4. adequate unloaned faction stock;
+5. acquire the generally available reference item;
+6. if current gear or member inventory is not sufficiently known, mark the slot unresolved and defer the purchase.
+
+Member inventory is imported from the user's authorized Torn API inventory selection and stored only as the readiness profile's non-secret item summary. Faction-owned/loaned rows are excluded from the member-owned pool where the API identifies them as faction items, preventing double-counting.
+
+A member-owned item that meets or beats the active readiness floor resolves to `OWNED — EQUIP / VERIFY`; it must not generate a duplicate purchase.
+
+## Small-faction procurement modes and budget
+
+The module has three planning modes:
+
+- **Budget** — default. Uses lower-cost generally available examples that still satisfy the selected readiness floor.
+- **Standard** — stronger routine equipment reference set.
+- **Ideal** — premium planning reference; not routine purchase authorization.
+
+The default known-cost acquisition cap is **$15,000,000**. The cap is editable locally. Acquisition output is split into:
+
+- required quantity;
+- buy-now quantity within the cap;
+- deferred quantity;
+- known buy-now reference cost;
+- known deferred reference cost.
+
+Unpriced provision lines remain requirements but do not consume the known-cost budget calculation until a reference price exists.
+
+Missing member stats, missing member inventory, and unknown-performance current gear are intentionally excluded from automatic buy quantity and shown as unresolved. This prevents a partially populated roster from generating a large speculative purchase list.
+
+Budget-mode examples currently include lower-cost common equipment such as AK-47 / Mag 7 / Benelli M4 Super, BT MP9, Macana, WWII Helmet, Bulletproof Vest, Kevlar Gloves, Safety Boots, and Combat Pants where no sensible mid-tier general alternative exists. Standard and Ideal modes may recommend stronger/more expensive references.
