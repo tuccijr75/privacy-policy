@@ -1,6 +1,6 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.8**
+Status: **NON-PRODUCTION / alpha.9**
 
 ## Scope implemented
 
@@ -293,5 +293,35 @@ Static syntax: Core PASS, Armory PASS, Scout PASS.
 - [ ] Double-click Armory header resets position.
 - [ ] Drag Scout header; panel moves and position persists after reopen/reload.
 - [ ] Double-click Scout header resets position.
+
+Production unchanged.
+
+
+## Alpha.9 exact Torn-row dock alignment — 2026-10-02
+
+Approved placement target: MM buttons should appear immediately to the left of Torn's first native bottom button, on the same vertical row/baseline as the Torn controls shown in the reference screenshot.
+
+Implemented in Core 8.0.0-alpha.4:
+- native toolbar detection now measures the actual Torn `a/button` control rectangles instead of using the containing toolbar rectangle;
+- the first native control's left edge is the horizontal anchor;
+- the median native inter-button gap is reused (clamped to a small 2–7 px range);
+- MM dock vertical position is aligned to the first Torn control's centerline;
+- narrow-screen fallback still moves the MM row above Torn rather than overlapping it;
+- Armory/Scout `@require` URLs are cache-busted to Core alpha.4 so the corrected shared dependency is refreshed by Tampermonkey.
+
+Versions:
+- Core 8.0.0-alpha.4
+- Armory 8.0.0-alpha.9
+- Scout 8.0.0-alpha.8
+
+Static syntax: Core PASS, Armory PASS, Scout PASS.
+
+Core remains an `@require` shared library, not a separate standalone Tampermonkey installation in the current architecture.
+
+Live check:
+- [ ] Update Armory alpha.9 and Scout alpha.8.
+- [ ] Reload Torn.
+- [ ] Confirm MM icons sit directly left of the globe/native first Torn icon, on the same centerline, with native-like gap and no overlap.
+- [ ] Confirm dock/undock and movable-panel behavior still works after the alignment change.
 
 Production unchanged.
