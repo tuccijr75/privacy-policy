@@ -1118,17 +1118,25 @@
     const members=memberRows();
     const minimums=logic.minimumProposal(state.factionInventory||{},{
       mode:stockMode,
-      participants:WAR_PARTICIPANTS
+      participants:WAR_PARTICIPANTS,
+      procurementMode
     });
     const acquisition=logic.acquisitionPlan(state.factionInventory||{},{
       mode:stockMode,
-      participants:WAR_PARTICIPANTS
+      participants:WAR_PARTICIPANTS,
+      procurementMode,
+      budgetCap:acquisitionBudget
     });
     const inventory=Object.values(state.factionInventory?.current||{});
     const summaryHeaders=['Metric','Value'];
     const summary=[
       {Metric:'Generated',Value:new Date().toISOString()},
       {Metric:'Stock mode',Value:stockMode.toUpperCase()},
+      {Metric:'Procurement mode',Value:procurementMode.toUpperCase()},
+      {Metric:'Acquisition budget',Value:acquisitionBudget},
+      {Metric:'Buy-now known cost',Value:acquisition.fundedEstimatedValue},
+      {Metric:'Known deferred cost',Value:acquisition.deferredEstimatedValue},
+      {Metric:'Unresolved build slots',Value:acquisition.unresolvedCount},
       {Metric:'War participants assumption',Value:stockMode==='war'?WAR_PARTICIPANTS:''},
       {Metric:'Faction members',Value:members.length},
       {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
@@ -1141,7 +1149,7 @@
     ];
     const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','War Ready','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
     const memberData=members.map(r=>{
-      const build=logic.compareMemberBuild(r,state.factionInventory||{},members);
+      const build=logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
       return {
         'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'API Saved':r.apiSaved?'YES':'NO','Readiness':r.readinessStatus,
         'War Ready':build.warReady?'YES':'NO','Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
@@ -1159,8 +1167,8 @@
       xmlSheet('Members',memberHeaders,memberData)+
       xmlSheet('Inventory',invHeaders,invData)+
       xmlSheet('Minimums',minHeaders,minData)+
-      xmlSheet('Acquire',['Category','Item','Qty','Reference Source','Reference Unit Value','Estimated Total','Reasons'],acquisition.list.map(r=>({
-        'Category':r.category,'Item':r.item,'Qty':num(r.qty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Estimated Total':num(r.estimatedValue),'Reasons':r.reasons
+      xmlSheet('Acquire',['Category','Item','Required Qty','Buy Now Qty','Deferred Qty','Reference Source','Reference Unit Value','Buy Now Cost','Reasons'],acquisition.list.map(r=>({
+        'Category':r.category,'Item':r.item,'Required Qty':num(r.qty),'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Buy Now Cost':num(r.fundedEstimatedValue),'Reasons':r.reasons
       })))+
       '</Workbook>';
     const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
