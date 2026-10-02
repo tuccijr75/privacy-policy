@@ -1181,20 +1181,37 @@
 
   function open(){
     createPanel();
-    const root=document.getElementById(ROOT_ID),launcher=document.getElementById(LAUNCHER_ID);
-    root.style.display='block';if(launcher)launcher.style.display='none';
+    const root=document.getElementById(ROOT_ID);
+    root.style.display='block';
+    core?.setDockLauncherActive?.('armory',true);
     render();reloadState();
   }
   function close(){
-    const root=document.getElementById(ROOT_ID),launcher=document.getElementById(LAUNCHER_ID);
-    if(root)root.style.display='none';if(launcher)launcher.style.display='block';
+    const root=document.getElementById(ROOT_ID);
+    if(root)root.style.display='none';
+    core?.setDockLauncherActive?.('armory',false);
   }
   function createLauncher(){
-    if(!document.body||document.getElementById(LAUNCHER_ID))return;
+    if(!document.body)return;
     injectStyle();
+    if(core?.registerDockLauncher){
+      const b=core.registerDockLauncher({
+        id:'armory',
+        label:'MM Faction Armory',
+        accent:'#8b6a2f',
+        onClick:()=>{
+          const root=document.getElementById(ROOT_ID);
+          if(root&&root.style.display!=='none')close(); else open();
+        }
+      });
+      if(b)b.id=LAUNCHER_ID;
+      core.adoptLegacyCrmLauncher?.();
+      return;
+    }
+    if(document.getElementById(LAUNCHER_ID))return;
     const b=document.createElement('button');
     b.id=LAUNCHER_ID;b.textContent='Armory';
-    b.style.cssText='position:fixed;right:0;top:250px;z-index:2147483647;'+button(true)+'border-radius:6px 0 0 6px;';
+    b.style.cssText='position:fixed;right:6px;bottom:6px;z-index:2147483647;'+button(true);
     b.addEventListener('click',open);document.body.appendChild(b);
   }
 
