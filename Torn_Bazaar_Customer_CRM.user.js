@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.5.3
+// @version      7.5.4
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.5-workflow-overhaul/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.5-workflow-overhaul/Torn_Bazaar_Customer_CRM.user.js
@@ -29,7 +29,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.5.3';
+    const VERSION = '7.5.4';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -10724,11 +10724,13 @@ function factionMemberSupplyFromApi(inventoryRows,ammoResponse,catalog,equipment
         };
     }
 
-    async function importAndSaveFactionMemberKey() {
-        const key = prompt(
-            'Paste the member Limited Access Torn API key. It will be imported and then encrypted in the local readiness-key vault:',
-            ''
-        );
+    async function importAndSaveFactionMemberKey(providedKey = null) {
+        const key = providedKey == null
+            ? prompt(
+                'Paste the member Limited Access Torn API key. It will be imported and then encrypted in the local readiness-key vault:',
+                ''
+            )
+            : String(providedKey);
         if (key == null || !String(key).trim()) return;
         try {
             statusText='Importing member data and unlocking encrypted vault…';
@@ -10851,11 +10853,13 @@ function factionMemberSupplyFromApi(inventoryRows,ammoResponse,catalog,equipment
         return true;
     }
 
-    async function promptFactionMemberApiImport() {
-        const key = prompt(
-            'Paste the member Limited Access Torn API key. It is used once in this browser to read basic identity, battle stats, and equipment, and is NOT saved by the CRM:',
-            ''
-        );
+    async function promptFactionMemberApiImport(providedKey = null) {
+        const key = providedKey == null
+            ? prompt(
+                'Paste the member Limited Access Torn API key. It is used once in this browser to read basic identity, battle stats, and equipment, and is NOT saved by the CRM:',
+                ''
+            )
+            : String(providedKey);
         if (key == null || !String(key).trim()) return;
         try {
             statusText='Importing member readiness data…';
@@ -12944,11 +12948,21 @@ function factionInventoryHtml(db) {
                         '</div>'+
                     '</div>';
                 }).join(''):'<div style="font-size:11px;color:#888;margin-top:7px;">Refresh faction data to load members.</div>')+
-                '<details style="margin-top:8px;"><summary style="cursor:pointer;font-size:10px;color:#999;">Optional API import</summary>'+
-                    '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;"><button id="mm-faction-member-key-import" style="'+btn()+'">One-time Key</button>'+
-                    '<button id="mm-faction-member-key-save" style="'+btn()+'">Save Encrypted Key</button>'+
-                    '<button id="mm-faction-member-key-refresh" style="'+btn()+'">Refresh Saved Keys</button></div>'+
-                '</details>'
+                '<div style="margin-top:8px;border-top:1px solid #303030;padding-top:8px;">'+
+                    '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
+                        '<div><b>Member API Key</b><div style="font-size:10px;color:#888;">Paste a member Limited Access key. The API identifies the member automatically.</div></div>'+
+                        '<span style="font-size:10px;color:#888;">Saved encrypted: '+Number(factionMemberKeyVaultSummary().savedMembers||0)+'</span>'+
+                    '</div>'+
+                    '<div style="display:grid;grid-template-columns:minmax(180px,1fr) auto auto;gap:5px;margin-top:6px;">'+
+                        '<input id="mm-faction-member-key-input" type="password" autocomplete="off" placeholder="Limited Access API key" style="'+inputCss()+'">'+
+                        '<button id="mm-faction-member-key-import-inline" style="'+btn()+'">Import Once</button>'+
+                        '<button id="mm-faction-member-key-save-inline" style="'+btn(true)+'">Import + Save Encrypted</button>'+
+                    '</div>'+
+                    '<div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-top:6px;">'+
+                        '<button id="mm-faction-member-key-refresh" style="'+btn()+'">Refresh Saved Keys</button>'+
+                        '<span style="font-size:10px;color:#777;">Keys are not written to CRM IndexedDB/localStorage. Saved keys use the encrypted Tampermonkey vault.</span>'+
+                    '</div>'+
+                '</div>'
             );
         } else {
             const counts=Object.fromEntries(FACTION_INVENTORY_CATEGORIES.map(cat=>[cat,rows.filter(row=>String(row.category||'')===cat).length]));
@@ -15189,8 +15203,21 @@ function render() {
                 render();
             });
         }));
-        root.querySelector('#mm-faction-member-key-import')?.addEventListener('click', () => promptFactionMemberApiImport());
-        root.querySelector('#mm-faction-member-key-save')?.addEventListener('click', () => importAndSaveFactionMemberKey());
+        const factionMemberKeyInput = () => String(root.querySelector('#mm-faction-member-key-input')?.value || '').trim();
+        const clearFactionMemberKeyInput = () => {
+            const input=root.querySelector('#mm-faction-member-key-input');
+            if(input) input.value='';
+        };
+        root.querySelector('#mm-faction-member-key-import-inline')?.addEventListener('click', () => {
+            const key=factionMemberKeyInput();
+            if(!key){ statusText='Paste a member Limited Access API key first.'; render(); return; }
+            promptFactionMemberApiImport(key).then(clearFactionMemberKeyInput).catch(()=>{});
+        });
+        root.querySelector('#mm-faction-member-key-save-inline')?.addEventListener('click', () => {
+            const key=factionMemberKeyInput();
+            if(!key){ statusText='Paste a member Limited Access API key first.'; render(); return; }
+            importAndSaveFactionMemberKey(key).then(clearFactionMemberKeyInput).catch(()=>{});
+        });
         root.querySelector('#mm-faction-member-key-refresh')?.addEventListener('click', () => refreshFactionMemberKeyVault().catch(()=>{}));
         root.querySelector('#mm-faction-roster-sync-card')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
         root.querySelectorAll('[data-faction-member-edit]').forEach(button => button.addEventListener('click', () => promptFactionMemberReadiness(button.dataset.factionMemberEdit)));
