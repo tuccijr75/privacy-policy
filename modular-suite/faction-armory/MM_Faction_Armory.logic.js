@@ -361,6 +361,10 @@
         decision='PROVISIONED — VERIFY EQUIPPED';
         route='LOANED';
         suggested=assignedLoan;
+      }else if(currentItem&&currentScore<=0){
+        decision='REVIEW CURRENT GEAR';
+        route='REVIEW';
+        suggested=target||currentItem;
       }else if(factionOption){
         decision=currentItem?'UPGRADE — ISSUE FACTION':'PROVISION — ISSUE FACTION';
         route='ISSUE';
@@ -435,6 +439,7 @@
 
     const requirements=new Map();
     const assignments=[];
+    const unresolved=[];
     const addRequirement=(item,qty,reason,category='equipment')=>{
       if(!item||!String(item.name||'').trim()||qty<=0)return;
       const key=category+'|'+String(item.name);
@@ -461,8 +466,15 @@
       const build=compareMemberBuild(member,factionInventory,rows);
       for(const item of build.items){
         if(item.ready||item.route==='LOANED')continue;
+        if(item.route==='REVIEW'){
+          unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:item.currentName||'',reason:'Current item exists but performance is not known.'});
+          continue;
+        }
         const target=item.targetItem;
-        if(!target)continue;
+        if(!target){
+          unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:item.currentName||'',reason:'No baseline target could be resolved.'});
+          continue;
+        }
         const factionPick=allocateFaction(item.slot,target,build.offensiveNeed);
         if(factionPick){
           assignments.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,route:'ISSUE',item:factionPick.name});
@@ -505,6 +517,8 @@
     return {
       mode,participants,
       assignments,
+      unresolved,
+      unresolvedCount:unresolved.length,
       list,
       totalUnits:list.reduce((sum,row)=>sum+n(row.qty),0),
       estimatedEquipmentValue:list.reduce((sum,row)=>sum+n(row.estimatedValue),0)
