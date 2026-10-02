@@ -453,6 +453,9 @@
     const seen=new Set();
     for(const raw of rows){
       const itemObj=raw?.item&&typeof raw.item==='object'?raw.item:{};
+      const ownership=String(raw?.ownership??raw?.owner_type??raw?.source??raw?.owner??'').toLowerCase();
+      const factionOwned=Boolean(raw?.faction_id??raw?.faction?.id??raw?.is_faction??raw?.loaned?.id)||/faction/.test(ownership);
+      if(factionOwned)continue;
       const name=String(raw?.name??itemObj?.name??'').trim();
       if(!name)continue;
       const quantity=Math.max(0,Number(raw?.amount??raw?.quantity??raw?.qty??1)||0);
