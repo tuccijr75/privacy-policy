@@ -16,6 +16,22 @@
     'Flash Grenade','Smoke Grenade','Tear Gas','HEG','Grenade','Pepper Spray'
   ]);
 
+  const DEFAULT_WAR_PARTICIPANTS=20;
+  const WAR_SUPPLY_PER_MEMBER=Object.freeze({
+    'medical|First Aid Kit':10,
+    'medical|Small First Aid Kit':10,
+    'medical|Morphine':10,
+    'medical|Ipecac Syrup':1,
+    'medical|Empty Blood Bag':5,
+    'temporary|Flash Grenade':5,
+    'temporary|Smoke Grenade':5,
+    'temporary|Tear Gas':5,
+    'temporary|HEG':5,
+    'temporary|Grenade':5,
+    'temporary|Pepper Spray':5,
+    'drugs|Xanax':3
+  });
+
   const asId=value=>String(value??'').trim();
   const n=value=>Math.max(0,Number(value)||0);
   const clone=value=>value==null?value:JSON.parse(JSON.stringify(value));
@@ -74,16 +90,113 @@
     return damage*0.5+accuracy*0.5;
   }
 
+  function summaryEquipmentSlots(summary=''){
+    const out={};
+    const slotMap={
+      primary:'primary',secondary:'secondary',melee:'melee',
+      helmet:'helmet',head:'helmet',body:'body',body_armor:'body',body_armour:'body',
+      gloves:'gloves',hands:'gloves',pants:'pants',legs:'pants',boots:'boots',feet:'boots',
+      temporary:'temporary',temp:'temporary',temp_equipped:'temporary',temporary_equipped:'temporary'
+    };
+    const segments=String(summary||'').split(/\s*\|\s*|\r?\n/).map(x=>x.trim()).filter(Boolean);
+    for(const segment of segments){
+      const match=segment.match(/^([A-Z _-]{3,24})\s*:\s*(.+)$/i);
+      if(!match)continue;
+      const key=String(match[1]||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'');
+      const slot=slotMap[key];
+      if(!slot||slot==='temporary')continue;
+      let name=String(match[2]||'').trim();
+      name=name.replace(/\s+\((?:DMG|ACC|ARM|Q|QUALITY)\b.*$/i,'').trim();
+      if(!name||name==='—'||/^none$/i.test(name))continue;
+      out[slot]={
+        itemId:'',
+        name,
+        slot,
+        type:slot,
+        subType:slot,
+        damage:0,
+        accuracy:0,
+        armor:0,
+        armorRating:0,
+        quality:0,
+        source:'equipment summary fallback'
+      };
+    }
+    return out;
+  }
+
   function profileEquipmentSlots(profile={}){
     const out={};
     const items=Array.isArray(profile?.equipment?.items)?profile.equipment.items:[];
     for(const item of items){
       const slot=equipmentSlot(item);
-      if(!slot)continue;
+      if(!slot||slot==='temporary')continue;
       const prior=out[slot];
-      if(!prior||equipmentScore(item)>equipmentScore(prior))out[slot]=clone(item);
+      if(!prior||equipmentScore(item)>equipmentScore(prior)||(!equipmentScore(prior)&&String(item?.name||''))){
+        out[slot]=clone(item);
+      }
+    }
+    const fallback=summaryEquipmentSlots(profile?.equipment?.summary||'');
+    for(const [slot,item] of Object.entries(fallback)){
+      if(!out[slot]||!String(out[slot]?.name||'').trim())out[slot]=item;
     }
     return out;
+  }
+
+  function percentile(values,value){
+    const clean=(values||[]).map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
+    if(!clean.length)return 0.5;
+    const atOrBelow=clean.filter(x=>x<=Number(value||0)).length;
+    return Math.max(0,Math.min(1,atOrBelow/clean.length));
+  }
+
+  function readinessTier(memberRow={},rosterRows=[]){
+    const total=n(memberRow?.statProfile?.total||memberRow?.stats&&battleProfile(memberRow.stats).total);
+    const level=n(memberRow?.level);
+    const known=(rosterRows||[]).filter(row=>n(row?.statProfile?.total)>0);
+    if(known.length>=4){
+      const statPct=percentile(known.map(row=>n(row.statProfile.total)),total);
+      const levelPct=percentile(known.map(row=>n(row.level)),level);
+      const composite=statPct*0.75+levelPct*0.25;
+      const label=composite>=0.72?'FRONTLINE':composite>=0.34?'STANDARD':'DEVELOPMENT';
+      return {label,composite,statPercentile:statPct,levelPercentile:levelPct};
+    }
+    const label=(total>=100000||level>=30)?'FRONTLINE':(total>=10000||level>=15)?'STANDARD':'DEVELOPMENT';
+    return {label,composite:null,statPercentile:null,levelPercentile:null};
+  }
+
+  function readinessPercentileFor(slot,tier,bias){
+    let q=tier==='FRONTLINE'?0.75:tier==='STANDARD'?0.55:0.35;
+    if(slot==='primary')q+=0.05;
+    if(slot==='secondary'||slot==='melee')q-=0.05;
+    if(['helmet','body','gloves','pants','boots'].includes(slot)&&bias==='balanced')q+=0.03;
+    return Math.max(0.20,Math.min(0.90,q));
+  }
+
+  function quantile(values,q){
+    const clean=(values||[]).map(Number).filter(x=>Number.isFinite(x)&&x>0).sort((a,b)=>a-b);
+    if(!clean.length)return 0;
+    const index=Math.min(clean.length-1,Math.max(0,Math.ceil((clean.length-1)*q)));
+    return clean[index];
+  }
+
+  function warReadinessStandard(memberRow,factionInventory={},rosterRows=[]){
+    const bp=memberRow?.statProfile?.total?memberRow.statProfile:battleProfile(memberRow?.stats||memberRow?.profile?.stats||{});
+    const tier=readinessTier({...memberRow,statProfile:bp},rosterRows);
+    const candidates=availableFactionCandidates(factionInventory);
+    const floors={};
+    for(const slot of STANDARD_SLOTS){
+      const scores=(candidates[slot]||[]).map(item=>equipmentScore(item,bp.bias)).filter(x=>x>0);
+      const q=readinessPercentileFor(slot,tier.label,bp.bias);
+      floors[slot]={score:quantile(scores,q),percentile:q};
+    }
+    return {
+      tier:tier.label,
+      tierDetail:tier,
+      style:bp.bias,
+      dominant:bp.dominant,
+      floors
+    };
   }
 
   function availableFactionCandidates(factionInventory={}){
@@ -105,70 +218,79 @@
     return out;
   }
 
-  function compareMemberBuild(memberRow,factionInventory={}){
+  function compareMemberBuild(memberRow,factionInventory={},rosterRows=[]){
     const stats=memberRow?.stats||memberRow?.profile?.stats||{};
     const profile=battleProfile(stats);
     const current=profileEquipmentSlots(memberRow?.profile||{});
     const candidates=availableFactionCandidates(factionInventory);
+    const standard=warReadinessStandard({...memberRow,stats,statProfile:profile},factionInventory,rosterRows);
     const items=[];
 
     for(const slot of STANDARD_SLOTS){
       const currentItem=current[slot]||null;
-      const list=(candidates[slot]||[]).map(item=>({
+      const scored=(candidates[slot]||[]).map(item=>({
         ...item,
         score:equipmentScore(item,profile.bias)
-      })).sort((a,b)=>b.score-a.score);
-      const best=list[0]||null;
+      })).filter(item=>item.score>0).sort((a,b)=>a.score-b.score);
+      const floor=n(standard.floors?.[slot]?.score);
+      const adequate=scored.find(item=>item.score>=floor)||scored[scored.length-1]||null;
       const currentScore=currentItem?equipmentScore(currentItem,profile.bias):0;
-      const bestScore=best?.score||0;
 
-      let decision='NO CURRENT DATA';
+      let decision='CURRENT DATA MISSING';
+      let ready=false;
       let target=null;
-      if(currentItem&&best){
-        if(currentScore<=0){
-          decision='REVIEW CURRENT GEAR';
-          target=best;
-        }else if(bestScore>currentScore*1.01){
-          decision='UPGRADE AVAILABLE';
-          target=best;
-        }else{
-          decision='KEEP';
-          target=currentItem;
-        }
-      }else if(currentItem){
-        decision='KEEP';
+
+      if(currentItem&&currentScore>0&&(!floor||currentScore>=floor)){
+        decision='WAR READY — KEEP';
+        ready=true;
         target=currentItem;
-      }else if(best){
+      }else if(currentItem&&currentScore>0&&adequate&&adequate.score>currentScore){
+        decision='UPGRADE AVAILABLE';
+        target=adequate;
+      }else if(currentItem&&currentScore>0){
+        decision='PROCUREMENT / REVIEW';
+        target=adequate||currentItem;
+      }else if(currentItem){
         decision='REVIEW CURRENT GEAR';
-        target=best;
+        target=adequate;
+      }else if(adequate){
+        decision='CURRENT GEAR MISSING — VERIFY';
+        target=adequate;
       }
 
       items.push({
         slot,
         decision,
+        ready,
+        readinessFloor:floor,
+        readinessPercentile:standard.floors?.[slot]?.percentile||0,
         currentName:String(currentItem?.name||''),
         currentScore,
         targetName:String(target?.name||''),
-        targetScore:target===best?bestScore:currentScore,
-        availableCount:target===best?n(best?.availableCount):0,
+        targetScore:target===adequate?n(adequate?.score):currentScore,
+        availableCount:target===adequate?n(adequate?.availableCount):0,
         currentItem:clone(currentItem),
         targetItem:clone(target)
       });
     }
 
-    const upgrades=items.filter(x=>x.decision==='UPGRADE AVAILABLE').length;
-    const reviews=items.filter(x=>x.decision==='REVIEW CURRENT GEAR'||x.decision==='NO CURRENT DATA').length;
+    const readyCount=items.filter(x=>x.ready).length;
+    const missing=items.filter(x=>x.decision==='CURRENT DATA MISSING'||x.decision==='CURRENT GEAR MISSING — VERIFY'||x.decision==='REVIEW CURRENT GEAR').length;
+    const upgrades=items.filter(x=>x.decision==='UPGRADE AVAILABLE'||x.decision==='PROCUREMENT / REVIEW').length;
     return {
       memberId:asId(memberRow?.memberId),
       memberName:String(memberRow?.memberName||''),
       totalStats:profile.total,
       bias:profile.bias,
+      tier:standard.tier,
+      dominant:standard.dominant,
       items,
-      summary:reviews
-        ? reviews+' slot(s) need current gear data before an issue decision.'
+      warReady:readyCount===STANDARD_SLOTS.length,
+      summary:missing
+        ? missing+' slot(s) need current gear verification before war-ready status can be finalized.'
         : upgrades
-          ? upgrades+' verified faction-stock upgrade(s) available.'
-          : 'Current known build is not beaten by available routine faction stock.'
+          ? upgrades+' slot(s) are below the '+standard.tier.toLowerCase()+' war-ready standard.'
+          : 'Known build meets the '+standard.tier.toLowerCase()+' war-ready standard.'
     };
   }
 
@@ -259,84 +381,137 @@
     return Object.fromEntries([...totals.entries()].map(([k,v])=>[k,v/days]));
   }
 
-  function minimumProposal(factionInventory={}){
+  function warSupplyUnitsPerMember(category,name){
+    const exact=WAR_SUPPLY_PER_MEMBER[String(category||'')+'|'+String(name||'')];
+    if(exact!=null)return n(exact);
+    if(String(category||'')==='consumables'&&/energy drink/i.test(String(name||'')))return 5;
+    return 0;
+  }
+
+  function minimumProposal(factionInventory={},options={}){
+    const mode=String(options?.mode||'peace').toLowerCase()==='war'?'war':'peace';
+    const rosterRows=memberRows(factionInventory,[]);
     const rosterCount=Object.keys(factionInventory?.memberReadiness?.roster||{}).length;
-    const poolMin=Math.max(2,Math.ceil(rosterCount*0.25)+2);
-    const poolMax=Math.ceil(poolMin*1.5);
-    const cons=consumptionMap(factionInventory);
+    const participants=mode==='war'
+      ? Math.max(1,Math.round(Number(options?.participants||DEFAULT_WAR_PARTICIPANTS)))
+      : rosterCount;
+    const peacePoolMin=Math.max(2,Math.ceil(rosterCount*0.25)+2);
+    const peacePoolMax=Math.ceil(peacePoolMin*1.5);
     const current=Object.values(factionInventory?.current||{});
+    const cons=consumptionMap(factionInventory);
     const proposals=[];
 
     for(const slot of STANDARD_SLOTS){
       const slotItems=current.filter(item=>equipmentSlot(item)===slot);
       const available=slotItems.reduce((sum,item)=>sum+n(item?.availableCount),0);
       const loaned=slotItems.reduce((sum,item)=>sum+n(item?.loanedCount),0);
+
+      let targetMin=peacePoolMin;
+      let targetMax=peacePoolMax;
+      let coverageNeeded=null;
+      if(mode==='war'){
+        const participating=rosterRows.slice(0,participants);
+        coverageNeeded=participating.filter(member=>{
+          const build=compareMemberBuild(member,factionInventory,rosterRows);
+          const row=build.items.find(item=>item.slot===slot);
+          return !row?.ready;
+        }).length;
+        const unresolvedParticipants=Math.max(0,participants-participating.length);
+        coverageNeeded+=unresolvedParticipants;
+        targetMin=Math.max(peacePoolMin,Math.min(participants+2,coverageNeeded+2));
+        targetMax=Math.max(targetMin,Math.min(participants+2,targetMin+2));
+      }
+
       proposals.push({
         kind:'equipment',
+        mode,
         category:['primary','secondary','melee'].includes(slot)?'weapons':'armor',
         item:'Routine '+slot+' pool',
         slot,
         current:available,
         loaned,
-        recommendedMin:poolMin,
-        recommendedMax:poolMax,
-        shortfall:Math.max(0,poolMin-available),
+        coverageNeeded,
+        recommendedMin:targetMin,
+        recommendedMax:targetMax,
+        shortfall:Math.max(0,targetMin-available),
         dataRequired:false,
-        rationale:'25% of roster plus two spares; maximum band is 150% of minimum.'
+        rationale:mode==='war'
+          ? 'War mode: 20-member participation assumption; cover every member whose current '+slot+' is unverified/below standard, plus two spares.'
+          : 'Peace mode: 25% of roster plus two spares; maximum band is 150% of minimum.'
       });
     }
 
     for(const item of current){
       const category=String(item?.category||'');
-      if(!['medical','temporary','consumables'].includes(category))continue;
+      if(!['medical','temporary','consumables','drugs','boosters'].includes(category))continue;
       const name=String(item?.name||'');
       if(/blood bag/i.test(name)&&!/empty blood bag/i.test(name)){
         proposals.push({
-          kind:'stackable',
-          category,
-          item:name,
-          itemId:asId(item?.itemId),
+          kind:'stackable',mode,category,item:name,itemId:asId(item?.itemId),
           current:n(item?.availableCount||item?.amountOwned),
-          recommendedMin:null,
-          recommendedMax:null,
-          shortfall:null,
-          dataRequired:true,
-          rationale:'Filled blood-bag mix requires member blood-type distribution.'
+          recommendedMin:null,recommendedMax:null,shortfall:null,dataRequired:true,
+          rationale:'Filled blood-bag mix requires the participating members\' blood-type distribution.'
         });
         continue;
       }
       const rate=n(cons[category+'|'+asId(item?.itemId)]);
       const critical=category==='medical'?CRITICAL_MEDICAL.has(name):category==='temporary'?CRITICAL_TEMPORARY.has(name):false;
-      let target=Math.ceil(rate*14);
-      if(critical)target+=rosterCount;
+      const peaceTarget=Math.ceil(rate*14)+(critical?rosterCount:0);
+      const perMember=mode==='war'?warSupplyUnitsPerMember(category,name):0;
+      const warPackage=perMember*participants;
+      const target=mode==='war'?Math.max(peaceTarget,warPackage):peaceTarget;
       if(target<=0)continue;
       const available=n(item?.availableCount||item?.amountOwned);
       proposals.push({
-        kind:'stackable',
-        category,
-        item:name,
-        itemId:asId(item?.itemId),
-        current:available,
-        consumptionPerDay:rate,
+        kind:'stackable',mode,category,item:name,itemId:asId(item?.itemId),
+        current:available,consumptionPerDay:rate,perMemberWarUnits:perMember,
         recommendedMin:target,
-        recommendedMax:Math.ceil(target*1.5),
+        recommendedMax:mode==='war'?Math.ceil(target*1.20):Math.ceil(target*1.5),
         shortfall:Math.max(0,target-available),
         dataRequired:false,
-        rationale:(critical?'14-day observed depletion plus one-per-member reserve.':'14-day observed depletion.')
+        rationale:mode==='war'
+          ? (perMember>0
+              ? 'War mode: '+perMember+' per participating member × '+participants+'; never lower than the peace/observed-use floor.'
+              : 'War mode: no fixed combat package for this item; retain the peace/observed-use floor.')
+          : (critical?'Peace mode: 14-day observed depletion plus one-per-member reserve.':'Peace mode: 14-day observed depletion.')
       });
+    }
+
+    if(mode==='war'){
+      const existingNames=new Set(current.map(item=>String(item?.category||'')+'|'+String(item?.name||'')));
+      for(const [key,perMember] of Object.entries(WAR_SUPPLY_PER_MEMBER)){
+        const split=key.indexOf('|');
+        const category=key.slice(0,split),name=key.slice(split+1);
+        if(existingNames.has(key))continue;
+        const target=perMember*participants;
+        proposals.push({
+          kind:'stackable',mode,category,item:name,itemId:'',
+          current:0,consumptionPerDay:0,perMemberWarUnits:perMember,
+          recommendedMin:target,recommendedMax:Math.ceil(target*1.20),
+          shortfall:target,dataRequired:false,synthetic:true,
+          rationale:'War mode: '+perMember+' per participating member × '+participants+'; item is not currently present in faction stock.'
+        });
+      }
     }
 
     const days=observedDays(factionInventory);
     const confidence=days>=7?'HIGH':days>=3?'MEDIUM':'LOW';
     return {
+      mode,
+      participants,
       rosterCount,
-      poolMin,
-      poolMax,
+      poolMin:mode==='war'?null:peacePoolMin,
+      poolMax:mode==='war'?null:peacePoolMax,
+      peacePoolMin,
+      peacePoolMax,
       observedDays:days,
       confidence,
       proposals,
       actionable:proposals.filter(p=>!p.dataRequired&&n(p.shortfall)>0),
-      dataRequired:proposals.filter(p=>p.dataRequired)
+      dataRequired:proposals.filter(p=>p.dataRequired),
+      assumptions:mode==='war'
+        ? 'WAR: assumes '+participants+' participants; equipment covers all unverified/below-standard members plus two spares; core medical/temp supplies use per-member war packages.'
+        : 'PEACE: routine equipment pool is 25% of roster plus two spares; stackables use 14-day observed depletion with one-per-member reserve for critical items.'
     };
   }
 
@@ -526,13 +701,17 @@
     equipmentSlot,
     battleProfile,
     equipmentScore,
+    summaryEquipmentSlots,
     profileEquipmentSlots,
+    readinessTier,
+    warReadinessStandard,
     availableFactionCandidates,
     compareMemberBuild,
     loanMap,
     memberRows,
     observedDays,
     consumptionMap,
+    warSupplyUnitsPerMember,
     minimumProposal,
     replyKey,
     replyMap,
