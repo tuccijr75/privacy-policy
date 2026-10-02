@@ -125,7 +125,10 @@
       let decision='NO CURRENT DATA';
       let target=null;
       if(currentItem&&best){
-        if(bestScore>currentScore*1.01){
+        if(currentScore<=0){
+          decision='REVIEW CURRENT GEAR';
+          target=best;
+        }else if(bestScore>currentScore*1.01){
           decision='UPGRADE AVAILABLE';
           target=best;
         }else{
@@ -337,6 +340,121 @@
     };
   }
 
+  function replyKey(value){
+    return String(value||'').trim().toUpperCase()
+      .replace(/[^A-Z0-9]+/g,'_')
+      .replace(/^_+|_+$/g,'');
+  }
+
+  function replyMap(raw){
+    const out={};
+    for(const line of String(raw||'').split(/\r?\n/)){
+      const match=line.match(/^\s*([^:=]{2,40})\s*[:=]\s*(.*?)\s*$/);
+      if(!match)continue;
+      const key=replyKey(match[1]);
+      if(key)out[key]=String(match[2]||'').trim();
+    }
+    return out;
+  }
+
+  function replyNumber(map,keys){
+    for(const key of keys){
+      const normalized=replyKey(key);
+      if(!Object.prototype.hasOwnProperty.call(map,normalized))continue;
+      const raw=String(map[normalized]||'').replace(/,/g,'').trim();
+      if(!raw)return null;
+      const value=Number(raw.replace(/[^0-9.\-]/g,''));
+      return Number.isFinite(value)?Math.max(0,value):null;
+    }
+    return null;
+  }
+
+  function parseManualItem(slot,value){
+    const raw=String(value||'').trim();
+    if(!raw)return null;
+    const parts=raw.split('|').map(x=>x.trim()).filter(Boolean);
+    const name=parts.shift()||'';
+    if(!name)return null;
+    let quality=0;
+    const bonus=[];
+    for(const part of parts){
+      const match=part.match(/^(?:Q|QUALITY)\s*[:#-]?\s*([0-9]+(?:\.[0-9]+)?)/i);
+      if(match){quality=Math.max(0,Number(match[1]||0));continue;}
+      bonus.push(part);
+    }
+    return {
+      itemId:'',
+      name,
+      slot:String(slot||''),
+      type:String(slot||''),
+      subType:String(slot||''),
+      damage:0,
+      accuracy:0,
+      armor:0,
+      armorRating:0,
+      quality,
+      bonuses:bonus.length?{manual:bonus.join(' | ')}:null,
+      source:'member message'
+    };
+  }
+
+  function parseMemberReply(raw){
+    const map=replyMap(raw);
+    if(!Object.keys(map).length)throw new Error('No KEY: value fields were found in the pasted reply.');
+    const stat=(shortName,longName)=>replyNumber(map,[shortName,longName])??0;
+    const stats={
+      strength:stat('STR','STRENGTH'),
+      defense:stat('DEF','DEFENSE'),
+      speed:stat('SPD','SPEED'),
+      dexterity:stat('DEX','DEXTERITY')
+    };
+    const slotKeys={
+      primary:['PRIMARY'],secondary:['SECONDARY'],melee:['MELEE'],
+      helmet:['HELMET','HEAD'],body:['BODY','BODY_ARMOR','BODY_ARMOUR'],
+      gloves:['GLOVES','HANDS'],pants:['PANTS','LEGS'],boots:['BOOTS','FEET'],
+      temporary:['TEMP_EQUIPPED','TEMPORARY_EQUIPPED']
+    };
+    const items=[];
+    for(const [slot,keys] of Object.entries(slotKeys)){
+      let value='';
+      for(const key of keys){
+        const k=replyKey(key);
+        if(map[k]){value=map[k];break;}
+      }
+      const item=parseManualItem(slot,value);
+      if(item)items.push(item);
+    }
+    const supply={
+      bloodType:String(map.BLOOD_TYPE||map.BLOOD||'').trim().toUpperCase(),
+      medical:{
+        sfak:replyNumber(map,['SFAK','SMALL_FIRST_AID_KIT','SMALL_FIRST_AID_KITS']),
+        fak:replyNumber(map,['FAK','FIRST_AID_KIT','FIRST_AID_KITS']),
+        morphine:replyNumber(map,['MORPHINE']),
+        ipecac:replyNumber(map,['IPECAC']),
+        emptyBloodBags:replyNumber(map,['EMPTY_BLOOD_BAGS','EMPTY_BLOOD_BAG']),
+        filledBloodBags:String(map.FILLED_BLOOD_BAGS||map.FILLED_BLOOD_BAG||'').trim()
+      },
+      temporaryStock:String(map.TEMP_STOCK||map.TEMPORARY_STOCK||'').trim(),
+      consumables:String(map.CONSUMABLES||map.CONSUMABLE||'').trim(),
+      drugs:String(map.DRUGS||map.DRUG||'').trim(),
+      boosters:String(map.BOOSTERS||map.BOOSTER||'').trim(),
+      utilities:String(map.UTILITIES_OTHER_WAR_SUPPLIES||map.UTILITIES||map.UTILITY||'').trim(),
+      ammo:String(map.AMMO||'').trim(),
+      weaponMods:String(map.WEAPON_MODS_ATTACHMENTS||map.WEAPON_MODS||map.ATTACHMENTS||'').trim(),
+      updatedAt:new Date().toISOString()
+    };
+    return {
+      map,
+      stats,
+      items,
+      equipmentSummary:items.map(item=>String(item.slot||'').toUpperCase()+': '+String(item.name||'')).join(' | '),
+      bloodType:supply.bloodType,
+      supply,
+      warRole:String(map.WAR_ROLE_PREFERENCE||map.WAR_ROLE||map.ROLE||'').trim(),
+      notes:String(map.NOTES||'').trim()
+    };
+  }
+
   function compactSnapshot(current={},sourceAt=0,fetchedAt=Date.now()){
     const items={};
     for(const [key,item] of Object.entries(current||{})){
@@ -416,6 +534,11 @@
     observedDays,
     consumptionMap,
     minimumProposal,
+    replyKey,
+    replyMap,
+    replyNumber,
+    parseManualItem,
+    parseMemberReply,
     compactSnapshot,
     recordSnapshot,
     clone
