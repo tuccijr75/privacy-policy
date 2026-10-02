@@ -11696,7 +11696,6 @@ function composeFactionMemberBuildMessage(memberId) {
         const roster = Object.values(readiness.roster || {});
         const profiles = readiness.profiles || {};
         const loanMap = new Map(factionLoanMemberRows(db).map(x=>[asId(x.memberId),x]));
-        const candidates = factionArmoryCandidateRows(db);
         const staleHours = Number(readiness.settings?.staleHours || 72);
         return roster.map(member => {
             const id = asId(member.memberId);
@@ -11722,8 +11721,6 @@ function composeFactionMemberBuildMessage(memberId) {
                 readinessStatus = 'SUPPLY ACTION';
                 action = 'Resolve medical/Ipecac requirement, then review equipment.';
             }
-            const knownCandidates = candidates.filter(x=>x.metadataComplete);
-            const candidate = knownCandidates[0] || null;
             let equipmentPlan = '';
             if (!hasStats || !hasEquipment) equipmentPlan = 'Member data incomplete.';
             else if (profile.simpleBuild) equipmentPlan = String(profile.simpleBuild.summary||'Build generated.');
@@ -12208,14 +12205,17 @@ function composeFactionMemberBuildMessage(memberId) {
         const withStats=readiness.filter(row=>row.hasStats).length;
         const withBuild=readiness.filter(row=>row.profile?.simpleBuild).length;
         const weapons=rows.filter(row=>String(row.category||'')==='weapons');
+        const bloodTypes=readiness.map(row=>String(row.profile?.bloodType||'').trim().toUpperCase()).filter(Boolean);
+        const bloodCounts=bloodTypes.reduce((out,type)=>{ out[type]=(out[type]||0)+1; return out; },{});
+        const bloodSummary=Object.entries(bloodCounts).sort((a,b)=>a[0].localeCompare(b[0])).map(([type,count])=>type+' '+count).join(' · ');
         return [
             {
                 priority:'HIGH',
                 topic:'Filled blood-bag mix',
-                current:'Individual filled blood bags are visible, but CRM does not yet have faction-member blood types.',
-                proposal:'Collect member blood types and set a compatible bag mix sized to active war participation, with Empty Blood Bags retained as general capacity reserve.',
-                why:'Prevents us from setting an unusable minimum based on whatever blood type happens to be in the armory now.',
-                status:'DATA REQUIRED'
+                current:bloodTypes.length+'/'+readiness.length+' member blood type(s) collected'+(bloodSummary?' · '+bloodSummary:''),
+                proposal:'Collect remaining member blood types and set a compatible bag mix sized to active war participation, with Empty Blood Bags retained as general capacity reserve.',
+                why:'Prevents us from setting an unusable minimum based on whatever blood type happens to be in inventory now.',
+                status:bloodTypes.length===readiness.length&&readiness.length?'READY FOR MIX DESIGN':'COLLECTING'
             },
             {
                 priority:'HIGH',
@@ -12429,7 +12429,13 @@ function composeFactionMemberBuildMessage(memberId) {
             'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Position':String(row.position||''),
             'Faction Status':String(row.status||''), 'Readiness':row.readinessStatus, 'Data Source':String(row.profile?.source||''),
             'Verified At':String(row.profile?.verifiedAt||''), 'Data Age Hours':row.ageHours==null?'':Number(row.ageHours.toFixed(1)),
-            'War Role':String(row.profile?.warRole||''), 'Medical':String(row.profile?.medicalStatus||'UNKNOWN'), 'Ipecac':String(row.profile?.ipecacStatus||'UNKNOWN'),
+            'War Role':String(row.profile?.warRole||''), 'Blood Type':String(row.profile?.bloodType||''),
+            'Medical':String(row.profile?.medicalStatus||'UNKNOWN'), 'Ipecac':String(row.profile?.ipecacStatus||'UNKNOWN'),
+            'SFAK':row.profile?.supplyReadiness?.medical?.sfak ?? '', 'FAK':row.profile?.supplyReadiness?.medical?.fak ?? '',
+            'Morphine':row.profile?.supplyReadiness?.medical?.morphine ?? '', 'Empty Blood Bags':row.profile?.supplyReadiness?.medical?.emptyBloodBags ?? '',
+            'Filled Blood Bags':String(row.profile?.supplyReadiness?.medical?.filledBloodBags||''),
+            'Temporary Stock':String(row.profile?.supplyReadiness?.temporaryStock||''),
+            'Consumables':String(row.profile?.supplyReadiness?.consumables||''),
             'Faction Loans':Number(row.loans||0), 'Action':row.action
         }));
         const battleStatRows = memberReadiness.map(row=>({
@@ -12444,11 +12450,14 @@ function composeFactionMemberBuildMessage(memberId) {
         }));
         const missingRows = memberReadiness.filter(row=>row.readinessStatus==='MISSING DATA'||row.readinessStatus==='STALE DATA').map(row=>({
             'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Issue':row.readinessStatus,
-            'Battle Stats Present':row.hasStats?'YES':'NO', 'Equipment Present':row.hasEquipment?'YES':'NO', 'Verified At':String(row.profile?.verifiedAt||''), 'Action':row.action
+            'Battle Stats Present':row.hasStats?'YES':'NO', 'Equipment Present':row.hasEquipment?'YES':'NO',
+            'Data Request Sent':String(row.profile?.dataRequestAt||''), 'Verified At':String(row.profile?.verifiedAt||''), 'Action':row.action
         }));
         const warPrepRows = memberReadiness.map(row=>({
             'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Battle Profile':String(row.statProfile?.label||'UNKNOWN'),
-            'Medical':String(row.profile?.medicalStatus||'UNKNOWN'), 'Ipecac':String(row.profile?.ipecacStatus||'UNKNOWN'), 'Faction Loans':Number(row.loans||0),
+            'Medical':String(row.profile?.medicalStatus||'UNKNOWN'), 'Ipecac':String(row.profile?.ipecacStatus||'UNKNOWN'),
+            'Blood Type':String(row.profile?.bloodType||''), 'Temporary Stock':String(row.profile?.supplyReadiness?.temporaryStock||''),
+            'Consumables':String(row.profile?.supplyReadiness?.consumables||''), 'Faction Loans':Number(row.loans||0),
             'Equipment Plan':row.equipmentPlan, 'Readiness':row.readinessStatus, 'War Role':String(row.profile?.warRole||'')
         }));
         const armoryAllocationRows = memberReadiness.filter(row=>row.hasStats).map(row=>{
