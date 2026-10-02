@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "8.0.0-alpha.7",
+  "suiteVersion": "8.0.0-alpha.8",
   "status": "non-production",
   "baseVersion": "7.5.3",
   "branch": "crm-v8-modular-suite",
@@ -14,7 +14,9 @@
       "id": "core",
       "name": "MM Torn Core",
       "role": "credential-api-storage-contracts",
-      "visible": false
+      "visible": false,
+      "version": "8.0.0-alpha.2",
+      "status": "implemented-non-production"
     },
     {
       "id": "bazaar-manager",
@@ -24,13 +26,15 @@
     {
       "id": "market-scout",
       "name": "MM Market Scout",
-      "role": "acquire-market-travel"
+      "role": "acquire-market-travel",
+      "version": "8.0.0-alpha.6",
+      "status": "implemented-non-production"
     },
     {
       "id": "faction-armory",
       "name": "MM Faction Armory",
       "role": "faction-inventory-builds-readiness",
-      "version": "8.0.0-alpha.6",
+      "version": "8.0.0-alpha.7",
       "status": "implemented-non-production"
     },
     {
