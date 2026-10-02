@@ -523,9 +523,14 @@
         for(const slot of STANDARD_SLOTS)unresolved.push({memberId:member.memberId,memberName:member.memberName,slot,current:'',reason:'Current battle stats are missing; acquisition deferred.'});
         continue;
       }
+      const inventoryKnown=Array.isArray(member?.profile?.ownedEquipment?.items);
       const build=compareMemberBuild(member,factionInventory,rows,{procurementMode});
       for(const item of build.items){
         if(item.ready||item.route==='LOANED'||item.route==='OWNED')continue;
+        if(!item.currentName&&!inventoryKnown){
+          unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:'',reason:'Member inventory has not been refreshed; purchase deferred.'});
+          continue;
+        }
         if(item.route==='REVIEW'){
           unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:item.currentName||'',reason:'Current item exists but performance is not known.'});
           continue;
