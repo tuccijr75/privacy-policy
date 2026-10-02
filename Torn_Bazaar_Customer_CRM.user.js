@@ -10426,7 +10426,11 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
                 quality:numeric(item.quality ?? stats.quality),
                 bonuses:item.bonuses && typeof item.bonuses === 'object'
                     ? deepClone(item.bonuses)
-                    : (itemObj.bonuses && typeof itemObj.bonuses === 'object' ? deepClone(itemObj.bonuses) : null)
+                    : (itemObj.bonuses && typeof itemObj.bonuses === 'object' ? deepClone(itemObj.bonuses) : null),
+                mods:Array.isArray(item.mods)
+                    ? item.mods.map(mod=>({id:asId(mod?.id),name:String(mod?.name||'')})).filter(mod=>mod.id||mod.name)
+                    : [],
+                ammo:item.ammo && typeof item.ammo === 'object' ? deepClone(item.ammo) : null
             });
         };
         const equipment = Array.isArray(data?.equipment) ? data.equipment : [];
@@ -10437,18 +10441,117 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
     }
 
     function factionEquipmentSummaryFromResponse(data) {
-        return factionEquipmentItemsFromResponse(data).slice(0,30).map(item =>
-            (item.slot ? item.slot+': ' : '') + item.name + (item.itemId ? ' ['+item.itemId+']' : '')
-        ).join(' | ');
+        return factionEquipmentItemsFromResponse(data).slice(0,30).map(item => {
+            const mods=Array.isArray(item.mods)&&item.mods.length
+                ? ' · mods '+item.mods.map(mod=>mod.name||mod.id).join(', ')
+                : '';
+            const ammo=item.ammo
+                ? ' · ammo '+String(item.ammo.name||item.ammo.type||item.ammo.id||'equipped')
+                : '';
+            return (item.slot ? item.slot+': ' : '') + item.name + (item.itemId ? ' ['+item.itemId+']' : '') + mods + ammo;
+        }).join(' | ');
     }
+
+async function fetchFactionMemberInventoryAll(memberKey) {
+        const rows=[];
+        let url='/user/inventory?limit=250';
+        let pages=0;
+        const seen=new Set();
+        while(url && pages<10) {
+            const clean=String(url);
+            if(seen.has(clean)) throw new Error('Member inventory pagination loop detected.');
+            seen.add(clean);
+            const data=await apiRequest(clean,memberKey);
+            rows.push(...(Array.isArray(data?.inventory?.items)?data.inventory.items:[]));
+            const next=nextUrlFromMetadata(data);
+            url=next||null;
+            pages++;
+        }
+        return {rows,pages,truncated:Boolean(url)};
+    }
+
+function factionMemberSupplyFromApi(inventoryRows,ammoResponse,catalog,equipmentData) {
+        const items=(Array.isArray(inventoryRows)?inventoryRows:[]).map(raw=>{
+            const id=asId(raw?.id??raw?.item_id);
+            const cat=catalog?.[id]||{};
+            return {
+                id,
+                name:String(raw?.name||cat.name||('Item '+id)),
+                amount:Math.max(0,Number(raw?.amount||0)),
+                type:String(cat.type||''),
+                factionOwned:Boolean(raw?.faction_owned)
+            };
+        }).filter(row=>row.id&&row.amount>0);
+
+        const amountByName=name=>{
+            const key=normalizeItemName(name);
+            return items.filter(row=>normalizeItemName(row.name)===key).reduce((sum,row)=>sum+row.amount,0);
+        };
+        const formatTypes=types=>items
+            .filter(row=>types.includes(String(row.type||'')))
+            .sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name))
+            .map(row=>row.name+' x'+row.amount)
+            .join(' | ');
+        const filledBlood=items
+            .filter(row=>/blood bag/i.test(row.name)&&!/empty/i.test(row.name))
+            .sort((a,b)=>b.amount-a.amount||a.name.localeCompare(b.name))
+            .map(row=>row.name+' x'+row.amount)
+            .join(' | ');
+
+        const ammo=Array.isArray(ammoResponse?.ammo)
+            ? ammoResponse.ammo.flatMap(group=>
+                (Array.isArray(group?.types)?group.types:[])
+                    .filter(type=>Number(type?.quantity||0)>0)
+                    .map(type=>[
+                        String(group?.name||'Ammo'),
+                        String(type?.name||'').trim(),
+                        'x'+Number(type.quantity||0)
+                    ].filter(Boolean).join(' '))
+              ).join(' | ')
+            : '';
+
+        const equipped=factionEquipmentItemsFromResponse(equipmentData);
+        const weaponMods=equipped.flatMap(item=>
+            (Array.isArray(item.mods)?item.mods:[])
+                .map(mod=>item.name+': '+String(mod.name||mod.id||''))
+        ).filter(Boolean).join(' | ');
+
+        const medical={
+            sfak:amountByName('Small First Aid Kit'),
+            fak:amountByName('First Aid Kit'),
+            morphine:amountByName('Morphine'),
+            ipecac:amountByName('Ipecac Syrup') || amountByName('Ipecac'),
+            emptyBloodBags:amountByName('Empty Blood Bag'),
+            filledBloodBags:filledBlood
+        };
+        const anyMedical=items.some(row=>String(row.type)==='Medical');
+
+        return {
+            medical,
+            temporaryStock:formatTypes(['Temporary']),
+            consumables:formatTypes(['Candy','Alcohol','Energy Drink']),
+            drugs:formatTypes(['Drug']),
+            boosters:formatTypes(['Booster']),
+            utilities:formatTypes(['Enhancer','Tool','Material','Supply Pack']),
+            ammo,
+            weaponMods,
+            inventoryItemCount:items.length,
+            inventoryTruncated:false,
+            medicalKnown:anyMedical,
+            updatedAt:nowIso()
+        };
+    }
+
 
     async function importFactionMemberReadinessKey(memberKey) {
         const key = String(memberKey || '').trim();
         if (!key) throw new Error('Member API key is required.');
-        const [basic,battlestats,equipment] = await Promise.all([
+        const [basic,battlestats,equipment,inventoryResult,ammoResult] = await Promise.all([
             apiRequest('/user/basic', key),
             apiRequest('/user/battlestats', key),
-            apiRequest('/user/equipment', key)
+            apiRequest('/user/equipment', key),
+            fetchFactionMemberInventoryAll(key).catch(error=>({rows:[],pages:0,truncated:false,error:error?.message||String(error)})),
+            apiRequest('/user/ammo', key).catch(error=>({ammo:[],error:error?.message||String(error)}))
         ]);
         const memberId = extractUserIdFromApiPayload(basic);
         if (!memberId) throw new Error('Could not determine the member ID from the supplied key.');
@@ -10461,6 +10564,18 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
         const stats = factionBattleStatsFromResponse(battlestats);
         const equipmentItems = factionEquipmentItemsFromResponse(equipment);
         const equipmentSummary = factionEquipmentSummaryFromResponse(equipment);
+        if(!Object.keys(db.procurement?.catalog||{}).length) {
+            try { await refreshProcurementCatalog(false,key); } catch {}
+        }
+        const supply=factionMemberSupplyFromApi(
+            inventoryResult?.rows||[],
+            ammoResult,
+            dbLoad().procurement?.catalog||{},
+            equipment
+        );
+        supply.inventoryTruncated=Boolean(inventoryResult?.truncated);
+        supply.inventoryError=String(inventoryResult?.error||'');
+        supply.ammoError=String(ammoResult?.error||'');
         const statTotal = Number(stats.strength||0)+Number(stats.defense||0)+Number(stats.speed||0)+Number(stats.dexterity||0);
         const responseShape = {
             battlestatsKeys:Object.keys(battlestats?.battlestats || battlestats || {}).slice(0,20),
@@ -10478,6 +10593,11 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
         const profile = saveFactionMemberReadinessProfile(memberId,{
             stats,
             equipment:{ summary:equipmentSummary, items:equipmentItems, rawImported:false },
+            supplyReadiness:supply,
+            medicalStatus:supply.medicalKnown?'API INVENTORY':String(db.factionInventory.memberReadiness.profiles?.[memberId]?.medicalStatus||'UNKNOWN'),
+            ipecacStatus:supply.medicalKnown
+                ? (Number(supply.medical?.ipecac||0)>0?'READY':'NEEDS IPECAC')
+                : String(db.factionInventory.memberReadiness.profiles?.[memberId]?.ipecacStatus||'UNKNOWN'),
             source:'member Limited Access API key — one-time local import',
             verifiedAt:nowIso()
         });
@@ -10486,7 +10606,7 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
             db2.factionInventory.memberReadiness.roster[memberId].memberName=memberName;
             dbSave(db2);
         }
-        return { memberId, memberName, profile, equipmentSummary };
+        return { memberId, memberName, profile, equipmentSummary, supply };
     }
 
     function factionVaultBytesToBase64(bytes) {
@@ -11191,7 +11311,10 @@ function factionSimpleMemberBuild(member, rosterRows, candidateDetails) {
             if (!chosen && !current) return null;
             const currentScore=Number(scoreFn(current)||0);
             const targetScore=Number(scoreFn(chosen)||0);
-            const currentHasBonus=Boolean(current?.bonuses && Object.keys(current.bonuses||{}).length);
+            const currentHasBonus=Boolean(
+                (current?.bonuses && Object.keys(current.bonuses||{}).length) ||
+                (Array.isArray(current?.mods) && current.mods.length)
+            );
             const requiredFactor=currentHasBonus ? 1.15 : 1.01;
             const currentComparable=Boolean(current && currentScore>0);
             const reviewCurrent=Boolean(current && !currentComparable);
