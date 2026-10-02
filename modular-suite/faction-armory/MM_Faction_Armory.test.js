@@ -103,6 +103,27 @@ const faks=minimums.proposals.find(x=>x.item==='First Aid Kit');
 assert(faks);
 assert.strictEqual(faks.recommendedMin,20,'critical medical reserve should include one per member with no observed depletion');
 
+
+const parsedReply=logic.parseMemberReply(
+  'STR: 1000\nDEF: 2000\nSPD: 3000\nDEX: 4000\nPRIMARY: Test Rifle | Q42 | Powerful 10%\nHELMET: Combat Helmet | Q10\nBLOOD TYPE: O+\nSFAK: 5\nFAK: 7\nMORPHINE: 3\nIPECAC: 1'
+);
+assert.strictEqual(parsedReply.stats.strength,1000);
+assert.strictEqual(parsedReply.stats.dexterity,4000);
+assert.strictEqual(parsedReply.bloodType,'O+');
+assert(parsedReply.items.some(item=>item.slot==='primary'&&item.name==='Test Rifle'));
+
+const manualBuild=logic.compareMemberBuild({
+  memberId:'102',
+  memberName:'Manual Reply',
+  stats:parsedReply.stats,
+  profile:{stats:parsedReply.stats,equipment:{summary:parsedReply.equipmentSummary,items:parsedReply.items}}
+},factionInventory);
+assert.strictEqual(
+  manualBuild.items.find(x=>x.slot==='primary').decision,
+  'REVIEW CURRENT GEAR',
+  'manual item without parsed performance stats must never be auto-replaced'
+);
+
 const snapState=logic.recordSnapshot(
   {snapshots:[],events:[]},
   factionInventory.current,
