@@ -163,6 +163,57 @@ const acquisition=logic.acquisitionPlan({
 assert(acquisition.list.some(row=>row.category==='equipment'),'acquisition plan must contain named equipment requirements');
 assert(acquisition.list.some(row=>row.category==='provisions'),'acquisition plan must contain provision requirements');
 
+const ownedFactionInventory={
+  current:{},
+  memberReadiness:{
+    roster:{'200':{memberId:'200',memberName:'Owned Secondary',level:20}},
+    profiles:{'200':{
+      stats:{strength:1000,defense:1000,speed:1000,dexterity:1000},
+      equipment:{
+        summary:'PRIMARY: AK-47 | MELEE: Macana | HELMET: WWII Helmet | BODY: Bulletproof Vest | GLOVES: Kevlar Gloves | PANTS: Combat Pants | BOOTS: Safety Boots',
+        items:[
+          {name:'AK-47',type:'Primary'},
+          {name:'Macana',type:'Melee'},
+          {name:'WWII Helmet',subType:'Helmet'},
+          {name:'Bulletproof Vest',subType:'Body'},
+          {name:'Kevlar Gloves',subType:'Gloves'},
+          {name:'Combat Pants',subType:'Pants'},
+          {name:'Safety Boots',subType:'Boots'}
+        ]
+      },
+      ownedEquipment:{items:[{name:'Qsz-92',type:'Secondary',quantity:1}]},
+      verifiedAt:new Date().toISOString()
+    }},
+    settings:{staleHours:72}
+  },
+  snapshots:[],
+  events:[]
+};
+const ownedRows=logic.memberRows(ownedFactionInventory,[]);
+const ownedBuild=logic.compareMemberBuild(ownedRows[0],ownedFactionInventory,ownedRows,{procurementMode:'budget'});
+assert.strictEqual(ownedBuild.items.find(x=>x.slot==='secondary').route,'OWNED','member-owned adequate secondary must satisfy the slot');
+const budgetPlan=logic.acquisitionPlan(ownedFactionInventory,{mode:'war',participants:1,procurementMode:'budget',budgetCap:15000000});
+assert(budgetPlan.fundedEstimatedValue<=15000000,'known acquisition spend must respect budget cap');
+assert(!budgetPlan.list.some(row=>/BT MP9|Qsz-92/.test(row.item)&&String(row.reasons||'').includes('Owned Secondary secondary')),'owned adequate secondary must not be purchased again');
+
+const unknownInventoryFaction={
+  current:{},
+  memberReadiness:{
+    roster:{'300':{memberId:'300',memberName:'No Inventory',level:20}},
+    profiles:{'300':{
+      stats:{strength:1000,defense:1000,speed:1000,dexterity:1000},
+      equipment:{summary:'',items:[]},
+      verifiedAt:new Date().toISOString()
+    }},
+    settings:{staleHours:72}
+  },
+  snapshots:[],
+  events:[]
+};
+const unknownPlan=logic.acquisitionPlan(unknownInventoryFaction,{mode:'war',participants:1,procurementMode:'budget',budgetCap:15000000});
+assert(unknownPlan.unresolvedCount>=8,'missing member inventory must defer slot purchasing');
+
+
 const snapState=logic.recordSnapshot(
   {snapshots:[],events:[]},
   factionInventory.current,
