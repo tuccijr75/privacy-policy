@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.6
+// @version      8.0.0-alpha.7
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.6';
+  const VERSION='8.0.0-alpha.7';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -25,6 +25,8 @@
   const MEMBER_VAULT_KEY='mm_faction_armory_member_vault_v1';
   const MEMBER_VAULT_ITERATIONS=250000;
   const STOCK_MODE_KEY='mm_faction_armory_stock_mode_v1';
+  const PROCUREMENT_MODE_KEY='mm_faction_armory_procurement_mode_v1';
+  const ACQUISITION_BUDGET_KEY='mm_faction_armory_acquisition_budget_v1';
   const WAR_PARTICIPANTS=20;
   const API_BASE='https://api.torn.com/v2';
   const CHANNEL='mm_bazaar_crm_cross_tab_v1';
@@ -39,6 +41,8 @@
   let busy=false;
   let selectedCategory='all';
   let stockMode=String(GM_getValue(STOCK_MODE_KEY,'war')||'war').toLowerCase()==='peace'?'peace':'war';
+  let procurementMode=['budget','standard','ideal'].includes(String(GM_getValue(PROCUREMENT_MODE_KEY,'budget')||'').toLowerCase())?String(GM_getValue(PROCUREMENT_MODE_KEY,'budget')).toLowerCase():'budget';
+  let acquisitionBudget=Math.max(0,Number(GM_getValue(ACQUISITION_BUDGET_KEY,15000000))||15000000);
   let vaultSession=null;
   let channel=null;
 
