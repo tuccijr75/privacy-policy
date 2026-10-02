@@ -258,11 +258,12 @@
       const data=await deps.weavRequest('/marketplace');
       const generatedMs=unixToMs(data?.generated_at)||Date.now();
       const generatedIso=new Date(generatedMs).toISOString();
+      let changed=false;
       await core.updateDomainState('market',draft=>{
         const intel=draft.marketIntel || (draft.marketIntel={});
         intel.marketplace = intel.marketplace && typeof intel.marketplace==='object' ? intel.marketplace : {};
         intel.history = intel.history && typeof intel.history==='object' ? intel.history : {};
-        const changed=String(intel.marketplaceGeneratedAt||'')!==generatedIso || !Object.keys(intel.marketplace).length;
+        changed=String(intel.marketplaceGeneratedAt||'')!==generatedIso || !Object.keys(intel.marketplace).length;
         intel.lastWeavPollAt=nowIso();
         if (!changed) {
           intel.lastGlobalSyncAt=nowIso();
@@ -281,7 +282,7 @@
         intel.lastWeavChangeAt=nowIso();
         return draft;
       });
-      return core.readLegacyState();
+      return {state:await core.readLegacyState(),changed,generatedAt:generatedIso};
     }
 
     async function enrichItem(itemId) {
@@ -435,8 +436,8 @@
       return core.readLegacyState();
     }
 
-    async function refreshOpportunities({enrichLimit=8,itemMarketLimit=6}={}) {
-      await refreshGlobal();
+    async function refreshOpportunities({enrichLimit=8,itemMarketLimit=6,refreshGlobalFirst=true}={}) {
+      if(refreshGlobalFirst) await refreshGlobal();
       let state=await core.readLegacyState();
       let ranked=logic.rankCachedOpportunities(state);
       let ids=ranked.map(r=>r.id);
