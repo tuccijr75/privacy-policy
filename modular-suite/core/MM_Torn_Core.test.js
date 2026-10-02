@@ -22,3 +22,25 @@ if (!market.procurement || !market.marketIntel || !market.travelIntel || market.
 market.procurement.acquisitions.push({});
 if (fixture.procurement.acquisitions.length !== 2) throw new Error('domain slice is not cloned');
 console.log('PASS', c.version, s);
+
+const updatedMarket = c.applyDomainSlice(fixture, 'market', {
+  ...c.getDomainSlice(fixture, 'market'),
+  procurement: {
+    ...c.getDomainSlice(fixture, 'market').procurement,
+    acquisitions: [...fixture.procurement.acquisitions, {id:'new'}]
+  }
+});
+if (updatedMarket.procurement.acquisitions.length !== 3) throw new Error('market write not applied');
+if (JSON.stringify(updatedMarket.sales) !== JSON.stringify(fixture.sales)) throw new Error('unrelated sales changed');
+if (JSON.stringify(updatedMarket.factionInventory) !== JSON.stringify(fixture.factionInventory)) throw new Error('unrelated faction changed');
+let blocked = false;
+try { c.applyDomainSlice(fixture, 'intelligence', {}); } catch { blocked = true; }
+if (!blocked) throw new Error('read-only intelligence domain was writable');
+const fresh = c.freshnessSnapshot({
+  ...fixture,
+  syncState:{lastUnifiedSyncAt:'u'},
+  procurement:{...fixture.procurement,lastItemMarketAt:'m'},
+  factionInventory:{...fixture.factionInventory,lastSyncAt:'f'}
+});
+if (fresh.unified !== 'u' || fresh.itemMarket !== 'm' || fresh.faction !== 'f') throw new Error('freshness snapshot mismatch');
+console.log('MERGE PASS');
