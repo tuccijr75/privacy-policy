@@ -1,6 +1,6 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.4**
+Status: **NON-PRODUCTION / alpha.6**
 
 ## Scope implemented
 
@@ -123,3 +123,67 @@ Build-screen refinement:
 - all rows start collapsed to minimize scrolling.
 
 Static JavaScript syntax: PASS.
+
+
+## Alpha.6 research-based readiness + acquisition — 2026-10-02
+
+Owner challenged the faction-relative build weighting and requested external research before continuing. The previous alpha.2 readiness weighting is superseded by the methodology in `BUILD_READINESS_METHOD.md`.
+
+### Research conclusions applied
+- Strength and Speed are separate offensive axes: Strength drives damage while Speed drives hit chance; weapon Damage and Accuracy modify those systems separately.
+- Equipment preference now compensates the weaker offensive axis rather than blindly matching the dominant stat:
+  - STR materially above SPD → prefer accuracy;
+  - SPD materially above STR → prefer damage;
+  - otherwise balanced.
+- Hank/Baldr-like distributions are treated as descriptions of stat shape/training strategy, not as direct weapon prescriptions.
+- Level is survivability context, not a weapon-quality threshold.
+- Faction inventory no longer defines readiness. It only decides whether the route is KEEP, LOANED, ISSUE, ACQUIRE or REVIEW.
+- Advanced armor set coherence/bonuses are acknowledged; routine logic must not blindly break a superior coherent set.
+
+### Generally available reference catalog
+The module now uses a non-live curated reference catalog for routine suggestions. It deliberately does not query Item Market or Bazaars. Current reference families include:
+- Primary: Benelli M4 Super, Mag 7, AK-47, Jackhammer; ArmaLite as a premium generally-available option.
+- Secondary: BT MP9, Qsz-92.
+- Melee: Macana, Diamond Bladed Knife.
+- Armor: Combat Helmet/Vest/Gloves/Pants/Boots.
+
+Normal minimum item rolls are used as readiness floors; midpoint stats rank choices. This avoids falsely rejecting a normal copy of a recommended weapon/armor item.
+
+### UI / workflow changes
+- Members are collapsed clickable rows.
+- Builds are collapsed clickable rows and show Current / Baseline / Route / Suggest / Source / Premium Option.
+- Stock is collapsed by category; Weapons contains explicit Primary / Secondary / Melee subgroups.
+- Faction API inventory `type` is retained; known ambiguous item names also map to the correct slot. Secondary is no longer omitted.
+- Minimums are collapsed by category with category-level shortfall totals.
+- New **Acquire** tab aggregates equipment + provision acquisition quantities into one named item list.
+- Acquire uses current faction stock/loans to reduce requirements, but performs no live market/bazaar search.
+- Unknown-performance current gear is REVIEW, shown under unresolved slots, and excluded from automatic acquisition quantity to preserve the no-downgrade rule.
+- Leadership export now includes an Acquire worksheet.
+
+### Static acceptance
+- [x] Logic syntax PASS.
+- [x] Userscript syntax PASS.
+- [x] Qsz-92 classified as Secondary.
+- [x] BT MP9 classified as Secondary.
+- [x] STR > SPD test selects accuracy need.
+- [x] SPD > STR test selects damage need.
+- [x] Known Jackhammer remains KEEP against routine baseline.
+- [x] Known Qsz-92 remains KEEP against routine baseline.
+- [x] Unknown-performance current weapon remains REVIEW rather than being automatically replaced.
+- [x] Acquisition plan returns named equipment quantities.
+- [x] Acquisition plan includes Secondary requirements.
+- [x] Acquisition plan includes provision shortfalls.
+- [x] Assigned adequate faction loans can satisfy member provisioning without duplicate acquisition.
+
+### Remaining live acceptance
+- [ ] Update Tampermonkey to alpha.6 and reload Torn.
+- [ ] Confirm Members remain compact/collapsed.
+- [ ] Confirm Builds show objective baseline and KEEP / ISSUE / ACQUIRE routes.
+- [ ] Confirm known Secondary equipment appears for members and faction stock.
+- [ ] Confirm Stock → Weapons → Secondary populates after next faction refresh.
+- [ ] Confirm categorized Minimums layout.
+- [ ] Confirm Acquire list reflects the live 20-member faction state and current loans.
+- [ ] Confirm unresolved REVIEW slots are excluded from buy quantity.
+- [ ] Export/open Leadership workbook with Acquire sheet.
+
+Production remains unchanged.
