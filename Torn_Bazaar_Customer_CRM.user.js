@@ -11060,7 +11060,8 @@ async function generateAllFactionSimpleBuilds() {
         }
     }
 
-    function composeFactionMemberBuildMessage(memberId) {
+    
+function composeFactionMemberBuildMessage(memberId) {
         const id=asId(memberId);
         const db=dbLoad();
         const member=factionMemberReadinessRows(db).find(row=>asId(row.memberId)===id);
@@ -11068,77 +11069,27 @@ async function generateAllFactionSimpleBuilds() {
         if (!member) throw new Error('Faction member not found.');
         if (!build) throw new Error('Generate a Build first.');
 
-        const lines=(build.items||[]).map(item =>
-            String(item.slot||'slot').toUpperCase()+': '+String(item.name||'')+
-            (item.category==='weapon' ? ' (D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0)+')' : item.armor ? ' (Armor '+Number(item.armor||0)+')' : '')+
-            ' — '+String(item.acquisition||'REVIEW')+
-            (item.procurementRoute ? ' — '+item.procurementRoute : '')
-        );
-        const temps=(build.temporaryPool||[]).map(item=>item.name+' ('+item.acquisition+')').join(', ');
+        const lines=(build.items||[]).map(item => {
+            const stats=item.category==='weapon'
+                ? 'D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0)
+                : item.armor ? 'Armor '+Number(item.armor||0) : '';
+            const current=item.currentName ? 'Current: '+item.currentName+' → ' : '';
+            const action=item.decision==='KEEP'
+                ? 'KEEP'
+                : item.fulfillment==='AVAILABLE'
+                    ? 'UPGRADE — AVAILABLE'
+                    : 'UPGRADE — BUY';
+            return String(item.slot||'slot').toUpperCase()+': '+current+String(item.name||'')+
+                (stats?' ('+stats+')':'')+' — '+action;
+        });
         const body =
             String(member.memberName||'Faction member')+',\n\n' +
-            'I built a simple faction loadout from your current level and battle-stat profile.\n\n' +
-            'Level: '+Number(member.level||0)+'\n' +
-            'Battle stats: '+Number(member.statProfile?.total||0).toLocaleString()+' total · '+String(member.statProfile?.label||'UNKNOWN')+'\n' +
-            'Build tier: '+String(build.tier||'')+' · '+String(build.weaponBias||'')+'\n\n' +
-            'TARGET BUILD\n'+(lines.length?lines.join('\n'):'No evidence-backed weapon/armor targets yet.')+'\n\n' +
-            'TEMPORARY POOL\n'+(temps||'Assignment-dependent; review before war.')+'\n\n' +
-            'Armory items can be loaned when permitted. Missing targets can be procured. High-value Ranked War gear remains Leadership-controlled.\n\n' +
+            'I compared your current equipment against game-wide weapon and armor options using your level and battle-stat profile.\n\n' +
+            (lines.length?lines.join('\n'):'No equipment targets are available yet.')+'\n\n' +
+            'KEEP means your current item already meets or beats the available target. BUY means the target is not currently in faction stock.\n\n' +
             '— Manic Mike';
-        composeMessage(id,'Faction build recommendation',body);
+        composeMessage(id,'Faction equipment build',body);
         statusText='Build message prepared for '+String(member.memberName||id)+' ['+id+']; Send remains manual.';
-    }
-
-    
-function factionSimpleBuildCard(db) {
-        const members=factionMemberReadinessRows(db);
-        const eligible=members.filter(row=>row.hasStats);
-        const selectedId=asId(db.factionInventory?.settings?.buildMemberId || eligible[0]?.memberId || members[0]?.memberId || '');
-        const selected=members.find(row=>asId(row.memberId)===selectedId) || eligible[0] || members[0] || null;
-        const build=selected?.profile?.simpleBuild || null;
-        const options=members.map(row =>
-            '<option value="'+escapeHtml(row.memberId)+'" '+(asId(row.memberId)===asId(selected?.memberId)?'selected':'')+'>'+
-            escapeHtml(row.memberName)+' · Lv '+Number(row.level||0)+' · '+(row.hasStats?Number(row.statProfile?.total||0).toLocaleString()+' stats':'needs data')+
-            '</option>'
-        ).join('');
-        const buildRows=build?.items?.length
-            ? build.items.map(item => {
-                const stats=item.category==='weapon'
-                    ? 'D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0)
-                    : 'Armor '+Number(item.armor||0);
-                const route=item.decision==='KEEP'
-                    ? 'KEEP'
-                    : item.fulfillment==='AVAILABLE'
-                        ? 'AVAILABLE'
-                        : 'BUY';
-                const current=item.currentName
-                    ? '<span style="color:#999;">'+escapeHtml(item.currentName)+'</span> → '
-                    : '';
-                return '<div style="display:grid;grid-template-columns:80px 1fr auto;gap:7px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
-                    '<b>'+escapeHtml(String(item.slot||'').toUpperCase())+'</b>'+
-                    '<div>'+current+'<b>'+escapeHtml(item.name)+'</b><div style="font-size:10px;color:#888;">'+escapeHtml(stats)+
-                    (item.referencePrice?' · ~'+money(item.referencePrice):'')+'</div></div>'+
-                    '<b style="white-space:nowrap;">'+escapeHtml(route)+'</b>'+
-                '</div>';
-              }).join('')
-            : '<div style="font-size:11px;color:#888;margin-top:8px;">'+
-                (selected?.hasStats ? 'Press Build to compare current gear against game-wide weapon and armor options.' : 'This member needs battle stats before a build can be created.')+
-              '</div>';
-        return card(
-            '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">'+
-                '<select id="mm-faction-build-member" style="'+inputCss()+'flex:1;min-width:220px;">'+options+'</select>'+
-                '<button id="mm-faction-build-generate" '+(selected?.hasStats?'':'disabled')+' style="'+btn(Boolean(selected?.hasStats))+'">Build</button>'+
-                '<button id="mm-faction-build-message" '+(build?'':'disabled')+' style="'+btn(Boolean(build))+'">Message</button>'+
-            '</div>'+
-            (selected ? '<div style="font-size:10px;color:#999;margin-top:6px;">'+escapeHtml(selected.memberName)+' · Lv '+Number(selected.level||0)+
-                ' · STR '+Number(selected.stats?.strength||0).toLocaleString()+
-                ' · DEF '+Number(selected.stats?.defense||0).toLocaleString()+
-                ' · SPD '+Number(selected.stats?.speed||0).toLocaleString()+
-                ' · DEX '+Number(selected.stats?.dexterity||0).toLocaleString()+
-                (build?' · '+escapeHtml(build.summary):'')+
-              '</div>' : '')+
-            buildRows
-        );
     }
 
     function factionLoadoutOptimization(member, candidateDetails) {
@@ -12143,62 +12094,58 @@ function factionSimpleBuildCard(db) {
             'Medical':String(row.profile?.medicalStatus||'UNKNOWN'), 'Ipecac':String(row.profile?.ipecacStatus||'UNKNOWN'), 'Faction Loans':Number(row.loans||0),
             'Equipment Plan':row.equipmentPlan, 'Readiness':row.readinessStatus, 'War Role':String(row.profile?.warRole||'')
         }));
-        const armoryAllocationRows = memberReadiness.filter(row=>row.hasStats&&row.hasEquipment).map(row=>({
-            'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Battle Profile':String(row.statProfile?.label||'UNKNOWN'),
-            'Current Equipment':String(row.equipmentSummary||''), 'Current Faction Loans':Number(row.loans||0), 'Candidate / Review Plan':String(row.profile?.optimization?.summary || row.equipmentPlan),
-            'Optimization Details':Array.isArray(row.profile?.optimization?.recommendations)
-                ? row.profile.optimization.recommendations.map(x=>[
-                    x.kind,x.slot,x.current,x.candidate,
-                    x.delta!=null?'Δ '+x.delta:'',
-                    x.acquisition,
-                    x.referencePrice?'Est. '+money(Number(x.referencePrice)):'',
-                    x.priceSource,
-                    x.procurementRoute,
-                    x.note
+        const armoryAllocationRows = memberReadiness.filter(row=>row.hasStats).map(row=>{
+            const build=row.profile?.simpleBuild;
+            const items=Array.isArray(build?.items)?build.items:[];
+            return {
+                'Member ID':asId(row.memberId),
+                'Member':String(row.memberName||''),
+                'Level':Number(row.level||0),
+                'Battle Profile':String(row.statProfile?.label||'UNKNOWN'),
+                'Current Equipment':String(row.equipmentSummary||''),
+                'Current Faction Loans':Number(row.loans||0),
+                'Build Summary':String(build?.summary||'NOT GENERATED'),
+                'Equipment Decisions':items.map(item=>[
+                    String(item.slot||'').toUpperCase(),
+                    item.currentName?'Current '+item.currentName:'',
+                    String(item.decision||''),
+                    String(item.name||''),
+                    String(item.fulfillment||''),
+                    item.referencePrice?'~'+money(Number(item.referencePrice)):''
                 ].filter(Boolean).join(' · ')).join(' | ')
-                : '',
-            'Authority':'Candidate planning only; high-value Ranked War allocation remains leadership-controlled.'
-        }));
+            };
+        });
 
-        const equipmentActionRows = memberReadiness.filter(row=>row.hasStats&&row.hasEquipment).flatMap(row => {
-            const recs = Array.isArray(row.profile?.optimization?.recommendations) ? row.profile.optimization.recommendations : [];
-            if (!recs.length) {
+        const equipmentActionRows = memberReadiness.filter(row=>row.hasStats).flatMap(row => {
+            const build=row.profile?.simpleBuild;
+            const items=Array.isArray(build?.items)?build.items:[];
+            if(!items.length) {
                 return [{
                     'Member ID':asId(row.memberId),
-                    'Member':String(row.memberName || ''),
-                    'Level':Number(row.level || 0),
-                    'Battle Profile':String(row.statProfile?.label || 'UNKNOWN'),
-                    'Priority':'MEDIUM',
-                    'Action Type':'REVIEW',
+                    'Member':String(row.memberName||''),
+                    'Level':Number(row.level||0),
+                    'Battle Profile':String(row.statProfile?.label||'UNKNOWN'),
+                    'Action Type':'BUILD REQUIRED',
                     'Slot':'',
                     'Current':'',
-                    'Candidate':'',
-                    'Delta':'',
-                    'Acquisition':'',
+                    'Target':'',
+                    'Fulfillment':'',
                     'Reference Price':0,
-                    'Price Source':'',
-                    'Procurement Route':'',
-                    'Rationale / Review Note':String(row.profile?.optimization?.summary || row.equipmentPlan || 'Manual review required.'),
-                    'Decision Status':'AWAITING DECISION'
+                    'Decision Status':'OPEN'
                 }];
             }
-            return recs.map(rec => ({
+            return items.map(item=>({
                 'Member ID':asId(row.memberId),
-                'Member':String(row.memberName || ''),
-                'Level':Number(row.level || 0),
-                'Battle Profile':String(row.statProfile?.label || 'UNKNOWN'),
-                'Priority':String(rec.kind || '').includes('CLEAR') ? 'HIGH' : 'MEDIUM',
-                'Action Type':String(rec.kind || 'REVIEW'),
-                'Slot':String(rec.slot || ''),
-                'Current':String(rec.current || ''),
-                'Candidate':String(rec.candidate || ''),
-                'Delta':rec.delta == null ? '' : Number(rec.delta),
-                'Acquisition':String(rec.acquisition || ''),
-                'Reference Price':Number(rec.referencePrice || 0),
-                'Price Source':String(rec.priceSource || ''),
-                'Procurement Route':String(rec.procurementRoute || ''),
-                'Rationale / Review Note':String(rec.note || ''),
-                'Decision Status':'AWAITING DECISION'
+                'Member':String(row.memberName||''),
+                'Level':Number(row.level||0),
+                'Battle Profile':String(row.statProfile?.label||'UNKNOWN'),
+                'Action Type':String(item.decision||'REVIEW'),
+                'Slot':String(item.slot||''),
+                'Current':String(item.currentName||''),
+                'Target':String(item.name||''),
+                'Fulfillment':String(item.fulfillment||''),
+                'Reference Price':Number(item.referencePrice||0),
+                'Decision Status':item.decision==='KEEP'?'NO ACTION':'OPEN'
             }));
         });
 
@@ -12241,15 +12188,14 @@ function factionSimpleBuildCard(db) {
                     'Level':Number(row.level||0),
                     'Battle Stats':Number(row.statProfile?.total||0),
                     'Stat Profile':String(row.statProfile?.label||'UNKNOWN'),
-                    'Build Tier':'',
-                    'Weapon Bias':'',
                     'Slot':'',
+                    'Current Item':'',
+                    'Decision':'',
                     'Target Item':'',
                     'Combat Data':'',
-                    'Acquisition':'',
+                    'Fulfillment':'',
                     'Available':0,
                     'Reference Price':0,
-                    'Procurement Route':'',
                     'Build Status':row.hasStats?'NOT GENERATED':'STATS REQUIRED'
                 }];
             }
@@ -12261,16 +12207,15 @@ function factionSimpleBuildCard(db) {
                     'Level':Number(row.level||0),
                     'Battle Stats':Number(row.statProfile?.total||0),
                     'Stat Profile':String(row.statProfile?.label||'UNKNOWN'),
-                    'Build Tier':String(build.tier||''),
-                    'Weapon Bias':String(build.weaponBias||''),
                     'Slot':'',
+                    'Current Item':'',
+                    'Decision':'',
                     'Target Item':'',
                     'Combat Data':'',
-                    'Acquisition':'',
+                    'Fulfillment':'',
                     'Available':0,
                     'Reference Price':0,
-                    'Procurement Route':'',
-                    'Build Status':'NO EVIDENCE-BACKED TARGETS'
+                    'Build Status':'NO TARGETS'
                 }];
             }
             return items.map(item=>({
@@ -12279,22 +12224,23 @@ function factionSimpleBuildCard(db) {
                 'Level':Number(row.level||0),
                 'Battle Stats':Number(row.statProfile?.total||0),
                 'Stat Profile':String(row.statProfile?.label||'UNKNOWN'),
-                'Build Tier':String(build.tier||''),
-                'Weapon Bias':String(build.weaponBias||''),
                 'Slot':String(item.slot||''),
+                'Current Item':String(item.currentName||''),
+                'Decision':String(item.decision||''),
                 'Target Item':String(item.name||''),
-                'Combat Data':item.category==='weapon' ? 'D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0) : item.armor ? 'Armor '+Number(item.armor||0) : '',
-                'Acquisition':String(item.acquisition||''),
+                'Combat Data':item.category==='weapon'
+                    ? 'D '+Number(item.damage||0)+' / A '+Number(item.accuracy||0)
+                    : item.armor ? 'Armor '+Number(item.armor||0) : '',
+                'Fulfillment':String(item.fulfillment||''),
                 'Available':Number(item.available||0),
                 'Reference Price':Number(item.referencePrice||0),
-                'Procurement Route':String(item.procurementRoute||''),
                 'Build Status':'GENERATED'
             }));
         });
 
         const readyMembers = memberReadiness.filter(row=>row.readinessStatus==='READY FOR REVIEW').length;
         const missingMembers = memberReadiness.filter(row=>row.readinessStatus==='MISSING DATA').length;
-        const clearUpgradeCount = equipmentActionRows.filter(row=>String(row['Action Type']).includes('CLEAR')).length;
+        const clearUpgradeCount = equipmentActionRows.filter(row=>String(row['Action Type'])==='UPGRADE').length;
         const baseline = factionWarReadinessBaseline(db);
         const dashboardRows = [
             { Section:'READINESS', Signal:'Readiness coverage', Current:readyMembers + '/' + memberReadiness.length, Status:missingMembers ? 'ACTION' : 'READY', 'Leader / Manager Interpretation':missingMembers + ' member(s) still missing readiness data.' },
@@ -12309,7 +12255,7 @@ function factionSimpleBuildCard(db) {
             { Section:'POLICY', Signal:'Open policy decisions', Current:0, Status:'AUTHORIZED', 'Leader / Manager Interpretation':'D01–D07 answered. Preferred external partner names remain a pending dependency.' },
             { Section:'DEPENDENCY', Signal:'Preferred supplier names', Current:manager.questions.length, Status:manager.questions.length ? 'WAITING — LEADERSHIP' : 'COMPLETE', 'Leader / Manager Interpretation':manager.questions.length ? manager.questions[0].decision : 'Preferred supplier register complete.' },
             { Section:'HISTORY', Signal:'Observed history days', Current:Number(manager.report.observedDays || 0).toFixed(1), Status:manager.report.observedDays >= 7 ? 'MATURE WEEK' : 'COLLECTING HISTORY', 'Leader / Manager Interpretation':'Provisional targets use a conservative roster floor while the history window matures.' },
-            { Section:'EQUIPMENT', Signal:'Clear equipment upgrades', Current:clearUpgradeCount, Status:clearUpgradeCount ? 'REVIEW / APPROVE' : 'NONE', 'Leader / Manager Interpretation':'Review Equipment Actions for per-member candidate, acquisition, and rationale.' }
+            { Section:'EQUIPMENT', Signal:'Equipment upgrades', Current:clearUpgradeCount, Status:clearUpgradeCount ? 'REVIEW' : 'NONE', 'Leader / Manager Interpretation':'Builds compare current equipment against game-wide targets and never recommend a lower-scoring replacement.' }
         ];
         for (const row of questionRows) {
             dashboardRows.push({
@@ -12368,9 +12314,9 @@ function factionSimpleBuildCard(db) {
             { Topic:'Reporting cadence', Value:FACTION_INVENTORY_POLICY.reporting, Classification:'LEADERSHIP AUTHORIZATION 2026-10-01' },
             { Topic:'Inventory source', Value:'Torn API v2 faction/inventory; local CRM snapshots retain history.', Classification:'SOURCE' },
             { Topic:'Market references', Value:'Advisory only. Current CRM market evidence may include Item Market, Bazaar observations, TornW3B, or catalog fallback.', Classification:'ADVISORY' },
-            { Topic:'Equipment optimization scope', Value:'Optimization may recommend equipment not currently owned by the faction. Armory availability determines acquisition path, not the target loadout. Missing items are procurement targets using faction-member bazaars first, then trusted/private suppliers, then Item Market.', Classification:'CONFIRMED OPERATING MODEL' },
+            { Topic:'Equipment build scope', Value:'Build targets are selected from game-wide weapon and armor catalog data. Current faction stock only affects fulfillment; it does not limit the target item. Current equipped gear is compared first to prevent downgrade recommendations.', Classification:'CONFIRMED OPERATING MODEL' },
             { Topic:'Minimum-stock proposal methodology', Value:minimumProposal.methodology, Classification:'MANAGER PROPOSAL — LEADERSHIP APPROVAL REQUIRED' },
-            { Topic:'Simple Build methodology', Value:'Member build tier uses faction-relative battle-stat percentile at 75% weight and level percentile at 25%. Development favors armory stock; Standard favors armory stock within 90% of best scored candidate; Advanced selects strongest evidence-backed target. Build scoring is a logistics heuristic, not an exact combat formula.', Classification:'MANAGER MODEL' },
+            { Topic:'Simple Build methodology', Value:'Weapon targets use the member battle-stat profile to weight damage versus accuracy; armor targets use armor rating and quality. Current equipped gear is retained when it meets or beats the selected target, with a wider safety margin for bonus gear.', Classification:'MANAGER MODEL' },
             { Topic:'Automation boundary', Value:'Read-only manager: no automatic faction item movement, purchase, reimbursement, trade, give, retrieve, or consumption action.', Classification:'CONTROL' }
         ];
         const makeDoc=(filename,rows)=>({filename,headers:rows.length?Object.keys(rows[0]):[],rows});
@@ -12430,58 +12376,54 @@ function factionSimpleBuildCard(db) {
         ]);
     }
 
-    function factionLeadershipReportMessage(db, reportUrl = '') {
-        const rows = factionMemberReadinessRows(db);
-        const builds = rows.filter(row=>row.profile?.simpleBuild);
-        const optimized = rows.filter(row => Array.isArray(row.profile?.optimization?.recommendations) && row.profile.optimization.recommendations.length);
-        const procure = optimized.reduce((sum,row) => sum + row.profile.optimization.recommendations.filter(rec => rec.acquisition === 'PROCURE').length, 0);
-        const armory = optimized.reduce((sum,row) => sum + row.profile.optimization.recommendations.filter(rec => rec.acquisition === 'ISSUE FROM ARMORY').length, 0);
-        const missing = rows.filter(row => row.readinessStatus === 'MISSING DATA').length;
-        const stale = rows.filter(row => row.readinessStatus === 'STALE DATA').length;
-        const manager = factionInventoryManagerPlan(db);
-        const baseline = manager.baseline || factionWarReadinessBaseline(db);
-        const minimums = factionMinimumStockProposal(db);
-        const proposalInputs = factionManagerProposalInputs(db);
-        const escalations = manager.loans.filter(row=>row.followUpStatus==='ESCALATE — LEADERSHIP + SUPERVISOR').length;
-        const safeUrl = /^https:\/\//i.test(String(reportUrl || '')) ? String(reportUrl) : '';
-        const approvalItems = proposalInputs.filter(row=>['READY FOR LEADERSHIP','DATA REQUIRED','WAITING — LEADERSHIP','MANAGER RULE — REVIEW LATER'].includes(String(row.status||'')));
+    
+function factionLeadershipReportMessage(db, reportUrl = '') {
+        const rows=factionMemberReadinessRows(db);
+        const builds=rows.filter(row=>row.profile?.simpleBuild);
+        const buildItems=builds.flatMap(row=>Array.isArray(row.profile?.simpleBuild?.items)?row.profile.simpleBuild.items:[]);
+        const upgrades=buildItems.filter(item=>item.decision==='UPGRADE').length;
+        const buys=buildItems.filter(item=>item.decision==='UPGRADE' && item.fulfillment==='BUY').length;
+        const keeps=buildItems.filter(item=>item.decision==='KEEP').length;
+        const missing=rows.filter(row=>row.readinessStatus==='MISSING DATA').length;
+        const stale=rows.filter(row=>row.readinessStatus==='STALE DATA').length;
+        const manager=factionInventoryManagerPlan(db);
+        const minimums=factionMinimumStockProposal(db);
+        const proposalInputs=factionManagerProposalInputs(db);
+        const escalations=manager.loans.filter(row=>row.followUpStatus==='ESCALATE — LEADERSHIP + SUPERVISOR').length;
+        const safeUrl=/^https:\/\//i.test(String(reportUrl||''))?String(reportUrl):'';
+        const approvalItems=proposalInputs.filter(row=>['READY FOR LEADERSHIP','DATA REQUIRED','WAITING — LEADERSHIP','MANAGER RULE — REVIEW LATER'].includes(String(row.status||'')));
+
         const body =
-            'Dakiller_MLM,\n\nFaction Inventory leadership report generated by Manic Mike.\n\n' +
-            'I have established a manager-recommended Minimums Proposal for Leadership approval rather than leaving stock levels open-ended.\n' +
-            'Proposed rows: ' + minimums.proposals.length + ' · current shortfalls: ' + minimums.actionable.length + ' · data-required: ' + minimums.dataRequired.length + ' · confidence: ' + minimums.confidence + '.\n' +
-            'Member builds: ' + builds.length + '/' + rows.length + ' generated · readiness missing: ' + missing + ' · stale: ' + stale + '.\n' +
-            'Loan escalations due: ' + escalations + '.\n' +
-            'Advanced comparison actions: ' + armory + ' armory issue(s) · ' + procure + ' procurement target(s).\n\n' +
-            'REQUESTED LEADERSHIP ACTION\n' +
-            '1. Review the Minimums Proposal sheet and approve or adjust the recommended minimums/max bands.\n' +
-            '2. Review Proposal Inputs for the remaining validation items; our recommendation is already included for each one.\n' +
-            '3. Once approved, I will operate to those thresholds and recalculate after a full 7-day movement window and before Ranked Wars.\n\n' +
-            (safeUrl ? 'Leadership report: ' + safeUrl + '\n\n' : '') +
-            'Weapons are now included in Faction Inventory and in the simple member Build Builder. High-value Ranked War gear remains Leadership-controlled.\n\n' +
+            'Dakiller_MLM,\n\n' +
+            'Faction inventory proposal is ready for review.\n\n' +
+            'Minimums: '+minimums.proposals.length+' proposed rows · '+minimums.actionable.length+' current shortfalls · '+minimums.dataRequired.length+' data-required.\n' +
+            'Member builds: '+builds.length+'/'+rows.length+' generated · '+upgrades+' upgrade(s) · '+keeps+' keep(s) · '+buys+' purchase target(s).\n' +
+            'Readiness: '+missing+' missing · '+stale+' stale · '+escalations+' loan escalation(s).\n\n' +
+            'REQUESTED ACTION\n' +
+            '1. Approve or adjust the proposed minimum/max bands.\n' +
+            '2. Review remaining proposal inputs.\n' +
+            '3. I will recalculate after the usage window matures and before Ranked Wars.\n\n' +
+            (safeUrl?'Leadership report: '+safeUrl+'\n\n':'')+
             '— Manic Mike';
 
-        const inputHtml = approvalItems.slice(0,7).map(row =>
+        const inputHtml=approvalItems.slice(0,7).map(row=>
             '<div style="padding:5px 0;border-top:1px solid #333;"><b>'+escapeMessageHtml(row.topic)+'</b> · '+escapeMessageHtml(row.status)+
             '<br><span style="color:#bbb;">Recommendation: '+escapeMessageHtml(row.proposal)+'</span></div>'
         ).join('');
-        const bodyHtml =
-            '<div data-mm-message-kind="leadership-report" style="font-family:Arial,sans-serif;background:#111;color:#f3f3f3;padding:14px;line-height:1.45;">' +
-                '<div style="font-size:18px;font-weight:bold;color:#f2c94c;">Faction Inventory Leadership Proposal</div>' +
-                '<div style="margin:8px 0;">Dakiller_MLM,</div>' +
-                '<div style="margin:8px 0;">I established manager-recommended stock minimums for approval rather than leaving the numbers open-ended.<br>' +
-                    'Proposal rows: <b>' + minimums.proposals.length + '</b> · Shortfalls: <b>' + minimums.actionable.length + '</b> · Data-required: <b>' + minimums.dataRequired.length + '</b> · Confidence: <b>' + escapeMessageHtml(minimums.confidence) + '</b>.<br>' +
-                    'Simple member builds: <b>' + builds.length + '/' + rows.length + '</b> · Loan escalations due: <b>' + escalations + '</b>.</div>' +
-                (safeUrl
-                    ? '<div style="margin:14px 0;"><a href="' + escapeMessageHtml(safeUrl) + '" style="display:inline-block;background:#1f4e78;color:#ffffff;text-decoration:none;font-weight:bold;padding:10px 14px;border-radius:4px;">OPEN LEADERSHIP PROPOSAL</a></div>'
-                    : '') +
-                '<div style="margin:10px 0;color:#ddd;"><b>Requested action:</b> review the Minimums Proposal sheet, approve or adjust the min/max bands, then review the Proposal Inputs sheet. Each unresolved item already includes our recommendation.</div>' +
-                inputHtml +
-                '<div style="margin-top:12px;color:#aaa;">Weapons are now included in Faction Inventory and the Build Builder. High-value Ranked War gear remains Leadership-controlled.</div>' +
-                '<div style="margin-top:12px;">— Manic Mike</div>' +
+        const bodyHtml=
+            '<div data-mm-message-kind="leadership-report" style="font-family:Arial,sans-serif;background:#111;color:#f3f3f3;padding:14px;line-height:1.45;">'+
+                '<div style="font-size:18px;font-weight:bold;color:#f2c94c;">Faction Inventory Proposal</div>'+
+                '<div style="margin:8px 0;">Dakiller_MLM,</div>'+
+                '<div style="margin:8px 0;">Minimums: <b>'+minimums.actionable.length+'</b> current shortfall(s) · Confidence: <b>'+escapeMessageHtml(minimums.confidence)+'</b>.<br>'+
+                    'Member builds: <b>'+builds.length+'/'+rows.length+'</b> · Upgrades: <b>'+upgrades+'</b> · Purchase targets: <b>'+buys+'</b> · Keeps: <b>'+keeps+'</b>.</div>'+
+                (safeUrl?'<div style="margin:14px 0;"><a href="'+escapeMessageHtml(safeUrl)+'" style="display:inline-block;background:#1f4e78;color:#fff;text-decoration:none;font-weight:bold;padding:10px 14px;border-radius:4px;">OPEN LEADERSHIP PROPOSAL</a></div>':'')+
+                '<div style="margin:10px 0;color:#ddd;"><b>Requested action:</b> approve or adjust the proposed minimum/max bands, then review the remaining proposal inputs.</div>'+
+                inputHtml+
+                '<div style="margin-top:12px;">— Manic Mike</div>'+
             '</div>';
 
         return {
-            subject: 'Faction Inventory Minimums & Build Proposal · ' + new Date().toLocaleDateString(),
+            subject:'Faction Inventory Proposal · '+new Date().toLocaleDateString(),
             body,
             bodyHtml
         };
