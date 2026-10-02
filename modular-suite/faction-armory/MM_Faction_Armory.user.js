@@ -447,6 +447,42 @@
     return Array.isArray(rows)?rows:[];
   }
 
+  function ownedEquipmentFromInventory(inventory){
+    const rows=Array.isArray(inventory)?inventory:[];
+    const items=[];
+    const seen=new Set();
+    for(const raw of rows){
+      const itemObj=raw?.item&&typeof raw.item==='object'?raw.item:{};
+      const name=String(raw?.name??itemObj?.name??'').trim();
+      if(!name)continue;
+      const quantity=Math.max(0,Number(raw?.amount??raw?.quantity??raw?.qty??1)||0);
+      if(quantity<=0)continue;
+      const base={
+        itemId:asId(raw?.id??raw?.item_id??itemObj?.id),
+        uid:asId(raw?.uid??raw?.item_uid??itemObj?.uid),
+        name,
+        type:String(raw?.type??raw?.category??itemObj?.type??''),
+        subType:String(raw?.sub_type??raw?.subType??itemObj?.sub_type??itemObj?.subType??''),
+        slot:String(raw?.slot??raw?.weapon_slot??itemObj?.slot??''),
+        weaponType:String(raw?.weapon_type??raw?.weaponType??itemObj?.weapon_type??''),
+        damage:num(raw?.damage??itemObj?.damage??raw?.stats?.damage??itemObj?.stats?.damage),
+        accuracy:num(raw?.accuracy??itemObj?.accuracy??raw?.stats?.accuracy??itemObj?.stats?.accuracy),
+        armor:num(raw?.armor??itemObj?.armor??raw?.stats?.armor??itemObj?.stats?.armor??raw?.stats?.protection??itemObj?.stats?.protection),
+        armorRating:num(raw?.armor??itemObj?.armor??raw?.stats?.armor??itemObj?.stats?.armor??raw?.stats?.protection??itemObj?.stats?.protection),
+        quantity,
+        source:'member inventory'
+      };
+      const enriched=logic?.enrichCatalogItem?logic.enrichCatalogItem(base):base;
+      const slot=logic?.equipmentSlot?logic.equipmentSlot(enriched):'';
+      if(!['primary','secondary','melee','helmet','body','gloves','pants','boots'].includes(slot))continue;
+      const key=[slot,String(enriched.name||name).toLowerCase(),String(enriched.uid||'')].join('|');
+      if(seen.has(key))continue;
+      seen.add(key);
+      items.push({...enriched,slot,quantity});
+    }
+    return {items,updatedAt:new Date().toISOString()};
+  }
+
   function memberSupply(inventory,ammoData,equipment){
     const rows=Array.isArray(inventory)?inventory:[];
     const countName=name=>rows.filter(r=>String(r?.name||r?.item?.name||'').toLowerCase()===name.toLowerCase())
@@ -574,6 +610,7 @@
     const summary=equipmentSummary(items);
     if(!summary)throw new Error('No equipped items could be parsed; no profile was changed.');
     const supply=memberSupply(inventory,ammoData,items);
+    const ownedEquipment=ownedEquipmentFromInventory(inventory);
     const verifiedAt=new Date().toISOString();
 
     await core.updateDomainState('faction',draft=>{
@@ -584,6 +621,7 @@
       fi.memberReadiness.profiles[memberId]={
         ...previous,memberId,stats,
         equipment:{...(previous.equipment||{}),summary,items,rawImported:false},
+        ownedEquipment,
         supplyReadiness:supply,
         medicalStatus:supply.medicalKnown?'API INVENTORY':String(previous.medicalStatus||'UNKNOWN'),
         ipecacStatus:supply.medicalKnown?(num(supply.medical?.ipecac)>0?'READY':'NEEDS IPECAC'):String(previous.ipecacStatus||'UNKNOWN'),
