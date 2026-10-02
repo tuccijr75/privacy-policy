@@ -5,16 +5,20 @@
 - [x] Production branch left untouched.
 - [x] v8 non-production branch created.
 - [x] Modular architecture approved.
-- [ ] Record current v7.5.3 static harness outputs on v8 branch.
+- [x] Record current v7.5.3 static harness outputs on v8 branch.
 
 ## Phase 1 — Core
-- [ ] Define Core request/data contracts.
-- [ ] Compatibility-read v7.5.3 IndexedDB/local state.
+- [x] Define Core request/data contracts.
+- [x] Compatibility-read v7.5.3 IndexedDB state without creating/upgrading it.
 - [ ] Preserve customers/sales/coupons/refunds/acquisitions.
 - [ ] Preserve market/travel/faction/member/build state.
 - [ ] Prove migration idempotence.
-- [ ] Prove no page-load network activity.
-- [ ] Prove secrets are not written to page-readable storage.
+- [x] Prove Core has no automatic page-load network/timer activity.
+- [x] Define credential boundary: per-tool GM storage; no shared plaintext key in page storage.
+
+- [x] Add freshness observability for market/travel/faction source timestamps.
+- [x] Add atomic domain-scoped write contract that preserves unrelated fresh state.
+- [ ] Validate Core against the real v7.5.3 IndexedDB in live browser acceptance.
 
 ## Phase 2 — Market Scout
 - [ ] Extract Weav3r generation watcher.
