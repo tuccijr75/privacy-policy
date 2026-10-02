@@ -2,7 +2,7 @@
 require('./MM_Torn_Core.js');
 const c = globalThis.MMTornCore;
 if (!c) throw new Error('MMTornCore not exposed');
-if (typeof c.registerDockLauncher !== 'function' || typeof c.setDockLauncherActive !== 'function') throw new Error('dock API missing');
+if (typeof c.registerDockLauncher !== 'function' || typeof c.setDockLauncherActive !== 'function' || typeof c.makePanelDraggable !== 'function') throw new Error('dock/panel API missing');
 const fixture = {
   schema: 11,
   customers: {1:{}}, sales: {a:{},b:{}}, coupons:{1:{}}, refunds:{}, subscribers:{}, removedCustomers:{}, notificationHistory:[],
