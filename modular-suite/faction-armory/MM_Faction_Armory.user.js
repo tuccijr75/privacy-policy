@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.4
+// @version      8.0.0-alpha.5
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.4';
+  const VERSION='8.0.0-alpha.5';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -241,7 +241,10 @@
           current[key]={
             key,category,itemId,
             name:String(raw?.name||('Item '+itemId)),
-            type:String(raw?.type||''),
+            type:String(raw?.type||raw?.category||''),
+            subType:String(raw?.sub_type??raw?.subType??raw?.weapon_type??''),
+            slot:String(raw?.slot??raw?.weapon_slot??''),
+            weaponType:String(raw?.weapon_type??raw?.weaponType??''),
             amountOwned:0,availableCount:0,loanedCount:0,
             availableUids:[],loans:[],
             armorRating:num(raw?.armor??raw?.stats?.armor??raw?.stats?.protection),
@@ -719,25 +722,26 @@
       const entry=vault?.entries?.[row.memberId];
       const statusClass=row.readinessStatus==='READY FOR REVIEW'?'mm-fa-good':row.readinessStatus==='MISSING DATA'?'mm-fa-bad':'mm-fa-warn';
       const med=row.profile?.supplyReadiness?.medical||{};
-      return '<div class="mm-fa-card mm-fa-compact">'+
-        '<div class="mm-fa-module-head">'+
-          '<div class="mm-fa-member-head"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</div>'+
-          '<div class="mm-fa-buttons">'+
+      return '<details class="mm-fa-build-member">'+
+        '<summary>'+
+          '<span class="mm-fa-build-summary-main"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</span>'+
+          '<span class="mm-fa-muted">'+(row.hasStats?fmt(row.statProfile.total)+' stats':'stats missing')+'</span>'+
+        '</summary>'+
+        '<div class="mm-fa-build-body">'+
+          '<div class="mm-fa-module-head"><div class="mm-fa-buttons">'+
             (entry?'<button data-refresh-member="'+esc(row.memberId)+'" style="'+button(true)+'">Refresh</button><button data-remove-member="'+esc(row.memberId)+'" style="'+button()+'">Remove Key</button>':'')+
             '<button data-paste-reply="'+esc(row.memberId)+'" style="'+button()+'">Paste Reply</button>'+
+          '</div></div>'+
+          '<div class="mm-fa-tiles">'+
+            tile('STR',row.hasStats?fmt(s.strength):'—')+
+            tile('DEF',row.hasStats?fmt(s.defense):'—')+
+            tile('SPD',row.hasStats?fmt(s.speed):'—')+
+            tile('DEX',row.hasStats?fmt(s.dexterity):'—')+
+            tile('TOTAL',row.hasStats?fmt(row.statProfile.total):'—')+
+            tile('LOANS',row.loans?row.loans+' units':'—')+
+            (source?tile('SOURCE',source+' · '+when(row.profile?.verifiedAt),{wide:true}):tile('SOURCE','No current profile',{wide:true}))+
           '</div>'+
-        '</div>'+
-        '<div class="mm-fa-tiles">'+
-          tile('STR',row.hasStats?fmt(s.strength):'—')+
-          tile('DEF',row.hasStats?fmt(s.defense):'—')+
-          tile('SPD',row.hasStats?fmt(s.speed):'—')+
-          tile('DEX',row.hasStats?fmt(s.dexterity):'—')+
-          tile('TOTAL',row.hasStats?fmt(row.statProfile.total):'—')+
-          tile('LOANS',row.loans?row.loans+' units':'—')+
-          (source?tile('SOURCE',source+' · '+when(row.profile?.verifiedAt),{wide:true}):tile('SOURCE','No current profile',{wide:true}))+
-        '</div>'+
-        (entry?.lastError?'<div class="mm-fa-bad mm-fa-mini" style="margin-top:3px;">API error: '+esc(entry.lastError)+'</div>':'')+
-        '<details class="mm-fa-details"><summary>Gear / supplies</summary>'+
+          (entry?.lastError?'<div class="mm-fa-bad mm-fa-mini" style="margin-top:3px;">API error: '+esc(entry.lastError)+'</div>':'')+
           '<div class="mm-fa-tiles" style="margin-top:4px;">'+
             tile('EQUIPPED',gear||'—',{wide:true})+
             tile('FACTION LOANS',row.loanItems.length?row.loanItems.map(i=>i.name+' x'+num(i.amount)).join(' | '):'—',{wide:true})+
@@ -746,41 +750,48 @@
             tile('MORPHINE',med.morphine??'—')+
             tile('IPECAC',med.ipecac??'—')+
           '</div>'+
-        '</details>'+
-      '</div>';
+        '</div>'+
+      '</details>';
     }).join(''):card('No faction roster is cached yet. Use Refresh Faction.'));
   }
 
   function buildsHtml(){
     const rows=memberRows();
     if(!rows.length)return card('No member roster is loaded.');
-    return '<div class="mm-fa-card mm-fa-compact"><b>War-ready build standard</b> <span class="mm-fa-muted">Click a member to open details. Level + battle-stat tier + build style; no downgrades.</span></div>'+
+    return '<div class="mm-fa-card mm-fa-compact"><b>War-ready build baseline</b> <span class="mm-fa-muted">General availability baseline; faction stock decides KEEP / ISSUE / ACQUIRE, never the readiness standard.</span></div>'+
     rows.map(row=>{
       const build=logic.compareMemberBuild(row,state?.factionInventory||{},rows);
-      const tierClass=build.warReady?'mm-fa-good':row.hasStats?'mm-fa-warn':'mm-fa-bad';
+      const statusClass=build.warReady?'mm-fa-good':'mm-fa-warn';
       const unresolved=build.items.filter(item=>!item.ready).length;
       return '<details class="mm-fa-build-member">'+
         '<summary>'+
           '<span class="mm-fa-build-summary-main">'+
             '<b>'+esc(row.memberName)+'</b>'+
             '<span class="mm-fa-pill">Lv '+num(row.level)+'</span>'+
-            '<span class="'+tierClass+'">'+esc(build.tier)+' '+(build.warReady?'WAR READY':'REVIEW')+'</span>'+
+            '<span class="'+statusClass+'">'+(build.warReady?'WAR READY':'ACTION NEEDED')+'</span>'+
           '</span>'+
           '<span class="mm-fa-muted">'+(build.warReady?'ready':unresolved+' slot'+(unresolved===1?'':'s')+' open')+'</span>'+
         '</summary>'+
         '<div class="mm-fa-build-body">'+
-          '<div class="mm-fa-module-head">'+
-            '<span class="mm-fa-muted">'+esc(build.summary)+'</span>'+
-            '<span class="mm-fa-muted">style '+esc(build.bias)+(build.dominant?' · '+esc(build.dominant):'')+'</span>'+
+          '<div class="mm-fa-tiles">'+
+            tile('TOTAL STATS',build.totalStats?fmt(build.totalStats):'—')+
+            tile('BUILD',build.buildStyle||'UNKNOWN',{wide:true})+
+            tile('OFFENSE NEED',build.offensiveNeed||'balanced')+
+            tile('DEFENSE STYLE',build.defensiveStyle||'balanced')+
+            tile('PREMIUM PRIORITY',build.priority?.label||'—')+
           '</div>'+
+          '<div class="mm-fa-muted" style="margin-top:4px;">'+esc(build.summary)+'</div>'+
           '<div class="mm-fa-slot-grid">'+build.items.map(item=>{
-            const cls=item.ready?'mm-fa-good':item.decision==='UPGRADE AVAILABLE'?'mm-fa-warn':'mm-fa-bad';
+            const cls=item.ready?'mm-fa-good':item.route==='ISSUE'?'mm-fa-warn':'mm-fa-bad';
             return '<div class="mm-fa-slot">'+
               '<div><b>'+esc(item.slot.toUpperCase())+'</b> <span class="'+cls+'">'+esc(item.decision)+'</span></div>'+
               '<div class="mm-fa-tiles">'+
                 tile('CURRENT',item.currentName||'—',{wide:true})+
-                tile('FLOOR',item.readinessFloor?fmt(item.readinessFloor):'—')+
-                tile('TARGET',item.targetName||'—',{wide:true})+
+                tile('BASELINE',item.targetName||'—',{wide:true})+
+                tile('ROUTE',item.route||'—')+
+                tile('SUGGEST',item.suggestedName||'—',{wide:true})+
+                (item.suggestedSource?tile('SOURCE',item.suggestedSource,{wide:true}):'')+
+                (item.premiumOptionName&&item.premiumOptionName!==item.targetName?tile('PREMIUM OPTION',item.premiumOptionName,{wide:true}):'')+
               '</div>'+
             '</div>';
           }).join('')+'</div>'+
@@ -792,22 +803,31 @@
   function inventoryHtml(){
     const fi=state?.factionInventory||{};
     const current=Object.values(fi.current||{});
-    const cats=['all',...logic.categories];
-    const rows=current.filter(r=>selectedCategory==='all'||r.category===selectedCategory)
-      .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
-    return '<div class="mm-fa-card mm-fa-compact">'+
-      '<div class="mm-fa-module-head"><div><b>Faction inventory</b> <span class="mm-fa-muted">'+current.length+' rows · '+when(fi.lastSyncAt)+'</span></div><button id="mm-fa-refresh-faction" style="'+button(true)+'">Refresh Faction</button></div>'+
-      '<div class="mm-fa-actions">'+cats.map(cat=>'<button data-cat="'+esc(cat)+'" style="'+button(selectedCategory===cat)+'">'+esc(cat==='all'?'All':cat)+'</button>').join('')+'</div>'+
-    '</div>'+
-    (rows.length?rows.map(row=>'<div class="mm-fa-card mm-fa-compact">'+
-      '<div class="mm-fa-module-head"><div><b>'+esc(row.name)+'</b> <span class="mm-fa-muted">'+esc(row.category)+' · '+esc(row.itemId)+'</span></div></div>'+
-      '<div class="mm-fa-tiles">'+
-        tile('OWNED',fmt(row.amountOwned))+
-        tile('AVAILABLE',fmt(row.availableCount))+
-        tile('LOANED',fmt(row.loanedCount))+
-        (row.loans?.length?tile('LOANS',row.loans.map(l=>l.memberName+' x'+num(l.amount)).join(' | '),{wide:true}):'')+
+    const categories=logic.categories;
+    const itemRow=row=>'<div class="mm-fa-row">'+
+      '<div class="mm-fa-main"><b>'+esc(row.name)+'</b> <span class="mm-fa-muted">ID '+esc(row.itemId)+'</span>'+
+        (row.loans?.length?'<div class="mm-fa-muted">'+row.loans.map(l=>esc(l.memberName)+' x'+num(l.amount)).join(' | ')+'</div>':'')+
       '</div>'+
-    '</div>').join(''):card('No items in this category.'));
+      '<div class="mm-fa-tiles">'+tile('OWNED',fmt(row.amountOwned))+tile('AVAILABLE',fmt(row.availableCount))+tile('LOANED',fmt(row.loanedCount))+'</div>'+
+    '</div>';
+
+    const categoryHtml=categories.map(cat=>{
+      const rows=current.filter(row=>row.category===cat).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+      if(cat==='weapons'){
+        const slots=['primary','secondary','melee'];
+        const nested=slots.map(slot=>{
+          const list=rows.filter(row=>logic.equipmentSlot(row)===slot);
+          return '<details class="mm-fa-details"><summary><b>'+esc(slot.toUpperCase())+'</b> · '+list.length+' item types · '+list.reduce((sum,r)=>sum+num(r.availableCount),0)+' available</summary>'+
+            (list.length?list.map(itemRow).join(''):'<div class="mm-fa-muted" style="padding:4px;">No '+esc(slot)+' weapons currently recorded in faction inventory.</div>')+
+          '</details>';
+        }).join('');
+        return '<details class="mm-fa-build-member"><summary><span class="mm-fa-build-summary-main"><b>WEAPONS</b><span class="mm-fa-pill">'+rows.length+' types</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.availableCount),0)+' available</span></summary><div class="mm-fa-build-body">'+nested+'</div></details>';
+      }
+      return '<details class="mm-fa-build-member"><summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' types</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.availableCount),0)+' available</span></summary>'+
+        '<div class="mm-fa-build-body">'+(rows.length?rows.map(itemRow).join(''):'<div class="mm-fa-muted">No stock.</div>')+'</div></details>';
+    }).join('');
+
+    return '<div class="mm-fa-card mm-fa-compact"><div class="mm-fa-module-head"><div><b>Faction inventory</b> <span class="mm-fa-muted">'+current.length+' item rows · '+when(fi.lastSyncAt)+'</span></div><button id="mm-fa-refresh-faction" style="'+button(true)+'">Refresh Faction</button></div></div>'+categoryHtml;
   }
 
   function minimumsHtml(){
@@ -815,25 +835,49 @@
       mode:stockMode,
       participants:WAR_PARTICIPANTS
     });
-    const rows=proposal.proposals.slice().sort((a,b)=>(b.shortfall||0)-(a.shortfall||0)||String(a.category).localeCompare(String(b.category)));
+    const categories=[...new Set(proposal.proposals.map(row=>String(row.category||'other')))];
     const modeLabel=stockMode==='war'?'WAR · '+WAR_PARTICIPANTS+' PARTICIPANTS':'PEACE';
+    const groups=categories.map(cat=>{
+      const rows=proposal.proposals.filter(row=>String(row.category||'other')===cat)
+        .sort((a,b)=>(b.shortfall||0)-(a.shortfall||0)||String(a.item).localeCompare(String(b.item)));
+      const short=rows.reduce((sum,row)=>sum+n(row.shortfall),0);
+      return '<details class="mm-fa-build-member">'+
+        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' lines</span></span><span class="mm-fa-muted">'+short+' short</span></summary>'+
+        '<div class="mm-fa-build-body">'+rows.map(row=>
+          '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.item)+'</b><div class="mm-fa-muted">'+esc(row.rationale)+'</div></div>'+
+          '<div class="mm-fa-tiles">'+tile('CURRENT',fmt(row.current))+tile('MIN',row.dataRequired?'DATA':fmt(row.recommendedMin))+tile('MAX',row.dataRequired?'—':fmt(row.recommendedMax))+tile('SHORT',row.dataRequired?'—':fmt(row.shortfall),{cls:num(row.shortfall)>0?'mm-fa-bad':''})+'</div></div>'
+        ).join('')+'</div>'+
+      '</details>';
+    }).join('');
     return '<div class="mm-fa-card mm-fa-compact">'+
-      '<div class="mm-fa-module-head">'+
-        '<div><b>Inventory minimums</b> <span class="mm-fa-muted">'+modeLabel+' · '+proposal.observedDays.toFixed(1)+'d history · '+proposal.confidence+'</span></div>'+
-        '<div class="mm-fa-actions"><button data-stock-mode="peace" style="'+button(stockMode==='peace')+'">Peace</button><button data-stock-mode="war" style="'+button(stockMode==='war')+'">War</button><button id="mm-fa-export" style="'+button(true)+'">Leadership Excel</button></div>'+
-      '</div>'+
+      '<div class="mm-fa-module-head"><div><b>Inventory minimums</b> <span class="mm-fa-muted">'+modeLabel+' · '+proposal.observedDays.toFixed(1)+'d history · '+proposal.confidence+'</span></div>'+
+      '<div class="mm-fa-actions"><button data-stock-mode="peace" style="'+button(stockMode==='peace')+'">Peace</button><button data-stock-mode="war" style="'+button(stockMode==='war')+'">War</button><button id="mm-fa-export" style="'+button(true)+'">Leadership Excel</button></div></div>'+
       '<div class="mm-fa-muted">'+esc(proposal.assumptions)+'</div>'+
-    '</div>'+
-    (rows.length?rows.map(row=>'<div class="mm-fa-card mm-fa-compact">'+
-      '<div class="mm-fa-module-head"><div><b>'+esc(row.item)+'</b> <span class="mm-fa-muted">'+esc(row.category)+(row.slot?' · '+esc(row.slot):'')+'</span></div></div>'+
-      '<div class="mm-fa-tiles">'+
-        tile('CURRENT',fmt(row.current))+
-        tile('MIN',row.dataRequired?'DATA':fmt(row.recommendedMin))+
-        tile('MAX',row.dataRequired?'—':fmt(row.recommendedMax))+
-        tile('SHORT',row.dataRequired?'—':fmt(row.shortfall),{cls:num(row.shortfall)>0?'mm-fa-bad':''})+
-      '</div>'+
-      '<details class="mm-fa-details"><summary>Basis</summary><div class="mm-fa-muted" style="margin-top:3px;">'+esc(row.rationale)+'</div></details>'+
-    '</div>').join(''):card('Not enough inventory/history data to calculate proposals.'));
+    '</div>'+groups;
+  }
+
+  function acquireHtml(){
+    const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+      mode:stockMode,
+      participants:WAR_PARTICIPANTS
+    });
+    const categories=[...new Set(plan.list.map(row=>row.category))];
+    const groups=categories.map(cat=>{
+      const rows=plan.list.filter(row=>row.category===cat);
+      return '<details class="mm-fa-build-member" open>'+
+        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.qty),0)+' units</span></summary>'+
+        '<div class="mm-fa-build-body">'+rows.map(row=>
+          '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.item)+'</b>'+
+            '<div class="mm-fa-muted">'+esc(row.source||'General Torn availability')+(row.reasons?' · '+esc(row.reasons):'')+'</div></div>'+
+          '<div class="mm-fa-tiles">'+tile('QTY',fmt(row.qty))+(row.marketValue?tile('REF VALUE','$'+fmt(row.marketValue)): '')+(row.estimatedValue?tile('EST TOTAL','$'+fmt(row.estimatedValue)): '')+'</div></div>'
+        ).join('')+'</div>'+
+      '</details>';
+    }).join('');
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head"><div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+WAR_PARTICIPANTS+' participants in War mode</span></div></div>'+
+      '<div class="mm-fa-tiles">'+tile('TOTAL UNITS',fmt(plan.totalUnits))+tile('EQUIPMENT REF VALUE',plan.estimatedEquipmentValue?'$'+fmt(plan.estimatedEquipmentValue):'—',{wide:true})+'</div>'+
+      '<div class="mm-fa-muted" style="margin-top:4px;">This is a planning list only. It uses generally available item references and current faction stock; it does not search Item Market or Bazaars.</div>'+
+    '</div>'+(groups||card('Nothing currently requires acquisition.'));
   }
 
   function settingsHtml(){
@@ -869,6 +913,7 @@
       :activeView==='builds'?buildsHtml()
       :activeView==='inventory'?inventoryHtml()
       :activeView==='minimums'?minimumsHtml()
+      :activeView==='acquire'?acquireHtml()
       :settingsHtml();
     root.innerHTML=
       '<div class="mm-fa-head"><div><b style="font-size:14px;">MM Faction Armory</b><div class="mm-fa-muted">v'+VERSION+' · task-first faction readiness</div></div><button id="mm-fa-close" style="'+button()+'">×</button></div>'+
@@ -878,6 +923,7 @@
           '<button data-view="builds" style="'+button(activeView==='builds')+'">Builds</button>'+
           '<button data-view="inventory" style="'+button(activeView==='inventory')+'">Stock</button>'+
           '<button data-view="minimums" style="'+button(activeView==='minimums')+'">Minimums</button>'+
+          '<button data-view="acquire" style="'+button(activeView==='acquire')+'">Acquire</button>'+
           '<button data-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
         '</div>'+
         '<div class="mm-fa-status">'+esc(statusText)+'</div>'+
@@ -975,6 +1021,10 @@
       mode:stockMode,
       participants:WAR_PARTICIPANTS
     });
+    const acquisition=logic.acquisitionPlan(state.factionInventory||{},{
+      mode:stockMode,
+      participants:WAR_PARTICIPANTS
+    });
     const inventory=Object.values(state.factionInventory?.current||{});
     const summaryHeaders=['Metric','Value'];
     const summary=[
@@ -990,12 +1040,12 @@
       {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
       {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length}
     ];
-    const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','War Tier','War Ready','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','War Ready','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
     const memberData=members.map(r=>{
       const build=logic.compareMemberBuild(r,state.factionInventory||{},members);
       return {
         'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'API Saved':r.apiSaved?'YES':'NO','Readiness':r.readinessStatus,
-        'War Tier':build.tier,'War Ready':build.warReady?'YES':'NO',
+        'War Ready':build.warReady?'YES':'NO','Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
         'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
         'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
       };
@@ -1010,6 +1060,9 @@
       xmlSheet('Members',memberHeaders,memberData)+
       xmlSheet('Inventory',invHeaders,invData)+
       xmlSheet('Minimums',minHeaders,minData)+
+      xmlSheet('Acquire',['Category','Item','Qty','Reference Source','Reference Unit Value','Estimated Total','Reasons'],acquisition.list.map(r=>({
+        'Category':r.category,'Item':r.item,'Qty':num(r.qty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Estimated Total':num(r.estimatedValue),'Reasons':r.reasons
+      })))+
       '</Workbook>';
     const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
     const url=URL.createObjectURL(blob);
