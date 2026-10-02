@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.5.0
+// @version      7.5.1
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.5-workflow-overhaul/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.5-workflow-overhaul/Torn_Bazaar_Customer_CRM.user.js
@@ -29,7 +29,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.5.0';
+    const VERSION = '7.5.1';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -65,9 +65,14 @@
     const WEAV3R_GLOBAL_TTL_MS = 60_000;
     const WEAV3R_DETAIL_TTL_MS = 60_000;
     const WEAV3R_MAX_ENRICH = 30;
-    const SMART_REFRESH_ITEM_LIMIT = 8;
-    const MARKET_ENRICH_CONCURRENCY = 1;
-    const PROCUREMENT_MARKET_CONCURRENCY = 1;
+    const SMART_REFRESH_ITEM_LIMIT = 12;
+    const MARKET_ENRICH_CONCURRENCY = 2;
+    const PROCUREMENT_MARKET_CONCURRENCY = 2;
+    const WEAV3R_LIVE_POLL_MS = 60_000;
+    const WEAV3R_LIVE_ENRICH_LIMIT = 12;
+    const WEAV3R_LIVE_MARKET_LIMIT = 6;
+    const ACQUISITION_VERIFY_SELLERS = 4;
+    const WEAV3R_LIVE_COORDINATOR_KEY = 'mm_bazaar_crm_weav3r_live_coordinator_v1';
     const BACKGROUND_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
     const BACKGROUND_COORDINATOR_LEASE_MS = 75 * 1000;
     const BACKGROUND_COORDINATOR_KEY = 'mm_bazaar_crm_background_coordinator_v1';
@@ -195,6 +200,8 @@
     let crmInitialized = false;
     let initializePromise = null;
     let backgroundRefreshTimer = null;
+    let weavLiveTimer = null;
+    let weavLiveRunning = false;
 
     // ============================================================
     // BASIC HELPERS
@@ -564,6 +571,8 @@
         db.marketIntel.settings.freshnessWarnSeconds = db.businessRules.maxListingAgeSec;
         db.marketIntel.settings.bazaarExitHaircutPct = Number(db.marketIntel.settings.bazaarExitHaircutPct ?? 1);
         db.marketIntel.diagnostics = Array.isArray(db.marketIntel.diagnostics) ? db.marketIntel.diagnostics : [];
+        db.marketIntel.lastWeavPollAt = db.marketIntel.lastWeavPollAt || null;
+        db.marketIntel.lastWeavChangeAt = db.marketIntel.lastWeavChangeAt || null;
         db.travelIntel = db.travelIntel && typeof db.travelIntel === 'object' ? db.travelIntel : {};
         db.travelIntel.rows = Array.isArray(db.travelIntel.rows) ? db.travelIntel.rows : [];
         db.travelIntel.history = db.travelIntel.history && typeof db.travelIntel.history === 'object' ? db.travelIntel.history : {};
@@ -4864,30 +4873,49 @@
         intel.history[id] = intel.history[id].slice(-MARKET_INTEL_HISTORY_MAX);
     }
 
-    async function syncWeavMarketplace(force = false) {
-        const db = dbLoad();
-        const intel = db.marketIntel;
-        if (
-            !force &&
-            intel.lastGlobalSyncAt &&
-            Date.now() - new Date(intel.lastGlobalSyncAt).getTime() < WEAV3R_GLOBAL_TTL_MS &&
-            Object.keys(intel.marketplace).length
-        ) return Object.values(intel.marketplace);
 
-        const data = await weav3rRequest('/marketplace');
-        const generatedAtMs = unixToMs(data?.generated_at) || Date.now();
-        const next = {};
-        for (const raw of Array.isArray(data?.items) ? data.items : []) {
-            const row = normalizeWeavMarketplaceItem(raw);
-            if (!row.itemId) continue;
-            next[row.itemId] = row;
-            pushIntelHistory(intel, row.itemId, row);
+function applyWeavMarketplacePayload(data, { markPoll = true } = {}) {
+        const db=dbLoad();
+        const intel=db.marketIntel;
+        const generatedAtMs=unixToMs(data?.generated_at)||Date.now();
+        const generatedIso=new Date(generatedAtMs).toISOString();
+        const previous=String(intel.marketplaceGeneratedAt||'');
+        const changed=previous!==generatedIso || !Object.keys(intel.marketplace||{}).length;
+        if(markPoll) intel.lastWeavPollAt=nowIso();
+        if(!changed) {
+            dbSave(db);
+            return {changed:false,generatedAt:generatedIso,rows:Object.values(intel.marketplace||{})};
         }
-        intel.marketplace = next;
-        intel.marketplaceGeneratedAt = new Date(generatedAtMs).toISOString();
-        intel.lastGlobalSyncAt = nowIso();
+        const next={};
+        for(const raw of Array.isArray(data?.items)?data.items:[]) {
+            const row=normalizeWeavMarketplaceItem(raw);
+            if(!row.itemId) continue;
+            next[row.itemId]=row;
+            pushIntelHistory(intel,row.itemId,row);
+        }
+        intel.marketplace=next;
+        intel.marketplaceGeneratedAt=generatedIso;
+        intel.lastGlobalSyncAt=nowIso();
+        intel.lastWeavChangeAt=nowIso();
         dbSave(db);
-        return Object.values(next);
+        return {changed:true,generatedAt:generatedIso,rows:Object.values(next)};
+    }
+
+
+async function syncWeavMarketplace(force = false) {
+        const db=dbLoad();
+        const intel=db.marketIntel;
+        if(!force && intel.lastGlobalSyncAt &&
+            Date.now()-new Date(intel.lastGlobalSyncAt).getTime()<WEAV3R_GLOBAL_TTL_MS &&
+            Object.keys(intel.marketplace).length) return Object.values(intel.marketplace);
+        const data=await weav3rRequest('/marketplace');
+        const applied=applyWeavMarketplacePayload(data);
+        if(!applied.changed) {
+            const latest=dbLoad();
+            latest.marketIntel.lastGlobalSyncAt=nowIso();
+            dbSave(latest);
+        }
+        return applied.rows;
     }
 
     async function enrichWeavItem(itemId, options = {}) {
@@ -5047,112 +5075,118 @@
         };
     }
 
-    function globalOpportunityRows(db) {
-        const intel = db.marketIntel;
-        const settings = intel.settings;
-        const rules = businessRules(db);
-        const generated = intel.marketplaceGeneratedAt;
-        const fresh = freshnessInfo(generated, rules.maxListingAgeSec);
-        const localMetrics = salesItemMetrics(db);
-        const rows = [];
 
-        for (const base of Object.values(intel.marketplace)) {
-            const buy = Number(base.lowestPrice || 0);
-            const bazaarAverage = Number(base.bazaarAverage || 0);
-            const marketPrice = Number(base.marketPrice || 0);
-            if (!(buy > 1)) continue;
-            if (buy < rules.minPrice) continue;
-            if (buy > rules.maxPrice) continue;
-            if (Number(base.totalBazaars || 0) < rules.minSellerCount) continue;
+function globalOpportunityRows(db) {
+        const intel=db.marketIntel;
+        const settings=intel.settings;
+        const rules=businessRules(db);
+        const globalFresh=freshnessInfo(intel.marketplaceGeneratedAt,rules.maxListingAgeSec);
+        const localMetrics=salesItemMetrics(db);
+        const rows=[];
 
-            const bazaarExit = bazaarAverage
-                ? Math.floor(bazaarAverage * (1 - Number(settings.bazaarExitHaircutPct || 0) / 100))
-                : 0;
-            const itemMarketNet = marketPrice ? Math.floor(marketPrice * (1 - ITEM_MARKET_FEE_RATE)) : 0;
+        for(const base of Object.values(intel.marketplace)) {
+            const id=asId(base.itemId);
+            const aggregateBuy=Number(base.lowestPrice||0);
+            const bazaarAverage=Number(base.bazaarAverage||0);
+            const marketPrice=Number(base.marketPrice||0);
+            if(!(aggregateBuy>1) || aggregateBuy<rules.minPrice || aggregateBuy>rules.maxPrice) continue;
+            if(Number(base.totalBazaars||0)<rules.minSellerCount) continue;
 
-            const detail = intel.details[base.itemId];
-            const trader = intel.traders[base.itemId];
-            const organicTrader = trader?.organicTraders?.[0];
-            const freshListings = freshOrganicListings(db, detail?.organicListings || []);
-            const organicListing = freshListings[0] || null;
+            const detail=intel.details[id];
+            const trader=intel.traders[id];
+            const organicTrader=trader?.organicTraders?.[0];
+            const freshListings=freshOrganicListings(db,detail?.organicListings||[]);
+            const bazaarListing=freshListings[0]||null;
+            const snap=db.procurement?.marketSnapshots?.[id]||{};
+            const snapAge=ageSeconds(snap.fetchedAt);
+            const itemMarketFresh=Boolean(snap.fetchedAt)&&snapAge<=rules.maxListingAgeSec;
+            const itemMarketBuy=itemMarketFresh?Number(snap?.itemMarket?.lowest||0):0;
 
-            const liveBuy = Number(organicListing?.price || buy);
-            const traderExit = Number(organicTrader?.price || 0);
-            const exits = [
-                { route: 'Bazaar', value: bazaarExit },
-                { route: 'Trader', value: traderExit },
-                { route: 'Item Market Net', value: itemMarketNet }
-            ].filter(x => x.value > 0).sort((a,b) => b.value - a.value);
+            const bazaarExit=bazaarAverage?Math.floor(bazaarAverage*(1-Number(settings.bazaarExitHaircutPct||0)/100)):0;
+            const itemMarketNet=marketPrice?Math.floor(marketPrice*(1-ITEM_MARKET_FEE_RATE)):0;
+            const traderExit=Number(organicTrader?.price||0);
+            const exits=[
+                {route:'Bazaar',value:bazaarExit},
+                {route:'Trader',value:traderExit},
+                {route:'Item Market Net',value:itemMarketNet}
+            ].filter(x=>x.value>0).sort((a,b)=>b.value-a.value);
+            const exit=exits[0]||{route:'Unknown',value:0};
+            if(!(exit.value>0)) continue;
 
-            const exit = exits[0] || { route: 'Unknown', value: 0 };
-            const profit = liveBuy > 0 && exit.value > 0 ? exit.value - liveBuy : 0;
-            const roiPct = liveBuy > 0 ? profit / liveBuy * 100 : 0;
-            if (roiPct < rules.minRoiPct) continue;
-            if (profit < rules.minAbsoluteProfit) continue;
+            const buySources=[];
+            if(bazaarListing) buySources.push({
+                source:'Bazaar',price:Number(bazaarListing.price||0),
+                quantity:Math.max(1,Number(bazaarListing.quantity||1)),
+                sellerId:asId(bazaarListing.sellerId),sellerName:String(bazaarListing.sellerName||''),
+                ageSeconds:listingAgeSeconds(bazaarListing)
+            });
+            if(itemMarketBuy>0) buySources.push({
+                source:'Item Market',price:itemMarketBuy,
+                quantity:Math.max(1,Number(snap?.itemMarket?.depth1Pct||1)),
+                sellerId:'',sellerName:'',ageSeconds:snapAge
+            });
+            buySources.sort((a,b)=>a.price-b.price);
+            const live=buySources[0]||null;
+            const buyPrice=Number(live?.price||aggregateBuy);
+            const profit=exit.value-buyPrice;
+            const roiPct=profit>0?profit/buyPrice*100:0;
+            const roiCeiling=Math.floor(exit.value/(1+rules.minRoiPct/100));
+            const profitCeiling=Math.floor(exit.value-rules.minAbsoluteProfit);
+            const maxBuyPrice=Math.max(0,Math.min(roiCeiling,profitCeiling));
+            const priceQualified=buyPrice>=rules.minPrice&&buyPrice<=rules.maxPrice&&buyPrice<=maxBuyPrice;
+            if(roiPct<rules.minRoiPct||profit<rules.minAbsoluteProfit) continue;
 
-            const personal = localMetrics[base.itemId] || {};
-            const personalDaily = Number(personal.sold7d || 0) > 0
-                ? Number(personal.sold7d || 0) / 7
-                : Number(personal.sold30d || 0) / 30;
-            const personalDemandQualified =
-                Number(personal.sold30d || 0) >= 5 ||
-                Number(personal.saleDays30d || 0) >= 3;
-            if (personalDemandQualified && personalDaily < rules.minDemandPerDay) continue;
+            const personal=localMetrics[id]||{};
+            const personalDaily=Number(personal.sold7d||0)>0?Number(personal.sold7d||0)/7:Number(personal.sold30d||0)/30;
+            const personalDemandQualified=Number(personal.sold30d||0)>=5||Number(personal.saleDays30d||0)>=3;
+            if(personalDemandQualified&&personalDaily<rules.minDemandPerDay) continue;
 
-            const sellerCount = Number(base.totalBazaars || 0);
-            const sellerConfidence = Math.min(100, 25 + Math.log10(sellerCount + 1) * 35);
-            const history = intelHistoryStats(intel, base.itemId);
-            const volatilityPenalty = Math.min(30, history.volatilityPct * 2);
-            const roiScore = Math.min(100, roiPct * 8);
-            const confidence = Math.max(0, Math.min(100,
-                fresh.score * 0.35 +
-                sellerConfidence * 0.35 +
-                Math.min(100, history.samples * 5) * 0.30
+            const sellerCount=Number(base.totalBazaars||0);
+            const history=intelHistoryStats(intel,id);
+            const priceStability=Math.max(0,1-Math.min(1,Number(history.volatilityPct||0)/30));
+            const marketDepthSignal=Math.min(1,Math.log10(1+sellerCount)/2);
+            const historySignal=Math.min(1,Number(history.samples||0)/12);
+            const personalSellThrough=1-Math.exp(-Math.max(0,personalDaily)*3);
+            const marketSellThrough=Math.max(0.10,Math.min(0.80,0.15+marketDepthSignal*0.25+historySignal*0.20+priceStability*0.20));
+            const sellThrough3d=personalDemandQualified?personalSellThrough:marketSellThrough;
+            const sellThrough3dPct=sellThrough3d*100;
+
+            const qtyCap=personalDemandQualified?Math.max(1,Math.min(10,Math.ceil(Math.max(personalDaily,0.25)*3))):(sellThrough3d>=0.60?2:1);
+            const recommendedQty=Math.max(1,Math.min(Number(live?.quantity||1),qtyCap));
+            const expectedProfit3d=Math.max(0,profit*recommendedQty*sellThrough3d);
+            const expectedProfitPerDay=expectedProfit3d/3;
+
+            const sellerConfidence=Math.min(100,25+Math.log10(sellerCount+1)*35);
+            const sourceFreshness=live?Math.max(0,100-Math.max(0,Number(live.ageSeconds||0)-15)*(100/Math.max(30,rules.maxListingAgeSec))):globalFresh.score;
+            const confidence=Math.max(0,Math.min(100,
+                sourceFreshness*0.40+sellerConfidence*0.25+Math.min(100,Number(history.samples||0)*6)*0.20+sellThrough3dPct*0.15
             ));
-            const demandScore = personalDemandQualified
-                ? Math.min(100, Math.log10(1 + personalDaily * 12) * 55)
-                : Math.min(100, sellerCount * 3);
-            const score = Math.max(0, Math.min(100,
-                roiScore * 0.45 +
-                confidence * 0.25 +
-                demandScore * 0.20 +
-                Math.min(100, sellerCount * 3) * 0.10 -
-                volatilityPenalty
+            const roiScore=Math.min(100,Math.max(0,roiPct)*4);
+            const conversionScore=Math.min(100,sellThrough3dPct);
+            const profitVelocityScore=Math.min(100,Math.log10(1+expectedProfitPerDay)*18);
+            const absoluteProfitScore=Math.min(100,Math.log10(1+Math.max(0,profit))*14);
+            const volatilityPenalty=Math.min(25,Number(history.volatilityPct||0)*0.75);
+            const score=Math.max(0,Math.min(100,
+                roiScore*0.32+conversionScore*0.32+profitVelocityScore*0.18+absoluteProfitScore*0.10+sourceFreshness*0.08-volatilityPenalty
             ));
 
             rows.push({
-                id: base.itemId,
-                name: base.itemName,
-                buyPrice: liveBuy,
-                bazaarAverage,
-                marketPrice,
-                sellerCount,
-                traderExit,
-                bestExit: exit.value,
-                bestExitRoute: exit.route,
-                profit,
-                roiPct,
-                score,
-                confidence,
-                freshness: fresh,
-                history,
-                enriched: Boolean(detail),
-                listingQty: Number(organicListing?.quantity || 0),
-                sellerId: organicListing?.sellerId || '',
-                sellerName: organicListing?.sellerName || '',
-                listingVerified: Boolean(organicListing),
-                listingAgeSeconds: organicListing ? listingAgeSeconds(organicListing) : Infinity,
-                personalDemandDaily: personalDaily,
-                personalDemandQualified
+                id,name:String(base.itemName||db.procurement?.catalog?.[id]?.name||('Item '+id)),
+                itemType:String(db.procurement?.catalog?.[id]?.type||''),
+                buyPrice,maxBuyPrice,bazaarAverage,marketPrice,sellerCount,traderExit,
+                bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,score,confidence,
+                freshness:globalFresh,history,enriched:Boolean(detail),
+                listingQty:Number(live?.quantity||0),sellerId:String(live?.sellerId||''),
+                sellerName:String(live?.sellerName||''),listingVerified:Boolean(live?.source==='Bazaar'&&live?.sellerId),
+                purchaseReady:Boolean(live&&priceQualified),purchaseSource:String(live?.source||'Research'),
+                purchaseAgeSeconds:Number(live?.ageSeconds??Infinity),recommendedQty,sellThrough3dPct,
+                conversionSource:personalDemandQualified?'PERSONAL SALES':'MARKET PROXY',
+                expectedProfit3d,expectedProfitPerDay,personalDemandDaily:personalDaily,personalDemandQualified
             });
         }
-
-        return rows.sort((a,b) =>
-            Number(b.personalDemandQualified) - Number(a.personalDemandQualified) ||
-            b.score - a.score ||
-            b.roiPct - a.roiPct ||
-            b.personalDemandDaily - a.personalDemandDaily ||
-            b.profit - a.profit
+        return rows.sort((a,b)=>
+            Number(b.purchaseReady)-Number(a.purchaseReady)||
+            b.score-a.score||b.expectedProfit3d-a.expectedProfit3d||b.roiPct-a.roiPct||b.confidence-a.confidence
         );
     }
 
