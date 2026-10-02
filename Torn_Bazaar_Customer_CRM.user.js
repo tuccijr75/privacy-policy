@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.5.4
+// @version      7.5.5
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.5-workflow-overhaul/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.5-workflow-overhaul/Torn_Bazaar_Customer_CRM.user.js
@@ -29,7 +29,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.5.4';
+    const VERSION = '7.5.5';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -10746,7 +10746,9 @@ function factionMemberSupplyFromApi(inventoryRows,ammoResponse,catalog,equipment
                 sealed,
                 addedAt:vault.entries[result.memberId]?.addedAt || nowIso(),
                 updatedAt:nowIso(),
-                lastUsedAt:nowIso()
+                lastUsedAt:nowIso(),
+                lastError:'',
+                lastErrorAt:null
             };
             vault.updatedAt=nowIso();
             saveFactionMemberKeyVault(vault);
@@ -10773,13 +10775,21 @@ function factionMemberSupplyFromApi(inventoryRows,ammoResponse,catalog,equipment
                 try {
                     const key = await decryptFactionVaultText(cryptoKey,entry.sealed);
                     const result = await importFactionMemberReadinessKey(key);
+                    if(asId(result.memberId)!==asId(entry.memberId)) {
+                        throw new Error('Key identity changed: saved for '+String(entry.memberName||entry.memberId)+' ['+asId(entry.memberId)+'] but Torn returned '+String(result.memberName||result.memberId)+' ['+asId(result.memberId)+'].');
+                    }
                     entry.memberName=result.memberName;
                     entry.lastUsedAt=nowIso();
                     entry.updatedAt=nowIso();
+                    entry.lastError='';
+                    entry.lastErrorAt=null;
                     ok++;
                     await flushDbWrites();
                 } catch(error) {
-                    failures.push(String(entry.memberName || entry.memberId || 'Unknown')+': '+(error?.message||String(error)));
+                    entry.lastError=error?.message||String(error);
+                    entry.lastErrorAt=nowIso();
+                    entry.updatedAt=nowIso();
+                    failures.push(String(entry.memberName || entry.memberId || 'Unknown')+': '+entry.lastError);
                 }
             }
 
@@ -10815,9 +10825,14 @@ function factionMemberSupplyFromApi(inventoryRows,ammoResponse,catalog,equipment
             render();
             const key = await decryptFactionVaultText(cryptoKey,entry.sealed);
             const result = await importFactionMemberReadinessKey(key);
+            if(asId(result.memberId)!==id) {
+                throw new Error('Key identity changed: saved for '+String(entry.memberName||id)+' ['+id+'] but Torn returned '+String(result.memberName||result.memberId)+' ['+asId(result.memberId)+'].');
+            }
             entry.memberName=result.memberName;
             entry.lastUsedAt=nowIso();
             entry.updatedAt=nowIso();
+            entry.lastError='';
+            entry.lastErrorAt=null;
             vault.updatedAt=nowIso();
             saveFactionMemberKeyVault(vault);
             await flushDbWrites();
@@ -10825,6 +10840,15 @@ function factionMemberSupplyFromApi(inventoryRows,ammoResponse,catalog,equipment
             render();
             return result;
         } catch(error) {
+            const vault=getFactionMemberKeyVault();
+            const entry=vault?.entries?.[id];
+            if(entry) {
+                entry.lastError=error?.message||String(error);
+                entry.lastErrorAt=nowIso();
+                entry.updatedAt=nowIso();
+                vault.updatedAt=nowIso();
+                saveFactionMemberKeyVault(vault);
+            }
             statusText='Saved member refresh failed: '+(error?.message||String(error));
             render();
             throw error;
@@ -12938,10 +12962,29 @@ function factionInventoryHtml(db) {
                             ? ' · prepared '+escapeHtml(fmtDate(member.profile.dataRequestPreparedAt))
                             : '';
                     const blood=member.profile?.bloodType ? ' · blood '+escapeHtml(member.profile.bloodType) : '';
+                    const keyEntry=factionMemberVaultEntry(member.memberId);
+                    const apiTag=keyEntry ? ' · API SAVED' : '';
+                    const apiError=keyEntry?.lastError
+                        ? '<div style="color:#e79a7b;font-size:10px;">API error: '+escapeHtml(String(keyEntry.lastError))+'</div>'
+                        : '';
+                    const s=member.stats||{};
+                    const statDetail=member.hasStats
+                        ? '<div style="color:#aaa;font-size:10px;">STR '+Number(s.strength||0).toLocaleString()+
+                            ' · DEF '+Number(s.defense||0).toLocaleString()+
+                            ' · SPD '+Number(s.speed||0).toLocaleString()+
+                            ' · DEX '+Number(s.dexterity||0).toLocaleString()+'</div>'
+                        : '';
+                    const source=member.profile?.source
+                        ? '<div style="color:#777;font-size:10px;">'+escapeHtml(String(member.profile.source))+
+                            (member.profile?.verifiedAt?' · '+escapeHtml(fmtDate(member.profile.verifiedAt)):'')+'</div>'
+                        : '';
                     return '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
                         '<div><b>'+escapeHtml(member.memberName)+'</b> · Lv '+Number(member.level||0)+
-                        '<div style="color:#888;">'+escapeHtml(member.readinessStatus)+' · '+(member.hasStats?Number(member.statProfile?.total||0).toLocaleString()+' stats':'stats missing')+blood+requested+'</div></div>'+
+                        '<div style="color:#888;">'+escapeHtml(member.readinessStatus)+' · '+(member.hasStats?Number(member.statProfile?.total||0).toLocaleString()+' stats':'stats missing')+blood+apiTag+requested+'</div>'+
+                        statDetail+source+apiError+'</div>'+
                         '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
+                            (keyEntry?'<button data-faction-member-refresh="'+escapeHtml(member.memberId)+'" style="'+btn(true)+'">Refresh Key</button>':'')+
+                            (keyEntry?'<button data-faction-member-remove-key="'+escapeHtml(member.memberId)+'" style="'+btn()+'">Remove Key</button>':'')+
                             '<button data-faction-member-request="'+escapeHtml(member.memberId)+'" style="'+btn(member.readinessStatus!=='READY FOR REVIEW')+'">Request Data</button>'+
                             '<button data-faction-member-import-reply="'+escapeHtml(member.memberId)+'" style="'+btn()+'">Paste Reply</button>'+
                             '<button data-faction-member-edit="'+escapeHtml(member.memberId)+'" style="'+btn()+'">Edit</button>'+
