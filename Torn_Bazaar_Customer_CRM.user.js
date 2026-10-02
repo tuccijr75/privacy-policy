@@ -39,6 +39,7 @@
     const BAZAAR_SELL_LOG_ID = 1226;
     const PENDING_COMPOSE_KEY = 'mm_bazaar_crm_pending_compose_v1';
     const PENDING_FIRST_SEND_KEY = 'mm_bazaar_crm_pending_first_send_v1';
+    const PENDING_FACTION_DATA_SEND_KEY = 'mm_bazaar_crm_pending_faction_data_send_v1';
     const PENDING_BAZAAR_ASSIST_KEY = 'mm_bazaar_crm_pending_bazaar_assist_v1';
     const FIRST_SYNC_LOOKBACK_MS = 24 * 60 * 60 * 1000;
     const CUSTOMER_REFRESH_LOOKBACK_MS = 72 * 60 * 60 * 1000;
@@ -8332,6 +8333,18 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
             GM_deleteValue(PENDING_FIRST_SEND_KEY);
         }
 
+        if (options?.trackFactionDataRequest) {
+            GM_setValue(PENDING_FACTION_DATA_SEND_KEY, {
+                memberId:id,
+                subject:payload.subject,
+                createdAt:Date.now(),
+                composeOpenedAt:Date.now(),
+                state:'awaiting-send'
+            });
+        } else {
+            GM_deleteValue(PENDING_FACTION_DATA_SEND_KEY);
+        }
+
         const url = 'https://www.torn.com/messages.php#/p=compose' +
             '&XID=' + encodeURIComponent(id) +
             '&subject=' + encodeURIComponent(payload.subject);
@@ -10757,12 +10770,12 @@ function composeFactionMemberDataRequest(memberId) {
         db.factionInventory.memberReadiness.profiles[id]={
             ...profile,
             memberId:id,
-            dataRequestAt:nowIso(),
+            dataRequestPreparedAt:nowIso(),
             source:String(profile.source||'member message request')
         };
         dbSave(db);
         const msg=factionMemberDataRequestTemplate(member);
-        composeMessage(id,msg.subject,msg.body);
+        composeMessage(id,msg.subject,msg.body,'',{trackFactionDataRequest:true});
         statusText='Readiness-data message prepared for '+String(member.memberName||id)+'. Send remains manual.';
     }
 
@@ -12101,7 +12114,8 @@ function composeFactionMemberBuildMessage(memberId) {
         const missingRows = memberReadiness.filter(row=>row.readinessStatus==='MISSING DATA'||row.readinessStatus==='STALE DATA').map(row=>({
             'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Issue':row.readinessStatus,
             'Battle Stats Present':row.hasStats?'YES':'NO', 'Equipment Present':row.hasEquipment?'YES':'NO',
-            'Data Request Sent':String(row.profile?.dataRequestAt||''), 'Verified At':String(row.profile?.verifiedAt||''), 'Action':row.action
+            'Data Request Prepared':String(row.profile?.dataRequestPreparedAt||''), 'Data Request Sent':String(row.profile?.dataRequestAt||''),
+            'Verified At':String(row.profile?.verifiedAt||''), 'Action':row.action
         }));
         const warPrepRows = memberReadiness.map(row=>({
             'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Battle Profile':String(row.statProfile?.label||'UNKNOWN'),
@@ -12777,7 +12791,11 @@ function factionInventoryHtml(db) {
                     '<button id="mm-faction-request-next" '+(nextMissing?'':'disabled')+' style="'+btn(Boolean(nextMissing))+'">Request Next Missing</button>'+
                 '</div>'+
                 (visible.length?visible.map(member=>{
-                    const requested=member.profile?.dataRequestAt ? ' · requested '+escapeHtml(fmtDate(member.profile.dataRequestAt)) : '';
+                    const requested=member.profile?.dataRequestAt
+                        ? ' · sent '+escapeHtml(fmtDate(member.profile.dataRequestAt))
+                        : member.profile?.dataRequestPreparedAt
+                            ? ' · prepared '+escapeHtml(fmtDate(member.profile.dataRequestPreparedAt))
+                            : '';
                     const blood=member.profile?.bloodType ? ' · blood '+escapeHtml(member.profile.bloodType) : '';
                     return '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
                         '<div><b>'+escapeHtml(member.memberName)+'</b> · Lv '+Number(member.level||0)+
@@ -15534,6 +15552,92 @@ function render() {
         });
     }
 
+function completeFactionDataRequestSend(memberId, source = 'auto-detect') {
+        const id=asId(memberId);
+        const db=dbLoad();
+        const profile=db.factionInventory?.memberReadiness?.profiles?.[id];
+        const member=db.factionInventory?.memberReadiness?.roster?.[id];
+        if(!profile && !member) {
+            GM_deleteValue(PENDING_FACTION_DATA_SEND_KEY);
+            return false;
+        }
+        if(!db.factionInventory.memberReadiness.profiles[id]) {
+            db.factionInventory.memberReadiness.profiles[id]={memberId:id};
+        }
+        db.factionInventory.memberReadiness.profiles[id].dataRequestAt=nowIso();
+        db.factionInventory.memberReadiness.profiles[id].dataRequestSendSource=String(source||'');
+        dbSave(db);
+        GM_deleteValue(PENDING_FACTION_DATA_SEND_KEY);
+        statusText='Readiness-data request sent to '+String(member?.memberName||id)+'.';
+        try { render(); } catch {}
+        return true;
+    }
+
+function installFactionDataRequestSendDetector() {
+        if(!location.pathname.includes('messages.php')) return;
+        const pending=GM_getValue(PENDING_FACTION_DATA_SEND_KEY,null);
+        const id=asId(pending?.memberId);
+        const createdAt=Number(pending?.createdAt||0);
+        if(!id||!createdAt||Date.now()-createdAt>15*60*1000) {
+            if(pending) GM_deleteValue(PENDING_FACTION_DATA_SEND_KEY);
+            return;
+        }
+
+        let armed=true, clickedAt=0, verifyTimer=null, observer=null;
+        const cleanup=keepPending=>{
+            armed=false;
+            if(verifyTimer) clearInterval(verifyTimer);
+            if(observer) observer.disconnect();
+            document.removeEventListener('click',clickHandler,true);
+            document.removeEventListener('submit',submitHandler,true);
+            if(!keepPending) GM_deleteValue(PENDING_FACTION_DATA_SEND_KEY);
+        };
+        const verify=()=>{
+            if(!armed||!clickedAt) return;
+            const confirmed=
+                messageSentConfirmationVisible() ||
+                !location.hash.includes('compose') ||
+                !composeStillVisible(pending.subject);
+            if(confirmed) {
+                cleanup(true);
+                completeFactionDataRequestSend(id,'messages-page-send-confirmed');
+                return;
+            }
+            if(Date.now()-clickedAt>=5000) {
+                clickedAt=0;
+                if(verifyTimer){clearInterval(verifyTimer);verifyTimer=null;}
+                GM_setValue(PENDING_FACTION_DATA_SEND_KEY,{...pending,state:'awaiting-send',lastFailedVerifyAt:Date.now()});
+            }
+        };
+        const arm=()=>{
+            if(!armed||clickedAt) return;
+            clickedAt=Date.now();
+            GM_setValue(PENDING_FACTION_DATA_SEND_KEY,{...pending,state:'send-clicked',sendClickedAt:clickedAt});
+            verifyTimer=setInterval(verify,250);
+            setTimeout(verify,350);setTimeout(verify,1200);setTimeout(verify,3000);setTimeout(verify,4800);
+        };
+        const clickHandler=event=>{
+            if(!armed) return;
+            const el=event.target?.closest?.('button, input[type="submit"], [role="button"]');
+            if(!el||!visible(el)) return;
+            const text=String(el.innerText||el.value||el.getAttribute?.('aria-label')||el.getAttribute?.('title')||'').trim().toLowerCase();
+            if(/(^|\s)send(\s|$)|send message/.test(text)&&!/search|money|cash|trade|gift/.test(elementMeta(el))) arm();
+        };
+        const submitHandler=event=>{
+            if(!armed) return;
+            const form=event.target;
+            if(!(form instanceof HTMLFormElement)) return;
+            const send=visibleSendButton();
+            if(send&&(form.contains(send)||composeStillVisible(pending.subject))) arm();
+        };
+        document.addEventListener('click',clickHandler,true);
+        document.addEventListener('submit',submitHandler,true);
+        observer=new MutationObserver(()=>{if(armed&&clickedAt)verify();});
+        observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','disabled']});
+        setTimeout(()=>{if(armed&&!clickedAt)cleanup(true);},5*60*1000);
+    }
+
+
     function installFirstMessageSendDetector() {
         if (!location.pathname.includes('messages.php')) return;
 
@@ -15643,6 +15747,7 @@ function render() {
     function runPageHelpers() {
         fillMessageComposer();
         installFirstMessageSendDetector();
+        installFactionDataRequestSendDetector();
         fillRefundForm();
         setTimeout(installBazaarListingAssistant, 450);
     }
