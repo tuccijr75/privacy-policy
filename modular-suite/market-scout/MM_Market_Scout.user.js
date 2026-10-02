@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         MM Torn Market Scout
 // @namespace    manic-mike.torn.market-scout
-// @version      8.0.0-alpha.7
+// @version      8.0.0-alpha.8
 // @description  Modular acquisition tool for verified Bazaar, Item Market and cached Travel opportunities.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.4
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/market-scout/MM_Market_Scout.logic.js
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/market-scout/MM_Market_Scout.live.js
 // @grant        GM_xmlhttpRequest
@@ -480,7 +480,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM Market Scout</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.7 · task-first acquisition</div></div>'+
+        '<div><b style="font-size:15px;">MM Market Scout</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.8 · task-first acquisition</div></div>'+
         '<button id="mm-scout-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
