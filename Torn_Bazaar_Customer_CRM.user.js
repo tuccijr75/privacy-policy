@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.19
+// @version      7.4.20
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -29,7 +29,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.19';
+    const VERSION = '7.4.20';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -373,6 +373,7 @@
                 lastSyncAt: null,
                 nextUsefulRefreshAt: null,
                 diagnostics: [],
+                sourceCategorySummary: {},
                 settings: {
                     autoSync: true,
                     selectedCategory: 'all',
@@ -600,6 +601,9 @@
         db.factionInventory.lastSyncAt = db.factionInventory.lastSyncAt || null;
         db.factionInventory.nextUsefulRefreshAt = db.factionInventory.nextUsefulRefreshAt || null;
         db.factionInventory.diagnostics = Array.isArray(db.factionInventory.diagnostics) ? db.factionInventory.diagnostics.slice(0,40) : [];
+        db.factionInventory.sourceCategorySummary = db.factionInventory.sourceCategorySummary && typeof db.factionInventory.sourceCategorySummary === 'object'
+            ? db.factionInventory.sourceCategorySummary
+            : {};
         db.factionInventory.settings = db.factionInventory.settings && typeof db.factionInventory.settings === 'object' ? db.factionInventory.settings : {};
         db.factionInventory.settings.autoSync = db.factionInventory.settings.autoSync === true;
         db.factionInventory.settings.selectedCategory = ['all',...FACTION_INVENTORY_CATEGORIES].includes(String(db.factionInventory.settings.selectedCategory || 'all')) ? String(db.factionInventory.settings.selectedCategory || 'all') : 'all';
@@ -9303,6 +9307,9 @@
             lastSyncAt: newState.lastSyncAt || null,
             nextUsefulRefreshAt: newState.nextUsefulRefreshAt || null,
             diagnostics: Array.isArray(newState.diagnostics) ? newState.diagnostics : [],
+            sourceCategorySummary: newState.sourceCategorySummary && typeof newState.sourceCategorySummary === 'object'
+                ? newState.sourceCategorySummary
+                : {},
             settings: newState.settings && typeof newState.settings === 'object' ? newState.settings : {}
         };
 
@@ -9315,6 +9322,7 @@
             out.inventoryTimestamp = oldState.inventoryTimestamp || out.inventoryTimestamp;
             out.lastSyncAt = oldState.lastSyncAt || out.lastSyncAt;
             out.nextUsefulRefreshAt = oldState.nextUsefulRefreshAt || out.nextUsefulRefreshAt;
+            out.sourceCategorySummary = deepClone(oldState.sourceCategorySummary || out.sourceCategorySummary || {});
         }
 
         const thresholds = {};
@@ -9464,6 +9472,7 @@
         let offset = 0;
         let pages = 0;
         let inventoryTimestamp = 0;
+        let metadataTotal = 0;
 
         while (pages < 25) {
             const url = new URL(API_BASE + '/faction/inventory');
@@ -9495,12 +9504,13 @@
             pages++;
 
             const total = factionInventoryTotalFromResponse(data);
+            metadataTotal = Math.max(metadataTotal, total);
             if (!pageRows.length || pageRows.length < 100 || (total > 0 && offset + pageRows.length >= total)) break;
             offset += pageRows.length;
         }
 
         if (pages >= 25) throw new Error('Faction inventory pagination exceeded safety limit for ' + cat + '.');
-        return { category: cat, rows, inventoryTimestamp };
+        return { category: cat, rows, inventoryTimestamp, metadataTotal, pages };
     }
 
     function normalizeFactionInventoryResults(categoryResults, fetchedAt = Date.now()) {
@@ -9688,26 +9698,53 @@
             const current = normalizeFactionInventoryResults(groups, fetchedAt);
             const db = dbLoad();
             const state = db.factionInventory;
+            const sourceCategorySummary = Object.fromEntries(groups.map(group => [
+                String(group.category || ''),
+                {
+                    rows: Array.isArray(group.rows) ? group.rows.length : 0,
+                    metadataTotal: Math.max(0, Number(group.metadataTotal || 0)),
+                    pages: Math.max(0, Number(group.pages || 0)),
+                    inventoryTimestamp: Math.max(0, Number(group.inventoryTimestamp || 0))
+                }
+            ]));
             const ledger = recordFactionInventorySnapshot(state, current, sourceAt, fetchedAt);
 
             state.current = current;
+            state.sourceCategorySummary = sourceCategorySummary;
             state.inventoryTimestamp = sourceAt ? new Date(sourceAt).toISOString() : null;
             state.lastSyncAt = new Date(fetchedAt).toISOString();
             state.nextUsefulRefreshAt = new Date(Math.max(fetchedAt, sourceAt + FACTION_INVENTORY_SYNC_INTERVAL_MS)).toISOString();
+            const sourceCountText = FACTION_INVENTORY_CATEGORIES
+                .map(category => {
+                    const summary = sourceCategorySummary[category] || {};
+                    return category + '=' + Number(summary.rows || 0) + '/' + Number(summary.metadataTotal || 0);
+                })
+                .join(', ');
+            const weaponsSummary = sourceCategorySummary.weapons || {};
+            const weaponWarning = Number(weaponsSummary.rows || 0) === 0
+                ? ' WARNING: Torn returned zero weapon rows for cat=weapons.'
+                : '';
             addFactionInventoryDiagnostic(
                 state,
-                'Faction inventory sync: ' + Object.keys(current).length + ' item/category rows; ' +
+                'Faction inventory sync: ' + Object.keys(current).length + ' item/category rows; source [' + sourceCountText + ']; ' +
                 ledger.eventsAdded + ' change event' + (ledger.eventsAdded === 1 ? '' : 's') +
-                (ledger.snapshotAdded ? '; new source snapshot.' : '; source cache unchanged.')
+                (ledger.snapshotAdded ? '; new source snapshot.' : '; source cache unchanged.') +
+                weaponWarning
             );
 
             dbSave(db);
             await flushDbWrites();
 
             if (!silent) {
+                const weaponsSummary = sourceCategorySummary.weapons || {};
+                const weaponStatus = 'weapons ' + Number(weaponsSummary.rows || 0) + '/' + Number(weaponsSummary.metadataTotal || 0);
                 statusText =
                     'Faction Inventory synced: ' + Object.keys(current).length + ' item/category rows · ' +
-                    ledger.eventsAdded + ' change event' + (ledger.eventsAdded === 1 ? '' : 's') + '.';
+                    weaponStatus + ' · ' +
+                    ledger.eventsAdded + ' change event' + (ledger.eventsAdded === 1 ? '' : 's') +
+                    (Number(weaponsSummary.rows || 0) === 0
+                        ? ' · Torn source returned zero weapon rows.'
+                        : '.');
                 render();
             }
             return {
@@ -12654,6 +12691,21 @@
         const keyMode = getFactionApiKey() ? 'Dedicated faction key' : getApiKey() ? 'Primary CRM key fallback — may lack Faction → Inventory access' : 'No key';
         const nextRefresh = state.nextUsefulRefreshAt ? fmtDate(state.nextUsefulRefreshAt) : '—';
         const categories = ['all',...FACTION_INVENTORY_CATEGORIES];
+        const sourceCategorySummary = state.sourceCategorySummary && typeof state.sourceCategorySummary === 'object'
+            ? state.sourceCategorySummary
+            : {};
+        const currentCategoryCounts = Object.fromEntries(
+            FACTION_INVENTORY_CATEGORIES.map(category => [
+                category,
+                allRows.filter(row => String(row.category || '') === category).length
+            ])
+        );
+        const sourceCountText = FACTION_INVENTORY_CATEGORIES
+            .map(category => {
+                const source = sourceCategorySummary[category] || {};
+                return category + ' ' + Number(source.rows || 0) + '/' + Number(source.metadataTotal || 0);
+            })
+            .join(' · ');
         const policy = FACTION_INVENTORY_POLICY;
 
         const summary = card(
@@ -12663,7 +12715,7 @@
                     '<label style="font-size:10px;color:#aaa;display:flex;align-items:center;gap:4px;">Category <select id="mm-faction-category" style="'+inputCss()+'padding:5px 7px;min-width:150px;">'+
                         categories.map(cat => '<option value="'+escapeHtml(cat)+'" '+(selectedCategory===cat?'selected':'')+'>'+escapeHtml(cat==='all'?'All categories':cat)+'</option>').join('')+
                     '</select></label>'+                    '<div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;">'+
-                        categories.map(cat => '<button type="button" data-faction-category-link="'+escapeHtml(cat)+'" style="'+btn(selectedCategory===cat)+'padding:5px 7px;">'+escapeHtml(cat==='all'?'All':cat)+'</button>').join('')+
+                        categories.map(cat => '<button type="button" data-faction-category-link="'+escapeHtml(cat)+'" style="'+btn(selectedCategory===cat)+'padding:5px 7px;">'+escapeHtml(cat==='all'?'All ('+allRows.length+')':cat+' ('+Number(currentCategoryCounts[cat]||0)+')')+'</button>').join('')+
                     '</div>'+
                     '<button id="mm-faction-sync" style="'+btn(true)+'">Sync Armory</button>'+
                     '<button id="mm-faction-market" style="'+btn()+'">Refresh Market Intel</button>'+
@@ -12680,6 +12732,7 @@
             '</div>'+
             '<div style="font-size:11px;color:#aaa;margin-top:7px;line-height:1.55;">'+
                 'API: <b>'+escapeHtml(keyMode)+'</b> · Torn source snapshot: <b>'+escapeHtml(fmtDate(state.inventoryTimestamp))+'</b> · Last fetch: '+escapeHtml(fmtDate(state.lastSyncAt))+'<br>'+
+                'Source rows / metadata: <b>'+escapeHtml(sourceCountText || 'No source-category diagnostics yet')+'</b><br>'+
                 'Next useful refresh: ~'+escapeHtml(nextRefresh)+' because Torn caches the inventory selection for one hour. CRM snapshots remain local and historical.<br>'+
                 'Planning basis: available for armor/temporary weapons, owned for medical/consumables. <b>Read-only:</b> this module never gives, retrieves, moves, buys, or consumes faction items.'+
             '</div>'+
