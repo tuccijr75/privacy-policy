@@ -129,7 +129,8 @@
     const FACTION_INVENTORY_SNAPSHOT_MAX = 192;
     const FACTION_INVENTORY_EVENT_MAX = 2500;
     const FACTION_INVENTORY_CATEGORIES = Object.freeze([
-        'weapons','armor','temporary','medical','consumables'
+        'weapons','armor','temporary','medical','consumables',
+        'drugs','boosters','utilities','loot'
     ]);
     const FACTION_INVENTORY_LOAN_CATEGORIES = Object.freeze(['weapons','armor','temporary']);
     const FACTION_PURCHASE_TRANSACTION_LIMIT = 5_000_000;
@@ -10735,7 +10736,10 @@ function factionMemberDataRequestTemplate(member) {
                 'SFAK:\nFAK:\nMORPHINE:\nIPECAC:\nEMPTY BLOOD BAGS:\n' +
                 'FILLED BLOOD BAGS: type + count\n' +
                 'TEMP STOCK: Flash / Smoke / Tear Gas / HEG / Grenade / Pepper Spray + quantities\n' +
-                'CONSUMABLES: energy drinks / sweets / alcohol / other useful war supplies + quantities\n' +
+                'CONSUMABLES: energy drinks / sweets / alcohol + quantities\n' +
+                'DRUGS: Xanax / other relevant drugs + quantities\n' +
+                'BOOSTERS: relevant booster items + quantities\n' +
+                'UTILITIES / OTHER WAR SUPPLIES:\n' +
                 'WAR ROLE / PREFERENCE:\nNOTES:\n\n' +
                 'If a field is unknown, leave it blank. This is only for faction readiness/build planning.\n\n' +
                 '— Manic Mike'
@@ -10872,6 +10876,9 @@ function importFactionMemberMessageReply(memberId,rawReply) {
             },
             temporaryStock:String(map.TEMP_STOCK||map.TEMPORARY_STOCK||'').trim(),
             consumables:String(map.CONSUMABLES||map.CONSUMABLE||'').trim(),
+            drugs:String(map.DRUGS||map.DRUG||'').trim(),
+            boosters:String(map.BOOSTERS||map.BOOSTER||'').trim(),
+            utilities:String(map.UTILITIES_OTHER_WAR_SUPPLIES||map.UTILITIES||map.UTILITY||'').trim(),
             updatedAt:nowIso()
         };
         const ipecacCount=supply.medical.ipecac;
@@ -11465,7 +11472,7 @@ function composeFactionMemberBuildMessage(memberId) {
         const action = String(actionRaw || '').trim().toUpperCase();
         const itemName = prompt('Item / subject name (for access/readiness audits, describe the armory or check):', '') ?? '';
         const itemId = prompt('Item ID (optional):', '') ?? '';
-        const category = prompt('Category (weapons, armor, temporary, medical, consumables, access, readiness, other):', '') ?? '';
+        const category = prompt('Category (all supported faction inventory categories, access, readiness, other):', '') ?? '';
         const quantityRaw = prompt('Quantity (0 if not applicable):', '0');
         if (quantityRaw == null) return;
         const quantity = Math.max(0, Number(quantityRaw || 0));
@@ -12070,6 +12077,9 @@ function composeFactionMemberBuildMessage(memberId) {
             'Filled Blood Bags':String(row.profile?.supplyReadiness?.medical?.filledBloodBags||''),
             'Temporary Stock':String(row.profile?.supplyReadiness?.temporaryStock||''),
             'Consumables':String(row.profile?.supplyReadiness?.consumables||''),
+            'Drugs':String(row.profile?.supplyReadiness?.drugs||''),
+            'Boosters':String(row.profile?.supplyReadiness?.boosters||''),
+            'Utilities / Other':String(row.profile?.supplyReadiness?.utilities||''),
             'Faction Loans':Number(row.loans||0), 'Action':row.action
         }));
         const battleStatRows = memberReadiness.map(row=>({
@@ -12091,7 +12101,9 @@ function composeFactionMemberBuildMessage(memberId) {
             'Member ID':asId(row.memberId), 'Member':String(row.memberName||''), 'Level':Number(row.level||0), 'Battle Profile':String(row.statProfile?.label||'UNKNOWN'),
             'Medical':String(row.profile?.medicalStatus||'UNKNOWN'), 'Ipecac':String(row.profile?.ipecacStatus||'UNKNOWN'),
             'Blood Type':String(row.profile?.bloodType||''), 'Temporary Stock':String(row.profile?.supplyReadiness?.temporaryStock||''),
-            'Consumables':String(row.profile?.supplyReadiness?.consumables||''), 'Faction Loans':Number(row.loans||0),
+            'Consumables':String(row.profile?.supplyReadiness?.consumables||''), 'Drugs':String(row.profile?.supplyReadiness?.drugs||''),
+            'Boosters':String(row.profile?.supplyReadiness?.boosters||''), 'Utilities / Other':String(row.profile?.supplyReadiness?.utilities||''),
+            'Faction Loans':Number(row.loans||0),
             'Equipment Plan':row.equipmentPlan, 'Readiness':row.readinessStatus, 'War Role':String(row.profile?.warRole||'')
         }));
         const armoryAllocationRows = memberReadiness.filter(row=>row.hasStats).map(row=>{
