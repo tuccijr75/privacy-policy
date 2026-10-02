@@ -1,6 +1,6 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.2**
+Status: **NON-PRODUCTION / alpha.3**
 
 ## Scope implemented
 
@@ -91,3 +91,19 @@ Static checks added/passed:
 - Peace 20-member equipment pool remains 7 min / 11 upper band;
 - War unknown-member equipment coverage becomes 22 (20 + two spares);
 - War FAK/SFAK targets = 200 and Xanax = 60 for 20 participants.
+
+
+## Alpha.3 compact interface — 2026-10-02
+
+Live UI feedback: member cards used excessive vertical space and a two-column content/actions layout. Refined all main views to compact, content-sized modules:
+- reduced panel/header/card/button padding and vertical gaps;
+- removed the member card's permanent left/right two-column layout;
+- member STR / DEF / SPD / DEX / Total / Loans / Source each render as their own compact tile;
+- member actions remain inline in the header and gear/supplies stay collapsed until needed;
+- Builds renders each equipment slot as its own compact box with Current / Floor / Target tiles;
+- Stock renders Owned / Available / Loaned as separate tiles;
+- Minimums renders Current / Min / Max / Short as separate tiles and collapses methodology under Basis;
+- tiles use content-sized wrapping instead of expanding to fill arbitrary columns;
+- responsive mobile widths retain wrapping without forcing tall two-column rows.
+
+Static syntax acceptance: PASS.
