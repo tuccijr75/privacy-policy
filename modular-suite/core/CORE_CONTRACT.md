@@ -4,14 +4,15 @@
 
 `MM_Torn_Core.js` is a shared `@require` library used by the separate domain userscripts. It is not a fifth heavy UI application.
 
-Current alpha has no automatic side effects:
+Current alpha keeps automatic side effects narrow:
 - opens the existing CRM IndexedDB without specifying a higher version;
 - aborts rather than creating the legacy DB if it does not exist;
 - reads `mm_bazaar_crm_idb/state/main` on explicit request;
 - writes only when a domain tool explicitly calls the atomic domain update API;
 - performs no network calls by itself;
-- starts no timers;
-- exposes no raw credential value.
+- exposes no raw credential value;
+- may create the shared **MM Torn module dock** in the currently loaded Torn page DOM when a module registers a launcher;
+- uses only one-shot animation-frame / short delayed adoption checks for the legacy CRM launcher, not a polling loop or background Torn request.
 
 ## Credential decision
 
@@ -81,3 +82,27 @@ Business Intelligence remains read-only. Shared Core configuration uses the `cor
 ## Freshness observability
 
 Core exposes a read-only freshness snapshot for unified refresh, acquisitions, Item Market, Weav3r generation/global market, travel, faction inventory and faction roster timestamps. This is observability only; Core does not automatically refresh any source.
+
+
+## Shared module dock
+
+Core owns the visual launcher contract for split modules so each product does not create a different floating button.
+
+API:
+- `registerDockLauncher({ id, label, accent, icon, onClick, element })`
+- `setDockLauncherActive(id, active)`
+- `positionDock()`
+- `adoptLegacyCrmLauncher()`
+
+Rules:
+- launchers are approximately 42×42 px and use original MM Torn SVG line icons;
+- Torn sprites, official icons, artwork and asset files are not copied;
+- colors remain dark / muted and Torn-adjacent, but each MM module has a distinct accent;
+- the dock attempts to sit beside the currently visible Torn bottom toolbar and falls back to the lower-right corner;
+- module buttons can be drag-reordered inside the dock;
+- order is stored only as non-sensitive local UI state in `localStorage` under `mm_torn_module_dock_order_v1`;
+- credentials and operational data are never stored through the dock;
+- dock operations are DOM-only and perform no network request;
+- future Bazaar Manager / Business Intelligence launchers should register here rather than inventing new fixed-position controls.
+
+The legacy CRM launcher may be temporarily adopted into this dock during migration. This is a bridge only and does not make the legacy CRM a modular product.
