@@ -495,6 +495,10 @@
         db.syncState.lastUnifiedSyncAt = db.syncState.lastUnifiedSyncAt || null;
         db.syncState.lastUnifiedSyncError = db.syncState.lastUnifiedSyncError || null;
         db.syncState.backgroundRefreshEnabled = db.syncState.backgroundRefreshEnabled === true;
+        if (db.syncState.workflowUiVersion !== '7.5') {
+            db.syncState.backgroundRefreshEnabled = false;
+            db.syncState.workflowUiVersion = '7.5';
+        }
         db.syncState.dashboardSnapshot = db.syncState.dashboardSnapshot && typeof db.syncState.dashboardSnapshot === 'object'
             ? db.syncState.dashboardSnapshot
             : null;
@@ -14431,18 +14435,78 @@ function dealsSimpleHtml(db) {
     }
 
     
-function reportsSimpleHtml(db) {
-        const tasks=[['summary','Summary'],['exports','Exports'],['sales','Sales'],['analytics','Analytics']];
+
+function customersSimpleHtml(db) {
+        const tasks=[
+            ['list','Customers'],
+            ['restock','Restock Alerts'],
+            ['coupons','Coupons'],
+            ['refunds','Refunds']
+        ];
         let body='';
-        if(reportWorkflow==='exports') body=financialExportCard();
-        else if(reportWorkflow==='sales') body=salesHtml(db);
-        else if(reportWorkflow==='analytics') body=analyticsHtml(db);
-        else {
+
+        if(customerWorkflow==='restock') {
+            const subs=Object.values(db.subscribers||{}).slice().sort((a,b)=>String(a.name||a.id).localeCompare(String(b.name||b.id))).slice(0,15);
+            body=card('<b>Restock Alerts</b>'+
+                (subs.length?subs.map(sub=>{
+                    const matching=currentBazaarInventoryRows(db,sub);
+                    return '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+                        '<div><b>'+escapeHtml(displayUsername(sub)||('['+sub.id+']'))+'</b><div style="color:#888;">'+matching.length+' matching Bazaar item'+(matching.length===1?'':'s')+
+                        (sub.pendingNotification?' · message prepared':'')+'</div></div>'+
+                        '<button data-action="notify-inventory" data-id="'+escapeHtml(sub.id)+'" style="'+btn(true)+'">Prepare Alert</button>'+
+                    '</div>';
+                }).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No restock subscribers.</div>')
+            );
+        } else if(customerWorkflow==='coupons') {
+            const coupons=Object.values(db.coupons||{}).slice().sort((a,b)=>String(a.playerName||'').localeCompare(String(b.playerName||''))).slice(0,15);
+            body=card('<b>Coupons</b>'+
+                (coupons.length?coupons.map(c=>{
+                    const q=couponQualification(db,c);
+                    return '<div style="border-top:1px solid #303030;padding:7px 0;font-size:11px;"><b>'+escapeHtml(c.playerName)+' ['+escapeHtml(c.playerId)+']</b> · '+escapeHtml(c.code)+
+                        '<div style="color:#888;">'+(q.qualified?money(q.cashback)+' eligible':'Not eligible')+' · '+couponRemaining(c)+' use(s) left</div></div>';
+                }).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No coupons.</div>')
+            );
+        } else if(customerWorkflow==='refunds') {
+            const refunds=Object.values(db.refunds||{}).slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,15);
+            body=card('<b>Refunds</b>'+
+                (refunds.length?refunds.map(r=>
+                    '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+                        '<div><b>'+escapeHtml(r.playerName)+' · '+money(r.amount)+'</b><div style="color:#888;">'+escapeHtml(r.status)+' · '+escapeHtml(fmtDate(r.createdAt))+'</div></div>'+
+                        (r.status==='pending'?'<div style="display:flex;gap:4px;"><button data-action="open-refund" data-refund="'+escapeHtml(r.id)+'" style="'+btn(true)+'">Open</button><button data-action="complete-refund" data-refund="'+escapeHtml(r.id)+'" style="'+btn()+'">Paid</button></div>':'')+
+                    '</div>'
+                ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No refunds.</div>')
+            );
+        } else {
+            const rfm=customerRfmRows(db).slice().sort((a,b)=>b.monetary-a.monetary).slice(0,12);
+            body=card(
+                '<div style="display:flex;gap:5px;margin-bottom:7px;"><input id="mm-add-id" placeholder="Player ID" style="'+inputCss()+'flex:1;"><button id="mm-add-customer" style="'+btn(true)+'">Add Customer</button></div>'+
+                (rfm.length?rfm.map(c=>
+                    '<div style="border-top:1px solid #303030;padding:7px 0;font-size:11px;"><b>'+escapeHtml(c.name)+' ['+escapeHtml(c.id)+']</b> · '+escapeHtml(c.segment)+' · '+money(c.monetary)+' spend</div>'
+                ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No customer history yet.</div>')
+            );
+        }
+
+        return '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px;">'+
+            tasks.map(([id,label])=>'<button data-customer-workflow="'+id+'" style="'+btn(customerWorkflow===id)+'">'+label+'</button>').join('')+
+            '<span style="flex:1;"></span><button data-smart-refresh style="'+btn()+'">Refresh Data</button>'+
+        '</div>'+body;
+    }
+
+
+function reportsSimpleHtml(db) {
+        const tasks=[['summary','Summary'],['exports','Export']];
+        let body='';
+        if(reportWorkflow==='exports') {
+            body=financialExportCard();
+        } else {
             const rows=advancedInventoryRows(db);
             const brief=ownerBriefing(db,rows);
             const grossRevenue=rows.reduce((sum,r)=>sum+Number(r.realized?.revenue||0),0);
             const grossCogs=rows.reduce((sum,r)=>sum+Number(r.realized?.cogs||0),0);
             const demand=rows.filter(r=>Number(r.sold30d||0)>0).sort((a,b)=>Number(b.daily||0)-Number(a.daily||0)).slice(0,6);
+            const roi=rows.filter(r=>Number(r.realized?.cogs||0)>0)
+                .map(r=>({...r,roiPct:Number(r.realized?.grossProfit||0)/Math.max(1,Number(r.realized?.cogs||0))*100}))
+                .sort((a,b)=>b.roiPct-a.roiPct).slice(0,6);
             body='<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;">'+
                 simpleMetric('Revenue',money(grossRevenue))+
                 simpleMetric('COGS',money(grossCogs))+
@@ -14451,11 +14515,14 @@ function reportsSimpleHtml(db) {
             '</div>'+
             card('<b>Highest Demand</b>'+
                 (demand.length?demand.map((r,i)=>'<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>#'+(i+1)+' '+escapeHtml(r.name)+'</b> · '+Number(r.daily||0).toFixed(2)+'/day · Gross '+money(r.realized?.grossProfit||0)+'</div>').join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">More sales history is needed.</div>')
+            )+
+            card('<b>Highest Realized ROI</b>'+
+                (roi.length?roi.map((r,i)=>'<div style="font-size:11px;border-top:1px solid #303030;padding:6px 0;"><b>#'+(i+1)+' '+escapeHtml(r.name)+'</b> · '+Number(r.roiPct||0).toFixed(1)+'% · Gross '+money(r.realized?.grossProfit||0)+'</div>').join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">Matched purchase history is needed.</div>')
             );
         }
         return '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px;">'+
             tasks.map(([id,label])=>'<button data-report-workflow="'+id+'" style="'+btn(reportWorkflow===id)+'">'+label+'</button>').join('')+
-        '</div><div style="max-height:470px;overflow:auto;padding-right:2px;">'+body+'</div>';
+        '</div>'+body;
     }
 
     function moreSimpleHtml(db) {
@@ -14911,7 +14978,8 @@ function render() {
             const value=String(root.querySelector('#mm-faction-api-key')?.value||'').trim();
             if(value)setFactionApiKey(value);
             const db=dbLoad();
-            db.factionInventory.settings.autoSync=Boolean(root.querySelector('#mm-faction-auto-sync')?.checked);
+            const factionAuto=root.querySelector('#mm-faction-auto-sync');
+            if(factionAuto) db.factionInventory.settings.autoSync=Boolean(factionAuto.checked);
             db.factionInventory.settings.updatedAt=nowIso();
             dbSave(db);
             statusText=value?'Faction inventory API key saved.':'Faction inventory settings saved.';
@@ -15108,8 +15176,8 @@ function render() {
                 repo: root.querySelector('#mm-gh-repo')?.value || '',
                 branch: root.querySelector('#mm-gh-branch')?.value || 'main',
                 folder: root.querySelector('#mm-gh-folder')?.value || 'crm-sync',
-                autoSync: Boolean(root.querySelector('#mm-gh-auto')?.checked),
-                encryptedFullBackup: Boolean(root.querySelector('#mm-gh-full')?.checked)
+                autoSync: root.querySelector('#mm-gh-auto') ? Boolean(root.querySelector('#mm-gh-auto').checked) : Boolean(getGithubSettings().autoSync),
+                encryptedFullBackup: root.querySelector('#mm-gh-full') ? Boolean(root.querySelector('#mm-gh-full').checked) : Boolean(getGithubSettings().encryptedFullBackup)
             });
             const token = root.querySelector('#mm-gh-token')?.value || '';
             const passphrase = root.querySelector('#mm-gh-passphrase')?.value || '';
