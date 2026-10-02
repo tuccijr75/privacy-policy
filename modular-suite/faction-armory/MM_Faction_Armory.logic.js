@@ -47,6 +47,10 @@
     {name:'Macana',slot:'melee',damage:59.5,accuracy:67.5,baselineDamage:57,baselineAccuracy:65,marketValue:118822,source:'Argentina',availability:'VERY COMMON',class:'routine'},
     {name:'Diamond Bladed Knife',slot:'melee',damage:62.5,accuracy:64.5,baselineDamage:60,baselineAccuracy:62,marketValue:913906,source:'Cayman Islands',availability:'VERY COMMON',class:'routine'},
 
+    {name:'WWII Helmet',slot:'helmet',armorRating:36.5,baselineArmor:34,marketValue:73168,source:'United Kingdom',availability:'VERY COMMON',class:'budget'},
+    {name:'Bulletproof Vest',slot:'body',armorRating:36.5,baselineArmor:34,marketValue:31271,source:'Big Al\'s Gun Shop',availability:'VERY COMMON',class:'budget'},
+    {name:'Kevlar Gloves',slot:'gloves',armorRating:34.5,baselineArmor:32,marketValue:319800,source:'Mexico',availability:'COMMON',class:'budget'},
+    {name:'Safety Boots',slot:'boots',armorRating:32.5,baselineArmor:30,marketValue:57086,source:'Canada',availability:'VERY COMMON',class:'budget'},
     {name:'Combat Helmet',slot:'helmet',armorRating:40.5,baselineArmor:38,marketValue:3389173,source:'South Africa',availability:'VERY COMMON',class:'routine'},
     {name:'Combat Vest',slot:'body',armorRating:40.5,baselineArmor:38,marketValue:3559659,source:'South Africa',availability:'VERY COMMON',class:'routine'},
     {name:'Combat Gloves',slot:'gloves',armorRating:40.5,baselineArmor:38,marketValue:2151411,source:'South Africa',availability:'VERY COMMON',class:'routine'},
@@ -186,13 +190,36 @@
       .map(clone);
   }
 
-  function generalTargetForSlot(slot,profile={}){
-    const candidates=generalCandidates(slot,{includePremium:false});
-    if(!candidates.length)return null;
-    if(['helmet','body','gloves','pants','boots'].includes(slot))return candidates[0];
+  function namedCatalog(name){
+    return clone(catalogItemByName(name));
+  }
+
+  function generalTargetForSlot(slot,profile={},mode='budget'){
+    const m=['budget','standard','ideal'].includes(String(mode||'').toLowerCase())
+      ? String(mode).toLowerCase():'budget';
+    const need=profile?.offensiveNeed||profile?.bias||'balanced';
+    const budgetMap={
+      primary:need==='accuracy'?'Mag 7':need==='damage'?'Benelli M4 Super':'AK-47',
+      secondary:'BT MP9',
+      melee:'Macana',
+      helmet:'WWII Helmet',
+      body:'Bulletproof Vest',
+      gloves:'Kevlar Gloves',
+      pants:'Combat Pants',
+      boots:'Safety Boots'
+    };
+    const standardMap={
+      primary:need==='accuracy'?'Mag 7':need==='damage'?'Jackhammer':'Benelli M4 Super',
+      secondary:need==='damage'?'Qsz-92':'BT MP9',
+      melee:need==='accuracy'?'Macana':'Diamond Bladed Knife',
+      helmet:'Combat Helmet',body:'Combat Vest',gloves:'Combat Gloves',pants:'Combat Pants',boots:'Combat Boots'
+    };
+    const idealMap={...standardMap,primary:'ArmaLite M-15A4'};
+    const chosen=(m==='ideal'?idealMap:m==='standard'?standardMap:budgetMap)[slot];
+    if(chosen&&catalogItemByName(chosen))return namedCatalog(chosen);
+    const candidates=generalCandidates(slot,{includePremium:m==='ideal'});
     return candidates.slice().sort((a,b)=>
-      equipmentScore(b,profile?.offensiveNeed||profile?.bias||'balanced')-
-      equipmentScore(a,profile?.offensiveNeed||profile?.bias||'balanced')
+      equipmentScore(b,need)-equipmentScore(a,need)
       || n(a.marketValue)-n(b.marketValue)
     )[0]||null;
   }
@@ -204,6 +231,19 @@
       equipmentScore(b,profile?.offensiveNeed||profile?.bias||'balanced')-
       equipmentScore(a,profile?.offensiveNeed||profile?.bias||'balanced')
     )[0]||null;
+  }
+
+  function ownedEquipmentCandidates(profile={}){
+    const items=Array.isArray(profile?.ownedEquipment?.items)?profile.ownedEquipment.items:[];
+    const out={};
+    for(const raw of items){
+      const item=enrichCatalogItem(raw);
+      const slot=equipmentSlot(item);
+      if(!slot||n(raw?.quantity??raw?.amount??1)<=0)continue;
+      if(!out[slot])out[slot]=[];
+      out[slot].push({...item,quantity:n(raw?.quantity??raw?.amount??1)});
+    }
+    return out;
   }
 
   function summaryEquipmentSlots(summary=''){
@@ -276,13 +316,14 @@
     };
   }
 
-  function warReadinessStandard(memberRow={},factionInventory={},rosterRows=[]){
+  function warReadinessStandard(memberRow={},factionInventory={},rosterRows=[],options={}){
     const bp=memberRow?.statProfile?.total?memberRow.statProfile:battleProfile(memberRow?.stats||memberRow?.profile?.stats||{});
+    const procurementMode=['budget','standard','ideal'].includes(String(options?.procurementMode||'').toLowerCase())?String(options.procurementMode).toLowerCase():'budget';
     const floors={};
     const targets={};
     const premium={};
     for(const slot of STANDARD_SLOTS){
-      const target=generalTargetForSlot(slot,bp);
+      const target=generalTargetForSlot(slot,bp,procurementMode);
       const premiumOption=premiumOptionForSlot(slot,bp);
       targets[slot]=target;
       premium[slot]=premiumOption;
@@ -297,7 +338,8 @@
       floors,
       targets,
       premium,
-      methodology:'Objective generally-available baseline; faction inventory affects route only, not readiness.'
+      procurementMode,
+      methodology:'Objective generally-available '+procurementMode+' baseline; member-owned gear and faction inventory affect route only, not readiness.'
     };
   }
 
@@ -317,11 +359,12 @@
     return out;
   }
 
-  function compareMemberBuild(memberRow,factionInventory={},rosterRows=[]){
+  function compareMemberBuild(memberRow,factionInventory={},rosterRows=[],options={}){
     const stats=memberRow?.stats||memberRow?.profile?.stats||{};
     const profile=battleProfile(stats);
     const currentRaw=profileEquipmentSlots(memberRow?.profile||{});
     const current=Object.fromEntries(Object.entries(currentRaw).map(([slot,item])=>[slot,enrichCatalogItem(item)]));
+    const owned=ownedEquipmentCandidates(memberRow?.profile||{});
     const assignedLoans={};
     for(const loan of memberRow?.loanItems||[]){
       const item=enrichCatalogItem({name:loan?.name,amount:loan?.amount,source:'Faction loan'});
@@ -331,7 +374,7 @@
       if(!prior||equipmentScore(item,profile.offensiveNeed)>equipmentScore(prior,profile.offensiveNeed))assignedLoans[slot]=item;
     }
     const faction=availableFactionCandidates(factionInventory);
-    const standard=warReadinessStandard({...memberRow,stats,statProfile:profile},factionInventory,rosterRows);
+    const standard=warReadinessStandard({...memberRow,stats,statProfile:profile},factionInventory,rosterRows,options);
     const items=[];
 
     for(const slot of STANDARD_SLOTS){
@@ -340,6 +383,10 @@
       const premium=standard.premium[slot]||null;
       const floor=target?readinessFloorScore(target,profile.offensiveNeed):0;
       const currentScore=currentItem?equipmentScore(currentItem,profile.offensiveNeed):0;
+      const ownedOptions=(owned[slot]||[]).map(item=>({
+        ...item,score:equipmentScore(item,profile.offensiveNeed)
+      })).filter(item=>item.score>=floor&&item.score>0).sort((a,b)=>b.score-a.score);
+      const ownedOption=ownedOptions[0]||null;
       const assignedLoan=assignedLoans[slot]||null;
       const assignedLoanScore=assignedLoan?equipmentScore(assignedLoan,profile.offensiveNeed):0;
       const factionOptions=(faction[slot]||[]).map(item=>({
@@ -357,6 +404,10 @@
         route='KEEP';
         ready=true;
         suggested=currentItem;
+      }else if(ownedOption){
+        decision='OWNED — EQUIP / VERIFY';
+        route='OWNED';
+        suggested=ownedOption;
       }else if(assignedLoan&&assignedLoanScore>=floor){
         decision='PROVISIONED — VERIFY EQUIPPED';
         route='LOANED';
@@ -389,6 +440,8 @@
         suggestedName:String(suggested?.name||''),
         suggestedSource:String(suggested?.source||''),
         suggestedMarketValue:n(suggested?.marketValue),
+        ownedOptionName:String(ownedOption?.name||''),
+        ownedOptionQuantity:n(ownedOption?.quantity),
         factionOptionName:String(factionOption?.name||''),
         factionAvailableCount:n(factionOption?.availableCount),
         assignedLoanName:String(assignedLoan?.name||''),
@@ -411,6 +464,7 @@
       defensiveStyle:profile.defensiveStyle,
       buildStyle:profile.buildStyle,
       priority:standard.priority,
+      procurementMode:standard.procurementMode,
       dominant:standard.dominant,
       items,
       warReady:readyCount===STANDARD_SLOTS.length,
@@ -425,6 +479,8 @@
   function acquisitionPlan(factionInventory={},options={}){
     const mode=String(options?.mode||'war').toLowerCase()==='peace'?'peace':'war';
     const participants=Math.max(1,Math.round(Number(options?.participants||DEFAULT_WAR_PARTICIPANTS)));
+    const procurementMode=['budget','standard','ideal'].includes(String(options?.procurementMode||'').toLowerCase())?String(options.procurementMode).toLowerCase():'budget';
+    const budgetCap=Math.max(0,Number(options?.budgetCap??15000000)||0);
     const rows=memberRows(factionInventory,[]);
     const selected=rows.slice(0,participants);
     const pools=availableFactionCandidates(factionInventory);
@@ -463,9 +519,13 @@
     }
 
     for(const member of selected){
-      const build=compareMemberBuild(member,factionInventory,rows);
+      if(!member?.hasStats){
+        for(const slot of STANDARD_SLOTS)unresolved.push({memberId:member.memberId,memberName:member.memberName,slot,current:'',reason:'Current battle stats are missing; acquisition deferred.'});
+        continue;
+      }
+      const build=compareMemberBuild(member,factionInventory,rows,{procurementMode});
       for(const item of build.items){
-        if(item.ready||item.route==='LOANED')continue;
+        if(item.ready||item.route==='LOANED'||item.route==='OWNED')continue;
         if(item.route==='REVIEW'){
           unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:item.currentName||'',reason:'Current item exists but performance is not known.'});
           continue;
@@ -489,7 +549,7 @@
     if(mode==='war'){
       const neutral=battleProfile({strength:1,defense:1,speed:1,dexterity:1});
       for(const slot of STANDARD_SLOTS){
-        const target=generalTargetForSlot(slot,neutral);
+        const target=generalTargetForSlot(slot,neutral,procurementMode);
         for(let i=0;i<2;i++){
           const factionPick=allocateFaction(slot,target,'balanced');
           if(!factionPick)addRequirement(target,1,'War spare '+slot,'equipment');
@@ -498,7 +558,7 @@
     }
 
     // Stackable acquisition comes from the selected Peace/War minimum policy.
-    const minimums=minimumProposal(factionInventory,{mode,participants});
+    const minimums=minimumProposal(factionInventory,{mode,participants,procurementMode});
     for(const row of minimums.proposals){
       if(row.kind==='equipment'||row.dataRequired||n(row.shortfall)<=0)continue;
       addRequirement({
@@ -508,20 +568,50 @@
       },n(row.shortfall),'Inventory minimum','provisions');
     }
 
+    const priorityFor=row=>{
+      if(row.category==='equipment'){
+        const slot=GENERAL_EQUIPMENT_CATALOG.find(x=>x.name===row.item)?.slot||'';
+        return ({primary:10,secondary:20,melee:30,body:40,helmet:45,gloves:50,pants:55,boots:60}[slot]??65);
+      }
+      if(/First Aid Kit|Small First Aid Kit|Morphine|Ipecac|Blood Bag/.test(row.item))return 70;
+      if(/Grenade|HEG|Pepper Spray|Tear Gas|Smoke/.test(row.item))return 80;
+      if(/Xanax/.test(row.item))return 90;
+      return 100;
+    };
     const list=[...requirements.values()].map(row=>({
       ...row,
       reasons:[...row.reasons].join(' | '),
-      estimatedValue:row.marketValue?row.marketValue*row.qty:0
-    })).sort((a,b)=>String(a.category).localeCompare(String(b.category))||String(a.item).localeCompare(String(b.item)));
+      estimatedValue:row.marketValue?row.marketValue*row.qty:0,
+      priority:priorityFor(row)
+    })).sort((a,b)=>a.priority-b.priority||String(a.category).localeCompare(String(b.category))||String(a.item).localeCompare(String(b.item)));
+
+    let remainingBudget=budgetCap;
+    for(const row of list){
+      if(!row.marketValue){
+        row.fundedQty=row.qty;
+        row.deferredQty=0;
+        row.fundedEstimatedValue=0;
+        continue;
+      }
+      const affordable=Math.min(row.qty,Math.floor(remainingBudget/row.marketValue));
+      row.fundedQty=Math.max(0,affordable);
+      row.deferredQty=Math.max(0,row.qty-row.fundedQty);
+      row.fundedEstimatedValue=row.fundedQty*row.marketValue;
+      remainingBudget=Math.max(0,remainingBudget-row.fundedEstimatedValue);
+    }
 
     return {
-      mode,participants,
+      mode,participants,procurementMode,budgetCap,remainingBudget,
       assignments,
       unresolved,
       unresolvedCount:unresolved.length,
       list,
       totalUnits:list.reduce((sum,row)=>sum+n(row.qty),0),
-      estimatedEquipmentValue:list.reduce((sum,row)=>sum+n(row.estimatedValue),0)
+      fundedUnits:list.reduce((sum,row)=>sum+n(row.fundedQty),0),
+      deferredUnits:list.reduce((sum,row)=>sum+n(row.deferredQty),0),
+      estimatedEquipmentValue:list.reduce((sum,row)=>sum+n(row.estimatedValue),0),
+      fundedEstimatedValue:list.reduce((sum,row)=>sum+n(row.fundedEstimatedValue),0),
+      deferredEstimatedValue:list.reduce((sum,row)=>sum+n(row.estimatedValue)-n(row.fundedEstimatedValue),0)
     };
   }
 
@@ -643,7 +733,7 @@
       if(mode==='war'){
         const participating=rosterRows.slice(0,participants);
         coverageNeeded=participating.filter(member=>{
-          const build=compareMemberBuild(member,factionInventory,rosterRows);
+          const build=compareMemberBuild(member,factionInventory,rosterRows,{procurementMode:options?.procurementMode||'budget'});
           const row=build.items.find(item=>item.slot===slot);
           return !row?.ready;
         }).length;
@@ -941,6 +1031,7 @@
     premiumOptionForSlot,
     summaryEquipmentSlots,
     profileEquipmentSlots,
+    ownedEquipmentCandidates,
     readinessPriority,
     warReadinessStandard,
     availableFactionCandidates,
