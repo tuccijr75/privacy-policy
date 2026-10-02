@@ -1,6 +1,6 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.7**
+Status: **NON-PRODUCTION / alpha.8**
 
 ## Scope implemented
 
@@ -255,3 +255,43 @@ Existing member-key profiles must be refreshed once after alpha.7 so their new `
 - [ ] Export/open Leadership workbook and confirm budget/acquisition columns.
 
 Production remains unchanged.
+
+
+## Alpha.8 left dock + free launcher/panel movement — 2026-10-02
+
+Live feedback: MM launchers were overlapping Torn's existing bottom controls and could not be freely repositioned; module panels were fixed.
+
+Implemented:
+- shared MM dock now anchors to the **left** of the detected Torn bottom toolbar instead of to its right;
+- narrow-screen fallback places MM controls above Torn controls rather than overlapping them;
+- docked launchers remain reorderable;
+- dragging a docked launcher away from the dock undocks it into a free-floating launcher;
+- floating launchers can be dragged anywhere and persist their positions locally;
+- dropping a floating launcher back over/near the MM dock redocks it;
+- right-click provides an alternate dock/undock toggle;
+- floating active-state styling still works;
+- Faction Armory main interface is draggable by its header and persists position;
+- Market Scout main interface is draggable by its header and persists position;
+- double-clicking a non-interactive part of either header resets its saved position;
+- all movement is DOM/local UI only and adds no Torn network request.
+
+Versions:
+- MM Torn Core `8.0.0-alpha.3`
+- MM Faction Armory `8.0.0-alpha.8`
+- MM Market Scout `8.0.0-alpha.7`
+
+Static syntax: Core PASS, Armory PASS, Scout PASS.
+
+### Live checks
+- [ ] MM dock appears directly left of Torn bottom controls, with no overlap.
+- [ ] Drag inside dock reorders icons.
+- [ ] Pull an icon away from dock; it becomes freely movable.
+- [ ] Reload; floating icon position persists.
+- [ ] Drag floating icon back onto/near dock; it redocks.
+- [ ] Right-click toggles dock/undock as an alternate control.
+- [ ] Drag Armory header; panel moves and position persists after reopen/reload.
+- [ ] Double-click Armory header resets position.
+- [ ] Drag Scout header; panel moves and position persists after reopen/reload.
+- [ ] Double-click Scout header resets position.
+
+Production unchanged.
