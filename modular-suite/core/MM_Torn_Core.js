@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.2';
+  const CORE_VERSION = '8.0.0-alpha.3';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -263,6 +263,8 @@
   const DOCK_ID='mm-torn-module-dock';
   const DOCK_STYLE_ID='mm-torn-module-dock-style';
   const DOCK_ORDER_KEY='mm_torn_module_dock_order_v1';
+  const DOCK_FLOAT_KEY='mm_torn_module_float_positions_v1';
+  const PANEL_POSITION_PREFIX='mm_torn_panel_position_v1:';
   const DOCK_META=Object.freeze({
     crm:{label:'CRM',accent:'#59636d',icon:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 5v14M4 10h16M12 10v9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>'},
     scout:{label:'Market Scout',accent:'#287f85',icon:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4 4M8 13l2-3 2 2 3-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'},
@@ -270,6 +272,10 @@
     bazaar:{label:'Bazaar Manager',accent:'#2c718e',icon:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9h14l-1 11H6zM7 9l1-5h8l1 5M9 13h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>'},
     intelligence:{label:'Business Intelligence',accent:'#53677d',icon:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V11M10 19V6M15 19v-9M20 19V3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'}
   });
+
+  function clamp(value,min,max){
+    return Math.min(Math.max(Number(value)||0,min),Math.max(min,max));
+  }
 
   function dockReadOrder(){
     try{
@@ -285,19 +291,50 @@
     }catch{}
   }
 
+  function dockReadFloatState(){
+    try{
+      const raw=JSON.parse(localStorage.getItem(DOCK_FLOAT_KEY)||'{}');
+      return raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
+    }catch{return {};}
+  }
+
+  function dockWriteFloatState(state){
+    try{localStorage.setItem(DOCK_FLOAT_KEY,JSON.stringify(state||{}));}catch{}
+  }
+
+  function saveLauncherFloat(key,value){
+    const state=dockReadFloatState();
+    if(value&&value.floating){
+      state[key]={
+        floating:true,
+        left:Math.round(Number(value.left)||0),
+        top:Math.round(Number(value.top)||0)
+      };
+    }else{
+      delete state[key];
+    }
+    dockWriteFloatState(state);
+  }
+
   function injectDockStyle(){
     if(document.getElementById(DOCK_STYLE_ID))return;
     const style=document.createElement('style');
     style.id=DOCK_STYLE_ID;
     style.textContent=`
       #${DOCK_ID}{position:fixed;z-index:2147483645;display:flex;gap:2px;align-items:flex-end;padding:0;pointer-events:auto;user-select:none}
-      #${DOCK_ID} .mm-torn-dock-btn{width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,color-mix(in srgb,var(--mm-accent) 72%,#555) 0%,color-mix(in srgb,var(--mm-accent) 54%,#252525) 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:filter .12s ease,transform .12s ease,border-color .12s ease}
-      #${DOCK_ID} .mm-torn-dock-btn:hover{filter:brightness(1.14);border-color:#666}
-      #${DOCK_ID} .mm-torn-dock-btn:active{transform:translateY(1px);filter:brightness(.92)}
-      #${DOCK_ID} .mm-torn-dock-btn[data-mm-active="1"]{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--mm-accent) 70%,#ddd),inset 0 -8px 18px #0005,0 1px 3px #0009}
-      #${DOCK_ID} .mm-torn-dock-btn svg{width:23px;height:23px;display:block;filter:drop-shadow(0 1px 1px #000)}
+      #${DOCK_ID}:empty{display:none}
+      #${DOCK_ID} .mm-torn-dock-btn,.mm-torn-floating-btn{width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,color-mix(in srgb,var(--mm-accent) 72%,#555) 0%,color-mix(in srgb,var(--mm-accent) 54%,#252525) 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:filter .12s ease,transform .12s ease,border-color .12s ease;user-select:none}
+      #${DOCK_ID} .mm-torn-dock-btn:hover,.mm-torn-floating-btn:hover{filter:brightness(1.14);border-color:#666}
+      #${DOCK_ID} .mm-torn-dock-btn:active,.mm-torn-floating-btn:active{transform:translateY(1px);filter:brightness(.92)}
+      #${DOCK_ID} .mm-torn-dock-btn[data-mm-active="1"],.mm-torn-floating-btn[data-mm-active="1"]{box-shadow:inset 0 0 0 2px color-mix(in srgb,var(--mm-accent) 70%,#ddd),inset 0 -8px 18px #0005,0 1px 3px #0009}
+      #${DOCK_ID} .mm-torn-dock-btn svg,.mm-torn-floating-btn svg{width:23px;height:23px;display:block;filter:drop-shadow(0 1px 1px #000);pointer-events:none}
       #${DOCK_ID} .mm-torn-dock-btn[draggable="true"]{touch-action:none}
-      @media(max-width:620px){#${DOCK_ID} .mm-torn-dock-btn{width:38px;height:38px;min-width:38px;min-height:38px}#${DOCK_ID} .mm-torn-dock-btn svg{width:21px;height:21px}}
+      .mm-torn-floating-btn{position:fixed;z-index:2147483647;touch-action:none;cursor:grab}
+      .mm-torn-floating-btn.mm-torn-moving{cursor:grabbing;filter:brightness(1.12)}
+      @media(max-width:620px){
+        #${DOCK_ID} .mm-torn-dock-btn,.mm-torn-floating-btn{width:38px;height:38px;min-width:38px;min-height:38px}
+        #${DOCK_ID} .mm-torn-dock-btn svg,.mm-torn-floating-btn svg{width:21px;height:21px}
+      }
     `;
     document.head.appendChild(style);
   }
@@ -306,6 +343,7 @@
     const candidates=[];
     for(const el of document.querySelectorAll('body *')){
       if(!(el instanceof HTMLElement))continue;
+      if(el.id===DOCK_ID||el.closest('#'+DOCK_ID)||el.classList.contains('mm-torn-floating-btn'))continue;
       const cs=getComputedStyle(el);
       if(!['fixed','sticky'].includes(cs.position))continue;
       const r=el.getBoundingClientRect();
@@ -323,21 +361,22 @@
 
   function positionDock(){
     const dock=document.getElementById(DOCK_ID);
-    if(!dock)return;
+    if(!dock||!dock.children.length)return;
     const native=visibleBottomToolbarCandidate();
     if(native){
       const r=native.r;
       const gap=4;
-      const desiredLeft=Math.min(window.innerWidth-dock.offsetWidth-4,r.right+gap);
-      const canRight=desiredLeft>=4&&desiredLeft>=r.right-2;
-      if(canRight){
-        dock.style.left=Math.max(4,desiredLeft)+'px';
+      const desiredLeft=r.left-dock.offsetWidth-gap;
+      if(desiredLeft>=4){
+        dock.style.left=Math.round(desiredLeft)+'px';
         dock.style.right='auto';
+        dock.style.bottom=Math.max(2,Math.round(window.innerHeight-r.bottom))+'px';
       }else{
-        dock.style.right='4px';
-        dock.style.left='auto';
+        // Narrow-screen fallback: keep the MM controls clear of Torn controls instead of overlapping them.
+        dock.style.left=Math.max(4,Math.round(r.left))+'px';
+        dock.style.right='auto';
+        dock.style.bottom=Math.max(2,Math.round(window.innerHeight-r.top+4))+'px';
       }
-      dock.style.bottom=Math.max(2,window.innerHeight-r.bottom)+'px';
     }else{
       dock.style.right='6px';
       dock.style.left='auto';
@@ -353,6 +392,125 @@
     for(const b of buttons)dock.appendChild(b);
   }
 
+  function pointNearDock(x,y,padding=18){
+    const dock=document.getElementById(DOCK_ID);
+    if(!dock)return false;
+    const r=dock.getBoundingClientRect();
+    return x>=r.left-padding&&x<=r.right+padding&&y>=r.top-padding&&y<=r.bottom+padding;
+  }
+
+  function setLauncherTitle(button,label,floating){
+    const base=String(label||button.dataset.mmDockId||'MM Torn module');
+    button.title=floating
+      ? base+' · drag to move · drag onto dock or right-click to redock'
+      : base+' · drag to reorder · pull away to undock · right-click to undock';
+    button.setAttribute('aria-label',base);
+  }
+
+  function dockLauncher(button,key,{persist=true}={}){
+    const dock=ensureDock();
+    if(!dock||!button)return;
+    button.classList.remove('mm-torn-floating-btn','mm-torn-moving');
+    button.classList.add('mm-torn-dock-btn');
+    button.dataset.mmFloating='0';
+    button.draggable=true;
+    button.style.position='';
+    button.style.left='';
+    button.style.top='';
+    button.style.right='';
+    button.style.bottom='';
+    button.style.zIndex='';
+    dock.appendChild(button);
+    setLauncherTitle(button,button.__mmLabel||key,false);
+    if(persist)saveLauncherFloat(key,null);
+    dockWriteOrder(dock);
+    applyDockOrder(dock);
+    requestAnimationFrame(positionDock);
+  }
+
+  function undockLauncher(button,key,{left,top,persist=true}={}){
+    if(!button||typeof document==='undefined'||!document.body)return;
+    const dock=document.getElementById(DOCK_ID);
+    const rect=button.getBoundingClientRect();
+    if(dock&&button.parentElement===dock)dockWriteOrder(dock);
+    document.body.appendChild(button);
+    button.classList.remove('mm-torn-dock-btn');
+    button.classList.add('mm-torn-floating-btn');
+    button.dataset.mmFloating='1';
+    button.draggable=false;
+    const width=button.offsetWidth||42;
+    const height=button.offsetHeight||42;
+    const nextLeft=clamp(left??rect.left,4,window.innerWidth-width-4);
+    const nextTop=clamp(top??rect.top,4,window.innerHeight-height-4);
+    button.style.position='fixed';
+    button.style.left=Math.round(nextLeft)+'px';
+    button.style.top=Math.round(nextTop)+'px';
+    button.style.right='auto';
+    button.style.bottom='auto';
+    button.style.zIndex='2147483647';
+    setLauncherTitle(button,button.__mmLabel||key,true);
+    if(persist)saveLauncherFloat(key,{floating:true,left:nextLeft,top:nextTop});
+    requestAnimationFrame(positionDock);
+  }
+
+  function installFloatingLauncherDrag(button,key){
+    if(button.__mmFloatDragInstalled)return;
+    button.__mmFloatDragInstalled=true;
+    button.addEventListener('pointerdown',event=>{
+      if(button.dataset.mmFloating!=='1'||event.button!==0)return;
+      const rect=button.getBoundingClientRect();
+      const state={
+        pointerId:event.pointerId,
+        startX:event.clientX,
+        startY:event.clientY,
+        left:rect.left,
+        top:rect.top,
+        moved:false
+      };
+      button.__mmFloatPointer=state;
+      try{button.setPointerCapture(event.pointerId);}catch{}
+    });
+    button.addEventListener('pointermove',event=>{
+      const state=button.__mmFloatPointer;
+      if(!state||state.pointerId!==event.pointerId||button.dataset.mmFloating!=='1')return;
+      const dx=event.clientX-state.startX;
+      const dy=event.clientY-state.startY;
+      if(!state.moved&&Math.hypot(dx,dy)<4)return;
+      state.moved=true;
+      button.classList.add('mm-torn-moving');
+      const width=button.offsetWidth||42;
+      const height=button.offsetHeight||42;
+      button.style.left=Math.round(clamp(state.left+dx,4,window.innerWidth-width-4))+'px';
+      button.style.top=Math.round(clamp(state.top+dy,4,window.innerHeight-height-4))+'px';
+      event.preventDefault();
+    });
+    const finish=event=>{
+      const state=button.__mmFloatPointer;
+      if(!state||state.pointerId!==event.pointerId)return;
+      button.__mmFloatPointer=null;
+      button.classList.remove('mm-torn-moving');
+      try{button.releasePointerCapture(event.pointerId);}catch{}
+      if(!state.moved)return;
+      button.__mmSuppressClick=true;
+      const rect=button.getBoundingClientRect();
+      const cx=rect.left+rect.width/2;
+      const cy=rect.top+rect.height/2;
+      if(pointNearDock(cx,cy,26)){
+        dockLauncher(button,key);
+      }else{
+        saveLauncherFloat(key,{floating:true,left:rect.left,top:rect.top});
+      }
+    };
+    button.addEventListener('pointerup',finish);
+    button.addEventListener('pointercancel',finish);
+    button.addEventListener('click',event=>{
+      if(!button.__mmSuppressClick)return;
+      button.__mmSuppressClick=false;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    },true);
+  }
+
   function ensureDock(){
     if(typeof document==='undefined'||!document.body)return null;
     injectDockStyle();
@@ -366,15 +524,26 @@
       dock.addEventListener('drop',event=>{
         event.preventDefault();
         const sourceId=String(event.dataTransfer?.getData('text/mm-dock-id')||'');
-        const source=dock.querySelector('[data-mm-dock-id="'+CSS.escape(sourceId)+'"]');
+        const source=document.querySelector('[data-mm-dock-id="'+CSS.escape(sourceId)+'"]');
         const target=event.target?.closest?.('[data-mm-dock-id]');
         if(!source)return;
-        if(target&&target!==source)dock.insertBefore(source,target);
-        else dock.appendChild(source);
+        if(source.dataset.mmFloating==='1')dockLauncher(source,sourceId);
+        if(target&&target!==source&&target.parentElement===dock)dock.insertBefore(source,target);
+        else if(source.parentElement===dock)dock.appendChild(source);
         dockWriteOrder(dock);
         positionDock();
       });
-      window.addEventListener('resize',positionDock,{passive:true});
+      window.addEventListener('resize',()=>{
+        positionDock();
+        document.querySelectorAll('.mm-torn-floating-btn[data-mm-dock-id]').forEach(button=>{
+          const rect=button.getBoundingClientRect();
+          const left=clamp(rect.left,4,window.innerWidth-(button.offsetWidth||42)-4);
+          const top=clamp(rect.top,4,window.innerHeight-(button.offsetHeight||42)-4);
+          button.style.left=Math.round(left)+'px';
+          button.style.top=Math.round(top)+'px';
+          saveLauncherFloat(String(button.dataset.mmDockId||''),{floating:true,left,top});
+        });
+      },{passive:true});
     }
     requestAnimationFrame(positionDock);
     return dock;
@@ -390,28 +559,64 @@
       button=document.createElement('button');
       button.type='button';
       dock.appendChild(button);
-    }else if(button.parentElement!==dock){
-      dock.appendChild(button);
     }
     const meta=DOCK_META[key]||{};
+    const displayLabel=String(label||meta.label||key);
     button.className='mm-torn-dock-btn';
     button.dataset.mmDockId=key;
-    button.draggable=true;
-    button.title=String(label||meta.label||key);
-    button.setAttribute('aria-label',button.title);
-    button.style.cssText='--mm-accent:'+(accent||meta.accent||'#59636d')+';';
+    button.__mmLabel=displayLabel;
+    button.style.setProperty('--mm-accent',accent||meta.accent||'#59636d');
     button.innerHTML=String(icon||meta.icon||'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/></svg>');
+    setLauncherTitle(button,displayLabel,false);
+
     if(typeof onClick==='function'){
       if(button.__mmDockClick)button.removeEventListener('click',button.__mmDockClick);
       button.__mmDockClick=onClick;
       button.addEventListener('click',onClick);
     }
+
     if(!button.__mmDockDrag){
       button.__mmDockDrag=true;
       button.addEventListener('dragstart',event=>{
-        try{event.dataTransfer.setData('text/mm-dock-id',key);event.dataTransfer.effectAllowed='move';}catch{}
+        if(button.dataset.mmFloating==='1'){event.preventDefault();return;}
+        try{
+          event.dataTransfer.setData('text/mm-dock-id',key);
+          event.dataTransfer.effectAllowed='move';
+        }catch{}
       });
-      button.addEventListener('dragend',()=>{dockWriteOrder(dock);positionDock();});
+      button.addEventListener('dragend',event=>{
+        const dockNow=document.getElementById(DOCK_ID);
+        if(button.dataset.mmFloating==='1')return;
+        const x=Number(event.clientX)||0;
+        const y=Number(event.clientY)||0;
+        if(x>0&&y>0&&dockNow){
+          const r=dockNow.getBoundingClientRect();
+          const inside=x>=r.left-8&&x<=r.right+8&&y>=r.top-8&&y<=r.bottom+8;
+          if(!inside){
+            undockLauncher(button,key,{left:x-(button.offsetWidth||42)/2,top:y-(button.offsetHeight||42)/2});
+            return;
+          }
+        }
+        dockWriteOrder(dockNow||dock);
+        positionDock();
+      });
+      button.addEventListener('contextmenu',event=>{
+        event.preventDefault();
+        if(button.dataset.mmFloating==='1')dockLauncher(button,key);
+        else{
+          const r=button.getBoundingClientRect();
+          undockLauncher(button,key,{left:r.left,top:r.top});
+        }
+      });
+      installFloatingLauncherDrag(button,key);
+    }
+
+    const floatState=dockReadFloatState()[key];
+    if(floatState?.floating){
+      undockLauncher(button,key,{left:floatState.left,top:floatState.top,persist:false});
+    }else{
+      if(button.parentElement!==dock)dock.appendChild(button);
+      dockLauncher(button,key,{persist:false});
     }
     applyDockOrder(dock);
     dockWriteOrder(dock);
@@ -420,8 +625,122 @@
   }
 
   function setDockLauncherActive(id,active){
-    const button=document.querySelector('#'+DOCK_ID+' [data-mm-dock-id="'+CSS.escape(String(id||''))+'"]');
+    const button=document.querySelector('[data-mm-dock-id="'+CSS.escape(String(id||''))+'"]');
     if(button)button.dataset.mmActive=active?'1':'0';
+  }
+
+  function panelPositionKey(key){
+    return PANEL_POSITION_PREFIX+String(key||'panel');
+  }
+
+  function readPanelPosition(key){
+    try{
+      const raw=JSON.parse(localStorage.getItem(panelPositionKey(key))||'null');
+      return raw&&Number.isFinite(Number(raw.left))&&Number.isFinite(Number(raw.top))
+        ?{left:Number(raw.left),top:Number(raw.top)}:null;
+    }catch{return null;}
+  }
+
+  function writePanelPosition(key,value){
+    try{
+      if(value)localStorage.setItem(panelPositionKey(key),JSON.stringify({left:Math.round(value.left),top:Math.round(value.top)}));
+      else localStorage.removeItem(panelPositionKey(key));
+    }catch{}
+  }
+
+  function applyPanelPosition(panel,key,defaults={}){
+    const saved=readPanelPosition(key);
+    if(saved){
+      const maxLeft=Math.max(4,window.innerWidth-panel.offsetWidth-4);
+      const maxTop=Math.max(4,window.innerHeight-42);
+      panel.style.left=Math.round(clamp(saved.left,4,maxLeft))+'px';
+      panel.style.top=Math.round(clamp(saved.top,4,maxTop))+'px';
+      panel.style.right='auto';
+      panel.style.bottom='auto';
+      return;
+    }
+    panel.style.left='';
+    panel.style.bottom='';
+    panel.style.right=defaults.right??'';
+    panel.style.top=defaults.top??'';
+  }
+
+  function makePanelDraggable(panel,handle,key,defaults={}){
+    if(!(panel instanceof HTMLElement))return false;
+    const grip=typeof handle==='string'?panel.querySelector(handle):handle;
+    if(!(grip instanceof HTMLElement))return false;
+    if(typeof panel.__mmPanelDragCleanup==='function')panel.__mmPanelDragCleanup();
+
+    applyPanelPosition(panel,key,defaults);
+    grip.style.cursor='move';
+    grip.title='Drag to move · double-click header to reset position';
+
+    const interactive=target=>Boolean(target?.closest?.('button,input,select,textarea,a,label,summary,[contenteditable="true"]'));
+    let drag=null;
+
+    const down=event=>{
+      if(event.button!==0||interactive(event.target))return;
+      const rect=panel.getBoundingClientRect();
+      drag={id:event.pointerId,startX:event.clientX,startY:event.clientY,left:rect.left,top:rect.top,moved:false};
+      try{grip.setPointerCapture(event.pointerId);}catch{}
+    };
+    const move=event=>{
+      if(!drag||drag.id!==event.pointerId)return;
+      const dx=event.clientX-drag.startX;
+      const dy=event.clientY-drag.startY;
+      if(!drag.moved&&Math.hypot(dx,dy)<4)return;
+      drag.moved=true;
+      const maxLeft=Math.max(4,window.innerWidth-panel.offsetWidth-4);
+      const maxTop=Math.max(4,window.innerHeight-42);
+      panel.style.left=Math.round(clamp(drag.left+dx,4,maxLeft))+'px';
+      panel.style.top=Math.round(clamp(drag.top+dy,4,maxTop))+'px';
+      panel.style.right='auto';
+      panel.style.bottom='auto';
+      event.preventDefault();
+    };
+    const up=event=>{
+      if(!drag||drag.id!==event.pointerId)return;
+      const moved=drag.moved;
+      drag=null;
+      try{grip.releasePointerCapture(event.pointerId);}catch{}
+      if(moved){
+        const rect=panel.getBoundingClientRect();
+        writePanelPosition(key,{left:rect.left,top:rect.top});
+      }
+    };
+    const reset=event=>{
+      if(interactive(event.target))return;
+      writePanelPosition(key,null);
+      applyPanelPosition(panel,key,defaults);
+    };
+    const resize=()=>{
+      const saved=readPanelPosition(key);
+      if(!saved)return;
+      const maxLeft=Math.max(4,window.innerWidth-panel.offsetWidth-4);
+      const maxTop=Math.max(4,window.innerHeight-42);
+      const left=clamp(parseFloat(panel.style.left)||saved.left,4,maxLeft);
+      const top=clamp(parseFloat(panel.style.top)||saved.top,4,maxTop);
+      panel.style.left=Math.round(left)+'px';
+      panel.style.top=Math.round(top)+'px';
+      writePanelPosition(key,{left,top});
+    };
+
+    grip.addEventListener('pointerdown',down);
+    grip.addEventListener('pointermove',move);
+    grip.addEventListener('pointerup',up);
+    grip.addEventListener('pointercancel',up);
+    grip.addEventListener('dblclick',reset);
+    window.addEventListener('resize',resize,{passive:true});
+
+    panel.__mmPanelDragCleanup=()=>{
+      grip.removeEventListener('pointerdown',down);
+      grip.removeEventListener('pointermove',move);
+      grip.removeEventListener('pointerup',up);
+      grip.removeEventListener('pointercancel',up);
+      grip.removeEventListener('dblclick',reset);
+      window.removeEventListener('resize',resize);
+    };
+    return true;
   }
 
   function adoptLegacyCrmLauncher(){
@@ -467,6 +786,7 @@
     registerDockLauncher,
     setDockLauncherActive,
     positionDock,
+    makePanelDraggable,
     adoptLegacyCrmLauncher,
     deepClone
   });
