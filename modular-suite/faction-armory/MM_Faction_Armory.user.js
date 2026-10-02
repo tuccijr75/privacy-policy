@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.3
+// @version      8.0.0-alpha.4
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.3';
+  const VERSION='8.0.0-alpha.4';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -93,6 +93,13 @@
       .mm-fa-details summary{cursor:pointer;font-size:9px;color:#999}
       .mm-fa-slot-grid{display:flex;gap:4px;flex-wrap:wrap;align-items:stretch;margin-top:4px}
       .mm-fa-slot{display:flex;flex-direction:column;gap:2px;min-width:138px;max-width:220px;padding:5px 6px;border:1px solid #303030;background:#121212;border-radius:5px}
+      .mm-fa-build-member{border:1px solid #353535;background:#171717;border-radius:6px;margin-bottom:3px}
+      .mm-fa-build-member>summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px;padding:5px 7px;min-height:27px}
+      .mm-fa-build-member>summary::-webkit-details-marker{display:none}
+      .mm-fa-build-member>summary:before{content:'▸';color:#777;font-size:10px;flex:0 0 auto}
+      .mm-fa-build-member[open]>summary:before{content:'▾'}
+      .mm-fa-build-summary-main{display:flex;gap:5px;align-items:center;flex-wrap:wrap;min-width:0;flex:1 1 auto}
+      .mm-fa-build-body{border-top:1px solid #303030;padding:5px 7px}
       .mm-fa-good{color:#a7d7ad}.mm-fa-warn{color:#e5c879}.mm-fa-bad{color:#efaaa3}
       @media(max-width:620px){
         #${ROOT_ID}{right:4px;top:54px;width:calc(100vw - 8px);max-height:calc(100vh - 60px)}
@@ -747,28 +754,38 @@
   function buildsHtml(){
     const rows=memberRows();
     if(!rows.length)return card('No member roster is loaded.');
-    return '<div class="mm-fa-card mm-fa-compact"><b>War-ready build standard</b> <span class="mm-fa-muted">Level + battle-stat tier + build style; no downgrades.</span></div>'+
+    return '<div class="mm-fa-card mm-fa-compact"><b>War-ready build standard</b> <span class="mm-fa-muted">Click a member to open details. Level + battle-stat tier + build style; no downgrades.</span></div>'+
     rows.map(row=>{
       const build=logic.compareMemberBuild(row,state?.factionInventory||{},rows);
       const tierClass=build.warReady?'mm-fa-good':row.hasStats?'mm-fa-warn':'mm-fa-bad';
-      return '<div class="mm-fa-card mm-fa-compact">'+
-        '<div class="mm-fa-module-head">'+
-          '<div class="mm-fa-member-head"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+tierClass+'">'+esc(build.tier)+' '+(build.warReady?'WAR READY':'REVIEW')+'</span></div>'+
-          '<span class="mm-fa-muted">'+esc(build.bias)+(build.dominant?' · '+esc(build.dominant):'')+'</span>'+
+      const unresolved=build.items.filter(item=>!item.ready).length;
+      return '<details class="mm-fa-build-member">'+
+        '<summary>'+
+          '<span class="mm-fa-build-summary-main">'+
+            '<b>'+esc(row.memberName)+'</b>'+
+            '<span class="mm-fa-pill">Lv '+num(row.level)+'</span>'+
+            '<span class="'+tierClass+'">'+esc(build.tier)+' '+(build.warReady?'WAR READY':'REVIEW')+'</span>'+
+          '</span>'+
+          '<span class="mm-fa-muted">'+(build.warReady?'ready':unresolved+' slot'+(unresolved===1?'':'s')+' open')+'</span>'+
+        '</summary>'+
+        '<div class="mm-fa-build-body">'+
+          '<div class="mm-fa-module-head">'+
+            '<span class="mm-fa-muted">'+esc(build.summary)+'</span>'+
+            '<span class="mm-fa-muted">style '+esc(build.bias)+(build.dominant?' · '+esc(build.dominant):'')+'</span>'+
+          '</div>'+
+          '<div class="mm-fa-slot-grid">'+build.items.map(item=>{
+            const cls=item.ready?'mm-fa-good':item.decision==='UPGRADE AVAILABLE'?'mm-fa-warn':'mm-fa-bad';
+            return '<div class="mm-fa-slot">'+
+              '<div><b>'+esc(item.slot.toUpperCase())+'</b> <span class="'+cls+'">'+esc(item.decision)+'</span></div>'+
+              '<div class="mm-fa-tiles">'+
+                tile('CURRENT',item.currentName||'—',{wide:true})+
+                tile('FLOOR',item.readinessFloor?fmt(item.readinessFloor):'—')+
+                tile('TARGET',item.targetName||'—',{wide:true})+
+              '</div>'+
+            '</div>';
+          }).join('')+'</div>'+
         '</div>'+
-        '<div class="mm-fa-muted">'+esc(build.summary)+'</div>'+
-        '<div class="mm-fa-slot-grid">'+build.items.map(item=>{
-          const cls=item.ready?'mm-fa-good':item.decision==='UPGRADE AVAILABLE'?'mm-fa-warn':'mm-fa-bad';
-          return '<div class="mm-fa-slot">'+
-            '<div><b>'+esc(item.slot.toUpperCase())+'</b> <span class="'+cls+'">'+esc(item.decision)+'</span></div>'+
-            '<div class="mm-fa-tiles">'+
-              tile('CURRENT',item.currentName||'—',{wide:true})+
-              tile('FLOOR',item.readinessFloor?fmt(item.readinessFloor):'—')+
-              tile('TARGET',item.targetName||'—',{wide:true})+
-            '</div>'+
-          '</div>';
-        }).join('')+'</div>'+
-      '</div>';
+      '</details>';
     }).join('');
   }
 
