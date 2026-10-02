@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.2
+// @version      8.0.0-alpha.3
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.2';
+  const VERSION='8.0.0-alpha.3';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -63,41 +63,58 @@
     const style=document.createElement('style');
     style.id=STYLE_ID;
     style.textContent=`
-      #${ROOT_ID}{display:none;position:fixed;right:12px;top:72px;z-index:2147483646;width:min(860px,calc(100vw - 24px));max-height:calc(100vh - 92px);overflow:hidden;background:#101010;color:#eee;border:1px solid #6b5a2e;border-radius:9px;box-shadow:0 12px 35px #000b;font:13px/1.35 Arial,sans-serif}
+      #${ROOT_ID}{display:none;position:fixed;right:12px;top:72px;z-index:2147483646;width:min(900px,calc(100vw - 24px));max-height:calc(100vh - 92px);overflow:hidden;background:#101010;color:#eee;border:1px solid #6b5a2e;border-radius:8px;box-shadow:0 12px 35px #000b;font:12px/1.25 Arial,sans-serif}
       #${ROOT_ID} *{box-sizing:border-box}
-      #${ROOT_ID} button{min-height:32px;height:auto;line-height:1.2}
-      .mm-fa-head{height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 10px;gap:8px}
-      .mm-fa-body{padding:8px}
-      .mm-fa-tabs,.mm-fa-actions{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
-      .mm-fa-scroll{max-height:calc(100vh - 230px);overflow:auto;padding-right:3px}
-      .mm-fa-card{border:1px solid #353535;background:#171717;border-radius:8px;padding:9px;margin-bottom:7px}
-      .mm-fa-row{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;border-top:1px solid #303030;padding:8px 0}
+      #${ROOT_ID} button{min-height:26px;height:auto;line-height:1.05;padding:5px 8px;font-size:11px}
+      .mm-fa-head{height:40px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 7px;gap:6px}
+      .mm-fa-body{padding:5px}
+      .mm-fa-tabs,.mm-fa-actions,.mm-fa-tiles{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+      .mm-fa-scroll{max-height:calc(100vh - 190px);overflow:auto;padding-right:2px}
+      .mm-fa-card{border:1px solid #353535;background:#171717;border-radius:6px;padding:6px;margin-bottom:4px}
+      .mm-fa-card.mm-fa-compact{padding:5px 6px}
+      .mm-fa-row{display:flex;align-items:flex-start;justify-content:space-between;gap:6px;border-top:1px solid #303030;padding:5px 0}
       .mm-fa-row:first-child{border-top:0}
       .mm-fa-main{min-width:0;flex:1 1 auto}
-      .mm-fa-buttons{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;flex:0 0 auto}
-      .mm-fa-muted{font-size:10px;color:#888}
-      .mm-fa-mini{font-size:11px;color:#aaa}
-      .mm-fa-stats{display:flex;gap:8px;flex-wrap:wrap;font-size:10px;color:#aaa;margin-top:2px}
-      .mm-fa-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:6px}
-      .mm-fa-input{width:100%;background:#111;color:#eee;border:1px solid #444;border-radius:5px;padding:7px;font:12px Arial,sans-serif}
-      .mm-fa-status{padding:6px 8px;background:#151515;border:1px solid #333;border-radius:5px;color:#d7ad4b;margin:6px 0;white-space:normal}
-      .mm-fa-pill{display:inline-block;border:1px solid #444;border-radius:999px;padding:2px 6px;font-size:10px;margin:2px 3px 0 0;color:#bbb}
+      .mm-fa-buttons{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+      .mm-fa-muted{font-size:9px;color:#888}
+      .mm-fa-mini{font-size:10px;color:#aaa}
+      .mm-fa-stats{display:flex;gap:4px;flex-wrap:wrap;font-size:10px;color:#aaa;margin-top:3px}
+      .mm-fa-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,max-content));gap:4px;align-items:start}
+      .mm-fa-input{width:100%;background:#111;color:#eee;border:1px solid #444;border-radius:5px;padding:5px 6px;font:11px Arial,sans-serif;min-height:27px}
+      .mm-fa-status{padding:4px 6px;background:#151515;border:1px solid #333;border-radius:4px;color:#d7ad4b;margin:4px 0;white-space:normal;font-size:10px}
+      .mm-fa-pill{display:inline-block;border:1px solid #444;border-radius:999px;padding:1px 5px;font-size:9px;margin:1px 2px 0 0;color:#bbb}
+      .mm-fa-tile{display:inline-flex;flex-direction:column;justify-content:center;gap:1px;width:max-content;max-width:100%;min-width:58px;padding:4px 6px;border:1px solid #353535;background:#121212;border-radius:5px}
+      .mm-fa-tile-wide{min-width:120px;max-width:100%;white-space:normal}
+      .mm-fa-tile-label{font-size:8px;line-height:1;color:#777;text-transform:uppercase;letter-spacing:.25px}
+      .mm-fa-tile-value{font-size:10px;line-height:1.15;color:#ddd;font-weight:600;white-space:nowrap}
+      .mm-fa-module-head{display:flex;gap:5px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:4px}
+      .mm-fa-member-head{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+      .mm-fa-details{margin-top:3px;border-top:1px solid #2b2b2b;padding-top:3px}
+      .mm-fa-details summary{cursor:pointer;font-size:9px;color:#999}
+      .mm-fa-slot-grid{display:flex;gap:4px;flex-wrap:wrap;align-items:stretch;margin-top:4px}
+      .mm-fa-slot{display:flex;flex-direction:column;gap:2px;min-width:138px;max-width:220px;padding:5px 6px;border:1px solid #303030;background:#121212;border-radius:5px}
       .mm-fa-good{color:#a7d7ad}.mm-fa-warn{color:#e5c879}.mm-fa-bad{color:#efaaa3}
       @media(max-width:620px){
-        #${ROOT_ID}{right:5px;top:56px;width:calc(100vw - 10px);max-height:calc(100vh - 62px)}
-        .mm-fa-row{display:block}
-        .mm-fa-buttons{justify-content:flex-start;margin-top:6px}
-        .mm-fa-scroll{max-height:calc(100vh - 215px)}
-      }
-    `;
+        #${ROOT_ID}{right:4px;top:54px;width:calc(100vw - 8px);max-height:calc(100vh - 60px)}
+        .mm-fa-scroll{max-height:calc(100vh - 180px)}
+        .mm-fa-tile{min-width:52px}
+        .mm-fa-slot{min-width:125px;max-width:100%}
+      }`;
     document.head.appendChild(style);
   }
 
   function button(primary=false){
-    return 'border:1px solid '+(primary?'#9a7b35':'#555')+';background:'+(primary?'#d9ad42':'#252525')+';color:'+(primary?'#111':'#eee')+';border-radius:6px;padding:6px 9px;cursor:pointer;font:12px Arial,sans-serif;font-weight:'+(primary?'700':'500')+';';
+    return 'border:1px solid '+(primary?'#9a7b35':'#555')+';background:'+(primary?'#d9ad42':'#252525')+';color:'+(primary?'#111':'#eee')+';border-radius:5px;padding:5px 8px;cursor:pointer;font:11px Arial,sans-serif;font-weight:'+(primary?'700':'500')+';';
   }
 
   function card(html){return '<div class="mm-fa-card">'+html+'</div>';}
+
+  function tile(label,value,{wide=false,cls=''}={}){
+    return '<span class="mm-fa-tile'+(wide?' mm-fa-tile-wide':'')+' '+cls+'">'+
+      '<span class="mm-fa-tile-label">'+esc(label)+'</span>'+
+      '<span class="mm-fa-tile-value">'+esc(value==null||value===''?'—':value)+'</span>'+
+    '</span>';
+  }
 
   function gmJson(url){
     return new Promise((resolve,reject)=>{
@@ -677,46 +694,52 @@
     const rows=memberRows();
     const missing=rows.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length;
     const vault=getVault();
-    return card(
-      '<div class="mm-fa-actions" style="justify-content:space-between;">'+
-        '<div><b>Member readiness</b><div class="mm-fa-muted">'+rows.length+' members · '+missing+' missing/stale · '+savedKeyIds().length+' Armory keys saved</div></div>'+
-        '<div class="mm-fa-actions"><button id="mm-fa-refresh-keys" style="'+button()+'">Refresh Saved Keys</button><button id="mm-fa-copy-request" style="'+button()+'">Copy Data Request</button></div>'+
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head">'+
+        '<div><b>Member readiness</b> <span class="mm-fa-muted">'+rows.length+' members · '+missing+' missing/stale · '+savedKeyIds().length+' keys saved</span></div>'+
+        '<div class="mm-fa-actions"><button id="mm-fa-refresh-keys" style="'+button()+'">Refresh Keys</button><button id="mm-fa-copy-request" style="'+button()+'">Copy Request</button></div>'+
       '</div>'+
-      '<div class="mm-fa-grid" style="grid-template-columns:minmax(220px,1fr) auto auto;margin-top:8px;">'+
-        '<input id="mm-fa-member-key" class="mm-fa-input" type="password" autocomplete="off" placeholder="Member Limited Access API key">'+
+      '<div class="mm-fa-actions">'+
+        '<input id="mm-fa-member-key" class="mm-fa-input" style="flex:1 1 260px;min-width:180px;" type="password" autocomplete="off" placeholder="Member Limited Access API key">'+
         '<button id="mm-fa-import-once" style="'+button()+'">Import Once</button>'+
         '<button id="mm-fa-import-save" style="'+button(true)+'">Import + Save</button>'+
-      '</div>'
-    )+
+      '</div>'+
+    '</div>'+
     (rows.length?rows.map(row=>{
       const s=row.stats||{};
       const source=String(row.profile?.source||'');
       const gear=String(row.equipmentSummary||'');
       const entry=vault?.entries?.[row.memberId];
       const statusClass=row.readinessStatus==='READY FOR REVIEW'?'mm-fa-good':row.readinessStatus==='MISSING DATA'?'mm-fa-bad':'mm-fa-warn';
-      return '<div class="mm-fa-card">'+
-        '<div class="mm-fa-row">'+
-          '<div class="mm-fa-main">'+
-            '<div><b>'+esc(row.memberName)+'</b> · Lv '+num(row.level)+' <span class="'+statusClass+'">· '+esc(row.readinessStatus)+'</span> '+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</div>'+
-            '<div class="mm-fa-stats"><span>STR '+(row.hasStats?fmt(s.strength):'—')+'</span><span>DEF '+(row.hasStats?fmt(s.defense):'—')+'</span><span>SPD '+(row.hasStats?fmt(s.speed):'—')+'</span><span>DEX '+(row.hasStats?fmt(s.dexterity):'—')+'</span><b>Total '+(row.hasStats?fmt(row.statProfile.total):'—')+'</b></div>'+
-            '<div class="mm-fa-muted">'+(source?esc(source)+' · '+when(row.profile?.verifiedAt):'No current readiness profile')+(row.loans?' · '+row.loans+' faction loan unit(s)':'')+'</div>'+
-            (entry?.lastError?'<div class="mm-fa-bad mm-fa-mini">API error: '+esc(entry.lastError)+'</div>':'')+
-            '<details style="margin-top:4px;"><summary class="mm-fa-mini" style="cursor:pointer;">Gear / supplies</summary>'+
-              '<div class="mm-fa-mini" style="margin-top:4px;"><b>Equipped:</b> '+(gear?esc(gear):'—')+'</div>'+
-              '<div class="mm-fa-mini"><b>Faction loans:</b> '+(row.loanItems.length?row.loanItems.map(i=>esc(i.name)+' x'+num(i.amount)).join(' | '):'—')+'</div>'+
-              '<div class="mm-fa-mini"><b>Medical:</b> '+esc([
-                'SFAK '+(row.profile?.supplyReadiness?.medical?.sfak??'—'),
-                'FAK '+(row.profile?.supplyReadiness?.medical?.fak??'—'),
-                'Morphine '+(row.profile?.supplyReadiness?.medical?.morphine??'—'),
-                'Ipecac '+(row.profile?.supplyReadiness?.medical?.ipecac??'—')
-              ].join(' · '))+'</div>'+
-            '</details>'+
-          '</div>'+
+      const med=row.profile?.supplyReadiness?.medical||{};
+      return '<div class="mm-fa-card mm-fa-compact">'+
+        '<div class="mm-fa-module-head">'+
+          '<div class="mm-fa-member-head"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</div>'+
           '<div class="mm-fa-buttons">'+
             (entry?'<button data-refresh-member="'+esc(row.memberId)+'" style="'+button(true)+'">Refresh</button><button data-remove-member="'+esc(row.memberId)+'" style="'+button()+'">Remove Key</button>':'')+
             '<button data-paste-reply="'+esc(row.memberId)+'" style="'+button()+'">Paste Reply</button>'+
           '</div>'+
         '</div>'+
+        '<div class="mm-fa-tiles">'+
+          tile('STR',row.hasStats?fmt(s.strength):'—')+
+          tile('DEF',row.hasStats?fmt(s.defense):'—')+
+          tile('SPD',row.hasStats?fmt(s.speed):'—')+
+          tile('DEX',row.hasStats?fmt(s.dexterity):'—')+
+          tile('TOTAL',row.hasStats?fmt(row.statProfile.total):'—')+
+          tile('LOANS',row.loans?row.loans+' units':'—')+
+          (source?tile('SOURCE',source+' · '+when(row.profile?.verifiedAt),{wide:true}):tile('SOURCE','No current profile',{wide:true}))+
+        '</div>'+
+        (entry?.lastError?'<div class="mm-fa-bad mm-fa-mini" style="margin-top:3px;">API error: '+esc(entry.lastError)+'</div>':'')+
+        '<details class="mm-fa-details"><summary>Gear / supplies</summary>'+
+          '<div class="mm-fa-tiles" style="margin-top:4px;">'+
+            tile('EQUIPPED',gear||'—',{wide:true})+
+            tile('FACTION LOANS',row.loanItems.length?row.loanItems.map(i=>i.name+' x'+num(i.amount)).join(' | '):'—',{wide:true})+
+            tile('SFAK',med.sfak??'—')+
+            tile('FAK',med.fak??'—')+
+            tile('MORPHINE',med.morphine??'—')+
+            tile('IPECAC',med.ipecac??'—')+
+          '</div>'+
+        '</details>'+
       '</div>';
     }).join(''):card('No faction roster is cached yet. Use Refresh Faction.'));
   }
@@ -724,28 +747,28 @@
   function buildsHtml(){
     const rows=memberRows();
     if(!rows.length)return card('No member roster is loaded.');
-    return card(
-      '<b>War-ready build standard</b>'+
-      '<div class="mm-fa-muted">Each member is evaluated by level + relative battle-stat tier + stat style. Strength leans damage; Speed/Dexterity lean accuracy; defensive/balanced builds require stronger armor coverage. Known personal gear is never replaced by a weaker faction item.</div>'
-    )+
+    return '<div class="mm-fa-card mm-fa-compact"><b>War-ready build standard</b> <span class="mm-fa-muted">Level + battle-stat tier + build style; no downgrades.</span></div>'+
     rows.map(row=>{
       const build=logic.compareMemberBuild(row,state?.factionInventory||{},rows);
       const tierClass=build.warReady?'mm-fa-good':row.hasStats?'mm-fa-warn':'mm-fa-bad';
-      return card(
-        '<div><b>'+esc(row.memberName)+'</b> · Lv '+num(row.level)+' · '+(row.hasStats?fmt(row.statProfile.total)+' total stats':'stats missing')+
-          ' · <span class="'+tierClass+'">'+esc(build.tier)+' '+(build.warReady?'WAR READY':'REVIEW')+'</span></div>'+
-        '<div class="mm-fa-muted">'+esc(build.summary)+' · build style '+esc(build.bias)+(build.dominant?' · dominant '+esc(build.dominant):'')+'</div>'+
-        '<details style="margin-top:5px;"><summary class="mm-fa-mini" style="cursor:pointer;">Current vs war-ready standard</summary>'+
-          '<div style="margin-top:5px;">'+build.items.map(item=>{
-            const cls=item.ready?'mm-fa-good':item.decision==='UPGRADE AVAILABLE'?'mm-fa-warn':'mm-fa-bad';
-            return '<div class="mm-fa-row" style="padding:5px 0;">'+
-              '<div class="mm-fa-main"><b>'+esc(item.slot.toUpperCase())+'</b> · <span class="'+cls+'">'+esc(item.decision)+'</span>'+
-                '<div class="mm-fa-muted">Current: <b>'+esc(item.currentName||'—')+'</b> · Ready floor '+(item.readinessFloor?fmt(item.readinessFloor):'—')+
-                ' · Faction target: '+esc(item.targetName||'—')+'</div></div>'+
-            '</div>';
-          }).join('')+'</div>'+
-        '</details>'
-      );
+      return '<div class="mm-fa-card mm-fa-compact">'+
+        '<div class="mm-fa-module-head">'+
+          '<div class="mm-fa-member-head"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+tierClass+'">'+esc(build.tier)+' '+(build.warReady?'WAR READY':'REVIEW')+'</span></div>'+
+          '<span class="mm-fa-muted">'+esc(build.bias)+(build.dominant?' · '+esc(build.dominant):'')+'</span>'+
+        '</div>'+
+        '<div class="mm-fa-muted">'+esc(build.summary)+'</div>'+
+        '<div class="mm-fa-slot-grid">'+build.items.map(item=>{
+          const cls=item.ready?'mm-fa-good':item.decision==='UPGRADE AVAILABLE'?'mm-fa-warn':'mm-fa-bad';
+          return '<div class="mm-fa-slot">'+
+            '<div><b>'+esc(item.slot.toUpperCase())+'</b> <span class="'+cls+'">'+esc(item.decision)+'</span></div>'+
+            '<div class="mm-fa-tiles">'+
+              tile('CURRENT',item.currentName||'—',{wide:true})+
+              tile('FLOOR',item.readinessFloor?fmt(item.readinessFloor):'—')+
+              tile('TARGET',item.targetName||'—',{wide:true})+
+            '</div>'+
+          '</div>';
+        }).join('')+'</div>'+
+      '</div>';
     }).join('');
   }
 
@@ -755,18 +778,19 @@
     const cats=['all',...logic.categories];
     const rows=current.filter(r=>selectedCategory==='all'||r.category===selectedCategory)
       .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
-    return card(
-      '<div class="mm-fa-actions" style="justify-content:space-between;">'+
-        '<div><b>Faction inventory</b><div class="mm-fa-muted">'+current.length+' item rows · source '+when(fi.lastSyncAt)+'</div></div>'+
-        '<button id="mm-fa-refresh-faction" style="'+button(true)+'">Refresh Faction</button>'+
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head"><div><b>Faction inventory</b> <span class="mm-fa-muted">'+current.length+' rows · '+when(fi.lastSyncAt)+'</span></div><button id="mm-fa-refresh-faction" style="'+button(true)+'">Refresh Faction</button></div>'+
+      '<div class="mm-fa-actions">'+cats.map(cat=>'<button data-cat="'+esc(cat)+'" style="'+button(selectedCategory===cat)+'">'+esc(cat==='all'?'All':cat)+'</button>').join('')+'</div>'+
+    '</div>'+
+    (rows.length?rows.map(row=>'<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head"><div><b>'+esc(row.name)+'</b> <span class="mm-fa-muted">'+esc(row.category)+' · '+esc(row.itemId)+'</span></div></div>'+
+      '<div class="mm-fa-tiles">'+
+        tile('OWNED',fmt(row.amountOwned))+
+        tile('AVAILABLE',fmt(row.availableCount))+
+        tile('LOANED',fmt(row.loanedCount))+
+        (row.loans?.length?tile('LOANS',row.loans.map(l=>l.memberName+' x'+num(l.amount)).join(' | '),{wide:true}):'')+
       '</div>'+
-      '<div class="mm-fa-actions" style="margin-top:7px;">'+cats.map(cat=>'<button data-cat="'+esc(cat)+'" style="'+button(selectedCategory===cat)+'">'+esc(cat==='all'?'All':cat)+'</button>').join('')+'</div>'
-    )+
-    (rows.length?rows.map(row=>card(
-      '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.name)+'</b><div class="mm-fa-muted">'+esc(row.category)+' · ID '+esc(row.itemId)+'</div></div>'+
-      '<div class="mm-fa-mini" style="text-align:right;">Owned <b>'+fmt(row.amountOwned)+'</b><br>Available <b>'+fmt(row.availableCount)+'</b> · Loaned '+fmt(row.loanedCount)+'</div></div>'+
-      (row.loans?.length?'<div class="mm-fa-muted">'+row.loans.map(l=>esc(l.memberName)+' x'+num(l.amount)).join(' | ')+'</div>':'')
-    )).join(''):card('No items in this category.'));
+    '</div>').join(''):card('No items in this category.'));
   }
 
   function minimumsHtml(){
@@ -775,22 +799,24 @@
       participants:WAR_PARTICIPANTS
     });
     const rows=proposal.proposals.slice().sort((a,b)=>(b.shortfall||0)-(a.shortfall||0)||String(a.category).localeCompare(String(b.category)));
-    const modeLabel=stockMode==='war'?'WAR — '+WAR_PARTICIPANTS+' PARTICIPANTS':'PEACE';
-    return card(
-      '<div class="mm-fa-actions" style="justify-content:space-between;">'+
-        '<div><b>Inventory minimums</b><div class="mm-fa-muted">'+modeLabel+' · '+proposal.observedDays.toFixed(1)+' observed days · '+proposal.confidence+' history confidence</div></div>'+
-        '<button id="mm-fa-export" style="'+button(true)+'">Leadership Excel</button>'+
+    const modeLabel=stockMode==='war'?'WAR · '+WAR_PARTICIPANTS+' PARTICIPANTS':'PEACE';
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head">'+
+        '<div><b>Inventory minimums</b> <span class="mm-fa-muted">'+modeLabel+' · '+proposal.observedDays.toFixed(1)+'d history · '+proposal.confidence+'</span></div>'+
+        '<div class="mm-fa-actions"><button data-stock-mode="peace" style="'+button(stockMode==='peace')+'">Peace</button><button data-stock-mode="war" style="'+button(stockMode==='war')+'">War</button><button id="mm-fa-export" style="'+button(true)+'">Leadership Excel</button></div>'+
       '</div>'+
-      '<div class="mm-fa-actions" style="margin-top:8px;">'+
-        '<button data-stock-mode="peace" style="'+button(stockMode==='peace')+'">Peace</button>'+
-        '<button data-stock-mode="war" style="'+button(stockMode==='war')+'">War</button>'+
+      '<div class="mm-fa-muted">'+esc(proposal.assumptions)+'</div>'+
+    '</div>'+
+    (rows.length?rows.map(row=>'<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head"><div><b>'+esc(row.item)+'</b> <span class="mm-fa-muted">'+esc(row.category)+(row.slot?' · '+esc(row.slot):'')+'</span></div></div>'+
+      '<div class="mm-fa-tiles">'+
+        tile('CURRENT',fmt(row.current))+
+        tile('MIN',row.dataRequired?'DATA':fmt(row.recommendedMin))+
+        tile('MAX',row.dataRequired?'—':fmt(row.recommendedMax))+
+        tile('SHORT',row.dataRequired?'—':fmt(row.shortfall),{cls:num(row.shortfall)>0?'mm-fa-bad':''})+
       '</div>'+
-      '<div class="mm-fa-mini" style="margin-top:7px;">'+esc(proposal.assumptions)+'</div>'
-    )+
-    (rows.length?rows.map(row=>card(
-      '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.item)+'</b><div class="mm-fa-muted">'+esc(row.category)+(row.slot?' · '+esc(row.slot):'')+' · '+esc(row.rationale)+'</div></div>'+
-      '<div class="mm-fa-mini" style="text-align:right;">Current <b>'+fmt(row.current)+'</b><br>Min <b>'+(row.dataRequired?'DATA':fmt(row.recommendedMin))+'</b> · Max '+(row.dataRequired?'—':fmt(row.recommendedMax))+(row.dataRequired?'':' · Short '+fmt(row.shortfall))+'</div></div>'
-    )).join(''):card('Not enough inventory/history data to calculate proposals.'));
+      '<details class="mm-fa-details"><summary>Basis</summary><div class="mm-fa-muted" style="margin-top:3px;">'+esc(row.rationale)+'</div></details>'+
+    '</div>').join(''):card('Not enough inventory/history data to calculate proposals.'));
   }
 
   function settingsHtml(){
@@ -808,7 +834,7 @@
 
   function sourceStrip(){
     const fi=state?.factionInventory||{};
-    return '<div class="mm-fa-muted" style="margin-bottom:6px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
+    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
   }
 
   function createPanel(){
@@ -828,7 +854,7 @@
       :activeView==='minimums'?minimumsHtml()
       :settingsHtml();
     root.innerHTML=
-      '<div class="mm-fa-head"><div><b style="font-size:15px;">MM Faction Armory</b><div class="mm-fa-muted">v'+VERSION+' · task-first faction readiness</div></div><button id="mm-fa-close" style="'+button()+'">×</button></div>'+
+      '<div class="mm-fa-head"><div><b style="font-size:14px;">MM Faction Armory</b><div class="mm-fa-muted">v'+VERSION+' · task-first faction readiness</div></div><button id="mm-fa-close" style="'+button()+'">×</button></div>'+
       '<div class="mm-fa-body">'+
         '<div class="mm-fa-tabs">'+
           '<button data-view="members" style="'+button(activeView==='members')+'">Members</button>'+
