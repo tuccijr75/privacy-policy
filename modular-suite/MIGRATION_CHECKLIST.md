@@ -36,9 +36,9 @@
 - [x] Extract leadership workbook/reporting.
 
 ## Phase 4 — Bazaar Manager
-- [ ] Extract sales/Bazaar/listing workflow.
-- [ ] Extract customers/restock alerts/coupons/refunds.
-- [ ] Remove acquisition/faction/BI code paths.
+- [x] Extract sales/Bazaar/listing workflow.
+- [x] Extract customers/restock alerts/coupons/refunds.
+- [x] Remove acquisition/faction/BI code paths.
 
 ## Phase 5 — Business Intelligence
 - [ ] Extract summary analytics.
@@ -87,3 +87,24 @@
 - [ ] Verify live build decisions preserve stronger current gear.
 - [ ] Export and open Leadership Excel workbook.
 - [ ] Explicit owner acceptance before legacy faction workflow retirement.
+
+
+## Bazaar Manager live gate
+- [x] Static syntax + pure logic acceptance PASS.
+- [x] Sales/Bazaar/listing workflow extracted.
+- [x] Customers/restock/coupons/refunds extracted.
+- [x] Acquisition/faction/BI paths excluded from the new script.
+- [x] Shared Core dock + movable panel integration implemented.
+- [x] API key isolated in Bazaar Manager GM storage.
+- [ ] Human installs Bazaar Manager alpha.1 in Tampermonkey.
+- [ ] Reload Torn and confirm Bazaar launcher appears in shared bottom dock.
+- [ ] Open Bazaar Manager and confirm legacy customers/sales/coupons/refunds render from schema 11.
+- [ ] Save Bazaar Manager API key and run Refresh Sales.
+- [ ] Run Refresh Shop and confirm Bazaar + personal inventory rows populate.
+- [ ] Verify Sell view shows listing guidance without Market Scout/procurement UI.
+- [ ] Verify one customer welcome/coupon workflow routes to Torn Messages and does not auto-send.
+- [ ] Verify coupon qualification only counts post-issue purchases inside the 24-hour window.
+- [ ] Verify pending cashback opens the member profile and only changes to paid after explicit Mark Paid.
+- [ ] Verify Restock alert uses current Bazaar inventory and remains manual-send.
+- [ ] Verify draggable panel and shared dock behavior.
+- [ ] Explicit owner acceptance before legacy Sell/Customers workflow retirement.
