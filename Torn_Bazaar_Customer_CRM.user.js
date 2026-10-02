@@ -6237,7 +6237,7 @@ async function verifyAndOpenBazaarSeller(itemId, sellerId, expectedPrice = 0, ma
     }
 
     // ============================================================
-    // OPERATIONS + ADVANCED ANALYTICS v6
+    // OPERATIONS + DETAIL ANALYTICS v6
     // ============================================================
 
     function salesByItemDetailed(db, itemId) {
@@ -10987,73 +10987,6 @@ function promptFactionMemberReadiness(memberId) {
         render();
     }
 
-    function factionItemDetailRows(data) {
-        const source = Array.isArray(data)
-            ? data
-            : Array.isArray(data?.itemdetails)
-                ? data.itemdetails
-                : Array.isArray(data?.items)
-                    ? data.items
-                    : [];
-        const numeric = value => {
-            if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
-            if (typeof value === 'string') return Number(value.replace(/,/g,'')) || 0;
-            return 0;
-        };
-        return source.map(raw => {
-            const item = raw?.item && typeof raw.item === 'object' ? raw.item : raw;
-            const stats = item?.stats && typeof item.stats === 'object' ? item.stats : {};
-            return {
-                uid:String(raw?.uid ?? item?.uid ?? '').trim(),
-                itemId:asId(item?.id ?? raw?.item_id ?? raw?.id),
-                name:String(item?.name ?? raw?.name ?? '').trim(),
-                type:String(item?.type ?? raw?.type ?? '').trim(),
-                subType:String(item?.sub_type ?? item?.subType ?? raw?.sub_type ?? '').trim(),
-                damage:numeric(item?.damage ?? stats.damage),
-                accuracy:numeric(item?.accuracy ?? stats.accuracy),
-                armor:numeric(item?.armor ?? stats.armor ?? stats.protection),
-                quality:numeric(item?.quality ?? stats.quality),
-                bonuses:item?.bonuses && typeof item.bonuses === 'object' ? deepClone(item.bonuses) : null
-            };
-        }).filter(x=>x.uid || x.itemId || x.name);
-    }
-
-    async function fetchFactionArmoryCandidateDetails(db) {
-        const key = factionInventoryApiKey();
-        if (!key) throw new Error('No compatible faction API key is available.');
-        const inventoryRows = factionInventoryRows(db)
-            .filter(row => Number(row.availableCount||0) > 0)
-            .filter(row => ['weapons','armor','temporary'].includes(String(row.category||'')))
-            .filter(row => Array.isArray(row.availableUids) && row.availableUids.length);
-
-        const uidMap = new Map();
-        for (const row of inventoryRows) {
-            for (const uid of row.availableUids.slice(0,3)) {
-                const keyUid=String(uid||'').trim();
-                if (keyUid && !uidMap.has(keyUid)) uidMap.set(keyUid,row);
-            }
-        }
-
-        const uids=[...uidMap.keys()];
-        const details=[];
-        for(let i=0;i<uids.length;i+=25){
-            const batch=uids.slice(i,i+25);
-            const data=await apiRequest('/torn/'+batch.map(encodeURIComponent).join(',')+'/itemdetails',key);
-            details.push(...factionItemDetailRows(data));
-        }
-
-        return details.map(detail => {
-            const sourceRow=uidMap.get(String(detail.uid)) ||
-                inventoryRows.find(r=>asId(r.itemId)===asId(detail.itemId)) || {};
-            return {
-                ...detail,
-                category:String(sourceRow.category||'') === 'weapons' ? 'weapon' : String(sourceRow.category||''),
-                available:Number(sourceRow.availableCount||0),
-                referencePrice:Number(sourceRow.referencePrice||0)
-            };
-        });
-    }
-
     function factionArmorSlot(item) {
         const raw=[item?.subType,item?.slot,item?.type,item?.name].map(v=>String(v||'').toLowerCase()).join(' ');
         if(/helmet|head/.test(raw)) return 'helmet';
@@ -11062,18 +10995,6 @@ function promptFactionMemberReadiness(memberId) {
         if(/boot|shoe|foot/.test(raw)) return 'boots';
         if(/vest|body|armor|armour|jacket/.test(raw)) return 'body';
         return '';
-    }
-
-    function factionArmoryCandidateRows(db) {
-        return factionInventoryRows(db)
-            .filter(row => FACTION_INVENTORY_LOAN_CATEGORIES.includes(String(row.category||'')) && Number(row.availableCount||0) > 0)
-            .map(row => ({
-                itemId:asId(row.itemId), name:String(row.name||''), category:String(row.category||''),
-                available:Number(row.availableCount||0), armorRating:Number(row.armorRating||0),
-                damage:Number(row.damage||0), accuracy:Number(row.accuracy||0), quality:Number(row.quality||0),
-                referencePrice:Number(row.referencePrice||0), metadataComplete:Boolean(Number(row.armorRating||0) || Number(row.damage||0) || Number(row.accuracy||0) || Number(row.quality||0))
-            }))
-            .sort((a,b) => (b.armorRating-a.armorRating) || ((b.damage+b.accuracy)-(a.damage+a.accuracy)) || (b.quality-a.quality) || (b.available-a.available));
     }
 
     function factionWeaponSlot(item) {
@@ -11159,7 +11080,7 @@ function factionGlobalEquipmentCandidates(db) {
         const composite = statPct * 0.75 + levelPct * 0.25;
         const label = known.length < 4
             ? 'STANDARD'
-            : composite >= 0.75 ? 'ADVANCED' : composite >= 0.35 ? 'STANDARD' : 'DEVELOPMENT';
+            : composite >= 0.75 ? 'DETAIL' : composite >= 0.35 ? 'STANDARD' : 'DEVELOPMENT';
         return { label, composite, statPercentile:statPct, levelPercentile:levelPct, comparisonCount:known.length };
     }
 
@@ -11450,247 +11371,6 @@ function composeFactionMemberBuildMessage(memberId) {
         statusText='Build message prepared for '+String(member.memberName||id)+' ['+id+']; Send remains manual.';
     }
 
-    function factionLoadoutOptimization(member, candidateDetails) {
-        const equipped = Array.isArray(member?.profile?.equipment?.items)
-            ? member.profile.equipment.items
-            : [];
-        const result = {
-            memberId:asId(member?.memberId),
-            memberName:String(member?.memberName||''),
-            generatedAt:nowIso(),
-            statProfile:String(member?.statProfile?.label||'UNKNOWN'),
-            recommendations:[],
-            summary:''
-        };
-
-        if (!equipped.length) {
-            result.summary='No structured equipped-item data is available. Refresh this member before optimization.';
-            return result;
-        }
-
-        const candidates = Array.isArray(candidateDetails)
-            ? candidateDetails.filter(x=>x && typeof x==='object')
-            : [];
-
-        const decorate = (rec, candidate) => ({
-            ...rec,
-            itemId:asId(candidate?.itemId),
-            available:Number(candidate?.available||0),
-            uid:String(candidate?.uid||''),
-            source:String(candidate?.source || (Number(candidate?.available||0)>0 ? 'FACTION ARMORY' : 'GLOBAL CATALOG')),
-            acquisition:String(candidate?.acquisition || (Number(candidate?.available||0)>0 ? 'ISSUE FROM ARMORY' : 'PROCURE')),
-            procurementRoute:String(candidate?.procurementRoute || (Number(candidate?.available||0)>0
-                ? 'Faction armory'
-                : 'Faction member bazaar → trusted/private supplier → Item Market')),
-            referencePrice:Number(candidate?.referencePrice||0),
-            priceSource:String(candidate?.priceSource||'')
-        });
-
-        const currentArmor = equipped.filter(x=>factionArmorSlot(x));
-        const armorCandidates = candidates.filter(x=>String(x.category||'')==='armor' && factionArmorSlot(x));
-
-        for (const current of currentArmor) {
-            const slot = factionArmorSlot(current);
-            const comparable = armorCandidates
-                .filter(x=>factionArmorSlot(x)===slot && Number(x.armor||0)>0)
-                .sort((a,b)=>
-                    Number(b.armor||0)-Number(a.armor||0) ||
-                    Number(b.quality||0)-Number(a.quality||0) ||
-                    Number(b.available||0)-Number(a.available||0)
-                );
-            if (!comparable.length) continue;
-
-            const best = comparable[0];
-            const currentArmorValue = Number(current.armor||0);
-            const candidateArmorValue = Number(best.armor||0);
-
-            if (currentArmorValue > 0 && candidateArmorValue > currentArmorValue) {
-                result.recommendations.push(decorate({
-                    kind:'CLEAR ARMOR UPGRADE',
-                    slot,
-                    current:String(current.name||'Unknown'),
-                    candidate:String(best.name||'Unknown'),
-                    currentValue:currentArmorValue,
-                    candidateValue:candidateArmorValue,
-                    delta:candidateArmorValue-currentArmorValue,
-                    note:(best.bonuses||current.bonuses)
-                        ? 'Higher armor rating in the same slot; review bonuses/quality before final issue or purchase.'
-                        : 'Higher armor rating in the same slot.'
-                },best));
-            } else if (currentArmorValue > 0 && candidateArmorValue === currentArmorValue &&
-                (Number(best.quality||0)>Number(current.quality||0) || best.bonuses)) {
-                result.recommendations.push(decorate({
-                    kind:'QUALITY / BONUS REVIEW',
-                    slot,
-                    current:String(current.name||'Unknown'),
-                    candidate:String(best.name||'Unknown'),
-                    currentValue:currentArmorValue,
-                    candidateValue:candidateArmorValue,
-                    delta:0,
-                    note:'Armor rating is equal; inspect quality/bonuses before deciding whether this is a worthwhile change.'
-                },best));
-            } else if (!(currentArmorValue > 0) && candidateArmorValue > 0) {
-                result.recommendations.push(decorate({
-                    kind:'ARMOR DATA REVIEW',
-                    slot,
-                    current:String(current.name||'Unknown'),
-                    candidate:String(best.name||'Unknown'),
-                    currentValue:currentArmorValue,
-                    candidateValue:candidateArmorValue,
-                    delta:null,
-                    note:'Candidate has known armor data, but current equipped armor rating was not available; verify before purchase.'
-                },best));
-            }
-        }
-
-        const currentWeapons = equipped.filter(x=>Number(x.damage||0)>0 || Number(x.accuracy||0)>0);
-        const weaponCandidates = candidates.filter(x=>String(x.category||'')==='weapon' &&
-            (Number(x.damage||0)>0 || Number(x.accuracy||0)>0));
-
-        for (const current of currentWeapons) {
-            const slot=factionWeaponSlot(current);
-            const comparable=weaponCandidates.filter(x=>{
-                const candidateSlot=factionWeaponSlot(x);
-                if (slot && candidateSlot) return slot===candidateSlot;
-                const a=String(x.subType||x.type||'').toLowerCase();
-                const b=String(current.subType||current.type||'').toLowerCase();
-                return Boolean(a && b && a===b);
-            });
-            if(!comparable.length) continue;
-
-            const curD=Number(current.damage||0);
-            const curA=Number(current.accuracy||0);
-            const clear=comparable.filter(x=>{
-                const d=Number(x.damage||0), a=Number(x.accuracy||0);
-                return d>=curD && a>=curA && (d>curD || a>curA);
-            }).sort((a,b)=>{
-                const gainA=(Number(a.damage||0)-curD)+(Number(a.accuracy||0)-curA);
-                const gainB=(Number(b.damage||0)-curD)+(Number(b.accuracy||0)-curA);
-                return gainB-gainA || Number(b.available||0)-Number(a.available||0);
-            });
-
-            if(clear.length){
-                const best=clear[0];
-                result.recommendations.push(decorate({
-                    kind:'CLEAR WEAPON UPGRADE',
-                    slot:slot || String(current.subType||current.type||current.slot||'weapon'),
-                    current:String(current.name||'Unknown'),
-                    candidate:String(best.name||'Unknown'),
-                    currentValue:'D '+curD+' / A '+curA,
-                    candidateValue:'D '+Number(best.damage||0)+' / A '+Number(best.accuracy||0),
-                    delta:null,
-                    note:'Candidate is no worse on damage or accuracy and is better on at least one.'
-                },best));
-                continue;
-            }
-
-            const tradeoffs=comparable.filter(x=>{
-                const d=Number(x.damage||0), a=Number(x.accuracy||0);
-                return (d>curD && a<curA) || (d<curD && a>curA);
-            }).sort((a,b)=>
-                (Number(b.damage||0)+Number(b.accuracy||0))-
-                (Number(a.damage||0)+Number(a.accuracy||0))
-            );
-            if(tradeoffs.length){
-                const best=tradeoffs[0];
-                result.recommendations.push(decorate({
-                    kind:'WEAPON TRADEOFF',
-                    slot:slot || String(current.subType||current.type||current.slot||'weapon'),
-                    current:String(current.name||'Unknown'),
-                    candidate:String(best.name||'Unknown'),
-                    currentValue:'D '+curD+' / A '+curA,
-                    candidateValue:'D '+Number(best.damage||0)+' / A '+Number(best.accuracy||0),
-                    delta:null,
-                    note:'One combat stat improves while the other declines; manager review required.'
-                },best));
-            }
-        }
-
-        const temporaryCandidates=candidates.filter(x=>String(x.category||'')==='temporary');
-        if(temporaryCandidates.length){
-            const armoryTemporary=temporaryCandidates.filter(x=>Number(x.available||0)>0);
-            const sample=(armoryTemporary.length?armoryTemporary:temporaryCandidates)
-                .map(x=>String(x.name||'')).filter(Boolean);
-            result.recommendations.push({
-                kind:'TACTICAL REVIEW',
-                slot:'temporary',
-                current:String(equipped.find(x=>/temporary/i.test(String(x.slot||x.type||'')))?.name || 'Unknown'),
-                candidate:[...new Set(sample)].slice(0,8).join(', '),
-                available:armoryTemporary.reduce((sum,x)=>sum+Number(x.available||0),0),
-                source:armoryTemporary.length?'FACTION ARMORY':'GLOBAL CATALOG',
-                acquisition:armoryTemporary.length?'ISSUE FROM ARMORY':'PROCURE AS NEEDED',
-                procurementRoute:armoryTemporary.length?'Faction armory':'Faction member bazaar → trusted/private supplier → Item Market',
-                referencePrice:0,
-                priceSource:'',
-                note:'Temporary equipment is tactic/assignment dependent; no universal numeric upgrade is asserted.'
-            });
-        }
-
-        const clearCount=result.recommendations.filter(x=>
-            x.kind==='CLEAR ARMOR UPGRADE'||x.kind==='CLEAR WEAPON UPGRADE'
-        ).length;
-        const procureCount=result.recommendations.filter(x=>/^PROCURE/.test(String(x.acquisition||''))).length;
-        const armoryCount=result.recommendations.filter(x=>String(x.acquisition||'')==='ISSUE FROM ARMORY').length;
-        const reviewCount=result.recommendations.length-clearCount;
-
-        result.summary=result.recommendations.length
-            ? clearCount+' clear upgrade'+(clearCount===1?'':'s')+
-              ' · '+procureCount+' procurement target'+(procureCount===1?'':'s')+
-              ' · '+armoryCount+' armory action'+(armoryCount===1?'':'s')+
-              ' · '+reviewCount+' review item'+(reviewCount===1?'':'s')+'.'
-            : 'No supported upgrade was found from the current armory or global equipment catalog.';
-        return result;
-    }
-
-    async function optimizeFactionMemberLoadout(memberId) {
-        const id=asId(memberId);
-        if(!id) throw new Error('Member ID is required.');
-        try {
-            statusText='Analyzing global equipment and faction armory options for member '+id+'…';
-            render();
-
-            await refreshProcurementCatalog(false,factionInventoryApiKey());
-            const db=dbLoad();
-            const member=factionMemberReadinessRows(db).find(x=>asId(x.memberId)===id);
-            if(!member) throw new Error('Member is not present in the current faction roster.');
-            if(!member.hasStats || !member.hasEquipment) throw new Error('Refresh/import this member before optimizing loadout.');
-            if(!Array.isArray(member.profile?.equipment?.items) || !member.profile.equipment.items.length) {
-                throw new Error('Structured equipment data is missing. Refresh this member once before optimizing.');
-            }
-
-            const armoryDetails=await fetchFactionArmoryCandidateDetails(db);
-            const globalCandidates=factionGlobalEquipmentCandidates(db);
-            const enrichedArmory=armoryDetails.map(item=>{
-                const price=factionProcurementPriceContext(db,item.itemId,{marketValue:item.referencePrice||0});
-                return {
-                    ...item,
-                    source:'FACTION ARMORY INSTANCE',
-                    acquisition:'ISSUE FROM ARMORY',
-                    procurementRoute:'Faction armory',
-                    referencePrice:Number(price.price||item.referencePrice||0),
-                    priceSource:String(price.source||'Faction market reference')
-                };
-            });
-            const optimization=factionLoadoutOptimization(member,[...globalCandidates,...enrichedArmory]);
-
-            const db2=dbLoad();
-            const profile=db2.factionInventory.memberReadiness.profiles[id] || {};
-            profile.optimization=optimization;
-            profile.optimizedAt=nowIso();
-            db2.factionInventory.memberReadiness.profiles[id]=profile;
-            dbSave(db2);
-            await flushDbWrites();
-
-            statusText='Loadout optimization complete for '+member.memberName+': '+optimization.summary;
-            render();
-            return optimization;
-        } catch(error) {
-            statusText='Loadout optimization failed: '+(error?.message||String(error));
-            render();
-            throw error;
-        }
-    }
-
     function factionMemberReadinessRows(db) {
         const readiness = db.factionInventory?.memberReadiness || {};
         const roster = Object.values(readiness.roster || {});
@@ -11745,52 +11425,6 @@ function composeFactionMemberBuildMessage(memberId) {
             const p={'MISSING DATA':0,'STALE DATA':1,'SUPPLY ACTION':2,'READY FOR REVIEW':3};
             return (p[a.readinessStatus]??9)-(p[b.readinessStatus]??9) || Number(b.level||0)-Number(a.level||0) || String(a.memberName||'').localeCompare(String(b.memberName||''));
         });
-    }
-
-    function composeFactionMemberOptimizationMessage(memberId) {
-        const id = asId(memberId);
-        const db = dbLoad();
-        const row = factionMemberReadinessRows(db).find(item => asId(item.memberId) === id);
-        if (!row) throw new Error('Faction member readiness row not found.');
-
-        const recs = Array.isArray(row.profile?.optimization?.recommendations)
-            ? row.profile.optimization.recommendations
-            : [];
-        const recLines = recs.length
-            ? recs.map((rec,index) => {
-                const action = rec.acquisition || (Number(rec.available||0)>0 ? 'ISSUE FROM ARMORY' : 'PROCURE');
-                const route = rec.procurementRoute ? ' | Route: '+rec.procurementRoute : '';
-                return (index+1)+'. '+String(rec.kind||'REVIEW')+
-                    (rec.slot?' ['+rec.slot+']':'')+
-                    (rec.current?' | Current: '+rec.current:'')+
-                    (rec.candidate?' | Target: '+rec.candidate:'')+
-                    ' | '+action+route+
-                    (rec.note?' | '+rec.note:'');
-            }).join('\n')
-            : 'No finalized equipment recommendation yet. Refresh/optimize this member before issuing gear.';
-
-        const currentGear = row.equipmentSummary || 'No current equipment summary available.';
-        const currentState =
-            'Level '+Number(row.level||0)+
-            ' | Battle stat total '+Number(row.statProfile?.total||0).toLocaleString()+
-            ' | Profile '+String(row.statProfile?.label||'UNKNOWN')+
-            ' | Readiness '+String(row.readinessStatus||'UNKNOWN')+
-            ' | Current faction loans '+Number(row.loans||0);
-
-        const subject = 'Your faction equipment optimization plan';
-        const body =
-            String(row.memberName||'Faction member')+',\n\n' +
-            'I reviewed your current readiness and equipment for faction optimization.\n\n' +
-            'CURRENT STATE\n'+currentState+'\nCurrent gear: '+currentGear+'\n\n' +
-            'OPTIMIZATION PLAN\n'+recs.length+' recommendation(s).\n'+recLines+'\n\n' +
-            'EQUIPMENT AVAILABILITY\nRecommendations are not limited to what is currently in Faction Inventory. If the best target is not available, I can procure it. Preferred sourcing is faction member bazaar first, then trusted/private suppliers, then the Item Market.\n\n' +
-            'LOAN OPTIONS / RULES\n'+FACTION_INVENTORY_POLICY.loans+'\n'+
-            'High-value Ranked War equipment: '+FACTION_INVENTORY_POLICY.highValue+'\n'+
-            'Routine permitted armor/temporary gear can be loaned when available; procurement or high-value allocation may require Leadership/Banker approval.\n\n' +
-            'If you have changed equipment or stats since the last refresh, tell me before we finalize the loadout.\n\n— Manic Mike';
-
-        composeMessage(id, subject, body);
-        statusText = 'Optimization message prepared for '+String(row.memberName||id)+' ['+id+']; Send remains manual.';
     }
 
     function recordFactionLogisticsEntry(entry = {}) {
@@ -14979,13 +14613,6 @@ function reportsSimpleHtml(db) {
         '</div>'+body;
     }
 
-    function moreSimpleHtml(db) {
-        const brief = ownerBriefing(db);
-        const preset = String(db.operations.settings.strategyPreset || 'BALANCED').replaceAll('_',' ');
-        return card(`<b>Tools & Settings</b><div style="font-size:11px;color:#999;margin:4px 0 8px;">Advanced reports and configuration remain fully available. Current strategy: <b>${escapeHtml(preset)}</b>.</div><div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;"><button data-simple-go="reports" style="${btn()}">Reports & Business Rules</button><button data-open-advanced="faction" style="${btn()}">Faction Inventory</button><button data-open-advanced="analytics" style="${btn()}">Analytics & Reports</button><button data-open-advanced="sales" style="${btn()}">Sales Ledger</button><button data-open-advanced="inventory" style="${btn()}">Full Inventory</button><button data-open-advanced="procurement" style="${btn()}">Full Procurement</button><button data-open-advanced="intel" style="${btn()}">Full Market Intel</button><button data-open-advanced="subscribers" style="${btn()}">Restock Subscribers</button><button data-open-advanced="coupons" style="${btn()}">Coupons</button><button data-open-advanced="refunds" style="${btn()}">Refunds</button><button data-open-advanced="ops" style="${btn()}">Operations Detail</button><button data-open-advanced="settings" style="${btn(true)}">Settings & Diagnostics</button></div><div style="border-top:1px solid #333;margin-top:9px;padding-top:7px;font-size:11px;color:#aaa;">Revenue ${money(brief.revenue)} · Gross profit ${money(brief.grossProfit)} · Dead capital ${money(brief.deadCapital)} · Lost profit ${money(brief.lostProfit)}</div>`);
-    }
-
-
     function compareVersions(a,b) {
         const pa=String(a||'0').split('.').map(x=>Number(x)||0);
         const pb=String(b||'0').split('.').map(x=>Number(x)||0);
@@ -15228,20 +14855,6 @@ function render() {
             render();
         }));
 
-        root.querySelectorAll('[data-open-advanced]').forEach(button => button.addEventListener('click', () => {
-            const legacy=String(button.dataset.openAdvanced||'');
-            const map={
-                ops:'stock',inventory:'stock',
-                procurement:'deals',intel:'deals',
-                customers:'customers',subscribers:'customers',coupons:'customers',refunds:'customers',
-                faction:'faction',
-                analytics:'reports',sales:'reports',
-                settings:'settings'
-            };
-            activeTab=map[legacy]||'home';
-            render();
-        }));
-
         root.querySelectorAll('[data-customer-workflow]').forEach(button => button.addEventListener('click', () => {
             customerWorkflow=String(button.dataset.customerWorkflow||'list');
             render();
@@ -15407,11 +15020,6 @@ function render() {
         root.querySelector('#mm-faction-member-key-refresh')?.addEventListener('click', () => refreshFactionMemberKeyVault().catch(()=>{}));
         root.querySelector('#mm-faction-roster-sync-card')?.addEventListener('click', () => syncFactionMemberRoster({silent:false}).catch(()=>{}));
         root.querySelectorAll('[data-faction-member-edit]').forEach(button => button.addEventListener('click', () => promptFactionMemberReadiness(button.dataset.factionMemberEdit)));
-        root.querySelectorAll('[data-faction-member-optimize]').forEach(button => button.addEventListener('click', () => optimizeFactionMemberLoadout(button.dataset.factionMemberOptimize).catch(()=>{})));
-        root.querySelectorAll('[data-faction-member-message]').forEach(button => button.addEventListener('click', () => {
-            try { composeFactionMemberOptimizationMessage(button.dataset.factionMemberMessage); }
-            catch (error) { statusText='Member optimization message failed: '+(error?.message||String(error)); render(); }
-        }));
         root.querySelectorAll('[data-faction-category-link]').forEach(button => button.addEventListener('click', () => {
             const db=dbLoad();
             db.factionInventory.settings.selectedCategory=String(button.dataset.factionCategoryLink||'all');
@@ -16324,9 +15932,6 @@ function scheduleWeavLiveSync() {
         factionMemberReadinessRows: () => factionMemberReadinessRows(dbLoad()),
         requestFactionMemberData: composeFactionMemberDataRequest,
         importFactionMemberReply: importFactionMemberMessageReply,
-        optimizeFactionMemberLoadout,
-        factionLoadoutOptimization,
-        factionArmoryCandidateRows: () => factionArmoryCandidateRows(dbLoad()),
         factionInventorySelfTest,
         syncTravelStock,
         updateTravelData,
