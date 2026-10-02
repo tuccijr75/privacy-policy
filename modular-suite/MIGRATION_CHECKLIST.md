@@ -29,11 +29,11 @@
 - [x] Verify one-action routing and seller fallback in mocked harness; live browser acceptance pending.
 
 ## Phase 3 — Faction Armory
-- [ ] Extract nine inventory categories.
-- [ ] Extract member readiness request/reply workflow.
-- [ ] Extract build engine/current-vs-target comparison.
-- [ ] Extract minimums/war reserve proposal.
-- [ ] Extract leadership workbook/reporting.
+- [x] Extract nine inventory categories.
+- [x] Extract member readiness request/reply workflow.
+- [x] Extract build engine/current-vs-target comparison.
+- [x] Extract minimums/war reserve proposal.
+- [x] Extract leadership workbook/reporting.
 
 ## Phase 4 — Bazaar Manager
 - [ ] Extract sales/Bazaar/listing workflow.
@@ -68,3 +68,22 @@
 - [ ] Verify Item Market fallback route.
 - [ ] Run Update Travel and confirm direct refresh or browser-capture fallback.
 - [ ] Confirm closing Scout stops scoped Weav watcher.
+
+
+## Faction Armory live gate
+- [x] Static syntax + pure logic acceptance PASS.
+- [x] Nine category extraction implemented.
+- [x] Member API import + encrypted local vault implemented.
+- [x] Structured message reply import implemented.
+- [x] No-downgrade current-vs-faction-stock build comparison implemented.
+- [x] Provisional minimums methodology implemented (20-member routine pool = 7; upper/war band = 11).
+- [x] Excel-compatible leadership workbook export implemented.
+- [ ] Human clicks Install in Tampermonkey.
+- [ ] Reload authenticated Torn page and confirm Armory launcher appears.
+- [ ] Open Armory and verify cached faction/member data renders correctly.
+- [ ] Verify desktop/mobile layout.
+- [ ] Save faction API key and run Refresh Faction.
+- [ ] Verify one saved member key refresh and one structured reply import.
+- [ ] Verify live build decisions preserve stronger current gear.
+- [ ] Export and open Leadership Excel workbook.
+- [ ] Explicit owner acceptance before legacy faction workflow retirement.
