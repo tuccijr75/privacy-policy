@@ -106,3 +106,25 @@ Rules:
 - future Bazaar Manager / Business Intelligence launchers should register here rather than inventing new fixed-position controls.
 
 The legacy CRM launcher may be temporarily adopted into this dock during migration. This is a bridge only and does not make the legacy CRM a modular product.
+
+
+### Dock placement and free movement
+
+- The MM dock anchors immediately **to the left of Torn's currently visible bottom control bar** when enough horizontal room exists.
+- On narrow screens where left placement would overlap Torn, the dock moves above the Torn controls rather than covering them.
+- Docked MM launchers can be dragged horizontally to reorder.
+- Pulling a docked launcher away from the dock undocks it into a freely movable fixed-position launcher.
+- A floating launcher can be dragged anywhere in the viewport. Dropping it back over/near the MM dock redocks it.
+- Right-click is an alternate dock/undock toggle.
+- Floating launcher positions persist locally under `mm_torn_module_float_positions_v1`.
+- Launcher movement is local UI state only and performs no network request.
+
+### Movable module panels
+
+Core exposes `makePanelDraggable(panel, handle, key, defaults)`.
+
+- Armory and Market Scout use their title/header bar as the drag handle.
+- Interactive controls inside the header remain clickable and do not begin a drag.
+- Panel positions persist locally per module under `mm_torn_panel_position_v1:<module>`.
+- Double-clicking a non-interactive part of the header resets that panel to its module default position.
+- Saved positions are clamped when the viewport changes so the header remains reachable.
