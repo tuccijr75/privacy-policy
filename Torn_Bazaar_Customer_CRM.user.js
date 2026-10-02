@@ -5075,7 +5075,6 @@ async function syncWeavMarketplace(force = false) {
         };
     }
 
-
 function globalOpportunityRows(db) {
         const intel=db.marketIntel;
         const settings=intel.settings;
@@ -5083,24 +5082,49 @@ function globalOpportunityRows(db) {
         const globalFresh=freshnessInfo(intel.marketplaceGeneratedAt,rules.maxListingAgeSec);
         const localMetrics=salesItemMetrics(db);
         const rows=[];
+        const baseMap=new Map();
 
-        for(const base of Object.values(intel.marketplace)) {
+        for(const base of Object.values(intel.marketplace||{})) {
+            if(base?.itemId) baseMap.set(asId(base.itemId),base);
+        }
+        // Preserve opportunities discovered through current Torn Item Market
+        // snapshots even when an item has no current Weav3r Bazaar row.
+        for(const [id,snap] of Object.entries(db.procurement?.marketSnapshots||{})) {
+            if(baseMap.has(asId(id))) continue;
+            const lowest=Number(snap?.itemMarket?.lowest||0);
+            if(!(lowest>0)) continue;
+            const catalog=db.procurement?.catalog?.[id]||{};
+            baseMap.set(asId(id),{
+                itemId:asId(id),
+                itemName:String(catalog.name||('Item '+id)),
+                marketPrice:Number(snap?.itemMarket?.median||snap?.itemMarket?.third||lowest),
+                bazaarAverage:Number(snap?.bazaar?.median||snap?.bazaar?.third||0),
+                lowestPrice:lowest,
+                totalBazaars:Number(snap?.bazaar?.listings||0),
+                itemMarketOnly:true
+            });
+        }
+
+        for(const base of baseMap.values()) {
             const id=asId(base.itemId);
+            const snap=db.procurement?.marketSnapshots?.[id]||{};
+            const snapAge=ageSeconds(snap.fetchedAt);
+            const itemMarketFresh=Boolean(snap.fetchedAt)&&snapAge<=rules.maxListingAgeSec;
+            const itemMarketBuy=itemMarketFresh?Number(snap?.itemMarket?.lowest||0):0;
             const aggregateBuy=Number(base.lowestPrice||0);
+            const discoveryBuy=itemMarketBuy||aggregateBuy;
             const bazaarAverage=Number(base.bazaarAverage||0);
-            const marketPrice=Number(base.marketPrice||0);
-            if(!(aggregateBuy>1) || aggregateBuy<rules.minPrice || aggregateBuy>rules.maxPrice) continue;
-            if(Number(base.totalBazaars||0)<rules.minSellerCount) continue;
+            const marketPrice=Number(base.marketPrice||snap?.itemMarket?.median||snap?.itemMarket?.third||0);
+
+            if(!(discoveryBuy>1)||discoveryBuy<rules.minPrice||discoveryBuy>rules.maxPrice) continue;
+            const sellerCount=Number(base.totalBazaars||0);
+            if(!itemMarketFresh&&sellerCount<rules.minSellerCount) continue;
 
             const detail=intel.details[id];
             const trader=intel.traders[id];
             const organicTrader=trader?.organicTraders?.[0];
             const freshListings=freshOrganicListings(db,detail?.organicListings||[]);
             const bazaarListing=freshListings[0]||null;
-            const snap=db.procurement?.marketSnapshots?.[id]||{};
-            const snapAge=ageSeconds(snap.fetchedAt);
-            const itemMarketFresh=Boolean(snap.fetchedAt)&&snapAge<=rules.maxListingAgeSec;
-            const itemMarketBuy=itemMarketFresh?Number(snap?.itemMarket?.lowest||0):0;
 
             const bazaarExit=bazaarAverage?Math.floor(bazaarAverage*(1-Number(settings.bazaarExitHaircutPct||0)/100)):0;
             const itemMarketNet=marketPrice?Math.floor(marketPrice*(1-ITEM_MARKET_FEE_RATE)):0;
@@ -5127,7 +5151,7 @@ function globalOpportunityRows(db) {
             });
             buySources.sort((a,b)=>a.price-b.price);
             const live=buySources[0]||null;
-            const buyPrice=Number(live?.price||aggregateBuy);
+            const buyPrice=Number(live?.price||discoveryBuy);
             const profit=exit.value-buyPrice;
             const roiPct=profit>0?profit/buyPrice*100:0;
             const roiCeiling=Math.floor(exit.value/(1+rules.minRoiPct/100));
@@ -5141,10 +5165,11 @@ function globalOpportunityRows(db) {
             const personalDemandQualified=Number(personal.sold30d||0)>=5||Number(personal.saleDays30d||0)>=3;
             if(personalDemandQualified&&personalDaily<rules.minDemandPerDay) continue;
 
-            const sellerCount=Number(base.totalBazaars||0);
             const history=intelHistoryStats(intel,id);
             const priceStability=Math.max(0,1-Math.min(1,Number(history.volatilityPct||0)/30));
-            const marketDepthSignal=Math.min(1,Math.log10(1+sellerCount)/2);
+            const marketDepthSignal=itemMarketFresh
+                ? Math.min(1,Math.log10(1+Number(snap?.itemMarket?.totalQty||0))/2)
+                : Math.min(1,Math.log10(1+sellerCount)/2);
             const historySignal=Math.min(1,Number(history.samples||0)/12);
             const personalSellThrough=1-Math.exp(-Math.max(0,personalDaily)*3);
             const marketSellThrough=Math.max(0.10,Math.min(0.80,0.15+marketDepthSignal*0.25+historySignal*0.20+priceStability*0.20));
@@ -5156,7 +5181,9 @@ function globalOpportunityRows(db) {
             const expectedProfit3d=Math.max(0,profit*recommendedQty*sellThrough3d);
             const expectedProfitPerDay=expectedProfit3d/3;
 
-            const sellerConfidence=Math.min(100,25+Math.log10(sellerCount+1)*35);
+            const sellerConfidence=itemMarketFresh
+                ? Math.min(100,35+Math.log10(1+Number(snap?.itemMarket?.listings||0))*35)
+                : Math.min(100,25+Math.log10(sellerCount+1)*35);
             const sourceFreshness=live?Math.max(0,100-Math.max(0,Number(live.ageSeconds||0)-15)*(100/Math.max(30,rules.maxListingAgeSec))):globalFresh.score;
             const confidence=Math.max(0,Math.min(100,
                 sourceFreshness*0.40+sellerConfidence*0.25+Math.min(100,Number(history.samples||0)*6)*0.20+sellThrough3dPct*0.15
@@ -5184,6 +5211,7 @@ function globalOpportunityRows(db) {
                 expectedProfit3d,expectedProfitPerDay,personalDemandDaily:personalDaily,personalDemandQualified
             });
         }
+
         return rows.sort((a,b)=>
             Number(b.purchaseReady)-Number(a.purchaseReady)||
             b.score-a.score||b.expectedProfit3d-a.expectedProfit3d||b.roiPct-a.roiPct||b.confidence-a.confidence
@@ -5321,7 +5349,7 @@ function globalOpportunityRows(db) {
         const restocks = restockCommandRows(db)
             .filter(r => r.status === 'BUY NOW' && r.globalBuyPrice > 0 && r.sourceQty > 0);
         const flips = globalOpportunityRows(db)
-            .filter(r => r.listingVerified && r.sellerId && r.buyPrice > 0 && r.profit > 0);
+            .filter(r => r.purchaseReady && r.buyPrice > 0 && r.profit > 0);
 
         const plan = [];
         for (const r of restocks) {
@@ -13870,7 +13898,7 @@ function tabsHtml() {
             profitCoverage: String(brief.profitCoverage || 'UNAVAILABLE'),
             needRestock: rows.filter(r => ['OUT OF STOCK','SOURCE NOW','WATCH PRICE'].includes(r.state)).length,
             needListing: rows.filter(r => r.state === 'NEEDS LISTING').length,
-            goodDeals: deals.filter(d => d.listingVerified && d.score >= 60).length,
+            goodDeals: deals.filter(d => d.purchaseReady && d.score >= 60).length,
             pendingAlerts: Object.values(db.subscribers || {}).filter(s => s.pendingNotification).length,
             lostProfit: Number(brief.lostProfit || 0),
             deadCapital: Number(brief.deadCapital || 0),
@@ -15788,8 +15816,19 @@ async function weavLiveTick() {
             await enrichTopGlobalOpportunities(WEAV3R_LIVE_ENRICH_LIMIT);
 
             if(getApiKey()) {
-                const candidates=globalOpportunityRows(dbLoad()).slice(0,WEAV3R_LIVE_MARKET_LIMIT);
-                await mapWithConcurrency(candidates,PROCUREMENT_MARKET_CONCURRENCY,row=>refreshMarketSnapshot(row.id));
+                const current=dbLoad();
+                const ids=[];
+                for(const row of globalOpportunityRows(current).slice(0,WEAV3R_LIVE_MARKET_LIMIT)) {
+                    if(!ids.includes(asId(row.id))) ids.push(asId(row.id));
+                }
+                for(const row of procurementRows(current)
+                    .filter(row=>row.personalDemandQualified||row.watched||row.shortage>0)
+                    .sort((a,b)=>b.acquisitionScore-a.acquisitionScore)
+                    .slice(0,WEAV3R_LIVE_MARKET_LIMIT)) {
+                    if(!ids.includes(asId(row.id))) ids.push(asId(row.id));
+                    if(ids.length>=WEAV3R_LIVE_MARKET_LIMIT*2) break;
+                }
+                await mapWithConcurrency(ids,PROCUREMENT_MARKET_CONCURRENCY,id=>refreshMarketSnapshot(id));
             }
 
             const root=document.getElementById(ROOT_ID);
