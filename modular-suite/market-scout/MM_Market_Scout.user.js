@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Market Scout
 // @namespace    manic-mike.torn.market-scout
-// @version      8.0.0-alpha.4
+// @version      8.0.0-alpha.5
 // @description  Modular acquisition tool for verified Bazaar, Item Market and cached Travel opportunities.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -26,12 +26,16 @@
   const API_KEY='mm_market_scout_api_v1';
   const TRAVEL_FEED_KEY='mm_market_scout_travel_feed_v1';
   const TRAVEL_RETURN_KEY='mm_market_scout_travel_return_v1';
+  const WEAV_WATCH_LEASE_KEY='mm_market_scout_weav_watch_lease_v1';
+  const INSTANCE_ID='scout-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);
 
   let activeView='deals';
   let state=null;
   let loadError='';
   let statusText='Ready.';
   let busy=false;
+  let watchRunning=false;
+  let watchTimer=null;
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornMarketLogic;
@@ -220,7 +224,7 @@
   }
 
   async function updateTravelData(){
-    if(busy)return;
+    if(busy||watchRunning)return;
     busy=true;
     statusText='Refreshing TornW3B Travel Stock…';
     render();
@@ -263,7 +267,7 @@
   }
 
   async function refreshOpportunities(){
-    if(busy)return;
+    if(busy||watchRunning)return;
     busy=true;
     statusText='Refreshing Weav3r opportunities'+(apiKey()?' + Torn Item Market…':'…');
     render();
@@ -301,7 +305,7 @@
   }
 
   async function acquire(itemId){
-    if(busy)return;
+    if(busy||watchRunning)return;
     if(!apiKey()){
       statusText='Save a Torn API key in Settings before live verification.';
       activeView='settings';
@@ -330,6 +334,47 @@
     }
   }
 
+  function claimWatchLease(){
+    const now=Date.now();
+    const current=GM_getValue(WEAV_WATCH_LEASE_KEY,null);
+    if(current?.owner&&current.owner!==INSTANCE_ID&&Number(current.expiresAt||0)>now)return false;
+    GM_setValue(WEAV_WATCH_LEASE_KEY,{owner:INSTANCE_ID,expiresAt:now+75000});
+    return true;
+  }
+
+  async function pollWeav3rWhileOpen(){
+    const root=document.getElementById(ROOT_ID);
+    if(watchRunning||busy||document.visibilityState!=='visible'||!root||root.style.display==='none')return;
+    if(!claimWatchLease())return;
+    watchRunning=true;
+    try{
+      const result=await service.refreshGlobal();
+      if(result?.changed){
+        state=await service.refreshOpportunities({enrichLimit:8,itemMarketLimit:apiKey()?6:0,refreshGlobalFirst:false});
+        statusText='Weav3r published a new market generation; Scout updated automatically.';
+        render();
+      }else if(result?.state){
+        state=result.state;
+      }
+    }catch(error){
+      console.warn('[MM Market Scout] Weav3r watch failed',error);
+    }finally{
+      watchRunning=false;
+    }
+  }
+
+  function startWatcher(){
+    if(watchTimer)return;
+    setTimeout(pollWeav3rWhileOpen,1500);
+    watchTimer=setInterval(pollWeav3rWhileOpen,60000);
+  }
+
+  function stopWatcher(){
+    if(watchTimer){clearInterval(watchTimer);watchTimer=null;}
+    const current=GM_getValue(WEAV_WATCH_LEASE_KEY,null);
+    if(current?.owner===INSTANCE_ID)GM_setValue(WEAV_WATCH_LEASE_KEY,{owner:INSTANCE_ID,expiresAt:0});
+  }
+
   function sourceStrip(){
     if(!state)return '';
     const f=core.freshnessSnapshot(state);
@@ -338,6 +383,7 @@
       '<span>· Item Market '+esc(age(f.itemMarket))+'</span>'+
       '<span>· Travel '+esc(age(f.travel))+'</span>'+
       '<span>· Torn key '+(apiKey()?'<b style="color:#9fe3a8;">SAVED</b>':'<b style="color:#ffd18a;">NOT SAVED</b>')+'</span>'+
+      '<span>· Weav auto-check <b style="color:#9fe3a8;">WHILE OPEN</b></span>'+
     '</div>';
   }
 
@@ -402,7 +448,7 @@
         '<button id="mm-scout-save-key" style="'+button(true)+'">Save</button>'+
         '<button id="mm-scout-clear-key" style="'+button()+'">Clear</button>'+
       '</div>'+
-      '<div style="font-size:10px;color:#888;margin-top:7px;">No background polling is enabled. Network calls occur only after <b>Refresh Opportunities</b> or <b>Verify & Buy</b>.</div>'
+      '<div style="font-size:10px;color:#888;margin-top:7px;">Weav3r generation is checked once per minute only while Scout is open and visible, coordinated to one Torn tab. Full enrichment runs only when the generation changes. Torn API calls otherwise occur only after <b>Refresh Opportunities</b> or <b>Verify & Buy</b>.</div>'
     )+
     card(
       '<b>Shared Acquisition Rules</b>'+
@@ -434,7 +480,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM Market Scout</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.4 · explicit live actions only</div></div>'+
+        '<div><b style="font-size:15px;">MM Market Scout</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.5 · task-first acquisition</div></div>'+
         '<button id="mm-scout-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -485,12 +531,14 @@
     if(launcher)launcher.style.display='none';
     render();
     reloadCachedState();
+    startWatcher();
   }
 
   function close(){
     const root=document.getElementById(ROOT_ID),launcher=document.getElementById(LAUNCHER_ID);
     if(root)root.style.display='none';
     if(launcher)launcher.style.display='block';
+    stopWatcher();
   }
 
   function createLauncher(){
