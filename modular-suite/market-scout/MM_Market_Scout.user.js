@@ -1,9 +1,11 @@
 // ==UserScript==
 // @name         MM Torn Market Scout
 // @namespace    manic-mike.torn.market-scout
-// @version      8.0.0-alpha.3
+// @version      8.0.0-alpha.4
 // @description  Modular acquisition tool for verified Bazaar, Item Market and cached Travel opportunities.
 // @match        https://www.torn.com/*
+// @match        https://weav3r.dev/travel-stock*
+// @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/market-scout/MM_Market_Scout.logic.js
@@ -22,6 +24,8 @@
   const ROOT_ID='mm-market-scout';
   const LAUNCHER_ID='mm-market-scout-launcher';
   const API_KEY='mm_market_scout_api_v1';
+  const TRAVEL_FEED_KEY='mm_market_scout_travel_feed_v1';
+  const TRAVEL_RETURN_KEY='mm_market_scout_travel_return_v1';
 
   let activeView='deals';
   let state=null;
@@ -59,6 +63,90 @@
     if(sec<3600)return Math.floor(sec/60)+'m ago';
     if(sec<86400)return Math.floor(sec/3600)+'h ago';
     return Math.floor(sec/86400)+'d ago';
+  }
+
+  function gmText(url){
+    return new Promise((resolve,reject)=>{
+      GM_xmlhttpRequest({
+        method:'GET',url,timeout:20000,headers:{Accept:'text/html,application/xhtml+xml'},
+        onload:r=>{
+          if(r.status<200||r.status>=300)return reject(new Error('HTTP '+r.status));
+          const body=String(r.responseText||'');
+          if(/just a moment|challenge-platform|cf-chl/i.test(body))return reject(new Error('Cloudflare challenge blocked direct refresh.'));
+          resolve(body);
+        },
+        ontimeout:()=>reject(new Error('Request timed out.')),
+        onerror:()=>reject(new Error('Network request failed.'))
+      });
+    });
+  }
+
+  function readTravelFeed(){
+    const raw=GM_getValue(TRAVEL_FEED_KEY,null);
+    if(!raw)return null;
+    if(typeof raw==='string'){try{return JSON.parse(raw);}catch{return null;}}
+    return raw&&typeof raw==='object'?raw:null;
+  }
+
+  function writeTravelFeed(rows,capturedAt=Date.now()){
+    const payload={capturedAt:Number(capturedAt||Date.now()),rows:Array.isArray(rows)?rows:[]};
+    GM_setValue(TRAVEL_FEED_KEY,JSON.stringify(payload));
+    return payload;
+  }
+
+  function beginTravelCapture(){
+    GM_setValue(TRAVEL_RETURN_KEY,{url:location.href,at:Date.now()});
+    statusText='Opening TornW3B Travel Stock for live capture…';
+    render();
+    setTimeout(()=>{location.href='https://weav3r.dev/travel-stock';},120);
+  }
+
+  function captureTravelPage(){
+    try{
+      const rows=live.parseTravelStockHtml(document.documentElement.outerHTML);
+      return writeTravelFeed(rows,Date.now()).rows.length;
+    }catch{return 0;}
+  }
+
+  function installTravelCollector(){
+    if(!/^(www\.)?weav3r\.dev$/.test(location.hostname)||!location.pathname.startsWith('/travel-stock'))return;
+    let attempts=0,stable=0,lastCount=0,returned=false;
+    let observer=null;
+    const maybeReturn=count=>{
+      if(!count||returned)return;
+      stable=count===lastCount?stable+1:1;
+      lastCount=count;
+      if(stable<2)return;
+      const ret=GM_getValue(TRAVEL_RETURN_KEY,null);
+      const requestedAt=Number(ret?.at||0);
+      const returnUrl=String(ret?.url||'');
+      if(returnUrl.startsWith('https://www.torn.com/')&&Date.now()-requestedAt<5*60*1000){
+        returned=true;
+        GM_deleteValue(TRAVEL_RETURN_KEY);
+        try{observer?.disconnect();}catch{}
+        setTimeout(()=>{location.href=returnUrl;},650);
+      }
+    };
+    const capture=()=>{
+      if(returned)return;
+      attempts++;
+      const count=captureTravelPage();
+      if(count>0)maybeReturn(count);
+      if(!returned&&attempts<90)setTimeout(capture,1000);
+    };
+    observer=new MutationObserver(()=>{
+      if(returned)return;
+      const table=[...document.querySelectorAll('table')].find(t=>{
+        const x=String(t.textContent||'').toLowerCase();
+        return x.includes('country')&&x.includes('item')&&x.includes('stock')&&x.includes('profit');
+      });
+      if(table){
+        const count=captureTravelPage();
+        if(count>0)maybeReturn(count);
+      }
+    });
+    observer.observe(document.documentElement,{childList:true,subtree:true});
+    setTimeout(capture,700);
   }
 
   function gmJson(url){
@@ -117,6 +205,42 @@
     navigate
   });
 
+  async function importTravelCapture({silent=false}={}){
+    const feed=readTravelFeed();
+    if(!feed?.rows?.length) {
+      if(!silent){statusText='No Market Scout travel capture is available yet.';render();}
+      return false;
+    }
+    const currentAt=Date.parse(state?.travelIntel?.lastSyncAt||'')||0;
+    const capturedAt=Number(feed.capturedAt||0);
+    if(capturedAt<=currentAt)return false;
+    state=await service.importTravelRows(feed.rows,capturedAt);
+    if(!silent)statusText='Imported '+feed.rows.length+' live TornW3B travel routes.';
+    return true;
+  }
+
+  async function updateTravelData(){
+    if(busy)return;
+    busy=true;
+    statusText='Refreshing TornW3B Travel Stock…';
+    render();
+    try{
+      const html=await gmText('https://weav3r.dev/travel-stock');
+      const rows=live.parseTravelStockHtml(html);
+      const feed=writeTravelFeed(rows,Date.now());
+      state=await service.importTravelRows(feed.rows,feed.capturedAt);
+      statusText='Travel updated: '+rows.length+' current routes.';
+    }catch(error){
+      busy=false;
+      statusText='Direct refresh blocked; opening live TornW3B page for capture…';
+      render();
+      beginTravelCapture();
+      return;
+    }
+    busy=false;
+    render();
+  }
+
   async function reloadCachedState(){
     loadError='';
     if(!core||!logic||!live||!service){
@@ -130,6 +254,7 @@
       const validation=core.validateLegacyState(next);
       if(!validation.ok)throw new Error(validation.errors.join('; '));
       state=next;
+      try{await importTravelCapture({silent:true});}catch{}
     }catch(error){
       state=null;
       loadError=error?.message||String(error);
@@ -252,16 +377,19 @@
   function travelHtml(){
     if(!state)return card('<b>No cached travel state available.</b>');
     const rows=logic.rankCachedTravel(state).slice(0,20);
+    const feed=readTravelFeed();
+    const captureAge=feed?.capturedAt?age(new Date(Number(feed.capturedAt)).toISOString()):'none';
     return card(
-      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">'+
-        '<div><b>Travel Acquisition</b><div style="font-size:10px;color:#888;">Travel stays inside Market Scout. Live TornW3B/YATA capture extraction is the next travel slice.</div></div>'+
-        '<button id="mm-scout-reload" style="'+button()+'">Reload Cache</button>'+
-      '</div>'
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
+        '<div><b>Travel Acquisition</b><div style="font-size:10px;color:#888;">TornW3B live stock/profit stays in Scout; deeper forecast analytics move to BI.</div></div>'+
+        '<div style="display:flex;gap:5px;"><button id="mm-scout-travel-import" style="'+button()+'">Import Capture</button><button id="mm-scout-travel-update" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Update Travel</button></div>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:5px;">Last browser capture: '+esc(captureAge)+' · Shared travel state: '+esc(age(state.travelIntel?.lastSyncAt))+'</div>'
     )+
     card(rows.length?rows.map((r,i)=>
       '<div style="border-top:1px solid #303030;padding:7px 0;font-size:11px;"><b>#'+(i+1)+' '+esc(r.itemName)+'</b> · '+esc(r.country)+
       '<div>Stock '+Number(r.stock||0).toLocaleString()+' · Profit '+money(r.profit||0)+' · Source profit/hr '+money(r.sourceProfitPerHour||0)+'</div></div>'
-    ).join(''):'<div style="font-size:11px;color:#888;">No profitable cached travel rows.</div>');
+    ).join(''):'<div style="font-size:11px;color:#888;">No profitable current travel rows.</div>');
   }
 
   function settingsHtml(){
@@ -306,7 +434,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM Market Scout</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.3 · explicit live actions only</div></div>'+
+        '<div><b style="font-size:15px;">MM Market Scout</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.4 · explicit live actions only</div></div>'+
         '<button id="mm-scout-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -327,6 +455,11 @@
     root.querySelectorAll('[data-scout-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.scoutView||'deals';render();}));
     root.querySelectorAll('#mm-scout-reload').forEach(b=>b.addEventListener('click',reloadCachedState));
     root.querySelector('#mm-scout-live-refresh')?.addEventListener('click',refreshOpportunities);
+    root.querySelector('#mm-scout-travel-update')?.addEventListener('click',updateTravelData);
+    root.querySelector('#mm-scout-travel-import')?.addEventListener('click',()=>importTravelCapture({silent:false}).catch(error=>{
+      statusText='Travel import failed: '+(error?.message||String(error));
+      render();
+    }));
     root.querySelectorAll('[data-acquire-item]').forEach(b=>b.addEventListener('click',()=>acquire(b.dataset.acquireItem)));
     root.querySelector('#mm-scout-save-key')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-scout-api')?.value||'').trim();
@@ -370,6 +503,10 @@
     document.body.appendChild(b);
   }
 
+  if(/^(www\.)?weav3r\.dev$/.test(location.hostname)){
+    installTravelCollector();
+    return;
+  }
   if(document.body)createLauncher();
   else window.addEventListener('DOMContentLoaded',createLauncher,{once:true});
 })();
