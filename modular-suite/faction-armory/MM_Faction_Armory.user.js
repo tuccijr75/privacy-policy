@@ -612,6 +612,48 @@
     delete vault.entries[key];vault.updatedAt=new Date().toISOString();saveVault(vault);return true;
   }
 
+  async function importMemberReply(memberId,raw){
+    const id=asId(memberId);
+    const latest=await core.readLegacyState();
+    const member=latest?.factionInventory?.memberReadiness?.roster?.[id];
+    if(!member)throw new Error('Faction member not found.');
+    const parsed=logic.parseMemberReply(raw);
+    const verifiedAt=new Date().toISOString();
+    await core.updateDomainState('faction',draft=>{
+      const fi=draft.factionInventory;
+      fi.memberReadiness=fi.memberReadiness&&typeof fi.memberReadiness==='object'?fi.memberReadiness:{};
+      fi.memberReadiness.profiles=fi.memberReadiness.profiles&&typeof fi.memberReadiness.profiles==='object'?fi.memberReadiness.profiles:{};
+      const previous=fi.memberReadiness.profiles[id]||{};
+      const medicalKnown=[
+        parsed.supply?.medical?.sfak,parsed.supply?.medical?.fak,
+        parsed.supply?.medical?.morphine,parsed.supply?.medical?.emptyBloodBags
+      ].some(value=>value!=null);
+      const ipecac=parsed.supply?.medical?.ipecac;
+      fi.memberReadiness.profiles[id]={
+        ...previous,
+        memberId:id,
+        stats:parsed.stats,
+        equipment:{
+          ...(previous.equipment||{}),
+          summary:parsed.equipmentSummary||String(previous.equipment?.summary||''),
+          items:parsed.items.length?parsed.items:(previous.equipment?.items||[])
+        },
+        bloodType:parsed.bloodType||String(previous.bloodType||''),
+        supplyReadiness:parsed.supply,
+        warRole:parsed.warRole||String(previous.warRole||''),
+        medicalStatus:medicalKnown?'DECLARED':String(previous.medicalStatus||'UNKNOWN'),
+        ipecacStatus:ipecac==null?String(previous.ipecacStatus||'UNKNOWN'):(ipecac>0?'READY':'NEEDS IPECAC'),
+        notes:parsed.notes||String(previous.notes||''),
+        source:'member message reply',
+        verifiedAt,
+        dataReplyImportedAt:verifiedAt
+      };
+      return draft;
+    });
+    state=await core.readLegacyState();
+    return {memberId:id,memberName:String(member.memberName||id),equipmentCount:parsed.items.length};
+  }
+
   function copyText(text){
     if(navigator.clipboard?.writeText){
       return navigator.clipboard.writeText(text).catch(()=>{prompt('Copy this text:',text);});
@@ -669,6 +711,7 @@
           '</div>'+
           '<div class="mm-fa-buttons">'+
             (entry?'<button data-refresh-member="'+esc(row.memberId)+'" style="'+button(true)+'">Refresh</button><button data-remove-member="'+esc(row.memberId)+'" style="'+button()+'">Remove Key</button>':'')+
+            '<button data-paste-reply="'+esc(row.memberId)+'" style="'+button()+'">Paste Reply</button>'+
           '</div>'+
         '</div>'+
       '</div>';
@@ -805,6 +848,18 @@
     }));
     root.querySelectorAll('[data-remove-member]').forEach(b=>b.addEventListener('click',()=>{
       if(removeMemberKey(b.dataset.removeMember)){statusText='Saved member key removed; readiness data preserved.';render();}
+    }));
+    root.querySelectorAll('[data-paste-reply]').forEach(b=>b.addEventListener('click',async()=>{
+      const id=asId(b.dataset.pasteReply);
+      const row=memberRows().find(x=>x.memberId===id);
+      const raw=prompt('Paste '+String(row?.memberName||id)+'\'s completed readiness reply:','');
+      if(raw==null||!String(raw).trim())return;
+      if(busy)return;busy=true;statusText='Importing member reply…';render();
+      try{
+        const result=await importMemberReply(id,raw);
+        statusText='Imported reply for '+result.memberName+' · '+result.equipmentCount+' equipped item(s) parsed.';
+      }catch(error){statusText='Reply import failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
     }));
     root.querySelector('#mm-fa-save-faction-key')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-fa-faction-key')?.value||'').trim();
