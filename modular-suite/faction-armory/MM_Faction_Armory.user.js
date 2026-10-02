@@ -907,29 +907,50 @@
   function acquireHtml(){
     const plan=logic.acquisitionPlan(state?.factionInventory||{},{
       mode:stockMode,
-      participants:WAR_PARTICIPANTS
+      participants:WAR_PARTICIPANTS,
+      procurementMode,
+      budgetCap:acquisitionBudget
     });
     const categories=[...new Set(plan.list.map(row=>row.category))];
     const groups=categories.map(cat=>{
       const rows=plan.list.filter(row=>row.category===cat);
       return '<details class="mm-fa-build-member" open>'+
-        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.qty),0)+' units</span></summary>'+
+        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.qty),0)+' required</span></summary>'+
         '<div class="mm-fa-build-body">'+rows.map(row=>
           '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.item)+'</b>'+
             '<div class="mm-fa-muted">'+esc(row.source||'General Torn availability')+(row.reasons?' · '+esc(row.reasons):'')+'</div></div>'+
-          '<div class="mm-fa-tiles">'+tile('QTY',fmt(row.qty))+(row.marketValue?tile('REF VALUE','$'+fmt(row.marketValue)): '')+(row.estimatedValue?tile('EST TOTAL','$'+fmt(row.estimatedValue)): '')+'</div></div>'
+          '<div class="mm-fa-tiles">'+
+            tile('REQUIRED',fmt(row.qty))+
+            tile('BUY NOW',fmt(row.fundedQty),{cls:row.fundedQty?'mm-fa-good':''})+
+            (row.deferredQty?tile('DEFER',fmt(row.deferredQty),{cls:'mm-fa-warn'}):'')+
+            (row.marketValue?tile('REF EACH','$'+fmt(row.marketValue)): '')+
+            (row.fundedEstimatedValue?tile('BUY-NOW COST','$'+fmt(row.fundedEstimatedValue)): '')+
+          '</div></div>'
         ).join('')+'</div>'+
       '</details>';
     }).join('');
     return '<div class="mm-fa-card mm-fa-compact">'+
-      '<div class="mm-fa-module-head"><div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+WAR_PARTICIPANTS+' participants in War mode</span></div></div>'+
-      '<div class="mm-fa-tiles">'+
-        tile('TOTAL UNITS',fmt(plan.totalUnits))+
-        tile('UNRESOLVED BUILD SLOTS',fmt(plan.unresolvedCount),{cls:plan.unresolvedCount?'mm-fa-warn':''})+
-        tile('EQUIPMENT REF VALUE',plan.estimatedEquipmentValue?'$'+fmt(plan.estimatedEquipmentValue):'—',{wide:true})+
+      '<div class="mm-fa-module-head">'+
+        '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+procurementMode.toUpperCase()+' · '+WAR_PARTICIPANTS+' participants in War mode</span></div>'+
+        '<div class="mm-fa-actions">'+
+          '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+          '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+          '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '</div>'+
       '</div>'+
-      '<div class="mm-fa-muted" style="margin-top:4px;">This is a planning list only. It uses generally available item references and current faction stock; it does not search Item Market or Bazaars. Unresolved slots are excluded from the buy quantity until their current item\'s performance is known.</div>'+
-      (plan.unresolvedCount?'<details class="mm-fa-details"><summary>Unresolved build slots</summary><div class="mm-fa-muted" style="margin-top:3px;">'+plan.unresolved.map(r=>esc(r.memberName)+' · '+esc(r.slot.toUpperCase())+(r.current?' · '+esc(r.current):'')).join('<br>')+'</div></details>':'')+
+      '<div class="mm-fa-tiles">'+
+        tile('BUDGET CAP','$'+fmt(plan.budgetCap))+
+        tile('BUY NOW','$'+fmt(plan.fundedEstimatedValue),{cls:'mm-fa-good'})+
+        tile('KNOWN DEFERRED','$'+fmt(plan.deferredEstimatedValue),{cls:plan.deferredEstimatedValue?'mm-fa-warn':''})+
+        tile('FUNDED UNITS',fmt(plan.fundedUnits))+
+        tile('UNRESOLVED SLOTS',fmt(plan.unresolvedCount),{cls:plan.unresolvedCount?'mm-fa-warn':''})+
+      '</div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<label class="mm-fa-muted">Budget $ <input id="mm-fa-budget-cap" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:130px;"></label>'+
+        '<button id="mm-fa-save-budget" style="'+button(true)+'">Save Budget</button>'+
+      '</div>'+
+      '<div class="mm-fa-muted" style="margin-top:4px;">Member equipped gear, member-owned inventory, assigned faction loans, and faction available stock are consumed before anything is added to the buy list. Missing member stats and unknown-performance gear stay unresolved instead of inflating procurement. Reference values are planning estimates only; this screen does not search Item Market or Bazaars.</div>'+
+      (plan.unresolvedCount?'<details class="mm-fa-details"><summary>Unresolved build slots</summary><div class="mm-fa-muted" style="margin-top:3px;">'+plan.unresolved.map(r=>esc(r.memberName)+' · '+esc(r.slot.toUpperCase())+(r.current?' · '+esc(r.current):'')+' · '+esc(r.reason||'')).join('<br>')+'</div></details>':'')+
     '</div>'+(groups||card('Nothing currently requires acquisition.'));
   }
 
