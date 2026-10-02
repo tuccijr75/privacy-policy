@@ -759,6 +759,7 @@
         '<button id="mm-fa-import-once" style="'+button()+'">Import Once</button>'+
         '<button id="mm-fa-import-save" style="'+button(true)+'">Import + Save</button>'+
       '</div>'+
+      '<div class="mm-fa-muted" style="margin-top:4px;">Key/Data: local browser only · shared with nobody · faction readiness only · Import Once is not retained · Import + Save uses the encrypted local vault · Limited Access member key.</div>'+
     '</div>'+
     (rows.length?rows.map(row=>{
       const s=row.stats||{};
