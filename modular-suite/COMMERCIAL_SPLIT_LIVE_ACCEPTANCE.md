@@ -137,6 +137,14 @@ Findings:
 
 - **MISSING TEST COVERAGE** — no dedicated MM_Acquisitions ranking regression test currently proves that visible `maxPrice`, `minSellerCount`, demand, confidence, and freshness rules exclude inappropriate candidates. Purchase-ledger parsing has tests, but ranking/business-rule enforcement needs its own fixture suite before acceptance.
 
+
+### MM_Acquisitions rule-consistency recheck
+- **PASS (current view)** — after returning to Deals, every displayed Best Buyable Deal is now below the visible $5,000,000 Max buy rule. Current examples ranged from about $69.7k to $3.34M.
+- **NOT REPRODUCED AS CURRENT LOGIC FAILURE** — the earlier $231M–$900M results are no longer present. Because Deals and Settings read the same in-memory state, the earlier contradiction is more consistent with stale/replaced state during live auto-refresh than with a persistent maxPrice comparison failure.
+- **UX / STATE CONSISTENCY DEFECT** — the module can visibly transition between materially different recommendation sets while its watcher refreshes, without identifying that the prior list was stale or that rules/state were reloaded. Recommendation state needs an explicit “evaluated at / rules version / data generation” marker and should atomically re-rank when shared rules change.
+- **UX / LABELING GAP** — “Best Buyable Deals” means rule-qualified, not necessarily affordable with current cash. Current Torn cash was about $606k while two displayed candidates still required about $1.44M and $3.34M. Rename or add affordability/budget status.
+- **PASS** — current top list contains lower-priced actionable items again, including sub-$500k candidates, so the engine can surface capital-feasible opportunities when data/rules align.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
