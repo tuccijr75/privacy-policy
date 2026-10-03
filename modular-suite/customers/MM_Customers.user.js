@@ -1055,10 +1055,6 @@
     return pending&&composeMatchesPending(pending)?candidates[0]:null;
   }
 
-  function messageSentConfirmationVisible(){
-    return sentConfirmationTexts().length>0;
-  }
-
   async function completeTrackedSend(pending,evidence=''){
     const id=String(pending?.playerId||'').trim(),kind=String(pending?.kind||'');
     if(!id||!kind)return false;
@@ -1086,31 +1082,28 @@
     });
     rememberDeliveryReceipt(pending,evidence);
     GM_deleteValue(PENDING_SEND_KEY);
-    statusText=kind==='welcome'?'Torn confirmed the welcome was sent; customer updated and coupon issued.':kind==='restock'?'Torn confirmed the restock alert was sent; notification state updated.':'Torn confirmed the message was sent; customer contact history updated.';
+    statusText=kind==='welcome'
+      ? 'Torn confirmed the welcome was sent; customer updated and coupon issued.'
+      : kind==='restock'
+        ? 'Torn confirmed the restock alert was sent; notification state updated.'
+        : 'Torn confirmed the message was sent; customer contact history updated.';
     return true;
   }
 
   function installMessageSendDetector(){
     if(sendDetectorCleanup){try{sendDetectorCleanup();}catch{}sendDetectorCleanup=null;sendDetectorKey='';}
     if(!location.pathname.includes('messages.php'))return;
+
     const initial=GM_getValue(PENDING_SEND_KEY,null);
     const id=String(initial?.playerId||'').trim(),createdAt=Number(initial?.createdAt||0);
-    if(!id||!createdAt||Date.now()-createdAt>PENDING_COMPOSE_TTL_MS){if(initial)GM_deleteValue(PENDING_SEND_KEY);return;}
+    if(!id||!createdAt||Date.now()-createdAt>PENDING_DELIVERY_TTL_MS){
+      if(initial)GM_deleteValue(PENDING_SEND_KEY);
+      return;
+    }
 
     const detectorKey=String(initial?.deliveryId||createdAt+'-'+id);
-    let active=true,verifyTimer=null,expiryTimer=null;
+    let active=true,expiryTimer=null,verifying=false;
     sendDetectorKey=detectorKey;
-
-    const cleanup=()=>{
-      if(!active)return;
-      active=false;
-      if(verifyTimer)clearInterval(verifyTimer);
-      if(expiryTimer)clearTimeout(expiryTimer);
-      document.removeEventListener('click',clickHandler,true);
-      document.removeEventListener('submit',submitHandler,true);
-      if(sendDetectorKey===detectorKey){sendDetectorCleanup=null;sendDetectorKey='';}
-    };
-    sendDetectorCleanup=cleanup;
 
     const currentPending=()=>{
       const value=GM_getValue(PENDING_SEND_KEY,null);
@@ -1118,35 +1111,56 @@
       return value;
     };
 
-    const verifyAfterSend=()=>{
+    const cleanup=()=>{
       if(!active)return;
-      const pending=currentPending();
-      if(!pending){cleanup();return;}
-      const clickedAt=Number(pending.sendClickedAt||0);
-      if(!clickedAt)return;
+      active=false;
+      if(expiryTimer)clearTimeout(expiryTimer);
+      document.removeEventListener('click',clickHandler,true);
+      document.removeEventListener('submit',submitHandler,true);
+      if(sendDetectorKey===detectorKey){sendDetectorCleanup=null;sendDetectorKey='';}
+    };
+    sendDetectorCleanup=cleanup;
 
-      const successText=newSentConfirmationEvidence(pending.confirmationBaseline||[]);
-      const fingerprint=String(pending.deliveryFingerprint||messageDeliveryFingerprint(pending));
-      const baselineCount=Math.max(0,Number(pending.fingerprintBaselineCount||0));
-      const transcriptConfirmed=Boolean(fingerprint&&deliveryFingerprintCount(fingerprint)>baselineCount);
-      const evidence=successText?'torn-success-ui':transcriptConfirmed?'conversation-transcript':'';
+    const verifyDeliveryAfterSend=async()=>{
+      if(verifying||!active)return;
+      verifying=true;
+      try{
+        while(active){
+          const pending=currentPending();
+          if(!pending){cleanup();return;}
+          const clickedAt=Number(pending.sendClickedAt||0);
+          if(!clickedAt||pending.state!=='send-clicked')return;
 
-      if(evidence){
-        cleanup();
-        completeTrackedSend(pending,evidence).catch(error=>console.warn('[MM Customers] Sent-message state update failed',error));
-        return;
-      }
+          const successText=newSentConfirmationEvidence(pending.confirmationBaseline||[]);
+          const fingerprint=String(pending.deliveryFingerprint||messageDeliveryFingerprint(pending));
+          const baselineCount=Math.max(0,Number(pending.fingerprintBaselineCount||0));
+          const transcriptConfirmed=Boolean(fingerprint&&deliveryFingerprintCount(fingerprint)>baselineCount);
+          const evidence=successText?'torn-success-ui':transcriptConfirmed?'conversation-transcript':'';
 
-      if(Date.now()-clickedAt>=DELIVERY_CONFIRM_WINDOW_MS&&pending.state!=='send-unconfirmed'){
-        GM_setValue(PENDING_SEND_KEY,{...pending,state:'send-unconfirmed',verificationFailedAt:Date.now()});
-        statusText='Send click was not confirmed by Torn. Customer state was NOT changed. Check Outbox before retrying.';
-        if(verifyTimer){clearInterval(verifyTimer);verifyTimer=null;}
+          if(evidence){
+            cleanup();
+            try{await completeTrackedSend(pending,evidence);}
+            catch(error){console.warn('[MM Customers] Sent-message state update failed',error);}
+            return;
+          }
+
+          if(Date.now()-clickedAt>=DELIVERY_CONFIRM_WINDOW_MS){
+            GM_setValue(PENDING_SEND_KEY,{...pending,state:'send-unconfirmed',verificationFailedAt:Date.now()});
+            statusText='Send click was not confirmed by Torn. Customer state was NOT changed. Check Outbox before retrying.';
+            if(document.getElementById(ROOT_ID)?.style.display!=='none')render();
+            cleanup();
+            return;
+          }
+          await sleepMs(500);
+        }
+      }finally{
+        verifying=false;
       }
     };
 
     const arm=()=>{
       const pending=currentPending();
-      if(!active||!pending||pending.state==='send-clicked'||pending.state==='send-unconfirmed')return;
+      if(!active||!pending||pending.state!=='awaiting-send')return;
       if(!composeMatchesPending(pending))return;
       const clickedAt=Date.now();
       const fingerprint=messageDeliveryFingerprint(pending);
@@ -1158,8 +1172,7 @@
         deliveryFingerprint:fingerprint,
         fingerprintBaselineCount:deliveryFingerprintCount(fingerprint)
       });
-      verifyTimer=setInterval(verifyAfterSend,500);
-      for(const delay of [350,1000,2500,5000,9000,12000])setTimeout(verifyAfterSend,delay);
+      verifyDeliveryAfterSend();
     };
 
     const isExactTrackedSendControl=el=>{
@@ -1184,33 +1197,38 @@
     document.addEventListener('click',clickHandler,true);
     document.addEventListener('submit',submitHandler,true);
 
-    const remaining=Math.max(0,PENDING_COMPOSE_TTL_MS-(Date.now()-createdAt));
+    const remaining=Math.max(0,PENDING_DELIVERY_TTL_MS-(Date.now()-createdAt));
     expiryTimer=setTimeout(()=>{
       const pending=currentPending();
-      if(pending&&Date.now()-Number(pending.createdAt||0)>=PENDING_COMPOSE_TTL_MS)GM_deleteValue(PENDING_SEND_KEY);
+      if(pending&&Date.now()-Number(pending.createdAt||0)>=PENDING_DELIVERY_TTL_MS)GM_deleteValue(PENDING_SEND_KEY);
       cleanup();
     },remaining+1000);
 
-    if(Number(initial.sendClickedAt||0)&&initial.state==='send-clicked'){
-      verifyTimer=setInterval(verifyAfterSend,500);
-      verifyAfterSend();
-    }
+    if(Number(initial.sendClickedAt||0)&&initial.state==='send-clicked')verifyDeliveryAfterSend();
   }
 
-  function runPageHelpers(){fillMessageComposer();installMessageSendDetector();}
+  function runPageHelpers(){
+    if(!location.hash.includes('compose')){
+      composeFillGeneration++;
+      GM_deleteValue(PENDING_COMPOSE_KEY);
+      clearComposeFormattingNotice();
+    }
+    fillMessageComposer();
+    installMessageSendDetector();
+  }
 
   function onRouteChanged(){
     if(routeTimer)clearTimeout(routeTimer);
-    routeTimer=setTimeout(()=>{if(location.href===lastHref)return;lastHref=location.href;runPageHelpers();},120);
+    routeTimer=setTimeout(()=>{
+      if(location.href===lastHref)return;
+      lastHref=location.href;
+      runPageHelpers();
+    },120);
   }
 
   function installRouteHooks(){
-    window.addEventListener('hashchange',onRouteChanged);window.addEventListener('popstate',onRouteChanged);
-    for(const method of ['pushState','replaceState']){
-      const original=history[method];if(original?.__mmCustomersWrapped)continue;
-      const wrapped=function(...args){const result=original.apply(this,args);onRouteChanged();return result;};
-      wrapped.__mmCustomersWrapped=true;history[method]=wrapped;
-    }
+    window.addEventListener('hashchange',onRouteChanged);
+    window.addEventListener('popstate',onRouteChanged);
   }
 
   function refundProfileUrl(refund){
