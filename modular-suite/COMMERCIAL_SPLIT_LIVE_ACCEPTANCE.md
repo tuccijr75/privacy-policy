@@ -114,6 +114,27 @@ Confirmed on an authenticated Torn page while traveling:
 - **UX DEFECT** — some runtime error strings still refer to “Market Scout” instead of MM_Acquisitions, a migration carryover that will confuse troubleshooting.
 - **MISSING FEATURE** — no capital budget / total-spend constraint is part of ranking. The existing Max buy rule is only a per-unit ceiling and is not tied to currently usable funds or a user-defined procurement budget.
 
+
+### MM_Acquisitions Settings live findings
+Current visible settings at inspection:
+- Min ROI: 10%
+- Min demand/day: 0.15
+- Min buy: $2
+- Max buy: $5,000,000
+- Min profit/unit: $5,000
+- Min sellers: 0
+- Max listing age: 180 seconds
+
+Findings:
+- **BLOCKING DEFECT / RULE CONSISTENCY** — the immediately preceding live Deals view showed “Best Buyable Deals” priced roughly $231M–$900M while the same module's visible Max buy rule is $5M. Ranking code explicitly checks `discoveryBuy > rules.maxPrice`, so this inconsistency must be reproduced and resolved before acceptance.
+- **EFFECTIVENESS GAP / MISLEADING CONTROL** — Min demand/day is enforced only when the item already has enough personal sale history (`sold30d >= 5` or sale activity on >=3 days). Candidates using MARKET PROXY are not rejected by this threshold, so the UI label suggests broader protection than exists.
+- **EFFECTIVENESS GAP** — Min sellers is currently 0, disabling the intended liquidity floor even before accounting for the fresh-Item-Market bypass found in code review.
+- **UX FRICTION** — “Max listing age sec” exposes a low-level implementation unit rather than a user-facing freshness choice such as 1m / 3m / 5m.
+- **MISSING FEATURE** — no conservative / balanced / aggressive acquisition presets or task-oriented defaults.
+- **MISSING FEATURE** — no minimum confidence setting despite the ranking model computing confidence.
+- **MISSING FEATURE** — no total procurement budget / per-run spend budget.
+- **UX FRICTION / MOBILE** — Settings uses a fixed four-column grid; on narrow mobile widths this is likely unnecessarily compressed and should collapse responsively.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
