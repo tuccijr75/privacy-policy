@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.9
-// @description  Manual-send Trade Chat rotation assistant for MM Torn Systems. Reminds, rotates, and pre-fills; never sends automatically.
+// @version      0.2.0-alpha.1
+// @description  Manual-send Trade Chat rotation assistant for MM Torn Systems.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @author       Manic-Mike
@@ -17,171 +17,167 @@
   'use strict';
 
   const APP_ID = 'mm-trade-chat-assistant';
-  const STORAGE_ID = 'mmTradeChatAssistantStateV1';
-  const TICK_MS = 1000;
-  const TRADE_LIMIT = 125;
   const MODULE_ID = 'trade-reminder';
-  const LAUNCHER_ID = 'mm-trade-chat-assistant-launcher';
   const PANEL_KEY = 'trade-reminder';
-  const PANEL_STORAGE_ID = 'mm_torn_panel_position_v1:' + PANEL_KEY;
-  const OTHER_MM_PANELS = [
+  const STATE_KEY = 'mmTradeChatAssistantStateV2';
+  const PANEL_POSITION_KEY = 'mm_torn_panel_position_v1:' + PANEL_KEY;
+  const TRADE_LIMIT = 125;
+  const TICK_MS = 1000;
+  const PLAYER_ID = '4325346';
+  const PLAYER_NAME = 'Manic-Mike';
+  const SERVICE_THREAD = '/forums.php#/p=threads&f=67&t=16608018';
+  const core = globalThis.MMTornCore;
+
+  const MODES = Object.freeze({
+    busy: Object.freeze({ label: 'Busy 5–8 min', min: 5, max: 8 }),
+    normal: Object.freeze({ label: 'Normal 8–12 min', min: 8, max: 12 }),
+    quiet: Object.freeze({ label: 'Quiet 15–20 min', min: 15, max: 20 }),
+  });
+
+  // Colored emoji are intentional. Torn Chat does not expose arbitrary text/icon colors,
+  // so category color is carried by emoji glyphs that render through the client's emoji font.
+  const ROTATION_MESSAGES = Object.freeze([
+    '🧰 <b>MM TORN SYSTEMS</b> | Custom <b>50M+</b> • Repair <b>25M+</b> | DM <a href="/profiles.php?XID=4325346">Manic-Mike</a>',
+    '💰 <b>MM TORN SYSTEMS</b> | Bazaar • ROI • Procure | <b>50M+</b> | DM <a href="/profiles.php?XID=4325346">Manic-Mike</a>',
+    '🥊 <b>MM TORN SYSTEMS</b> | Armory • Builds • War | <b>50M+</b> | DM <a href="/profiles.php?XID=4325346">Manic-Mike</a>',
+    '📱 <b>MM TORN SYSTEMS</b> | TornPDA • API • Data | <b>50M+</b> | DM <a href="/profiles.php?XID=4325346">Manic-Mike</a>',
+    '📌 <b>MM TORN SYSTEMS</b> | 50M+ Custom • 25M+ Repair | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO + CONTACT</a>',
+  ]);
+
+  const OTHER_MM_PANELS = Object.freeze([
     'mm-acquisitions',
     'mm-bazaar-manager',
     'mm-customers',
     'mm-faction-armory',
     'mm-inventory-roi',
     'mm-market-scout',
-  ];
-  const core = globalThis.MMTornCore;
-
-  const MODES = {
-    busy:   { label: 'Busy 5–8 min',  min: 5,  max: 8 },
-    normal: { label: 'Normal 8–12 min', min: 8, max: 12 },
-    quiet:  { label: 'Quiet 15–20 min', min: 15, max: 20 },
-  };
-
-  const ROTATION_MESSAGES = Object.freeze([
-    '⚙ <b>MM TORN SYSTEMS</b> | Custom 50M+ • Repair 25M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
-    '↗ <b>MM TORN SYSTEMS</b> | Bazaar • ROI • Procure | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
-    '⚔ <b>MM TORN SYSTEMS</b> | Armory • Builds • War | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
-    '⌘ <b>MM TORN SYSTEMS</b> | TornPDA • API • Data | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
-    'ⓘ <b>MM TORN SYSTEMS</b> | 50M+ Custom • 25M+ Repair | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO</a>',
   ]);
 
-  const loadState = () => {
-    const saved = GM_getValue(STORAGE_ID, null);
-    const src = saved && typeof saved === 'object' ? saved : {};
-    const mode = MODES[src.mode] ? src.mode : 'normal';
-    const rawIndex = Number.isInteger(src.index) ? src.index : 0;
+  let state = loadState();
+  let panel = null;
+  let lastComposer = null;
+  let lastFilledMessage = '';
+  let sessionId = 0;
+  let sessionFilled = false;
+  let submitArmed = false;
 
+  function loadState() {
+    const saved = GM_getValue(STATE_KEY, null);
+    const src = saved && typeof saved === 'object' ? saved : {};
     return {
       enabled: src.enabled !== false,
-      mode,
-      index: Math.max(0, rawIndex % ROTATION_MESSAGES.length),
+      mode: MODES[src.mode] ? src.mode : 'normal',
+      index: Number.isInteger(src.index) ? Math.max(0, src.index % ROTATION_MESSAGES.length) : 0,
       nextAt: Number.isFinite(src.nextAt) ? src.nextAt : 0,
       lastSentAt: Number.isFinite(src.lastSentAt) ? src.lastSentAt : 0,
       completedCount: Number.isFinite(src.completedCount) ? src.completedCount : 0,
       lastCompletedAt: Number.isFinite(src.lastCompletedAt) ? src.lastCompletedAt : 0,
     };
-  };
+  }
 
-  let state = loadState();
-  let panel = null;
-  let lastFilledMessage = '';
-  let lastComposer = null;
-  let panelSessionId = 0;
-  let sessionFilled = false;
+  function saveState() {
+    GM_setValue(STATE_KEY, {
+      enabled: state.enabled,
+      mode: state.mode,
+      index: state.index,
+      nextAt: state.nextAt,
+      lastSentAt: state.lastSentAt,
+      completedCount: state.completedCount,
+      lastCompletedAt: state.lastCompletedAt,
+    });
+  }
 
-  const saveState = () => GM_setValue(STORAGE_ID, state);
+  function codePointLength(value) {
+    return Array.from(String(value)).length;
+  }
 
-  const codePointLength = (s) => Array.from(String(s)).length;
+  function currentMessage() {
+    return ROTATION_MESSAGES[state.index % ROTATION_MESSAGES.length];
+  }
 
-  const randomDelayMs = () => {
+  function randomDelayMs() {
     const mode = MODES[state.mode] || MODES.normal;
     const minutes = mode.min + Math.random() * (mode.max - mode.min);
-    return Math.round(minutes * 60_000);
-  };
+    return Math.round(minutes * 60000);
+  }
 
-  const currentMessage = () => ROTATION_MESSAGES[state.index % ROTATION_MESSAGES.length];
-
-  const scheduleNext = (base = Date.now()) => {
-    state.nextAt = base + randomDelayMs();
+  function scheduleNext(base) {
+    state.nextAt = (base || Date.now()) + randomDelayMs();
     saveState();
-  };
+  }
 
-  const rotate = () => {
+  function rotate() {
     state.index = (state.index + 1) % ROTATION_MESSAGES.length;
     saveState();
-  };
+  }
 
-  const buttonLabel = (el) => [
-    el?.getAttribute?.('aria-label'),
-    el?.getAttribute?.('title'),
-    el?.getAttribute?.('data-title'),
-    el?.innerText,
-    el?.textContent,
-  ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
-
-  const visible = (el) => {
+  function isVisible(el) {
     if (!(el instanceof HTMLElement)) return false;
     const style = getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
-    const r = el.getBoundingClientRect();
-    return r.width > 4 && r.height > 4;
-  };
+    const rect = el.getBoundingClientRect();
+    return rect.width > 4 && rect.height > 4;
+  }
 
+  function buttonText(el) {
+    return [
+      el && el.getAttribute && el.getAttribute('aria-label'),
+      el && el.getAttribute && el.getAttribute('title'),
+      el && el.getAttribute && el.getAttribute('data-title'),
+      el && el.innerText,
+      el && el.textContent,
+    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
 
-  const findTradeOpenControl = () => {
-    const controls = [...document.querySelectorAll('button,[role="button"]')]
-      .filter(visible)
-      .filter(el => !el.closest?.('#' + APP_ID));
-
-    return controls.find(el => {
-      const label = buttonLabel(el);
-      if (!/(^|\s)trade(\s|$)/.test(label)) return false;
-      if (/minimi[sz]e|close/.test(label)) return false;
-      return !/mm trade rotation/.test(ancestorText(el, 4));
+  function findTradeOpenControl() {
+    const controls = Array.from(document.querySelectorAll('button,[role="button"]')).filter(isVisible);
+    return controls.find((el) => {
+      if (el.closest && el.closest('#' + APP_ID)) return false;
+      const label = buttonText(el);
+      return label === 'trade' || /^trade\b/.test(label);
     }) || null;
-  };
+  }
 
-  const findTradeMinimizeControl = () => {
-    const controls = [...document.querySelectorAll('button,[role="button"]')]
-      .filter(visible)
-      .filter(el => !el.closest?.('#' + APP_ID));
+  function findTradeRoot() {
+    const exact = document.getElementById('public_trade');
+    if (exact instanceof HTMLElement && isVisible(exact)) return exact;
 
-    return controls.find(el => {
-      const label = buttonLabel(el);
-      const around = ancestorText(el, 5);
-      return (/trade/.test(label) && /minimi[sz]e/.test(label))
-        || (/minimi[sz]e/.test(label) && /trade/.test(around));
+    const roots = Array.from(document.querySelectorAll('[id^="public_"], [class*="chatBox"], [class*="chat-box"]'));
+    return roots.find((root) => {
+      if (!(root instanceof HTMLElement) || !isVisible(root)) return false;
+      const title = root.querySelector('[class*="title"],[class*="header"]');
+      return String(title && title.textContent || '').trim().toLowerCase() === 'trade';
     }) || null;
-  };
+  }
 
-  const ancestorText = (el, maxDepth = 8) => {
-    let node = el;
-    const chunks = [];
-    for (let i = 0; node && i < maxDepth; i++, node = node.parentElement) {
-      chunks.push(node.getAttribute?.('aria-label') || '');
-      chunks.push(node.getAttribute?.('data-title') || '');
-      chunks.push(node.getAttribute?.('title') || '');
-      if (i <= 3) chunks.push(node.innerText || '');
-    }
-    return chunks.join(' ').replace(/\s+/g, ' ').toLowerCase();
-  };
+  function findTradeComposer() {
+    const root = findTradeRoot();
+    if (!root) return null;
+    const textarea = root.querySelector('textarea');
+    return textarea instanceof HTMLTextAreaElement && isVisible(textarea) ? textarea : null;
+  }
 
-  const findTradeChatRoot = () => {
-    const direct = document.getElementById('public_trade');
-    if (direct instanceof HTMLElement) return direct;
+  function waitForTradeComposer(timeoutMs) {
+    const timeout = Number(timeoutMs) || 2000;
+    return new Promise((resolve) => {
+      const started = Date.now();
+      const poll = () => {
+        const composer = findTradeComposer();
+        if (composer) {
+          resolve(composer);
+          return;
+        }
+        if (Date.now() - started >= timeout) {
+          resolve(null);
+          return;
+        }
+        setTimeout(poll, 80);
+      };
+      poll();
+    });
+  }
 
-    return [...document.querySelectorAll('[id]')].find(el => {
-      if (!(el instanceof HTMLElement) || !visible(el)) return false;
-      const id = String(el.id || '').toLowerCase();
-      if (id.includes('public_trade')) return true;
-      const title = el.querySelector('[class*="header"] [class*="name"], [class*="title"], header');
-      return title?.textContent?.trim().toLowerCase() === 'trade';
-    }) || null;
-  };
-
-  const findTradeComposer = () => {
-    const tradeRoot = findTradeChatRoot();
-    if (!tradeRoot || !visible(tradeRoot)) return null;
-
-    const composer = tradeRoot.querySelector('textarea[class*="textarea"], textarea');
-    return composer instanceof HTMLTextAreaElement && visible(composer) ? composer : null;
-  };
-
-  const waitForTradeComposer = (timeoutMs = 1800) => new Promise(resolve => {
-    const start = Date.now();
-    const check = () => {
-      const composer = findTradeComposer();
-      if (composer) return resolve(composer);
-      if (Date.now() - start >= timeoutMs) return resolve(null);
-      setTimeout(check, 80);
-    };
-    check();
-  });
-
-  const ensureTradeComposerFromUserGesture = async () => {
+  async function ensureTradeOpen() {
     const existing = findTradeComposer();
     if (existing) return existing;
 
@@ -189,28 +185,39 @@
     if (!control) return null;
 
     control.click();
-    return waitForTradeComposer();
-  };
+    return waitForTradeComposer(2200);
+  }
 
-  const minimizeTradeChat = () => {
+  function findTradeMinimizeControl() {
+    const root = findTradeRoot();
+    if (!root) return null;
+
+    const localButtons = Array.from(root.querySelectorAll('button,[role="button"]')).filter(isVisible);
+    const explicit = localButtons.find((el) => /minimi[sz]e|collapse/.test(buttonText(el)));
+    if (explicit) return explicit;
+
+    return localButtons.find((el) => {
+      const rect = el.getBoundingClientRect();
+      const rootRect = root.getBoundingClientRect();
+      return rect.top <= rootRect.top + 42 && rect.right >= rootRect.right - 52;
+    }) || null;
+  }
+
+  function minimizeTradeChat() {
     const control = findTradeMinimizeControl();
     if (control) control.click();
-  };
+  }
 
-  const composerValue = (el) => el instanceof HTMLTextAreaElement ? (el.value || '') : '';
-
-  const insertTradeMessage = (textarea, message) => {
+  function insertTradeMessage(textarea, message) {
     if (!(textarea instanceof HTMLTextAreaElement)) return false;
-
     textarea.focus({ preventScroll: true });
     textarea.setRangeText(message, 0, textarea.value.length, 'end');
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    textarea.focus({ preventScroll: true });
-    textarea.selectionStart = textarea.selectionEnd = message.length;
+    textarea.selectionStart = textarea.selectionEnd = textarea.value.length;
     return textarea.value === message;
-  };
+  }
 
-  const fillComposer = () => {
+  function fillCurrentSession() {
     if (!state.enabled) return { ok: false, reason: 'Assistant disabled.' };
     if (sessionFilled) return { ok: false, reason: 'This posting session has already been filled once.' };
     if (document.visibilityState !== 'visible' || !document.hasFocus()) {
@@ -218,12 +225,8 @@
     }
 
     const composer = findTradeComposer();
-    if (!composer) return { ok: false, reason: 'Open Trade Chat first.' };
-
-    const existing = composerValue(composer).trim();
-    if (existing) {
-      return { ok: false, reason: 'Trade composer already contains text.' };
-    }
+    if (!composer) return { ok: false, reason: 'Trade Chat is not open.' };
+    if (composer.value.trim()) return { ok: false, reason: 'Trade composer already contains text.' };
 
     const message = currentMessage();
     if (codePointLength(message) > TRADE_LIMIT) {
@@ -231,161 +234,117 @@
     }
 
     if (!insertTradeMessage(composer, message)) {
-      return { ok: false, reason: 'Torn Trade composer rejected the formatted message.' };
+      return { ok: false, reason: 'Torn rejected the Trade composer insertion.' };
     }
 
-    lastFilledMessage = message;
     lastComposer = composer;
+    lastFilledMessage = message;
     sessionFilled = true;
+    submitArmed = false;
     render();
     return { ok: true };
-  };
+  }
 
+  async function preparePostingSession(openedSessionId) {
+    if (!state.enabled || openedSessionId !== sessionId || sessionFilled) return;
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) {
+      setNote('Return to the focused Torn tab first.', false);
+      return;
+    }
 
-  const completeAssistedPost = () => {
+    const composer = await ensureTradeOpen();
+    if (openedSessionId !== sessionId || sessionFilled) return;
+    if (!composer) {
+      setNote('Trade Chat could not be opened. Open it manually, then press Fill Trade.', false);
+      return;
+    }
+
+    const result = fillCurrentSession();
+    setNote(
+      result.ok ? 'Next rotation message is ready. Review it, then send manually.' : result.reason,
+      result.ok
+    );
+  }
+
+  function completeAssistedPost() {
     const now = Date.now();
-    if (now - state.lastSentAt < 5000) return;
+    if (now - state.lastSentAt < 3000) return;
+
     state.lastSentAt = now;
-    state.completedCount = Number(state.completedCount || 0) + 1;
     state.lastCompletedAt = now;
+    state.completedCount += 1;
     rotate();
     scheduleNext(now);
-    lastFilledMessage = '';
+
     lastComposer = null;
+    lastFilledMessage = '';
+    sessionFilled = true;
+    submitArmed = false;
+
     render();
     closePanel();
     setTimeout(minimizeTradeChat, 120);
-  };
+  }
 
-  const prepareTradeOnPanelOpen = async (sessionId) => {
-    if (!state.enabled || sessionId !== panelSessionId || sessionFilled) return;
-    if (document.visibilityState !== 'visible' || !document.hasFocus()) {
-      note('Return to the focused Torn tab first.');
-      return;
+  function handleComposerKeydown(event) {
+    if (!sessionFilled || !lastComposer || event.target !== lastComposer) return;
+    if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
+      submitArmed = true;
     }
+  }
 
-    const composer = await ensureTradeComposerFromUserGesture();
-    if (sessionId !== panelSessionId || sessionFilled) return;
-    if (!composer) {
-      note('Trade Chat could not be opened. Open it manually, then use Fill Trade.');
-      return;
+  function handleTradeClick(event) {
+    if (!sessionFilled || !lastComposer) return;
+    const root = findTradeRoot();
+    const button = event.target && event.target.closest && event.target.closest('button,[role="button"]');
+    if (!root || !button || !root.contains(button)) return;
+    if (button.closest && button.closest('#' + APP_ID)) return;
+    submitArmed = true;
+  }
+
+  function handleComposerInput(event) {
+    if (!sessionFilled || !submitArmed || !lastComposer || event.target !== lastComposer) return;
+    if (lastComposer.value.trim()) return;
+
+    const completedComposer = lastComposer;
+    setTimeout(() => {
+      if (completedComposer.value.trim()) return;
+      completeAssistedPost();
+    }, 150);
+  }
+
+  function formatCountdown() {
+    if (!state.enabled) return 'PAUSE';
+    if (!state.nextAt || Date.now() >= state.nextAt) return '0:00';
+    const seconds = Math.ceil((state.nextAt - Date.now()) / 1000);
+    return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+  }
+
+  function hasSavedPanelPosition() {
+    try {
+      return Boolean(localStorage.getItem(PANEL_POSITION_KEY));
+    } catch {
+      return false;
     }
+  }
 
-    const result = fillComposer();
-    note(
-      result.ok
-        ? 'Next rotation message is ready in Trade Chat. Review it, then send manually.'
-        : result.reason,
-      result.ok
-    );
-  };
+  function visibleOtherPanelRects() {
+    return OTHER_MM_PANELS
+      .map((id) => document.getElementById(id))
+      .filter((el) => el instanceof HTMLElement && isVisible(el))
+      .map((el) => el.getBoundingClientRect());
+  }
 
-  const formatRemaining = () => {
-    if (!state.enabled) return 'Paused';
-    if (!state.nextAt) return 'Ready to start';
-    const delta = state.nextAt - Date.now();
-    if (delta <= 0) return 'DUE';
-    const sec = Math.ceil(delta / 1000);
-    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
-  };
-
-  const injectStyle = () => {
-    if (document.getElementById(APP_ID + '-style')) return;
-    const style = document.createElement('style');
-    style.id = APP_ID + '-style';
-    style.textContent = `
-      [data-mm-dock-id="${MODULE_ID}"] .mmta-launch-face {
-        position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;
-      }
-      [data-mm-dock-id="${MODULE_ID}"] .mmta-launch-bell {
-        position:absolute;width:27px!important;height:27px!important;opacity:.24;filter:drop-shadow(0 1px 1px #000);pointer-events:none;
-      }
-      [data-mm-dock-id="${MODULE_ID}"] .mmta-launch-timer {
-        position:relative;z-index:1;color:#f1f3f4;font:700 9.5px/1 Arial,sans-serif;letter-spacing:-.25px;
-        text-shadow:0 1px 2px #000,0 0 3px #000;pointer-events:none;
-      }
-      [data-mm-dock-id="${MODULE_ID}"][data-mm-due="1"] .mmta-launch-timer { color:#ffd66d; }
-      [data-mm-dock-id="${MODULE_ID}"][data-mm-due="1"] .mmta-launch-bell { opacity:.38; }
-
-      #${APP_ID} {
-        display:none;position:fixed;z-index:2147483646;width:min(390px,calc(100vw - 24px));
-        max-height:calc(100vh - 88px);overflow:hidden;color:#eee;background:#111;border:1px solid #8b6a2f;
-        border-radius:8px;box-shadow:0 12px 35px #000b;font:12px/1.35 Arial,sans-serif;
-      }
-      #${APP_ID} * { box-sizing:border-box; }
-      #${APP_ID} .mmta-head {
-        height:40px;display:flex;align-items:center;justify-content:space-between;gap:8px;
-        padding:0 8px 0 10px;background:#151515;border-bottom:1px solid #6f5426;
-      }
-      #${APP_ID} .mmta-head strong { color:#e7b83f;font-size:13px; }
-      #${APP_ID} button,#${APP_ID} select {
-        color:#eee;background:#242424;border:1px solid #555;border-radius:5px;padding:5px 7px;
-      }
-      #${APP_ID} button:hover { border-color:#9a7418; }
-      #${APP_ID} .mmta-close { width:27px;height:27px;padding:0;font-size:16px;line-height:1; }
-      #${APP_ID} .mmta-body { padding:8px 10px 10px;overflow:auto;max-height:calc(100vh - 150px); }
-      #${APP_ID} .mmta-row { display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px; }
-      #${APP_ID} [data-role="countdown"].due { color:#e7b83f; }
-      #${APP_ID} .mmta-message {
-        min-height:52px;padding:7px;border:1px solid #333;border-radius:5px;background:#090909;
-        white-space:pre-wrap;word-break:break-word;margin-bottom:7px;
-      }
-      #${APP_ID} .mmta-meta { color:#aaa; }
-      #${APP_ID} .mmta-actions { display:grid;grid-template-columns:1fr 1fr;gap:5px; }
-      #${APP_ID} .mmta-actions button:first-child { border-color:#9a7418; }
-      #${APP_ID} .mmta-note { margin-top:6px;color:#8fd59a; }
-      @media(max-width:620px){
-        [data-mm-dock-id="${MODULE_ID}"] .mmta-launch-timer { font-size:9px; }
-        #${APP_ID}{width:calc(100vw - 8px);max-height:calc(100vh - 62px)}
-        #${APP_ID} .mmta-body{max-height:calc(100vh - 106px)}
-      }
-    `;
-    document.head.appendChild(style);
-  };
-
-  const launcherMarkup = () => `
-    <span class="mmta-launch-face" aria-hidden="true">
-      <svg class="mmta-launch-bell" viewBox="0 0 24 24">
-        <path d="M6.8 16.5h10.4l-1.5-2.1V10a3.7 3.7 0 0 0-7.4 0v4.4zM10 18.2a2.2 2.2 0 0 0 4 0"
-          fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <span class="mmta-launch-timer" data-mm-trade-timer>--:--</span>
-    </span>
-  `;
-
-  const hasSavedPanelPosition = () => {
-    try { return Boolean(localStorage.getItem(PANEL_STORAGE_ID)); } catch { return false; }
-  };
-
-  const panelRectAt = (left, top, width, height) => ({
-    left,
-    top,
-    right: left + width,
-    bottom: top + height,
-    width,
-    height,
-  });
-
-  const overlapArea = (a, b, gap = 8) => {
-    const left = Math.max(a.left - gap, b.left);
-    const right = Math.min(a.right + gap, b.right);
-    const top = Math.max(a.top - gap, b.top);
-    const bottom = Math.min(a.bottom + gap, b.bottom);
+  function overlapArea(a, b, gap) {
+    const g = Number(gap) || 8;
+    const left = Math.max(a.left - g, b.left);
+    const right = Math.min(a.right + g, b.right);
+    const top = Math.max(a.top - g, b.top);
+    const bottom = Math.min(a.bottom + g, b.bottom);
     return Math.max(0, right - left) * Math.max(0, bottom - top);
-  };
+  }
 
-  const visibleMmPanelRects = () => OTHER_MM_PANELS
-    .map(id => document.getElementById(id))
-    .filter(el => el instanceof HTMLElement && el !== panel)
-    .filter(el => {
-      const cs = getComputedStyle(el);
-      const r = el.getBoundingClientRect();
-      return cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity || 1) > 0
-        && r.width > 80 && r.height > 60;
-    })
-    .map(el => el.getBoundingClientRect());
-
-  const resolveBottomCenterPanelPosition = () => {
+  function resolveBottomCenterPosition() {
     const rect = panel.getBoundingClientRect();
     const width = rect.width || Math.min(390, Math.max(280, innerWidth - 24));
     const height = rect.height || 250;
@@ -395,7 +354,7 @@
     const maxTop = Math.max(edge, innerHeight - height - edge);
     const baseLeft = Math.min(maxLeft, Math.max(edge, (innerWidth - width) / 2));
     const baseTop = Math.min(maxTop, Math.max(edge, innerHeight - height - bottomGap));
-    const obstacles = visibleMmPanelRects();
+    const obstacles = visibleOtherPanelRects();
     const stepX = width + 12;
     const stepY = Math.max(56, Math.min(height * 0.72, 180));
 
@@ -407,72 +366,87 @@
       [baseLeft - stepX * 0.55, baseTop - stepY],
       [baseLeft + stepX * 0.55, baseTop - stepY],
       [baseLeft, baseTop - stepY * 2],
-    ].map(([left, top]) => ({
-      left: Math.min(maxLeft, Math.max(edge, left)),
-      top: Math.min(maxTop, Math.max(edge, top)),
+    ].map((pair) => ({
+      left: Math.min(maxLeft, Math.max(edge, pair[0])),
+      top: Math.min(maxTop, Math.max(edge, pair[1])),
     }));
 
-    const scored = candidates.map(pos => {
-      const candidate = panelRectAt(pos.left, pos.top, width, height);
-      const overlap = obstacles.reduce((sum, obstacle) => sum + overlapArea(candidate, obstacle), 0);
-      const distance = Math.hypot(pos.left - baseLeft, pos.top - baseTop);
-      return { ...pos, overlap, distance };
-    }).sort((a, b) => a.overlap - b.overlap || a.distance - b.distance);
+    candidates.forEach((candidate) => {
+      const box = {
+        left: candidate.left,
+        top: candidate.top,
+        right: candidate.left + width,
+        bottom: candidate.top + height,
+      };
+      candidate.overlap = obstacles.reduce((sum, obstacle) => sum + overlapArea(box, obstacle, 8), 0);
+      candidate.distance = Math.hypot(candidate.left - baseLeft, candidate.top - baseTop);
+    });
 
-    return scored[0] || { left: baseLeft, top: baseTop };
-  };
+    candidates.sort((a, b) => a.overlap - b.overlap || a.distance - b.distance);
+    return candidates[0] || { left: baseLeft, top: baseTop };
+  }
 
-  const positionPanelDefault = () => {
+  function positionPanelDefault() {
     if (!panel || panel.style.display === 'none' || hasSavedPanelPosition()) return;
-    const pos = resolveBottomCenterPanelPosition();
+    const pos = resolveBottomCenterPosition();
     panel.style.left = Math.round(pos.left) + 'px';
-    panel.style.right = 'auto';
     panel.style.top = Math.round(pos.top) + 'px';
+    panel.style.right = 'auto';
     panel.style.bottom = 'auto';
-  };
+  }
 
-  const formatLauncherTimer = () => {
-    if (!state.enabled) return '--:--';
-    if (!state.nextAt) return '0:00';
-    const delta = Math.max(0, state.nextAt - Date.now());
-    const sec = Math.ceil(delta / 1000);
-    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
-  };
+  function injectStyle() {
+    if (document.getElementById(APP_ID + '-style')) return;
 
-  const renderLauncher = () => {
+    const style = document.createElement('style');
+    style.id = APP_ID + '-style';
+    style.textContent = [
+      '[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-face{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}',
+      '[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-bell{position:absolute;width:27px!important;height:27px!important;opacity:.24;filter:drop-shadow(0 1px 1px #000);pointer-events:none}',
+      '[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-timer{position:relative;z-index:1;color:#f1f3f4;font:700 9.5px/1 Arial,sans-serif;letter-spacing:-.25px;text-shadow:0 1px 2px #000,0 0 3px #000;pointer-events:none}',
+      '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-due="1"] .mmta-launch-timer{color:#ffd66d}',
+      '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-due="1"] .mmta-launch-bell{opacity:.42}',
+      '#' + APP_ID + '{display:none;position:fixed;z-index:2147483646;width:min(390px,calc(100vw - 24px));max-height:calc(100vh - 88px);overflow:hidden;color:#eee;background:#111;border:1px solid #8b6a2f;border-radius:8px;box-shadow:0 12px 35px #000b;font:12px/1.35 Arial,sans-serif}',
+      '#' + APP_ID + ' *{box-sizing:border-box}',
+      '#' + APP_ID + ' .mmta-head{height:40px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px 0 10px;background:#151515;border-bottom:1px solid #6f5426}',
+      '#' + APP_ID + ' .mmta-head strong{color:#e7b83f;font-size:13px}',
+      '#' + APP_ID + ' button,#' + APP_ID + ' select{color:#eee;background:#242424;border:1px solid #555;border-radius:5px;padding:5px 7px}',
+      '#' + APP_ID + ' button:hover{border-color:#9a7418}',
+      '#' + APP_ID + ' .mmta-close{width:27px;height:27px;padding:0;font-size:16px;line-height:1}',
+      '#' + APP_ID + ' .mmta-body{padding:8px 10px 10px;overflow:auto;max-height:calc(100vh - 150px)}',
+      '#' + APP_ID + ' .mmta-row{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px}',
+      '#' + APP_ID + ' .mmta-message{min-height:52px;padding:7px;border:1px solid #333;border-radius:5px;background:#090909;word-break:break-word;margin-bottom:7px}',
+      '#' + APP_ID + ' .mmta-message a{color:#70aee8}',
+      '#' + APP_ID + ' .mmta-meta{color:#aaa}',
+      '#' + APP_ID + ' .mmta-actions{display:grid;grid-template-columns:1fr 1fr;gap:5px}',
+      '#' + APP_ID + ' .mmta-actions button:first-child{border-color:#9a7418}',
+      '#' + APP_ID + ' .mmta-note{margin-top:7px;color:#8fd59a}',
+      '@media(max-width:620px){[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-timer{font-size:9px}#' + APP_ID + '{width:calc(100vw - 8px);max-height:calc(100vh - 62px)}#' + APP_ID + ' .mmta-body{max-height:calc(100vh - 106px)}}',
+    ].join('\n');
+    document.head.appendChild(style);
+  }
+
+  function launcherMarkup() {
+    return [
+      '<span class="mmta-launch-face" aria-hidden="true">',
+      '<svg class="mmta-launch-bell" viewBox="0 0 24 24">',
+      '<path d="M6.8 16.5h10.4l-1.5-2.1V10a3.7 3.7 0 0 0-7.4 0v4.4zM10 18.2a2.2 2.2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+      '</svg>',
+      '<span class="mmta-launch-timer" data-mm-trade-timer>0:00</span>',
+      '</span>',
+    ].join('');
+  }
+
+  function renderLauncher() {
     const button = document.querySelector('[data-mm-dock-id="' + MODULE_ID + '"]');
     if (!button) return;
     const timer = button.querySelector('[data-mm-trade-timer]');
-    if (timer) timer.textContent = formatLauncherTimer();
-    button.dataset.mmDue = state.enabled && state.nextAt && Date.now() >= state.nextAt ? '1' : '0';
-  };
+    if (timer) timer.textContent = formatCountdown();
+    button.dataset.mmDue = state.enabled && (!state.nextAt || Date.now() >= state.nextAt) ? '1' : '0';
+  }
 
-  const closePanel = () => {
-    if (panel) panel.style.display = 'none';
-    core?.setDockLauncherActive?.(MODULE_ID, false);
-  };
-
-  const openPanel = () => {
-    const root = createPanel();
-    panelSessionId += 1;
-    sessionFilled = false;
-    root.style.display = 'block';
-    root.style.zIndex = '2147483647';
-    core?.setDockLauncherActive?.(MODULE_ID, true);
-    requestAnimationFrame(positionPanelDefault);
-    render();
-    const sessionId = panelSessionId;
-    setTimeout(() => prepareTradeOnPanelOpen(sessionId), 0);
-  };
-
-  const togglePanel = () => {
-    const root = createPanel();
-    if (root.style.display === 'none' || !root.style.display) openPanel();
-    else closePanel();
-  };
-
-  const createLauncher = () => {
-    if (!core?.registerDockLauncher) return null;
+  function createLauncher() {
+    if (!core || !core.registerDockLauncher) return null;
     const button = core.registerDockLauncher({
       id: MODULE_ID,
       label: 'MM Trade Reminder',
@@ -480,183 +454,173 @@
       icon: launcherMarkup(),
       onClick: togglePanel,
     });
-    if (button) {
-      button.id = LAUNCHER_ID;
-      renderLauncher();
-    }
+    renderLauncher();
     return button;
-  };
+  }
 
-  const createPanel = () => {
-    if (panel?.isConnected) return panel;
+  function createPanel() {
+    if (panel && panel.isConnected) return panel;
+
     injectStyle();
-    const root = document.createElement('section');
-    root.id = APP_ID;
-    root.innerHTML = `
-      <div class="mmta-head">
-        <strong>MM Trade Rotation</strong>
-        <button type="button" class="mmta-close" data-act="close" aria-label="Close">×</button>
-      </div>
-      <div class="mmta-body">
-        <div class="mmta-row">
-          <span data-role="status">Ready</span>
-          <strong data-role="countdown">Ready to start</strong>
-        </div>
-        <div class="mmta-message" data-role="message"></div>
-        <div class="mmta-row mmta-meta">
-          <span data-role="chars"></span>
-          <select data-role="mode">
-            <option value="busy">Busy 5–8 min</option>
-            <option value="normal">Normal 8–12 min</option>
-            <option value="quiet">Quiet 15–20 min</option>
-          </select>
-        </div>
-        <div class="mmta-actions">
-          <button type="button" data-act="fill">Fill Trade</button>
-          <button type="button" data-act="sent">Mark Sent</button>
-          <button type="button" data-act="skip">Next Copy</button>
-          <button type="button" data-act="toggle"></button>
-        </div>
-        <div class="mmta-note" data-role="note">One fill per opened session. Never sends automatically.</div>
-      </div>
-    `;
-    document.body.append(root);
-    panel = root;
 
-    root.addEventListener('click', (event) => {
+    panel = document.createElement('section');
+    panel.id = APP_ID;
+    panel.innerHTML = [
+      '<div class="mmta-head">',
+      '<strong>MM Trade Rotation</strong>',
+      '<button type="button" class="mmta-close" data-act="close" aria-label="Close">×</button>',
+      '</div>',
+      '<div class="mmta-body">',
+      '<div class="mmta-row"><span data-role="status">Ready</span><strong data-role="countdown">0:00</strong></div>',
+      '<div class="mmta-message" data-role="message"></div>',
+      '<div class="mmta-row mmta-meta"><span data-role="chars"></span><select data-role="mode">',
+      '<option value="busy">Busy 5–8 min</option>',
+      '<option value="normal">Normal 8–12 min</option>',
+      '<option value="quiet">Quiet 15–20 min</option>',
+      '</select></div>',
+      '<div class="mmta-actions">',
+      '<button type="button" data-act="fill">Fill Trade</button>',
+      '<button type="button" data-act="sent">Mark Sent</button>',
+      '<button type="button" data-act="skip">Next Copy</button>',
+      '<button type="button" data-act="toggle"></button>',
+      '</div>',
+      '<div class="mmta-note" data-role="note">One fill per opened session. Send remains manual.</div>',
+      '</div>',
+    ].join('');
+
+    document.body.appendChild(panel);
+
+    panel.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-act]');
       if (!button) return;
-      const act = button.dataset.act;
 
-      if (act === 'close') {
+      const action = button.dataset.act;
+      if (action === 'close') {
         closePanel();
-      } else if (act === 'toggle') {
+        return;
+      }
+      if (action === 'toggle') {
         state.enabled = !state.enabled;
-        if (state.enabled && !state.nextAt) scheduleNext();
         saveState();
         render();
-      } else if (act === 'fill') {
-        const result = fillComposer();
-        note(result.ok ? 'Trade message filled. Review it, then press Send yourself.' : result.reason, result.ok);
-      } else if (act === 'sent') {
-        completeAssistedPost();
-      } else if (act === 'skip') {
+        return;
+      }
+      if (action === 'skip') {
         rotate();
         render();
-        note('Rotated to the next copy.', true);
+        setNote('Rotated to the next copy.', true);
+        return;
+      }
+      if (action === 'sent') {
+        completeAssistedPost();
+        return;
+      }
+      if (action === 'fill') {
+        const result = fillCurrentSession();
+        setNote(result.ok ? 'Trade message filled. Review it, then send manually.' : result.reason, result.ok);
       }
     });
 
-    root.querySelector('[data-role="mode"]').addEventListener('change', (event) => {
+    panel.querySelector('[data-role="mode"]').addEventListener('change', (event) => {
       state.mode = event.target.value;
-      if (state.enabled) scheduleNext(Date.now());
-      saveState();
+      if (state.nextAt && state.nextAt > Date.now()) scheduleNext(Date.now());
+      else saveState();
       render();
     });
 
     requestAnimationFrame(() => {
-      const head = root.querySelector('.mmta-head');
-      core?.makePanelDraggable?.(
-        root,
-        head,
-        PANEL_KEY,
-        { right: '', top: '' }
-      );
-      head?.addEventListener('dblclick', () => setTimeout(positionPanelDefault, 0));
-      root.addEventListener('pointerdown', () => {
-        root.style.zIndex = '2147483647';
-      }, { passive: true });
+      const head = panel.querySelector('.mmta-head');
+      if (core && core.makePanelDraggable) core.makePanelDraggable(panel, head, PANEL_KEY, { right: '', top: '' });
       positionPanelDefault();
     });
 
-    return root;
-  };
+    return panel;
+  }
 
-  const note = (text, good = false) => {
+  function setNote(message, good) {
     if (!panel) return;
-    const node = panel.querySelector('[data-role="note"]');
-    node.textContent = text;
-    node.style.color = good ? '#8fd59a' : '#e7b83f';
-  };
+    const note = panel.querySelector('[data-role="note"]');
+    if (!note) return;
+    note.textContent = message;
+    note.style.color = good ? '#8fd59a' : '#e7b83f';
+  }
 
-  const render = () => {
+  function render() {
     renderLauncher();
     if (!panel) return;
 
     const message = currentMessage();
-    const countdown = formatRemaining();
-    const countNode = panel.querySelector('[data-role="countdown"]');
-    countNode.textContent = countdown;
-    countNode.classList.toggle('due', countdown === 'DUE');
+    const countdown = formatCountdown();
 
-    panel.querySelector('[data-role="status"]').textContent =
-      state.enabled
-        ? `Copy ${state.index + 1}/${ROTATION_MESSAGES.length} • ${Number(state.completedCount || 0)} completed`
+    const status = panel.querySelector('[data-role="status"]');
+    const count = panel.querySelector('[data-role="countdown"]');
+    const preview = panel.querySelector('[data-role="message"]');
+    const chars = panel.querySelector('[data-role="chars"]');
+    const mode = panel.querySelector('[data-role="mode"]');
+    const toggle = panel.querySelector('[data-act="toggle"]');
+
+    if (status) {
+      status.textContent = state.enabled
+        ? 'Copy ' + (state.index + 1) + '/' + ROTATION_MESSAGES.length + ' • ' + state.completedCount + ' completed'
         : 'Paused';
-    panel.querySelector('[data-role="message"]').textContent = message;
-    panel.querySelector('[data-role="chars"]').textContent =
-      `${codePointLength(message)}/${TRADE_LIMIT} chars`;
-    panel.querySelector('[data-role="mode"]').value = state.mode;
-    panel.querySelector('[data-act="toggle"]').textContent = state.enabled ? 'Pause' : 'Resume';
-  };
-
-  const observeManualSend = (event) => {
-    if (!state.enabled || !lastFilledMessage) return;
-    const composer = lastComposer || findTradeComposer();
-    if (!composer) return;
-
-    if (event.type === 'keydown' && event.target === composer
-        && event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
-      composer.dataset.mmTradeSubmitIntent = '1';
     }
-  };
+    if (count) count.textContent = countdown;
+    if (preview) preview.innerHTML = message;
+    if (chars) chars.textContent = codePointLength(message) + '/' + TRADE_LIMIT + ' chars';
+    if (mode) mode.value = state.mode;
+    if (toggle) toggle.textContent = state.enabled ? 'Pause' : 'Resume';
+  }
 
-  const observeSendClick = (event) => {
-    if (!state.enabled || !lastFilledMessage) return;
-    const composer = lastComposer || findTradeComposer();
-    const button = event.target?.closest?.('button,[role="button"]');
-    if (!composer || !button || button.closest?.('#' + APP_ID)) return;
+  function closePanel() {
+    if (panel) panel.style.display = 'none';
+    if (core && core.setDockLauncherActive) core.setDockLauncherActive(MODULE_ID, false);
+  }
 
-    const cr = composer.getBoundingClientRect();
-    const br = button.getBoundingClientRect();
-    const nearComposer = br.left >= cr.left - 12
-      && br.top <= cr.bottom + 20
-      && br.bottom >= cr.top - 20
-      && br.left <= cr.right + 90;
+  function openPanel() {
+    const root = createPanel();
+    sessionId += 1;
+    sessionFilled = false;
+    submitArmed = false;
+    lastComposer = null;
+    lastFilledMessage = '';
 
-    if (nearComposer) composer.dataset.mmTradeSubmitIntent = '1';
-  };
+    root.style.display = 'block';
+    root.style.zIndex = '2147483647';
 
-  const observeComposerCleared = (event) => {
-    if (!state.enabled || !lastFilledMessage) return;
-    const composer = lastComposer || findTradeComposer();
-    if (!composer || event.target !== composer) return;
-    if (!composerValue(composer).trim() && composer.dataset.mmTradeSubmitIntent === '1') {
-      delete composer.dataset.mmTradeSubmitIntent;
-      setTimeout(completeAssistedPost, 150);
-    }
-  };
+    if (core && core.setDockLauncherActive) core.setDockLauncherActive(MODULE_ID, true);
+    requestAnimationFrame(positionPanelDefault);
+    render();
 
-  const boot = () => {
+    const openedSessionId = sessionId;
+    setTimeout(() => preparePostingSession(openedSessionId), 0);
+  }
+
+  function togglePanel() {
+    const root = createPanel();
+    if (!root.style.display || root.style.display === 'none') openPanel();
+    else closePanel();
+  }
+
+  function boot() {
     if (document.querySelector('[data-mm-dock-id="' + MODULE_ID + '"]')) return;
+
     injectStyle();
 
-    if (!core?.registerDockLauncher) {
+    if (!core || !core.registerDockLauncher) {
       setTimeout(boot, 300);
       return;
     }
 
-    if (state.enabled && !state.nextAt) scheduleNext();
     createLauncher();
     render();
 
-    document.addEventListener('keydown', observeManualSend, true);
-    document.addEventListener('click', observeSendClick, true);
-    document.addEventListener('input', observeComposerCleared, true);
+    document.addEventListener('keydown', handleComposerKeydown, true);
+    document.addEventListener('click', handleTradeClick, true);
+    document.addEventListener('input', handleComposerInput, true);
     window.addEventListener('resize', () => requestAnimationFrame(positionPanelDefault), { passive: true });
 
     setInterval(render, TICK_MS);
-  };
+  }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', boot, { once: true });
