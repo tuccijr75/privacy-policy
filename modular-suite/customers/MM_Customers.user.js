@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.8
+// @version      8.0.0-alpha.9
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.8';
+  const VERSION='8.0.0-alpha.9';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -390,6 +390,81 @@
     };
   }
 
+  function salePurchaseLine(sale){
+    const stamp=n(sale?.timestamp)?new Date(n(sale.timestamp)).toLocaleString():'time unavailable';
+    const items=(sale?.items||[]).map(item=>{
+      const name=String(item?.name||'Item').trim()||'Item';
+      const qty=Math.max(1,n(item?.quantity)||1);
+      return name+' × '+fmt(qty);
+    }).filter(Boolean);
+    return stamp+' — '+(items.length?items.join(', '):'Bazaar purchase')+' — '+money(sale?.total);
+  }
+
+  function cashbackEligibilityReminderMessage(customer,coupon,qualification){
+    const name=String(customer?.name||coupon?.playerName||customer?.id||coupon?.playerId||'there');
+    const q=qualification||logic.couponQualification(state||{},coupon);
+    if(!q?.qualified)throw new Error(q?.reason||'Customer is not currently eligible for cashback.');
+    const purchases=q.sales||[];
+    const purchaseLines=purchases.map(sale=>salePurchaseLine(sale));
+    const purchaseCount=purchases.length;
+    const greeting='CASHBACK REMINDER — '+name+', YOU ARE ELIGIBLE!';
+    const columns=[
+      {
+        title:'QUALIFYING PURCHASE'+(purchaseCount===1?'':'S'),
+        lines:purchaseLines.length?purchaseLines:['Qualifying Bazaar purchase total: '+money(q.total)]
+      },
+      {
+        title:'YOUR CASHBACK',
+        lines:[
+          'Refund amount: '+money(q.cashback),
+          'Qualifying purchase total: '+money(q.total),
+          'Coupon code: '+coupon.code
+        ]
+      },
+      {
+        title:'SEND YOUR COUPON',
+        lines:[
+          'This is a reminder to send me your coupon code now.',
+          'Your recent purchase'+(purchaseCount===1?'':'s')+' already '+(purchaseCount===1?'qualifies':'qualify')+' for cashback.',
+          'I will verify the qualifying sale'+(purchaseCount===1?'':'s')+' and send your cashback manually.'
+        ]
+      }
+    ];
+    const footer=[
+      'This reminder is based on '+purchaseCount+' qualifying post-coupon purchase'+(purchaseCount===1?'':'s')+' currently recorded in the CRM.',
+      'Eligible purchases remain available for 24 hours and each sale can only be used once.'
+    ];
+    return {
+      subject:SHOP_NAME+' — Cashback ready: send coupon '+coupon.code,
+      body:plainThreeColumnFallback({
+        customerName:name,greeting,
+        centerText:'Cashback: '+money(q.cashback),
+        rightText:purchaseCount+' qualifying purchase'+(purchaseCount===1?'':'s')+' · '+money(q.total),
+        columns,footerTitle:'CASHBACK REMINDER',footerLines:footer,couponCode:coupon.code
+      }),
+      bodyHtml:brandedMessageHtml({
+        customerName:name,greeting,
+        centerText:'Cashback: '+money(q.cashback),
+        rightText:purchaseCount+' qualifying purchase'+(purchaseCount===1?'':'s')+' · '+money(q.total),
+        columns,footerTitle:'CASHBACK REMINDER',footerLines:footer,couponCode:coupon.code
+      })
+    };
+  }
+
+  function cashbackEligibleRows(){
+    return Object.values(state?.coupons||{}).map(coupon=>{
+      const q=logic.couponQualification(state||{},coupon);
+      if(!q.qualified)return null;
+      const id=String(coupon.playerId||'').trim();
+      const customer=state?.customers?.[id]||{id,name:coupon.playerName||id};
+      return {id,customer,coupon,qualification:q};
+    }).filter(Boolean).sort((a,b)=>
+      n(b.qualification.cashback)-n(a.qualification.cashback)||
+      n(b.qualification.total)-n(a.qualification.total)||
+      String(a.customer?.name||a.id).localeCompare(String(b.customer?.name||b.id))
+    );
+  }
+
   function restockMessage(sub,rows){
     const name=String(sub?.name||'there');
     const limited=rows.slice(0,30),omitted=Math.max(0,rows.length-limited.length),chunks=[[],[],[]];
@@ -750,10 +825,29 @@
   }
 
   function refundsHtml(){
-    const rows=Object.values(state?.refunds||{}).sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
-    if(!rows.length)return card('No cashback refunds yet.');
-    return rows.map(r=>card('<div class="mm-cu-row"><div class="mm-cu-main"><b>'+esc(r.playerName)+' · '+money(r.amount)+'</b><div class="mm-cu-muted">'+esc(r.status)+' · purchases '+money(r.purchaseTotal)+' · '+when(r.createdAt)+'</div></div>'+
-      (r.status==='pending'?'<div class="mm-cu-actions"><button data-refund-open="'+esc(r.id)+'" style="'+button(true)+'">Open Profile</button><button data-refund-paid="'+esc(r.id)+'" style="'+button()+'">Mark Paid</button><button data-refund-cancel="'+esc(r.id)+'" style="'+button()+'">Cancel</button></div>':'')+'</div>')).join('');
+    const eligible=cashbackEligibleRows();
+    const refunds=Object.values(state?.refunds||{}).sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+
+    const eligibleHtml=card(
+      '<div class="mm-cu-row"><div class="mm-cu-main"><b>Cashback eligible now</b><div class="mm-cu-muted">'+fmt(eligible.length)+' customer'+(eligible.length===1?'':'s')+' currently qualify from post-coupon sales in the active 24-hour window.</div></div></div>'+
+      (eligible.length?eligible.map(row=>{
+        const q=row.qualification,coupon=row.coupon,customer=row.customer;
+        const displayName=hasRealUsername(customer)?customer.name:(coupon.playerName&&!/^\d+$/.test(String(coupon.playerName))?coupon.playerName:'Resolving name…');
+        const purchaseLines=(q.sales||[]).map(sale=>'<div class="mm-cu-mini" style="margin-top:2px;">• '+esc(salePurchaseLine(sale))+'</div>').join('');
+        return '<div class="mm-cu-row"><div class="mm-cu-main">'+
+          '<b>'+esc(displayName)+' ['+esc(row.id)+'] · '+money(q.cashback)+' cashback</b>'+
+          '<div class="mm-cu-muted">Coupon '+esc(coupon.code)+' · '+fmt(q.sales?.length||0)+' qualifying purchase'+((q.sales?.length||0)===1?'':'s')+' · '+money(q.total)+' qualifying total</div>'+
+          '<div style="margin-top:4px;">'+purchaseLines+'</div>'+
+          '</div><div class="mm-cu-actions"><button data-cashback-reminder="'+esc(row.id)+'" style="'+button(true)+'">Send Cashback Reminder</button></div></div>';
+      }).join(''):'<div class="mm-cu-muted" style="margin-top:5px;">No customers are currently eligible for cashback.</div>')
+    );
+
+    const historyHtml=refunds.length
+      ? card('<b>Refund history</b>')+refunds.map(r=>card('<div class="mm-cu-row"><div class="mm-cu-main"><b>'+esc(r.playerName)+' · '+money(r.amount)+'</b><div class="mm-cu-muted">'+esc(r.status)+' · purchases '+money(r.purchaseTotal)+' · '+when(r.createdAt)+'</div></div>'+
+          (r.status==='pending'?'<div class="mm-cu-actions"><button data-refund-open="'+esc(r.id)+'" style="'+button(true)+'">Open Profile</button><button data-refund-paid="'+esc(r.id)+'" style="'+button()+'">Mark Paid</button><button data-refund-cancel="'+esc(r.id)+'" style="'+button()+'">Cancel</button></div>':'')+'</div>')).join('')
+      : card('<b>Refund history</b><div class="mm-cu-muted">No cashback refunds recorded yet.</div>');
+
+    return eligibleHtml+historyHtml;
   }
 
   function settingsHtml(){
@@ -837,6 +931,26 @@
       return state?.subscribers?.[id]?'Restock alerts enabled.':'Restock alerts updated.';
     })));
     root.querySelectorAll('[data-profile]').forEach(b=>b.addEventListener('click',()=>{location.href='https://www.torn.com/profiles.php?XID='+encodeURIComponent(b.dataset.profile);}));
+
+    root.querySelectorAll('[data-cashback-reminder]').forEach(b=>b.addEventListener('click',()=>run('Preparing cashback eligibility reminder…',async()=>{
+      const id=String(b.dataset.cashbackReminder||'').trim();
+      let customer=state?.customers?.[id];const coupon=state?.coupons?.[id];
+      if(!customer||!coupon)throw new Error('Customer/coupon not found.');
+      const q=logic.couponQualification(state,coupon);
+      if(!q.qualified)throw new Error(q.reason||'Customer is no longer eligible for cashback.');
+      if(!hasRealUsername(customer)){
+        const name=await fetchTornUsername(id);
+        await updateCustomerState(draft=>applyUsername(draft,id,name));
+        customer=state?.customers?.[id]||customer;
+      }
+      const freshCoupon=state?.coupons?.[id]||coupon;
+      const freshQ=logic.couponQualification(state,freshCoupon);
+      if(!freshQ.qualified)throw new Error(freshQ.reason||'Customer is no longer eligible for cashback.');
+      const msg=cashbackEligibilityReminderMessage(customer,freshCoupon,freshQ);
+      composeMessage(id,msg.subject,msg.body,msg.bodyHtml,{kind:'reminder'});
+      return 'Opening cashback reminder for '+customer.name+' · '+money(freshQ.cashback)+' refund on '+money(freshQ.total)+' qualifying purchases. Send remains manual.';
+    })));
+
     root.querySelectorAll('[data-refund-start]').forEach(b=>b.addEventListener('click',()=>run('Creating cashback record…',async()=>{
       let refund;await updateCustomerState(draft=>{refund=logic.createRefund(draft,b.dataset.refundStart);});
       return 'Pending cashback created: '+money(refund.amount)+'. Send money manually, then Mark Paid.';
