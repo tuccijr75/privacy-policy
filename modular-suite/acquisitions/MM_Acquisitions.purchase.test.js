@@ -9,4 +9,13 @@ const proc=logic.ensureProcurement({catalog:{'26':{name:'AK-47'}}});
 assert.strictEqual(logic.mergeAcquisitionLogRows(proc,[{id:'log1',timestamp:ts,data:{items:[{id:26,qty:2}],cost_total:2000}}],'Bazaar'),1);
 assert.strictEqual(logic.mergeAcquisitionLogRows(proc,[{id:'log1',timestamp:ts,data:{items:[{id:26,qty:2}],cost_total:2000}}],'Bazaar'),0);
 assert.strictEqual(proc.acquisitions.length,1);
-console.log('MM_Acquisitions purchase-ledger tests: PASS');
+
+const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
+new Function(userSource);
+assert(userSource.includes('// @version      8.0.0-alpha.4'));
+assert(userSource.includes('async function autoRefreshAcquisitions'));
+assert(userSource.includes('AUTO_REFRESH_MS=60_000'));
+assert(userSource.includes('PURCHASE_STALE_MS=120_000'));
+assert(userSource.includes('OPPORTUNITY_STALE_MS=300_000'));
+assert(userSource.includes('Verify & Buy and final purchase remain manual'));
+console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS');
