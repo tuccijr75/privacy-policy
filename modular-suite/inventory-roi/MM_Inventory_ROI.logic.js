@@ -2,120 +2,19 @@
   'use strict';
 
   const BAZAAR_SELL_LOG_ID=1226;
-  const COUPON_WINDOW_MS=24*60*60*1000;
-  const COUPON_MAX_USES=2;
-  const MAX_CASHBACK_PERCENT=0.10;
-  const CASHBACK_TIERS=Object.freeze([
-    {minimum:1_000_000,cashback:20_000},
-    {minimum:250_000,cashback:10_000},
-    {minimum:50_000,cashback:5_000}
-  ]);
-
   const n=v=>Number.isFinite(Number(v))?Number(v):0;
   const asId=v=>String(v??'').trim();
-  const clone=v=>v==null?v:(typeof structuredClone==='function'?structuredClone(v):JSON.parse(JSON.stringify(v)));
   const nowIso=()=>new Date().toISOString();
-  const makeId=prefix=>String(prefix||'id')+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,10);
-  const makeCouponCode=playerId=>'SAVE-'+asId(playerId);
-
-  function ensureBazaarSlice(slice={}){
+  function ensureInventorySlice(slice={}){
     const out=slice&&typeof slice==='object'?slice:{};
-    out.customers=out.customers&&typeof out.customers==='object'&&!Array.isArray(out.customers)?out.customers:{};
     out.sales=out.sales&&typeof out.sales==='object'&&!Array.isArray(out.sales)?out.sales:{};
-    out.coupons=out.coupons&&typeof out.coupons==='object'&&!Array.isArray(out.coupons)?out.coupons:{};
-    out.refunds=out.refunds&&typeof out.refunds==='object'&&!Array.isArray(out.refunds)?out.refunds:{};
-    out.subscribers=out.subscribers&&typeof out.subscribers==='object'&&!Array.isArray(out.subscribers)?out.subscribers:{};
-    out.removedCustomers=out.removedCustomers&&typeof out.removedCustomers==='object'&&!Array.isArray(out.removedCustomers)?out.removedCustomers:{};
-    out.notificationHistory=Array.isArray(out.notificationHistory)?out.notificationHistory:[];
     out.operations=out.operations&&typeof out.operations==='object'&&!Array.isArray(out.operations)?out.operations:{};
-    out.operations.inventoryRoi=out.operations.inventoryRoi&&typeof out.operations.inventoryRoi==='object'
-      ?out.operations.inventoryRoi:{};
-    const bm=out.operations.inventoryRoi;
-    bm.listings=bm.listings&&typeof bm.listings==='object'&&!Array.isArray(bm.listings)?bm.listings:{};
-    bm.inventory=bm.inventory&&typeof bm.inventory==='object'&&!Array.isArray(bm.inventory)?bm.inventory:{};
-    bm.listingPlans=bm.listingPlans&&typeof bm.listingPlans==='object'&&!Array.isArray(bm.listingPlans)?bm.listingPlans:{};
+    out.operations.inventoryRoi=out.operations.inventoryRoi&&typeof out.operations.inventoryRoi==='object'&&!Array.isArray(out.operations.inventoryRoi)?out.operations.inventoryRoi:{};
+    const inv=out.operations.inventoryRoi;
+    inv.listings=inv.listings&&typeof inv.listings==='object'&&!Array.isArray(inv.listings)?inv.listings:{};
+    inv.inventory=inv.inventory&&typeof inv.inventory==='object'&&!Array.isArray(inv.inventory)?inv.inventory:{};
+    inv.listingPlans=inv.listingPlans&&typeof inv.listingPlans==='object'&&!Array.isArray(inv.listingPlans)?inv.listingPlans:{};
     return out;
-  }
-
-  function ensureCustomer(slice,playerId,playerName=''){
-    ensureBazaarSlice(slice);
-    const id=asId(playerId);
-    if(!id)return null;
-    if(!slice.customers[id]){
-      slice.customers[id]={
-        id,name:String(playerName||id),purchases:0,units:0,spent:0,
-        firstPurchase:null,lastPurchase:null,contacted:false,firstMessageSent:false,
-        messageCount:0,lastContacted:null,createdAt:nowIso(),manual:false
-      };
-    }else if(playerName&&!/^\d+$/.test(String(playerName))){
-      slice.customers[id].name=String(playerName);
-    }
-    return slice.customers[id];
-  }
-
-  function ensureCoupon(slice,customer){
-    ensureBazaarSlice(slice);
-    const id=asId(customer?.id||customer?.playerId);
-    if(!id)return null;
-    if(!slice.coupons[id]){
-      slice.coupons[id]={
-        playerId:id,playerName:String(customer?.name||id),code:makeCouponCode(id),
-        maxUses:COUPON_MAX_USES,uses:0,redemptions:[],pendingRefundId:null,
-        createdAt:nowIso(),issuedAt:null
-      };
-    }
-    return slice.coupons[id];
-  }
-
-  function couponRemaining(coupon){
-    return Math.max(0,n(coupon?.maxUses||COUPON_MAX_USES)-n(coupon?.uses));
-  }
-
-  function usedSaleIds(coupon){
-    const ids=new Set();
-    for(const redemption of coupon?.redemptions||[]){
-      for(const id of redemption?.saleIds||[])ids.add(String(id));
-    }
-    return ids;
-  }
-
-  function eligibleCouponSales(slice,coupon,at=Date.now()){
-    if(!coupon?.issuedAt)return [];
-    const issued=Date.parse(coupon.issuedAt)||0;
-    const cutoff=Math.max(issued,Number(at)-COUPON_WINDOW_MS);
-    const used=usedSaleIds(coupon);
-    return Object.values(slice?.sales||{})
-      .filter(sale=>asId(sale.playerId)===asId(coupon.playerId))
-      .filter(sale=>n(sale.timestamp)>=cutoff)
-      .filter(sale=>!used.has(String(sale.id)))
-      .sort((a,b)=>n(a.timestamp)-n(b.timestamp));
-  }
-
-  function cashbackForAmount(total){
-    const amount=Math.max(0,n(total));
-    const tier=CASHBACK_TIERS.find(row=>amount>=row.minimum);
-    if(!tier)return {qualified:false,cashback:0,tier:null};
-    const cap=Math.floor(amount*MAX_CASHBACK_PERCENT);
-    return {qualified:true,cashback:Math.min(tier.cashback,cap),tier:clone(tier)};
-  }
-
-  function couponQualification(slice,coupon,at=Date.now()){
-    if(!coupon)return {qualified:false,reason:'Coupon not found.',total:0,cashback:0,sales:[]};
-    if(!coupon.issuedAt)return {qualified:false,reason:'Coupon has not been issued yet.',total:0,cashback:0,sales:[]};
-    if(couponRemaining(coupon)<=0)return {qualified:false,reason:'Coupon is fully redeemed.',total:0,cashback:0,sales:[]};
-    if(coupon.pendingRefundId)return {qualified:false,reason:'A cashback refund is already pending.',total:0,cashback:0,sales:[]};
-    const sales=eligibleCouponSales(slice,coupon,at);
-    const total=sales.reduce((sum,sale)=>sum+n(sale.total),0);
-    const calc=cashbackForAmount(total);
-    if(!calc.qualified){
-      const needed=Math.max(0,50_000-total);
-      return {
-        qualified:false,
-        reason:total?'$'+Math.round(needed).toLocaleString()+' more needed for $5,000 cashback.':'No qualifying post-coupon purchase found in the last 24 hours.',
-        total,cashback:0,sales
-      };
-    }
-    return {qualified:true,reason:'Qualified.',total,cashback:calc.cashback,tier:calc.tier,sales};
   }
 
   function normalizeItems(rawItems,saleData={}){
@@ -197,44 +96,8 @@
     return {id:saleId,playerId:buyer.id,playerName:buyer.name||buyer.id,timestamp,total,units,items,sourceLogType:BAZAAR_SELL_LOG_ID};
   }
 
-  function customerRemoved(slice,playerId){
-    const record=slice?.removedCustomers?.[asId(playerId)];
-    if(!record)return false;
-    const removed=Date.parse(record.removedAt||'')||0;
-    const reactivated=Date.parse(record.reactivatedAt||'')||0;
-    return removed>0&&removed>reactivated;
-  }
-
-  function applySaleToCustomer(slice,sale){
-    const customer=ensureCustomer(slice,sale.playerId,sale.playerName);
-    if(!customer)return null;
-    ensureCoupon(slice,customer);
-    customer.purchases=n(customer.purchases)+1;
-    customer.units=n(customer.units)+n(sale.units);
-    customer.spent=n(customer.spent)+n(sale.total);
-    const iso=new Date(n(sale.timestamp)).toISOString();
-    const first=Date.parse(customer.firstPurchase||'')||0;
-    const last=Date.parse(customer.lastPurchase||'')||0;
-    if(!first||n(sale.timestamp)<first)customer.firstPurchase=iso;
-    if(!last||n(sale.timestamp)>last)customer.lastPurchase=iso;
-    return customer;
-  }
-
-  function recalculateCustomers(slice){
-    ensureBazaarSlice(slice);
-    for(const customer of Object.values(slice.customers)){
-      customer.purchases=0;customer.units=0;customer.spent=0;customer.firstPurchase=null;customer.lastPurchase=null;
-    }
-    const sales=Object.values(slice.sales).slice().sort((a,b)=>n(a.timestamp)-n(b.timestamp));
-    for(const sale of sales){
-      if(!sale?.playerId||customerRemoved(slice,sale.playerId))continue;
-      applySaleToCustomer(slice,sale);
-    }
-    return slice;
-  }
-
   function importSalesEntries(slice,entries=[]){
-    ensureBazaarSlice(slice);
+    ensureInventorySlice(slice);
     let imported=0,rejected=0,checked=0;
     const sorted=[...(entries||[])].sort((a,b)=>n(a?.timestamp)-n(b?.timestamp));
     for(const entry of sorted){
@@ -302,7 +165,7 @@
   }
 
   function listingRows(slice){
-    ensureBazaarSlice(slice);
+    ensureInventorySlice(slice);
     const bm=slice.operations.inventoryRoi;
     const metrics=salesItemMetrics(slice);
     const ids=new Set([...Object.keys(bm.listings||{}),...Object.keys(bm.inventory||{})]);
@@ -337,7 +200,7 @@
   }
 
   function updateShopSnapshot(slice,{bazaar,inventory,at=nowIso()}={}){
-    ensureBazaarSlice(slice);
+    ensureInventorySlice(slice);
     const bm=slice.operations.inventoryRoi;
     if(bazaar!==undefined){bm.listings=parseStackableRows(bazaar);bm.lastBazaarAt=at;}
     if(inventory!==undefined){bm.inventory=parseStackableRows(inventory);bm.lastInventoryAt=at;}
@@ -347,118 +210,6 @@
     }
     bm.listingPlans=plans;
     return slice;
-  }
-
-  function customerRfmRows(slice,at=Date.now()){
-    const affinity={};
-    for(const sale of Object.values(slice?.sales||{})){
-      const id=asId(sale.playerId);if(!id)continue;
-      const map=affinity[id]||(affinity[id]={});
-      for(const item of sale?.items||[]){
-        const name=String(item.name||'Unknown item');
-        map[name]=(map[name]||0)+n(item.quantity);
-      }
-    }
-    return Object.values(slice?.customers||{}).map(customer=>{
-      const recencyDays=customer.lastPurchase?Math.max(0,(Number(at)-(Date.parse(customer.lastPurchase)||0))/86400000):9999;
-      const frequency=n(customer.purchases),monetary=n(customer.spent);
-      let segment='DORMANT';
-      if(recencyDays<=7&&frequency>=8)segment='VIP';
-      else if(recencyDays<=14&&frequency>=4)segment='LOYAL';
-      else if(recencyDays<=30&&frequency>=2)segment='REGULAR';
-      else if(frequency<=1&&recencyDays<=30)segment='NEW';
-      else if(frequency>=3&&recencyDays<=60)segment='AT RISK';
-      return {...clone(customer),recencyDays,frequency,monetary,segment,
-        topProducts:Object.entries(affinity[asId(customer.id)]||{}).sort((a,b)=>b[1]-a[1]).slice(0,3)};
-    }).sort((a,b)=>a.recencyDays-b.recencyDays||b.monetary-a.monetary);
-  }
-
-  function issueCoupon(slice,playerId,at=nowIso()){
-    ensureBazaarSlice(slice);
-    const customer=slice.customers[asId(playerId)];
-    if(!customer)throw new Error('Customer not found.');
-    const coupon=ensureCoupon(slice,customer);
-    if(!coupon.issuedAt)coupon.issuedAt=at;
-    return coupon;
-  }
-
-  function subscribeCustomer(slice,playerId){
-    ensureBazaarSlice(slice);
-    const id=asId(playerId);
-    const customer=slice.customers[id];
-    if(!customer)throw new Error('Customer not found.');
-    const prior=slice.subscribers[id]||{};
-    slice.subscribers[id]={
-      id,name:String(customer.name||id),subscribedAt:prior.subscribedAt||nowIso(),
-      lastPrepared:prior.lastPrepared||null,lastNotified:prior.lastNotified||null,
-      pendingNotification:prior.pendingNotification||null,
-      interests:Array.isArray(prior.interests)?prior.interests:[]
-    };
-    return slice.subscribers[id];
-  }
-
-  function unsubscribeCustomer(slice,playerId){
-    ensureBazaarSlice(slice);
-    delete slice.subscribers[asId(playerId)];
-  }
-
-  function createRefund(slice,playerId,at=nowIso()){
-    ensureBazaarSlice(slice);
-    const id=asId(playerId);
-    const customer=slice.customers[id];
-    const coupon=slice.coupons[id];
-    if(!customer||!coupon)throw new Error('Customer/coupon not found.');
-    const q=couponQualification(slice,coupon,Date.parse(at)||Date.now());
-    if(!q.qualified)throw new Error(q.reason);
-    const refundId=makeId('refund');
-    slice.refunds[refundId]={
-      id:refundId,playerId:id,playerName:String(customer.name||id),couponCode:coupon.code,
-      amount:q.cashback,purchaseTotal:q.total,saleIds:q.sales.map(s=>String(s.id)),
-      status:'pending',createdAt:at,completedAt:null,cancelledAt:null
-    };
-    coupon.pendingRefundId=refundId;
-    return slice.refunds[refundId];
-  }
-
-  function completeRefund(slice,refundId,at=nowIso()){
-    ensureBazaarSlice(slice);
-    const id=asId(refundId);
-    const refund=slice.refunds[id];
-    if(!refund)throw new Error('Refund not found.');
-    if(refund.status==='completed')return refund;
-    if(refund.status!=='pending')throw new Error('Refund is not pending.');
-    const coupon=slice.coupons[refund.playerId];
-    if(!coupon)throw new Error('Coupon not found.');
-    refund.status='completed';refund.completedAt=at;
-    coupon.redemptions=Array.isArray(coupon.redemptions)?coupon.redemptions:[];
-    if(!coupon.redemptions.some(r=>asId(r.refundId)===id)){
-      coupon.redemptions.push({
-        refundId:id,amount:refund.amount,purchaseTotal:refund.purchaseTotal,
-        saleIds:[...(refund.saleIds||[])],completedAt:at
-      });
-    }
-    coupon.uses=Math.max(n(coupon.uses),coupon.redemptions.length);
-    coupon.pendingRefundId=null;
-    return refund;
-  }
-
-  function cancelRefund(slice,refundId,at=nowIso()){
-    ensureBazaarSlice(slice);
-    const refund=slice.refunds[asId(refundId)];
-    if(!refund||refund.status!=='pending')return null;
-    refund.status='cancelled';refund.cancelledAt=at;
-    const coupon=slice.coupons[refund.playerId];
-    if(coupon?.pendingRefundId===refund.id)coupon.pendingRefundId=null;
-    return refund;
-  }
-
-  function currentBazaarRows(slice,subscriber=null){
-    ensureBazaarSlice(slice);
-    const interests=Array.isArray(subscriber?.interests)?subscriber.interests.map(v=>String(v).trim().toLowerCase()).filter(Boolean):[];
-    return Object.values(slice.operations.inventoryRoi.listings||{})
-      .filter(row=>n(row.quantity)>0)
-      .filter(row=>!interests.length||interests.some(v=>v===asId(row.id).toLowerCase()||v===String(row.name||'').trim().toLowerCase()))
-      .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
   }
 
   function salesByItemDetailed(db,itemId){
@@ -515,12 +266,10 @@
   }
 
   const api=Object.freeze({
-    BAZAAR_SELL_LOG_ID,COUPON_WINDOW_MS,COUPON_MAX_USES,CASHBACK_TIERS,
-    ensureBazaarSlice,ensureCustomer,ensureCoupon,couponRemaining,eligibleCouponSales,cashbackForAmount,couponQualification,
-    normalizeItems,extractBazaarSale,applySaleToCustomer,recalculateCustomers,importSalesEntries,
-    parseStackableRows,salesItemMetrics,listingRows,updateShopSnapshot,customerRfmRows,
-    issueCoupon,subscribeCustomer,unsubscribeCustomer,createRefund,completeRefund,cancelRefund,currentBazaarRows,
-    makeCouponCode,salesByItemDetailed,fifoLedger,realizedProfitMetrics,inventoryRoiRows
+    BAZAAR_SELL_LOG_ID,
+    ensureInventorySlice,normalizeItems,extractBazaarSale,importSalesEntries,
+    parseStackableRows,salesItemMetrics,listingRows,updateShopSnapshot,
+    salesByItemDetailed,fifoLedger,realizedProfitMetrics,inventoryRoiRows
   });
 
   Object.defineProperty(globalThis,'MMTornInventoryRoiLogic',{value:api,configurable:true,enumerable:false,writable:false});
