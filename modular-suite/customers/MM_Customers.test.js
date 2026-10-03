@@ -14,7 +14,7 @@ logic.subscribeCustomer(db,'123');assert.strictEqual(logic.currentBazaarRows(db,
 
 const userSrc=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 assert.doesNotThrow(()=>new Function(userSrc));
-assert(userSrc.includes("const VERSION='8.0.0-alpha.6';"));
+assert(userSrc.includes("const VERSION='8.0.0-alpha.7';"));
 assert(userSrc.includes("const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';"));
 assert(userSrc.includes('function brandedMessageHtml'));
 assert(userSrc.includes('function fillMessageComposer'));
