@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.7
+// @version      8.0.0-alpha.8
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.7';
+  const VERSION='8.0.0-alpha.8';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -472,13 +472,21 @@
 
   function sourceEditorCandidates(){
     const set=new Set();
-    for(const selector of ['textarea','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]','[role="textbox"][contenteditable="true"]'])for(const el of document.querySelectorAll(selector))if(visible(el))set.add(el);
+    for(const selector of ['.sceditor-source','textarea[class*="source" i]','textarea[class*="code" i]','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]','[role="textbox"][contenteditable="true"]'])for(const el of document.querySelectorAll(selector))if(visible(el))set.add(el);
     return [...set];
   }
 
   function likelyTornSourceEditor(before=new Set()){
-    return sourceEditorCandidates().filter(el=>!before.has(el)).find(el=>{const meta=elementMeta(el)+' '+String(el.className||'').toLowerCase(),rect=el.getBoundingClientRect?.();return (!rect||rect.height>=80||rect.width>=300)&&(/code|source|html|editor|cm-|codemirror|monaco/.test(meta)||String(el.tagName||'').toLowerCase()==='textarea'||el.isContentEditable);})||
-      sourceEditorCandidates().find(el=>/code|source|html|cm-|codemirror|monaco/.test(elementMeta(el)+' '+String(el.className||'').toLowerCase()))||null;
+    const score=el=>{
+      const meta=elementMeta(el)+' '+String(el.className||'').toLowerCase();
+      if(/sceditor-source/.test(meta))return 5;
+      if(/code|source|html|cm-|codemirror|monaco/.test(meta))return 4;
+      if(el.matches?.('[data-language="html"],[data-mode="html"]'))return 3;
+      return 0;
+    };
+    const eligible=sourceEditorCandidates().filter(el=>{const r=el.getBoundingClientRect?.();return score(el)>0&&(!r||r.height>=70||r.width>=280);});
+    const fresh=eligible.filter(el=>!before.has(el)).sort((a,b)=>score(b)-score(a));
+    return fresh[0]||eligible.sort((a,b)=>score(b)-score(a))[0]||null;
   }
 
   function editorText(element){if(!element)return '';const tag=String(element.tagName||'').toLowerCase();return tag==='textarea'||tag==='input'?String(element.value||''):String(element.innerText||element.textContent||'');}
@@ -494,38 +502,97 @@
 
   const sleepMs=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
+  function richComposerHasBranding(){
+    const rich=findComposeRichEditorBody();
+    const docs=[document];
+    if(rich?.ownerDocument&&rich.ownerDocument!==document)docs.push(rich.ownerDocument);
+    const hasBanner=docs.some(doc=>[...doc.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL)));
+    const hasStructure=docs.some(doc=>[...doc.querySelectorAll('table')].some(table=>String(table.innerText||table.textContent||'').includes('RESTOCK ALERTS')||String(table.innerText||table.textContent||'').includes('CASHBACK TIERS')));
+    const text=String(rich?.innerText||rich?.textContent||'');
+    return Boolean((hasBanner&&hasStructure)||(hasStructure&&/MANIC'S MAD HOUSE|RESTOCK ALERTS|CASHBACK TIERS/.test(text)));
+  }
+
+  async function waitForSourceEditor(before=new Set(),timeoutMs=4000){
+    let source=null;const deadline=Date.now()+timeoutMs;
+    while(Date.now()<deadline&&!source){source=likelyTornSourceEditor(before);if(!source)await sleepMs(60);}
+    return source;
+  }
+
+  async function waitForRichBranding(timeoutMs=1800){
+    const deadline=Date.now()+timeoutMs;
+    while(Date.now()<deadline){if(richComposerHasBranding())return true;await sleepMs(60);}
+    return richComposerHasBranding();
+  }
+
   async function injectHtmlThroughTornCodeEditor(htmlValue){
     const html=String(htmlValue||'').replace(/>\s+</g,'><').trim();if(!html)return false;
     const toggle=findTornCodeEditorToggle();if(!toggle)return false;
-    const before=new Set(sourceEditorCandidates());try{toggle.click();}catch{return false;}
-    let source=null;const deadline=Date.now()+2000;while(Date.now()<deadline&&!source){source=likelyTornSourceEditor(before);if(!source)await sleepMs(50);}
-    if(!source){try{toggle.click();}catch{}return false;}
-    if(!setEditorContent(source,html,'')){try{toggle.click();}catch{}return false;}
-    await sleepMs(120);const toggleBack=findTornCodeEditorToggle()||toggle;try{toggleBack.click();}catch{return false;}await sleepMs(180);
-    const rich=findComposeRichEditorBody();
-    if(rich&&String(rich.innerText||rich.textContent||'').trim())return true;
-    return Boolean([...document.querySelectorAll('table')].find(table=>visible(table)&&String(table.innerText||table.textContent||'').includes('RESTOCK ALERTS')));
+
+    // Torn's message composer is SPA-backed and can occasionally carry source
+    // mode across rapid consecutive messages. If source mode is already open,
+    // use it directly rather than toggling it off and misclassifying the editor.
+    let source=likelyTornSourceEditor(new Set());
+    if(!source){
+      const before=new Set(sourceEditorCandidates());
+      try{toggle.click();}catch{return false;}
+      source=await waitForSourceEditor(before,4000);
+
+      // If the first click revealed the rich editor instead, we began in
+      // source mode. Toggle once more and wait for the actual HTML source box.
+      if(!source&&findComposeRichEditorBody()){
+        const toggleAgain=findTornCodeEditorToggle()||toggle;
+        try{toggleAgain.click();}catch{return false;}
+        source=await waitForSourceEditor(new Set(),3000);
+      }
+    }
+    if(!source)return false;
+    if(!setEditorContent(source,html,''))return false;
+
+    await sleepMs(120);
+    const toggleBack=findTornCodeEditorToggle()||toggle;
+    try{toggleBack.click();}catch{return false;}
+    return waitForRichBranding(2200);
   }
 
   async function fillMessageComposer(){
     if(!location.pathname.includes('messages.php'))return;
     const payload=composePayloadForCurrentPage();if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
-    let attempts=0,observer=null,timer=null,inFlight=false,finished=false;
-    const stop=(success,rich=true)=>{finished=true;if(timer)clearInterval(timer);if(observer)observer.disconnect();if(success){GM_deleteValue(PENDING_COMPOSE_KEY);statusText=rich?'Message prepared in Torn composer with branded formatting. Send remains manual.':'Message prepared in Torn composer as plain text fallback. Send remains manual.';}};
+    let attempts=0,richFailures=0,observer=null,timer=null,inFlight=false,finished=false;
+    const stop=(success,rich=true)=>{finished=true;if(timer)clearInterval(timer);if(observer)observer.disconnect();if(success){GM_deleteValue(PENDING_COMPOSE_KEY);statusText=rich?'Message prepared in Torn composer with branded formatting. Send remains manual.':'Message prepared in Torn composer as plain text fallback after rich-editor retries failed. Send remains manual.';}};
     const tryFill=async()=>{
       if(finished||inFlight)return false;inFlight=true;attempts++;
       try{
         const subject=findComposeSubjectInput();let subjectOK=false;
         if(subject){setNativeValue(subject,payload.subject);await sleepMs(25);subjectOK=String(subject.value||'').trim()===String(payload.subject||'').trim();}
         let bodyOK=false,rich=Boolean(payload.bodyHtml);
-        if(payload.bodyHtml){bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml);if(!bodyOK){const body=findComposeRichEditorBody();if(body)bodyOK=setEditorContent(body,payload.body,payload.bodyHtml);}}
-        if(!bodyOK){rich=false;const body=findComposeBodyInput(subject)||findComposeRichEditorBody();if(body)bodyOK=setEditorContent(body,payload.body,'');}
+
+        if(payload.bodyHtml){
+          bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml);
+          if(!bodyOK){
+            richFailures++;
+            const body=findComposeRichEditorBody();
+            if(body)bodyOK=setEditorContent(body,payload.body,payload.bodyHtml)&&await waitForRichBranding(900);
+          }
+          // A transient editor timing miss must not immediately downgrade the
+          // message to plain text. Retry branded composition first.
+          if(!bodyOK&&richFailures<3){
+            statusText='Waiting for Torn rich editor… branded message will retry automatically.';
+            render();
+            return false;
+          }
+        }
+
+        if(!bodyOK){
+          rich=false;
+          const body=findComposeBodyInput(subject)||findComposeRichEditorBody();
+          if(body)bodyOK=setEditorContent(body,payload.body,'');
+        }
         if(subjectOK&&bodyOK){stop(true,rich);return true;}
         if(attempts>=40)stop(false,false);
         return false;
       }finally{inFlight=false;}
     };
-    tryFill();timer=setInterval(()=>{if(!finished)tryFill();},750);observer=new MutationObserver(()=>{if(!finished&&attempts<40)tryFill();});observer.observe(document.documentElement,{childList:true,subtree:true});
+    tryFill();timer=setInterval(()=>{if(!finished)tryFill();},900);observer=new MutationObserver(()=>{if(!finished&&attempts<40)tryFill();});observer.observe(document.documentElement,{childList:true,subtree:true});
   }
 
   function visibleSendButton(){
