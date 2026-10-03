@@ -18,7 +18,7 @@
   const makeId=prefix=>String(prefix||'id')+'-'+Date.now()+'-'+Math.random().toString(36).slice(2,10);
   const makeCouponCode=playerId=>'SAVE-'+asId(playerId);
 
-  function ensureBazaarSlice(slice={}){
+  function ensureCustomerSlice(slice={}){
     const out=slice&&typeof slice==='object'?slice:{};
     out.customers=out.customers&&typeof out.customers==='object'&&!Array.isArray(out.customers)?out.customers:{};
     out.sales=out.sales&&typeof out.sales==='object'&&!Array.isArray(out.sales)?out.sales:{};
@@ -28,17 +28,12 @@
     out.removedCustomers=out.removedCustomers&&typeof out.removedCustomers==='object'&&!Array.isArray(out.removedCustomers)?out.removedCustomers:{};
     out.notificationHistory=Array.isArray(out.notificationHistory)?out.notificationHistory:[];
     out.operations=out.operations&&typeof out.operations==='object'&&!Array.isArray(out.operations)?out.operations:{};
-    out.operations.bazaarManager=out.operations.bazaarManager&&typeof out.operations.bazaarManager==='object'
-      ?out.operations.bazaarManager:{};
-    const bm=out.operations.bazaarManager;
-    bm.listings=bm.listings&&typeof bm.listings==='object'&&!Array.isArray(bm.listings)?bm.listings:{};
-    bm.inventory=bm.inventory&&typeof bm.inventory==='object'&&!Array.isArray(bm.inventory)?bm.inventory:{};
-    bm.listingPlans=bm.listingPlans&&typeof bm.listingPlans==='object'&&!Array.isArray(bm.listingPlans)?bm.listingPlans:{};
+    out.operations.customers=out.operations.customers&&typeof out.operations.customers==='object'&&!Array.isArray(out.operations.customers)?out.operations.customers:{};
     return out;
   }
 
   function ensureCustomer(slice,playerId,playerName=''){
-    ensureBazaarSlice(slice);
+    ensureCustomerSlice(slice);
     const id=asId(playerId);
     if(!id)return null;
     if(!slice.customers[id]){
@@ -54,7 +49,7 @@
   }
 
   function ensureCoupon(slice,customer){
-    ensureBazaarSlice(slice);
+    ensureCustomerSlice(slice);
     const id=asId(customer?.id||customer?.playerId);
     if(!id)return null;
     if(!slice.coupons[id]){
@@ -221,7 +216,7 @@
   }
 
   function recalculateCustomers(slice){
-    ensureBazaarSlice(slice);
+    ensureCustomerSlice(slice);
     for(const customer of Object.values(slice.customers)){
       customer.purchases=0;customer.units=0;customer.spent=0;customer.firstPurchase=null;customer.lastPurchase=null;
     }
@@ -234,7 +229,7 @@
   }
 
   function importSalesEntries(slice,entries=[]){
-    ensureBazaarSlice(slice);
+    ensureCustomerSlice(slice);
     let imported=0,rejected=0,checked=0;
     const sorted=[...(entries||[])].sort((a,b)=>n(a?.timestamp)-n(b?.timestamp));
     for(const entry of sorted){
@@ -246,108 +241,9 @@
       imported++;
     }
     recalculateCustomers(slice);
-    slice.operations.bazaarManager.lastSalesAt=nowIso();
-    slice.operations.bazaarManager.lastSalesResult={imported,rejected,checked};
+    slice.operations.customers.lastSalesAt=nowIso();
+    slice.operations.customers.lastSalesResult={imported,rejected,checked};
     return {slice,imported,rejected,checked};
-  }
-
-  function parseStackableRows(raw){
-    if(!raw)return {};
-    let rows=raw;
-    if(!Array.isArray(rows)&&typeof rows==='object'){
-      rows=Object.entries(rows).map(([id,row])=>row&&typeof row==='object'?{id,...row}:{id,quantity:row});
-    }
-    if(!Array.isArray(rows))return {};
-    const out={};
-    for(const row of rows){
-      const item=row?.item&&typeof row.item==='object'?row.item:{};
-      const id=asId(row?.id??row?.ID??row?.item_id??item?.id??item?.ID);
-      if(!id)continue;
-      const quantity=Math.max(0,n(row?.quantity??row?.qty??row?.amount??row?.available??row?.count));
-      const price=Math.max(0,n(row?.price??row?.cost??row?.listing_price));
-      const name=String(row?.name??row?.item_name??item?.name??('Item '+id));
-      if(!out[id])out[id]={id,name,quantity:0,price:0,listings:0};
-      out[id].quantity+=quantity;
-      if(price&&(!out[id].price||price<out[id].price))out[id].price=price;
-      out[id].listings++;
-    }
-    return out;
-  }
-
-  function salesItemMetrics(slice,at=Date.now()){
-    const cutoff30=Number(at)-30*86400000;
-    const cutoff7=Number(at)-7*86400000;
-    const metrics={};
-    for(const sale of Object.values(slice?.sales||{})){
-      const ts=n(sale.timestamp);
-      for(const item of sale?.items||[]){
-        const id=asId(item.id)||String(item.name||'').toLowerCase();
-        if(!id)continue;
-        const row=metrics[id]||(metrics[id]={
-          id:item.id||'',name:String(item.name||'Item'),units7d:0,units30d:0,revenue30d:0,
-          lastSaleAt:0,allUnits:0,allRevenue:0
-        });
-        const qty=Math.max(0,n(item.quantity));
-        const total=Math.max(0,n(item.total)||n(item.price)*qty);
-        row.allUnits+=qty;row.allRevenue+=total;row.lastSaleAt=Math.max(row.lastSaleAt,ts);
-        if(ts>=cutoff30){row.units30d+=qty;row.revenue30d+=total;}
-        if(ts>=cutoff7)row.units7d+=qty;
-      }
-    }
-    for(const row of Object.values(metrics)){
-      row.daily30=row.units30d/30;
-      row.avgSoldPrice30=row.units30d?row.revenue30d/row.units30d:0;
-      row.avgSoldPriceAll=row.allUnits?row.allRevenue/row.allUnits:0;
-    }
-    return metrics;
-  }
-
-  function listingRows(slice){
-    ensureBazaarSlice(slice);
-    const bm=slice.operations.bazaarManager;
-    const metrics=salesItemMetrics(slice);
-    const ids=new Set([...Object.keys(bm.listings||{}),...Object.keys(bm.inventory||{})]);
-    const rows=[];
-    for(const id of ids){
-      const listing=bm.listings[id]||{};
-      const inventory=bm.inventory[id]||{};
-      const metric=metrics[id]||metrics[String(listing.name||inventory.name||'').toLowerCase()]||{};
-      const bazaarQty=n(listing.quantity);
-      const personalQty=n(inventory.quantity);
-      const daily=n(metric.daily30);
-      const targetListed=daily>0?Math.max(1,Math.ceil(daily*3)):0;
-      const addToBazaar=Math.max(0,Math.min(personalQty,Math.max(0,targetListed-bazaarQty)));
-      let action='HOLD';
-      if(bazaarQty<=0&&personalQty>0&&daily>0)action='LIST';
-      else if(addToBazaar>0)action='TOP UP';
-      else if(bazaarQty>0&&daily<=0)action='REVIEW SLOW';
-      else if(bazaarQty>0)action='HEALTHY';
-      const price=n(listing.price)||Math.round(n(metric.avgSoldPrice30)||n(metric.avgSoldPriceAll));
-      rows.push({
-        id,name:String(listing.name||inventory.name||metric.name||('Item '+id)),
-        bazaarQty,bazaarPrice:n(listing.price),personalQty,
-        units7d:n(metric.units7d),units30d:n(metric.units30d),daily30:daily,
-        avgSoldPrice30:n(metric.avgSoldPrice30),targetListed,addToBazaar,
-        plannedPrice:price,action
-      });
-    }
-    return rows.sort((a,b)=>{
-      const pr={LIST:0,'TOP UP':1,HEALTHY:2,'REVIEW SLOW':3,HOLD:4};
-      return (pr[a.action]??9)-(pr[b.action]??9)||b.daily30-a.daily30||a.name.localeCompare(b.name);
-    });
-  }
-
-  function updateShopSnapshot(slice,{bazaar,inventory,at=nowIso()}={}){
-    ensureBazaarSlice(slice);
-    const bm=slice.operations.bazaarManager;
-    if(bazaar!==undefined){bm.listings=parseStackableRows(bazaar);bm.lastBazaarAt=at;}
-    if(inventory!==undefined){bm.inventory=parseStackableRows(inventory);bm.lastInventoryAt=at;}
-    const plans={};
-    for(const row of listingRows(slice)){
-      plans[row.id]={...row,createdAt:at};
-    }
-    bm.listingPlans=plans;
-    return slice;
   }
 
   function customerRfmRows(slice,at=Date.now()){
@@ -375,7 +271,7 @@
   }
 
   function issueCoupon(slice,playerId,at=nowIso()){
-    ensureBazaarSlice(slice);
+    ensureCustomerSlice(slice);
     const customer=slice.customers[asId(playerId)];
     if(!customer)throw new Error('Customer not found.');
     const coupon=ensureCoupon(slice,customer);
@@ -384,7 +280,7 @@
   }
 
   function subscribeCustomer(slice,playerId){
-    ensureBazaarSlice(slice);
+    ensureCustomerSlice(slice);
     const id=asId(playerId);
     const customer=slice.customers[id];
     if(!customer)throw new Error('Customer not found.');
@@ -399,12 +295,12 @@
   }
 
   function unsubscribeCustomer(slice,playerId){
-    ensureBazaarSlice(slice);
+    ensureCustomerSlice(slice);
     delete slice.subscribers[asId(playerId)];
   }
 
   function createRefund(slice,playerId,at=nowIso()){
-    ensureBazaarSlice(slice);
+    ensureCustomerSlice(slice);
     const id=asId(playerId);
     const customer=slice.customers[id];
     const coupon=slice.coupons[id];
@@ -422,7 +318,7 @@
   }
 
   function completeRefund(slice,refundId,at=nowIso()){
-    ensureBazaarSlice(slice);
+    ensureCustomerSlice(slice);
     const id=asId(refundId);
     const refund=slice.refunds[id];
     if(!refund)throw new Error('Refund not found.');
@@ -444,7 +340,7 @@
   }
 
   function cancelRefund(slice,refundId,at=nowIso()){
-    ensureBazaarSlice(slice);
+    ensureCustomerSlice(slice);
     const refund=slice.refunds[asId(refundId)];
     if(!refund||refund.status!=='pending')return null;
     refund.status='cancelled';refund.cancelledAt=at;
@@ -454,7 +350,7 @@
   }
 
   function currentBazaarRows(slice,subscriber=null){
-    ensureBazaarSlice(slice);
+    ensureCustomerSlice(slice);
     const interests=Array.isArray(subscriber?.interests)?subscriber.interests.map(v=>String(v).trim().toLowerCase()).filter(Boolean):[];
     const listings=slice?.operations?.inventoryRoi?.listings||slice?.operations?.bazaarManager?.listings||{};
     return Object.values(listings)
@@ -465,9 +361,9 @@
 
   const api=Object.freeze({
     BAZAAR_SELL_LOG_ID,COUPON_WINDOW_MS,COUPON_MAX_USES,CASHBACK_TIERS,
-    ensureBazaarSlice,ensureCustomer,ensureCoupon,couponRemaining,eligibleCouponSales,cashbackForAmount,couponQualification,
+    ensureCustomerSlice,ensureCustomer,ensureCoupon,couponRemaining,eligibleCouponSales,cashbackForAmount,couponQualification,
     normalizeItems,extractBazaarSale,applySaleToCustomer,recalculateCustomers,importSalesEntries,
-    parseStackableRows,salesItemMetrics,listingRows,updateShopSnapshot,customerRfmRows,
+    customerRfmRows,
     issueCoupon,subscribeCustomer,unsubscribeCustomer,createRefund,completeRefund,cancelRefund,currentBazaarRows,
     makeCouponCode
   });
