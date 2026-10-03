@@ -173,7 +173,7 @@
 
   async function updateBazaar(mutator){
     await core.updateDomainState('bazaar',draft=>{
-      logic.ensureBazaarSlice(draft);
+      logic.ensureCustomerSlice(draft);
       const out=mutator(draft);
       return out===undefined?draft:out;
     });
