@@ -57,6 +57,22 @@ Run in this order so ROI has cost data before evaluation:
 9. Verify existing customers/coupons/refunds, one welcome/coupon flow, one cashback flow and one restock alert.
 10. Verify all three dock launchers can independently move/dock and all three panels can independently move/reset.
 
+## Live progress — 2026-10-03
+
+Confirmed on an authenticated Torn page while traveling:
+- [x] MM_Acquisitions launcher injected.
+- [x] MM_Inventory Manager/ROI Tracker launcher injected.
+- [x] MM_Customers launcher injected.
+- [x] MM Faction Armory continued to coexist.
+- [x] Disabled MM Bazaar Manager, MM Market Scout, and legacy CRM launchers were absent.
+- [x] Replacement launchers load outside the Torn home page.
+- [ ] MM_Acquisitions panel open/state inspection.
+- [ ] MM_Acquisitions Sync Purchases.
+- [ ] MM_Acquisitions opportunity/routing checks.
+- [ ] MM_Inventory Manager/ROI Tracker panel/data checks.
+- [ ] MM_Customers panel/data/workflow checks.
+- [ ] Dock/undock + panel movement acceptance.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
