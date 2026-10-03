@@ -839,6 +839,38 @@ After installing alpha.14 and using the dedicated Unlock Vault control:
 - **PASS / SAFETY** — Refresh Keys remained untouched; the human action was limited to the required passphrase boundary.
 - **PENDING CONDITION** — automatic stale-member refresh itself can only be live-demonstrated once a saved profile actually crosses the configured stale threshold (default 72h), unless the policy is intentionally changed for testing.
 
+
+### Core alpha.6 live footer alignment failure / alpha.7 repair
+Live screenshot after the current automation checks shows the four MM module launchers in a separate row **above** Torn's native footer controls instead of immediately to their left on the same bottom edge.
+
+Classification:
+- **DEFECT** — Core alpha.6 still selected the wrong bottom-control band for dock anchoring on the current Torn layout.
+- Custom/custom overlap remains prevented, but default-row alignment is not accepted.
+
+Repair built in **Core v8.0.0-alpha.7**:
+- deduplicates near-identical button geometry so nested/overlaid Torn accessibility controls cannot distort row detection,
+- chooses the horizontally contiguous candidate row nearest the actual viewport bottom before considering row length,
+- uses the measured native footer gap when placing the MM dock,
+- retains native controls as collision obstacles for floating launchers.
+
+Consumer cache-busters / versions:
+- Customers alpha.6
+- Acquisitions alpha.5
+- Inventory/ROI alpha.6
+- Faction Armory alpha.15
+- suite manifest alpha.21
+
+Implementation checkpoints:
+- Core alpha.7: `103f15517f2075e10e1307d279e5366546f6857b`
+- Core regression assertions: `af1ad10e66abc3fefb4d25ce54a825a81e72510a`
+- Customers alpha.6: `2c11736850173c36f5932742cda8817025ab3113`
+- Acquisitions alpha.5: `1a1be273fc164b29a37a723970d0d4cffe89a534`
+- Inventory alpha.6: `864c4ff0a543cf4920a40385ad170af25b959d6d`
+- Faction alpha.15: `1cd08dad3723772ed7618bfc72eb41a93c0b0066`
+- manifest alpha.21: `edf606ccae93ebf63ba9f81be7f803faa70b45df`
+
+**PENDING LIVE RETEST** — install the four consumer updates, reload Torn, then verify the MM dock is immediately left of Torn's native footer row with the same bottom edge and no overlap.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
