@@ -304,6 +304,29 @@ Findings:
 - **MISSING FEATURE / EXIT DECISION** — no listing age, acquisition age, current competitor/market price, price trend, or recommended action (hold / reprice / exit) is shown. The user therefore cannot decide whether accepting a loss is rational.
 - **MISSING FEATURE** — FIFO remaining-lot age is calculated internally by the logic but is not exposed in the UI; capital-aging/holding-time information is being discarded at presentation time.
 
+
+### MM_Inventory Manager/ROI Tracker Settings live findings
+Observed alpha.2 Settings view:
+- Torn API key field
+- Save / Clear
+- explanatory purpose text
+- no inventory/business controls
+
+Findings:
+- **PASS** — API key is isolated to the Inventory/ROI userscript's Tampermonkey storage and is visibly described as such.
+- **MISSING FEATURE** — no configurable target days of supply / listing horizon. The hard-coded 3-day model cannot be tuned.
+- **MISSING FEATURE** — no overstock threshold or maximum days-of-supply setting.
+- **MISSING FEATURE** — no minimum acceptable ROI / loss-tolerance / break-even policy for listing recommendations.
+- **MISSING FEATURE** — no pricing-strategy control (own historical price vs live market/Bazaar reference, undercut behavior, minimum margin protection).
+- **MISSING FEATURE** — no stale-data thresholds for shop, sales, purchase ledger, or market references.
+- **MISSING FEATURE** — no initial sales-history/backfill depth or incremental-sync control despite 7d/30d metrics.
+- **MISSING FEATURE** — no minimum FIFO cost-coverage requirement before showing realized-profit/ROI headlines.
+- **MISSING FEATURE** — no handling preference for unknown cost basis (exclude, estimate, flag only).
+- **MISSING FEATURE** — no slow-stock / overstock action thresholds or hold/reprice/exit policy.
+- **EFFECTIVENESS GAP** — the module makes inventory-health and pricing judgments using hard-coded rules while exposing no way for the owner to define those rules.
+- **CRM-WIDE CONSISTENCY GAP** — this module does not consume/expose a shared rule surface for applicable ROI/price/business thresholds, despite the broader v8 design goal of CRM-wide reusable business rules where applicable.
+- **UX GAP** — Settings is simple, but only because nearly all decision controls are absent; the simplicity does not yet support the module's actual job.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
