@@ -58,6 +58,7 @@
   let busy=false;
   let autoSyncRunning=false;
   let customerAutoSyncTimer=null;
+  let customerStateChannel=null;
   let routeTimer=null;
   let lastHref=location.href;
   let composeFillGeneration=0;
@@ -1565,6 +1566,7 @@
     createPanel();
     const root=document.getElementById(ROOT_ID);root.style.display='block';
     core.setDockLauncherActive?.('customers',true);
+    startCustomerStateChannel();
     startCustomerAutoSync();
     reloadState()
       .then(()=>{render();return autoRefreshCustomers({force:false,switchToNew:true});})
@@ -1572,6 +1574,7 @@
   }
   function close(){
     stopCustomerAutoSync();
+    stopCustomerStateChannel();
     const root=document.getElementById(ROOT_ID);if(root)root.style.display='none';
     core.setDockLauncherActive?.('customers',false);
   }
@@ -1590,21 +1593,26 @@
     }
   }
 
-  function installChannel(){
-    if(typeof BroadcastChannel==='undefined')return;
+  function stopCustomerStateChannel(){
+    try{customerStateChannel?.close?.();}catch{}
+    customerStateChannel=null;
+  }
+
+  function startCustomerStateChannel(){
+    stopCustomerStateChannel();
+    if(typeof BroadcastChannel==='undefined'||!panelIsOpen())return;
     try{
       const channel=new BroadcastChannel('mm_bazaar_crm_cross_tab_v1');
       channel.addEventListener('message',event=>{
-        if(event?.data?.type!=='state-updated')return;
-        if(!panelIsOpen())return;
+        if(event?.data?.type!=='state-updated'||!panelIsOpen())return;
         reloadState().catch(()=>{});
       });
+      customerStateChannel=channel;
     }catch{}
   }
 
   function initializeCustomers(){
     createLauncher();
-    installChannel();
     installRouteHooks();
     runPageHelpers();
   }
