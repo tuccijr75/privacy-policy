@@ -279,6 +279,31 @@ Findings:
 - **UX / DECISION GAP** — ROI is positive, which can visually conflict with the far more important inventory-turn problem. Stock health and margin health need separate labels so “profitable” does not imply “healthy inventory.”
 - **PRICING GAP** — current own listing is $1,000 below the recent own-sale average, but no current competitive market context is shown, so the user cannot tell whether repricing would improve turnover without unnecessarily sacrificing margin.
 
+
+### MM_Inventory Manager/ROI Tracker Combat Helmet reconciliation
+Live expanded Combat Helmet row:
+- Bazaar qty 1 @ $3,159,999
+- Personal qty 0 (subject to known unavailable-inventory defect)
+- Sold 7d 0 / sold 30d 0
+- 3D target 0
+- Add 0
+- Recent avg —
+- Plan price $3,159,999
+- FIFO avg cost $3,475,000
+- Current ROI -9.1%
+- 30D gross —
+- 30D ROI —
+- Cost coverage 100%
+
+Findings:
+- **PASS** — current ROI reconciles: ($3,159,999 - $3,475,000) / $3,475,000 ≈ -9.1%.
+- **PASS** — `REVIEW SLOW` is directionally appropriate for zero 30-day sales.
+- **SEMANTIC DEFECT** — COST COVERAGE displays 100% when there are zero sales in the 30-day window. The implementation returns 100% when units=0; this should be N/A/— because there are no realized sales whose cost basis could be covered.
+- **MISSING FEATURE** — the row does not surface the unrealized dollar loss (~$315,001) or break-even price, even though both are directly derivable from current listing price and FIFO basis.
+- **EFFECTIVENESS GAP** — `REVIEW SLOW` does not distinguish “slow but profitable,” “slow and underwater,” and “no sales history.” These are materially different actions.
+- **MISSING FEATURE / EXIT DECISION** — no listing age, acquisition age, current competitor/market price, price trend, or recommended action (hold / reprice / exit) is shown. The user therefore cannot decide whether accepting a loss is rational.
+- **MISSING FEATURE** — FIFO remaining-lot age is calculated internally by the logic but is not exposed in the UI; capital-aging/holding-time information is being discarded at presentation time.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
