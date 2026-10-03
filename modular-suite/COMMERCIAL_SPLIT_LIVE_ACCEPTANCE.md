@@ -679,6 +679,12 @@ Live test using queued new customer birkodi [4488297]:
 - **CLARIFICATION** — the additional MANIC'S MAD HOUSE content visible lower on the page is Previous Conversation history, not a duplicate draft injection.
 - **PENDING LIVE** — send-state automation cannot be accepted until an actual intended Welcome is manually sent and the CRM is then checked for automatic contacted/message-count/coupon issuance and removal from New Customers.
 
+
+### MM_Customers alpha.5 Welcome send confirmation — birkodi
+After the human pressed Torn SEND for birkodi [4488297]:
+- **PASS / TORN** — Torn exited compose to Inbox and displayed `Message sent to birkodi`, providing an explicit send confirmation signal for the Customers send detector.
+- **PENDING CRM STATE CHECK** — open MM_Customers next and verify birkodi is no longer in New Customers, contact/message state advanced, and SAVE-4488297 was issued automatically without a manual Mark Sent step.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
