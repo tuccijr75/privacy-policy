@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.11
+// @version      8.0.0-alpha.12
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.11';
+  const VERSION='8.0.0-alpha.12';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -30,6 +30,9 @@
   const WAR_PARTICIPANTS=20;
   const API_BASE='https://api.torn.com/v2';
   const CHANNEL='mm_bazaar_crm_cross_tab_v1';
+  const AUTO_CHECK_MS=5*60*1000;
+  const FACTION_STALE_FALLBACK_MS=60*60*1000;
+  const AUTO_MEMBER_BATCH=2;
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornFactionLogic;
@@ -45,6 +48,8 @@
   let acquisitionBudget=Math.max(0,Number(GM_getValue(ACQUISITION_BUDGET_KEY,15000000))||15000000);
   let vaultSession=null;
   let channel=null;
+  let autoRefreshRunning=false;
+  let autoRefreshTimer=null;
 
   const asId=value=>String(value??'').trim();
   const esc=value=>String(value??'')
@@ -680,6 +685,67 @@
     return {ok,total:ids.length,failures};
   }
 
+  function factionRefreshDue(fi){
+    const now=Date.now();
+    const next=Date.parse(fi?.nextUsefulRefreshAt||'')||0;
+    if(next)return now>=next;
+    const last=Date.parse(fi?.lastSyncAt||'')||0;
+    return !last||now-last>=FACTION_STALE_FALLBACK_MS;
+  }
+
+  function staleSavedMemberIds(limit=AUTO_MEMBER_BATCH){
+    if(!vaultSession?.key)return [];
+    const vault=getVault(),profiles=state?.factionInventory?.memberReadiness?.profiles||{};
+    const staleHours=Math.max(1,Number(state?.factionInventory?.memberReadiness?.settings?.staleHours||72));
+    const cutoff=Date.now()-staleHours*3600000;
+    return Object.keys(vault?.entries||{})
+      .filter(id=>(Date.parse(profiles[id]?.verifiedAt||'')||0)<cutoff)
+      .slice(0,Math.max(1,limit));
+  }
+
+  async function autoRefreshArmory({forceFaction=false}={}){
+    if(autoRefreshRunning||busy||document.visibilityState!=='visible')return;
+    const root=document.getElementById(ROOT_ID);
+    if(!root||root.style.display==='none')return;
+    autoRefreshRunning=true;
+    try{
+      state=await core.readLegacyState();
+      const messages=[];
+      if(factionKey()&&(forceFaction||factionRefreshDue(state?.factionInventory||{}))){
+        await refreshFaction();
+        messages.push('faction checked');
+      }
+      const staleIds=staleSavedMemberIds();
+      if(staleIds.length){
+        let ok=0;
+        for(const id of staleIds){
+          if(busy)break;
+          try{await refreshSavedMember(id);ok++;}catch(error){console.warn('[MM Faction Armory] automatic member refresh failed',id,error);}
+        }
+        state=await core.readLegacyState();
+        if(ok)messages.push(ok+' stale member profile'+(ok===1?'':'s')+' refreshed');
+      }
+      if(messages.length){
+        statusText='Auto-refresh: '+messages.join(' · ')+'.';
+        render();
+      }
+    }catch(error){
+      console.warn('[MM Faction Armory] automatic refresh failed',error);
+      statusText='Auto-refresh warning: '+(error?.message||String(error));
+      render();
+    }finally{autoRefreshRunning=false;}
+  }
+
+  function startAutoRefresh(){
+    if(autoRefreshTimer)return;
+    setTimeout(()=>autoRefreshArmory({forceFaction:false}),1200);
+    autoRefreshTimer=setInterval(()=>autoRefreshArmory({forceFaction:false}),AUTO_CHECK_MS);
+  }
+
+  function stopAutoRefresh(){
+    if(autoRefreshTimer){clearInterval(autoRefreshTimer);autoRefreshTimer=null;}
+  }
+
   function removeMemberKey(id){
     const vault=getVault(),key=asId(id);
     if(!vault?.entries?.[key])return false;
@@ -1086,7 +1152,7 @@
     root.querySelector('#mm-fa-save-faction-key')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-fa-faction-key')?.value||'').trim();
       if(!value){statusText='Enter a faction-compatible API key first.';render();return;}
-      GM_setValue(FACTION_API_KEY,value);statusText='Faction Armory API key saved.';render();
+      GM_setValue(FACTION_API_KEY,value);statusText='Faction Armory API key saved. Refreshing automatically…';render();setTimeout(()=>autoRefreshArmory({forceFaction:true}),50);
     });
     root.querySelector('#mm-fa-clear-faction-key')?.addEventListener('click',()=>{
       GM_deleteValue(FACTION_API_KEY);statusText='Faction Armory API key cleared.';render();
@@ -1194,12 +1260,15 @@
     const root=document.getElementById(ROOT_ID);
     root.style.display='block';
     core?.setDockLauncherActive?.('armory',true);
-    render();reloadState();
+    render();
+    reloadState().then(()=>autoRefreshArmory({forceFaction:false}));
+    startAutoRefresh();
   }
   function close(){
     const root=document.getElementById(ROOT_ID);
     if(root)root.style.display='none';
     core?.setDockLauncherActive?.('armory',false);
+    stopAutoRefresh();
   }
   function createLauncher(){
     if(!document.body)return;
