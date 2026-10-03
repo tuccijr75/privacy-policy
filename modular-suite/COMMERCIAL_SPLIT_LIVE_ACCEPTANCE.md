@@ -519,6 +519,42 @@ Findings:
 - **EFFECTIVENESS GAP** — core commercial policy is embedded in source constants rather than owner-editable rules, so routine business-policy changes require a script release.
 - **UX GAP** — Settings is visually simple but does not actually control most of the behaviors the Customers product owns.
 
+
+### Shared launcher spacing / overlap defect and Core alpha.5 repair
+Live dock/launcher manipulation exposed an interaction defect:
+- bottom-edge snapping works acceptably, though it intentionally retains a small viewport margin;
+- floating launchers did not snap to a consistent distance from neighboring icons;
+- floating launchers could overlap other MM launchers and Torn's native bottom-toolbar icons.
+
+Repair built in **MM Torn Core v8.0.0-alpha.5**:
+- establishes a fixed 4px launcher-to-launcher / launcher-to-native-icon gap;
+- uses the same 4px gap between the MM dock group and Torn's first native bottom-toolbar icon;
+- treats other MM launchers plus detected Torn native toolbar buttons as collision obstacles;
+- snaps floating launchers to neighboring icon edges within an 18px snap range;
+- prevents persisted floating positions from overlapping/crowding another icon closer than the configured gap;
+- applies collision resolution while dragging, at drag completion, when undocking, and after viewport resize;
+- preserves the existing small bottom-edge margin.
+
+Deployment versions consuming Core alpha.5:
+- MM_Acquisitions v8.0.0-alpha.2
+- MM_Customers v8.0.0-alpha.3
+- MM_Inventory Manager/ROI Tracker v8.0.0-alpha.3
+- MM Torn Faction Armory v8.0.0-alpha.10
+- suite manifest v8.0.0-alpha.15
+
+Static checks:
+- Core and all four active userscripts parse successfully.
+- all four active userscripts reference Core alpha.5.
+- preservation regression test now asserts the fixed snap gap, collision guard, native Torn icon targets, and floating-drag collision snapshot.
+
+Implementation checkpoints:
+- Core collision/snap fix: `6377f7ebcc68cd25f6faf397590648d8f9ca7de5`
+- active-module Core cache-buster/version bumps: `96f1c7ae2e585c9038e1a44889f9492912d3389a`, `97b2dbd92298c1d9c4473331a868aa088db8058b`, `3ec03388add4ab0734f8be3e39bc7b0ac4672cb4`, `92ab3b53dc43b123ef252a87afacce42701668fc`
+- suite manifest: `0ddc729bbef5f26b21e4811c02ab5575657eb016`
+- regression assertions: `41198bbf3fd77d697bde8c46cc8e747e2ab3aa30`
+
+**PENDING LIVE RETEST** — reinstall/update the four active userscripts, refresh Torn, undock one launcher, drag it toward another MM icon and toward a Torn native bottom icon, and confirm it settles at the fixed gap without overlap.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
