@@ -648,6 +648,14 @@ Implementation checkpoints:
 4. Prepare Welcome for one unsent customer and verify immediate Torn Messages routing + auto-filled branded draft,
 5. do not send unless using a real intended customer message; if sent intentionally, verify the customer leaves New Customers and coupon/contact state updates automatically.
 
+
+### Suite-wide automation audit queue
+Initial static pass under the new automation rule:
+- **Acquisitions** already polls Weav3r generation once per minute while open, but purchase-ledger sync, full opportunity refresh, travel update, and capture import remain primarily manual. Target: stale-on-open auto refresh, automatic purchase-log reconciliation after relevant activity, automatic travel capture import, with Verify & Buy / final purchase remaining manual.
+- **Inventory/ROI** currently depends on explicit Refresh Shop and Refresh Sales. Target: stale-on-open refresh, periodic visible-tab refresh with API-rate guards, and automatic refresh/recompute after acquisition/customer-sale state changes; manual buttons remain fallback.
+- **Faction Armory** still uses explicit Refresh Faction / Refresh Keys / per-member Refresh. Target: stale-on-open faction refresh and guarded background refresh of saved member keys, respecting Torn API timing and avoiding wasteful repeated member calls.
+- **Business Intelligence** remains on the implementation/acceptance queue and must follow the same automation rule once its active implementation surface is reconciled.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
