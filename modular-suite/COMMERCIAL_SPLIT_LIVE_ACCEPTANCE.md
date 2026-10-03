@@ -1198,6 +1198,59 @@ Implementation checkpoints:
 5. for a genuinely intended message, verify the customer remains New until Torn provides actual post-Send confirmation.
 
 
+### MM_Customers alpha.15 — recipient-aware compose transport stabilization
+
+Owner-reported defect:
+- opening a prepared MM_Customers message directly from the interface could land on a partially initialized Torn composer where branded formatting did not persist,
+- switching to Outbox and back to Compose then caused the pending branded payload to render, but the recipient was blank.
+
+Live Torn inspection:
+- the current compose form exposes a distinct **Name** recipient field and **Subject** field,
+- a canonical compose route with `XID=<player id>` resolves the Name field to `Username [player id]`,
+- alpha.14 never inspected or verified that Name field; it considered the draft complete when only Subject + Body were present,
+- alpha.14 also allowed a pending payload to hydrate a generic `#/p=compose` route with no XID, which explains the correctly formatted body with a missing user after Outbox → Compose.
+
+Root cause:
+- recipient identity was not part of the compose-completion contract,
+- the pending compose payload did not retain recipient name,
+- branded HTML injection could begin while Torn's SPA was still mounting/replacing the editor,
+- direct rich-editor HTML fallback could make content appear present without proving Torn's editor state had accepted it,
+- multiple route-helper invocations could leave overlapping composer retry loops, and an older loop could clear pending compose state.
+
+Repair in **MM_Customers v8.0.0-alpha.15**:
+- every prepared compose payload now owns `composeId + playerId + recipientName + subject + body + bodyHtml`,
+- the common message path remains the single transport for Welcome, Coupon Reminder, Cashback Reminder, and Restock Alert,
+- generic Compose recovery now restores the canonical XID route instead of pasting a branded body into a recipient-less form,
+- generic automatic recovery is limited to a five-minute prepared-draft window and only to `awaiting-send` tracked deliveries; unconfirmed sends are not silently reconstructed into another send attempt,
+- recipient readiness is verified from Torn's actual Name field; `Username [XID]` / exact known username must match the intended target before formatting starts,
+- the compose surface must remain stable before source-mode injection begins,
+- source-mode injection is now idempotent: MM_Customers does not toggle the code editor until Torn exposes a real rich/source editor surface, and it no longer uses direct rich-editor `innerHTML` as a branded-message fallback,
+- recipient + subject + branded table are re-verified after a post-fill settle period before pending compose state is cleared,
+- composer retry sessions are generation-scoped and old observers/timers are cleaned up on route changes,
+- pending compose state is cleared only if the successful fill still matches the same compose ID,
+- Send tracking now also requires the live recipient field to match the pending delivery.
+
+Verification:
+- live Torn route probe confirmed `messages.php#/p=compose&XID=4257955&subject=...` resolves the Name field as `Bendi [4257955]`,
+- all four MM_Customers message-producing UI paths still converge on the single `composeMessage(...)` transport,
+- no clipboard-paste path exists in MM_Customers,
+- updated MM_Customers test suite executes successfully in an isolated V8 harness, including syntax, delivery-safety, rich-composer, source-editor, cashback, recipient-routing, and stale-session regression assertions.
+
+Implementation checkpoints on patch branch:
+- recipient-aware composer foundation: `f181cd701f4fedc8ee12eecb0304fd9a1bbe2814`
+- stale-route/session abort hardening: `87772b1e421624f5d396638d580ea904cfcea2fb`
+- rich-editor direct-innerHTML fallback removal: `eecf9423773409e1306c263547ec2ad4102d2317`
+- compose regression assertions: `5bac0928322fe9be92a62777592729ff91d5393f`
+- suite manifest alpha.32 / Customers alpha.15: `6d6ee243eaf4c641318842ccce74061351ced8e5`
+
+**PENDING LIVE RETEST**:
+1. install MM_Customers alpha.15 from the patch branch,
+2. from New Customers, prepare one welcome and verify **Name + Subject + full branded formatting** are present on the first Compose load,
+3. without sending, switch Outbox → Compose and verify MM_Customers restores the intended XID/Name rather than showing a recipient-less branded draft,
+4. repeat with Coupon Reminder, Cashback Reminder, and Restock Alert,
+5. verify no customer/contact/coupon/restock state changes until a real manual Send receives Torn confirmation.
+
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.

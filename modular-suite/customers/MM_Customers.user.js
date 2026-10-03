@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.14
+// @version      8.0.0-alpha.15
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.14';
+  const VERSION='8.0.0-alpha.15';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -37,6 +37,10 @@
   const AUTO_SYNC_STALE_MS=45_000;
   const NAME_REPAIR_BATCH=12;
   const PENDING_COMPOSE_TTL_MS=30*60*1000;
+  const COMPOSE_ROUTE_RECOVERY_MS=5*60*1000;
+  const COMPOSE_SURFACE_STABLE_MS=350;
+  const COMPOSE_POST_FILL_VERIFY_MS=500;
+  const COMPOSE_FILL_TIMEOUT_MS=45_000;
   const DELIVERY_CONFIRM_WINDOW_MS=12_000;
   const FALSE_SEND_RECOVERY_MS=2*60*60*1000;
 
@@ -54,6 +58,8 @@
   let autoSyncRunning=false;
   let routeTimer=null;
   let lastHref=location.href;
+  let composeFillCleanup=null;
+  let composeFillGeneration=0;
   let sendDetectorCleanup=null;
   let sendDetectorKey='';
 
@@ -377,18 +383,26 @@
 
   function composeMessage(playerId,subject,body,bodyHtml='',options={}){
     const id=String(playerId||'').trim(),createdAt=Date.now();
-    const payload={playerId:id,subject:String(subject||''),body:String(body||''),bodyHtml:String(bodyHtml||''),createdAt};
+    const recipientName=String(
+      options?.recipientName||
+      state?.customers?.[id]?.name||
+      state?.subscribers?.[id]?.name||
+      state?.coupons?.[id]?.playerName||
+      ''
+    ).trim();
+    const composeId='cu-compose-'+createdAt+'-'+id+'-'+Math.random().toString(36).slice(2,8);
+    const payload={composeId,playerId:id,recipientName,subject:String(subject||''),body:String(body||''),bodyHtml:String(bodyHtml||''),createdAt};
     GM_setValue(PENDING_COMPOSE_KEY,payload);
     if(options?.kind){
       const deliveryId='cu-'+createdAt+'-'+id+'-'+Math.random().toString(36).slice(2,8);
       GM_setValue(PENDING_SEND_KEY,{
-        deliveryId,playerId:id,subject:payload.subject,body:payload.body,bodyHtml:payload.bodyHtml,
+        deliveryId,composeId,playerId:id,recipientName,subject:payload.subject,body:payload.body,bodyHtml:payload.bodyHtml,
         kind:String(options.kind),createdAt,noticeId:options.noticeId||null,state:'awaiting-send'
       });
     }else GM_deleteValue(PENDING_SEND_KEY);
     statusText='Opening Torn composer with the prepared message. Sending remains manual.';
     render();
-    const url='https://www.torn.com/messages.php#/p=compose&XID='+encodeURIComponent(id)+'&subject='+encodeURIComponent(payload.subject);
+    const url=canonicalComposeUrl(payload);
     try{window.location.assign(url);}catch{location.href=url;}
   }
 
@@ -535,22 +549,58 @@
   }
 
   function getComposeParams(){const hash=location.hash||'',amp=hash.indexOf('&');return amp>=0?new URLSearchParams(hash.slice(amp+1)):new URLSearchParams();}
+  function getComposeXid(){const params=getComposeParams();return String(params.get('XID')||params.get('xid')||'').trim();}
+  function canonicalComposeUrl(payload={}){
+    const id=String(payload.playerId||'').trim();
+    const subject=String(payload.subject||'');
+    return 'https://www.torn.com/messages.php#/p=compose'+
+      (id?'&XID='+encodeURIComponent(id):'')+
+      (subject?'&subject='+encodeURIComponent(subject):'');
+  }
 
   function composePayloadForCurrentPage(){
-    const params=getComposeParams(),xid=String(params.get('XID')||params.get('xid')||'').trim(),pending=GM_getValue(PENDING_COMPOSE_KEY,null);
+    const params=getComposeParams(),xid=getComposeXid(),now=Date.now(),pending=GM_getValue(PENDING_COMPOSE_KEY,null);
     if(pending&&typeof pending==='object'){
-      if(Date.now()-Number(pending.createdAt||0)>PENDING_COMPOSE_TTL_MS)GM_deleteValue(PENDING_COMPOSE_KEY);
-      else{const pendingId=String(pending.playerId||'').trim();if(!xid||!pendingId||xid===pendingId)return {playerId:pendingId||xid,subject:String(pending.subject||''),body:String(pending.body||''),bodyHtml:String(pending.bodyHtml||'')};}
+      const age=now-Number(pending.createdAt||0);
+      if(age>PENDING_COMPOSE_TTL_MS)GM_deleteValue(PENDING_COMPOSE_KEY);
+      else{
+        const pendingId=String(pending.playerId||'').trim();
+        const explicitMatch=!xid||!pendingId||xid===pendingId;
+        const genericRecovery=!xid&&Boolean(pendingId)&&age<=COMPOSE_ROUTE_RECOVERY_MS;
+        if(explicitMatch&&(xid||genericRecovery||!pendingId)){
+          return {
+            composeId:String(pending.composeId||''),
+            playerId:pendingId||xid,
+            recipientName:String(pending.recipientName||''),
+            subject:String(pending.subject||''),
+            body:String(pending.body||''),
+            bodyHtml:String(pending.bodyHtml||''),
+            createdAt:Number(pending.createdAt||0),
+            routeRecovery:genericRecovery
+          };
+        }
+      }
     }
     const tracked=GM_getValue(PENDING_SEND_KEY,null);
-    if(tracked&&typeof tracked==='object'&&Date.now()-Number(tracked.createdAt||0)<=PENDING_COMPOSE_TTL_MS){
-      const trackedId=String(tracked.playerId||'').trim();
-      if((!xid||!trackedId||xid===trackedId)&&tracked.bodyHtml){
-        return {playerId:trackedId||xid,subject:String(tracked.subject||''),body:String(tracked.body||''),bodyHtml:String(tracked.bodyHtml||'')};
+    if(tracked&&typeof tracked==='object'&&now-Number(tracked.createdAt||0)<=PENDING_COMPOSE_TTL_MS){
+      const trackedId=String(tracked.playerId||'').trim(),trackedAge=now-Number(tracked.createdAt||0);
+      const explicitMatch=Boolean(xid)&&(!trackedId||xid===trackedId);
+      const genericRecovery=!xid&&Boolean(trackedId)&&trackedAge<=COMPOSE_ROUTE_RECOVERY_MS&&String(tracked.state||'awaiting-send')==='awaiting-send';
+      if((explicitMatch||genericRecovery||(!xid&&!trackedId))&&tracked.bodyHtml){
+        return {
+          composeId:String(tracked.composeId||''),
+          playerId:trackedId||xid,
+          recipientName:String(tracked.recipientName||''),
+          subject:String(tracked.subject||''),
+          body:String(tracked.body||''),
+          bodyHtml:String(tracked.bodyHtml||''),
+          createdAt:Number(tracked.createdAt||0),
+          routeRecovery:genericRecovery
+        };
       }
     }
     const urlSubject=params.get('subject'),urlBody=params.get('body');
-    return urlSubject!==null||urlBody!==null?{playerId:xid,subject:urlSubject||'',body:urlBody||'',bodyHtml:''}:null;
+    return urlSubject!==null||urlBody!==null?{playerId:xid,recipientName:'',subject:urlSubject||'',body:urlBody||'',bodyHtml:'',createdAt:0,routeRecovery:false}:null;
   }
 
   function elementMeta(element){
@@ -563,6 +613,40 @@
     const selectors=['input[placeholder="Subject"]','input[placeholder*="subject" i]','input[name*="subject" i]','input[id*="subject" i]','input[aria-label*="subject" i]','textarea[placeholder="Subject"]','textarea[placeholder*="subject" i]'];
     for(const selector of selectors){const el=[...document.querySelectorAll(selector)].find(visible);if(el)return el;}
     return [...document.querySelectorAll('input:not([type="hidden"]),textarea')].filter(visible).find(el=>/subject|title/.test(elementMeta(el)))||null;
+  }
+
+  function findComposeRecipientInput(subjectInput=findComposeSubjectInput()){
+    if(!subjectInput)return null;
+    const scope=subjectInput.closest?.('form')||subjectInput.parentElement?.parentElement||document;
+    const fields=[...scope.querySelectorAll('input:not([type="hidden"]),textarea')]
+      .filter(visible)
+      .filter(el=>el!==subjectInput)
+      .filter(el=>!/subject|title|search/.test(elementMeta(el)));
+    const labelled=fields.find(el=>{
+      const meta=elementMeta(el).replace(/\s+/g,' ').trim();
+      return /^(name|recipient|to|user|player|player name|username)$/.test(meta)||/\b(recipient|send to|player name|username)\b/.test(meta);
+    });
+    if(labelled)return labelled;
+    const sr=subjectInput.getBoundingClientRect?.();
+    if(!sr)return null;
+    return fields.filter(el=>String(el.tagName||'').toLowerCase()==='input').find(el=>{
+      const r=el.getBoundingClientRect?.();if(!r)return false;
+      const overlap=Math.max(0,Math.min(r.right,sr.right)-Math.max(r.left,sr.left));
+      return r.bottom<=sr.top+40&&r.bottom>=sr.top-220&&overlap>=Math.min(r.width,sr.width)*0.35;
+    })||null;
+  }
+
+  function recipientMatchesPayload(payload,recipient=findComposeRecipientInput()){
+    const id=String(payload?.playerId||'').trim();
+    if(!id)return true;
+    if(!recipient||!visible(recipient))return false;
+    const value=String(recipient.value||recipient.textContent||'').replace(/\s+/g,' ').trim();
+    if(!value)return false;
+    if(value.includes('['+id+']'))return true;
+    const expectedName=String(payload?.recipientName||'').replace(/\s+/g,' ').trim().toLowerCase();
+    if(!expectedName)return false;
+    const plain=value.replace(/\s*\[\d+\]\s*$/,'').trim().toLowerCase();
+    return plain===expectedName;
   }
 
   function findComposeBodyInput(subjectInput){
@@ -651,12 +735,12 @@
     return current.includes('<table')&&current.includes(SHOP_BANNER_URL);
   }
 
-  function setEditorContent(element,text,html=''){
+  function setPlainEditorText(element,text){
     if(!element)return false;const tag=String(element.tagName||'').toLowerCase();
-    if(tag==='textarea'||tag==='input'){setNativeValue(element,html||text);return Boolean(editorText(element));}
-    try{element.focus();if(html)element.innerHTML=html;else element.textContent=text;}catch{return false;}
+    if(tag==='textarea'||tag==='input'){setNativeValue(element,text);return Boolean(editorText(element));}
+    try{element.focus();element.textContent=String(text||'');}catch{return false;}
     dispatchEditorEvents(element);
-    return html?Boolean(element.querySelector?.('table')):Boolean(String(element.innerText||element.textContent||'').trim());
+    return Boolean(String(element.innerText||element.textContent||'').trim());
   }
 
   const sleepMs=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -730,46 +814,59 @@
     return true;
   }
 
-  async function waitForSourceEditor(before=new Set(),timeoutMs=4000,allowFreshAnonymous=false){
+  async function waitForSourceEditor(before=new Set(),timeoutMs=4000,allowFreshAnonymous=false,stillCurrent=null){
     let source=null;const deadline=Date.now()+timeoutMs;
-    while(Date.now()<deadline&&!source){source=likelyTornSourceEditor(before,allowFreshAnonymous);if(!source)await sleepMs(60);}
-    return source;
+    while(Date.now()<deadline&&!source){
+      if(stillCurrent&&!stillCurrent())return null;
+      source=likelyTornSourceEditor(before,allowFreshAnonymous);
+      if(!source)await sleepMs(60);
+    }
+    return stillCurrent&&!stillCurrent()?null:source;
   }
 
-  async function waitForRichBranding(expectedHtml='',timeoutMs=1800){
+  async function waitForRichBranding(expectedHtml='',timeoutMs=1800,stillCurrent=null){
     const deadline=Date.now()+timeoutMs;
-    while(Date.now()<deadline){if(richComposerHasBranding(expectedHtml))return true;await sleepMs(60);}
-    return richComposerHasBranding(expectedHtml);
+    while(Date.now()<deadline){
+      if(stillCurrent&&!stillCurrent())return false;
+      if(richComposerHasBranding(expectedHtml))return true;
+      await sleepMs(60);
+    }
+    return (!stillCurrent||stillCurrent())&&richComposerHasBranding(expectedHtml);
   }
 
-  async function injectHtmlThroughTornCodeEditor(htmlValue){
+  function composeEditorSurfaceReady(){
+    const toggle=findTornCodeEditorToggle();if(!toggle)return false;
+    if(findComposeRichEditorBody())return true;
+    return Boolean(likelyTornSourceEditor(new Set(),true));
+  }
+
+  async function injectHtmlThroughTornCodeEditor(htmlValue,stillCurrent=null){
     const html=String(htmlValue||'').replace(/>\s+</g,'><').trim();if(!html)return false;
+    if(stillCurrent&&!stillCurrent())return false;
     const toggle=findTornCodeEditorToggle();if(!toggle)return false;
 
-    // Torn's message composer is SPA-backed and can occasionally carry source
-    // mode across rapid consecutive messages. If source mode is already open,
-    // use it directly rather than toggling it off and misclassifying the editor.
+    // Treat the current editor mode as authoritative. Never toggle while Torn
+    // is still mounting the composer: that was the race that could make the
+    // first opened draft lose formatting while a later Outbox -> Compose worked.
     let source=likelyTornSourceEditor(new Set(),false);
+    const rich=findComposeRichEditorBody();
+    if(!source&&!rich)source=likelyTornSourceEditor(new Set(),true);
+    if(!source&&!rich)return false;
+
     if(!source){
       const before=new Set(sourceEditorCandidates());
+      if(stillCurrent&&!stillCurrent())return false;
       try{toggle.click();}catch{return false;}
-      source=await waitForSourceEditor(before,4000,true);
-
-      // If the first click revealed the rich editor instead, we began in
-      // source mode. Toggle once more and wait for the actual HTML source box.
-      if(!source&&findComposeRichEditorBody()){
-        const toggleAgain=findTornCodeEditorToggle()||toggle;
-        try{toggleAgain.click();}catch{return false;}
-        source=await waitForSourceEditor(new Set(),3000,true);
-      }
+      source=await waitForSourceEditor(before,4000,true,stillCurrent);
     }
-    if(!source)return false;
+    if(!source||(stillCurrent&&!stillCurrent()))return false;
     if(!setSourceEditorHtml(source,html))return false;
 
     await sleepMs(220);
+    if(stillCurrent&&!stillCurrent())return false;
     const toggleBack=findTornCodeEditorToggle()||toggle;
     try{toggleBack.click();}catch{return false;}
-    return waitForRichBranding(html,2200);
+    return waitForRichBranding(html,2400,stillCurrent);
   }
 
   function composeFormattingNotice(text,kind='waiting'){
@@ -787,52 +884,111 @@
 
   function clearComposeFormattingNotice(){document.getElementById('mm-cu-compose-format-status')?.remove();}
 
+  function clearMatchingPendingCompose(payload){
+    const current=GM_getValue(PENDING_COMPOSE_KEY,null);if(!current||typeof current!=='object')return;
+    const currentId=String(current.composeId||''),payloadId=String(payload?.composeId||'');
+    const sameId=currentId&&payloadId&&currentId===payloadId;
+    const legacyMatch=!currentId&&!payloadId&&String(current.playerId||'')===String(payload?.playerId||'')&&
+      Number(current.createdAt||0)===Number(payload?.createdAt||0)&&String(current.subject||'')===String(payload?.subject||'');
+    if(sameId||legacyMatch)GM_deleteValue(PENDING_COMPOSE_KEY);
+  }
+
+  function restoreComposeTargetRoute(payload){
+    const id=String(payload?.playerId||'').trim(),xid=getComposeXid();
+    if(!id||xid===id||xid||!payload?.routeRecovery)return false;
+    statusText='Restoring the intended Torn recipient before formatting the draft.';
+    const url=canonicalComposeUrl(payload);
+    try{window.location.assign(url);}catch{location.href=url;}
+    return true;
+  }
+
   async function fillMessageComposer(){
+    if(composeFillCleanup){try{composeFillCleanup();}catch{}composeFillCleanup=null;}
+    const generation=++composeFillGeneration;
     if(!location.pathname.includes('messages.php'))return;
     const payload=composePayloadForCurrentPage();if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
-    let attempts=0,richFailures=0,observer=null,timer=null,inFlight=false,finished=false;
-    const requiresBranding=Boolean(payload.bodyHtml);
+    if(restoreComposeTargetRoute(payload))return;
+
+    let observer=null,timer=null,inFlight=false,finished=false,readyKey='',readySince=0,fillAttempts=0;
+    const startedAt=Date.now(),requiresBranding=Boolean(payload.bodyHtml);
+    const cleanup=()=>{
+      if(timer)clearInterval(timer);timer=null;
+      if(observer)observer.disconnect();observer=null;
+      if(composeFillGeneration===generation)composeFillCleanup=null;
+    };
+    composeFillCleanup=cleanup;
     const stop=(success,rich=true)=>{
-      finished=true;if(timer)clearInterval(timer);if(observer)observer.disconnect();
+      if(finished)return;
+      finished=true;cleanup();
       if(success){
-        GM_deleteValue(PENDING_COMPOSE_KEY);clearComposeFormattingNotice();
-        statusText=rich?'Message prepared in Torn composer with branded formatting. Send remains manual.':'Message prepared in Torn composer. Send remains manual.';
+        clearMatchingPendingCompose(payload);clearComposeFormattingNotice();
+        statusText=rich?'Message prepared in Torn composer with recipient + branded formatting verified. Send remains manual.':'Message prepared in Torn composer with recipient verified. Send remains manual.';
       }else if(requiresBranding){
         statusText='Branded formatting is not ready. Draft was NOT downgraded to plain text.';
-        composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry branded formatting.','error');
+        composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Use Reopen Draft in MM_Customers to retry.','error');
       }
     };
+    const stillCurrent=()=>generation===composeFillGeneration&&location.pathname.includes('messages.php')&&location.hash.includes('compose')&&
+      (!payload.playerId||getComposeXid()===String(payload.playerId||''));
     const tryFill=async()=>{
-      if(finished||inFlight)return false;inFlight=true;attempts++;
+      if(finished||inFlight||!stillCurrent())return false;
+      if(Date.now()-startedAt>=COMPOSE_FILL_TIMEOUT_MS){stop(false,requiresBranding);return false;}
+      inFlight=true;
       try{
-        const subject=findComposeSubjectInput();let subjectOK=false;
-        if(subject){setNativeValue(subject,payload.subject);await sleepMs(25);subjectOK=String(subject.value||'').trim()===String(payload.subject||'').trim();}
+        const xid=getComposeXid(),subject=findComposeSubjectInput(),recipient=findComposeRecipientInput(subject);
+        const recipientOK=(!payload.playerId)||(xid===String(payload.playerId||'')&&recipientMatchesPayload(payload,recipient));
+        const editorReady=composeEditorSurfaceReady();
+        if(!subject||!recipientOK||!editorReady){
+          readyKey='';readySince=0;
+          statusText=!subject?'Waiting for Torn compose form…':!recipientOK?'Waiting for Torn to resolve the intended recipient…':'Waiting for Torn message editor…';
+          composeFormattingNotice('Preparing message safely… waiting for Torn to finish loading the recipient and editor.');
+          return false;
+        }
+
+        const surfaceKey=[xid,String(recipient?.value||recipient?.textContent||''),Boolean(findComposeRichEditorBody()),Boolean(likelyTornSourceEditor(new Set(),true))].join('|');
+        if(surfaceKey!==readyKey){readyKey=surfaceKey;readySince=Date.now();return false;}
+        if(Date.now()-readySince<COMPOSE_SURFACE_STABLE_MS)return false;
+
+        fillAttempts++;
+        if(!stillCurrent())return false;
+        setNativeValue(subject,payload.subject);await sleepMs(30);
+        if(!stillCurrent())return false;
+        let subjectOK=String(subject.value||'').trim()===String(payload.subject||'').trim();
         let bodyOK=false,rich=requiresBranding;
 
         if(requiresBranding){
-          bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml);
+          bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent);
           if(!bodyOK){
-            richFailures++;
-            const body=findComposeRichEditorBody();
-            if(body)bodyOK=setEditorContent(body,payload.body,payload.bodyHtml)&&await waitForRichBranding(payload.bodyHtml,1200);
-          }
-          if(!bodyOK){
+            readyKey='';readySince=0;
             statusText='Waiting for Torn rich editor… branded message will retry automatically.';
             composeFormattingNotice('Preparing branded message… do not send until this notice disappears.');
-            if(attempts>=40){stop(false,true);return false;}
             return false;
           }
         }else{
           const body=findComposeBodyInput(subject)||findComposeRichEditorBody();
-          if(body)bodyOK=setEditorContent(body,payload.body,'');
+          if(body)bodyOK=setPlainEditorText(body,payload.body);
         }
 
-        if(subjectOK&&bodyOK){stop(true,rich);return true;}
-        if(attempts>=40)stop(false,rich);
+        await sleepMs(COMPOSE_POST_FILL_VERIFY_MS);
+        if(!stillCurrent())return false;
+        const verifySubject=findComposeSubjectInput();
+        const verifyRecipient=findComposeRecipientInput(verifySubject);
+        const verifyRecipientOK=(!payload.playerId)||(getComposeXid()===String(payload.playerId||'')&&recipientMatchesPayload(payload,verifyRecipient));
+        subjectOK=Boolean(verifySubject)&&String(verifySubject.value||'').trim()===String(payload.subject||'').trim();
+        bodyOK=requiresBranding?richComposerHasBranding(payload.bodyHtml):bodyOK;
+        if(verifyRecipientOK&&subjectOK&&bodyOK){stop(true,rich);return true;}
+
+        readyKey='';readySince=0;
+        if(fillAttempts>=12&&Date.now()-startedAt>15_000){
+          statusText='Torn keeps replacing the compose surface; MM_Customers is still retrying without clearing the draft.';
+        }
         return false;
       }finally{inFlight=false;}
     };
-    tryFill();timer=setInterval(()=>{if(!finished)tryFill();},900);observer=new MutationObserver(()=>{if(!finished&&attempts<40)tryFill();});observer.observe(document.documentElement,{childList:true,subtree:true});
+    tryFill();
+    timer=setInterval(()=>{if(!finished)tryFill();},700);
+    observer=new MutationObserver(()=>{if(!finished)tryFill();});
+    observer.observe(document.documentElement,{childList:true,subtree:true});
   }
 
   function normalizedDeliveryText(value){
@@ -876,10 +1032,9 @@
 
   function composeMatchesPending(pending){
     if(!location.pathname.includes('messages.php')||!location.hash.includes('compose'))return false;
-    const params=getComposeParams();
-    const xid=String(params.get('XID')||params.get('xid')||'').trim();
-    const id=String(pending?.playerId||'').trim();
+    const xid=getComposeXid(),id=String(pending?.playerId||'').trim();
     if(xid&&id&&xid!==id)return false;
+    if(id&&(!xid||!recipientMatchesPayload(pending,findComposeRecipientInput())))return false;
     const subject=findComposeSubjectInput();
     if(subject&&visible(subject)){
       const value=String(subject.value||'').trim();
@@ -1238,8 +1393,10 @@
     };
     root.querySelector('[data-pending-reopen]')?.addEventListener('click',()=>{
       const pending=GM_getValue(PENDING_SEND_KEY,null);if(!pending)return;
-      GM_setValue(PENDING_COMPOSE_KEY,{playerId:pending.playerId,subject:pending.subject,body:pending.body,bodyHtml:pending.bodyHtml,createdAt:Date.now()});
-      const url='https://www.torn.com/messages.php#/p=compose&XID='+encodeURIComponent(String(pending.playerId||''))+'&subject='+encodeURIComponent(String(pending.subject||''));
+      const createdAt=Date.now();
+      const payload={composeId:'cu-reopen-'+createdAt+'-'+String(pending.playerId||''),playerId:pending.playerId,recipientName:pending.recipientName||state?.customers?.[String(pending.playerId||'')]?.name||'',subject:pending.subject,body:pending.body,bodyHtml:pending.bodyHtml,createdAt};
+      GM_setValue(PENDING_COMPOSE_KEY,payload);
+      const url=canonicalComposeUrl(payload);
       try{window.location.assign(url);}catch{location.href=url;}
     });
     root.querySelector('[data-pending-cancel]')?.addEventListener('click',()=>{
