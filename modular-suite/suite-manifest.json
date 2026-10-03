@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "8.0.0-alpha.11",
+  "suiteVersion": "8.0.0-alpha.12",
   "status": "non-production",
   "baseVersion": "7.5.3",
   "branch": "crm-v8-modular-suite",
@@ -19,17 +19,24 @@
       "status": "implemented-non-production"
     },
     {
-      "id": "bazaar-manager",
-      "name": "MM Bazaar Manager",
-      "role": "sell-list-customers",
+      "id": "customers",
+      "name": "MM_Customers",
+      "role": "customer-crm-coupons-cashback-restock",
       "version": "8.0.0-alpha.1",
       "status": "implemented-non-production"
     },
     {
-      "id": "market-scout",
-      "name": "MM Market Scout",
-      "role": "acquire-market-travel",
-      "version": "8.0.0-alpha.8",
+      "id": "acquisitions",
+      "name": "MM_Acquisitions",
+      "role": "acquire-market-travel-purchase-ledger",
+      "version": "8.0.0-alpha.1",
+      "status": "implemented-non-production"
+    },
+    {
+      "id": "inventory-roi",
+      "name": "MM_Inventory Manager/ROI Tracker",
+      "role": "inventory-listing-sales-velocity-fifo-roi",
+      "version": "8.0.0-alpha.1",
       "status": "implemented-non-production"
     },
     {
@@ -47,9 +54,10 @@
   ],
   "migrationOrder": [
     "core",
-    "market-scout",
+    "acquisitions",
     "faction-armory",
-    "bazaar-manager",
+    "customers",
+    "inventory-roi",
     "business-intelligence"
   ],
   "productionPromotionRequires": [
@@ -57,5 +65,26 @@
     "static-tests-pass",
     "live-browser-acceptance",
     "explicit-owner-approval"
+  ],
+  "supersededProducts": [
+    {
+      "id": "bazaar-manager",
+      "name": "MM Bazaar Manager",
+      "lastVersion": "8.0.0-alpha.1",
+      "status": "superseded-non-production",
+      "replacedBy": [
+        "customers",
+        "inventory-roi"
+      ]
+    },
+    {
+      "id": "market-scout",
+      "name": "MM Market Scout",
+      "lastVersion": "8.0.0-alpha.8",
+      "status": "superseded-non-production",
+      "replacedBy": [
+        "acquisitions"
+      ]
+    }
   ]
 }
