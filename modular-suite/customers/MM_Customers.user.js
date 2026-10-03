@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.11
+// @version      8.0.0-alpha.12
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.11';
+  const VERSION='8.0.0-alpha.12';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -554,23 +554,39 @@
     return [...set];
   }
 
-  function likelyTornSourceEditor(before=new Set()){
+  function composeAreaTextarea(el){
+    if(!el)return false;
+    const r=el.getBoundingClientRect?.();
+    if(!r||r.width<280||r.height<70)return false;
+    const subject=findComposeSubjectInput();
+    if(!subject)return true;
+    const sr=subject.getBoundingClientRect?.();
+    if(!sr)return true;
+    const overlap=Math.max(0,Math.min(r.right,sr.right)-Math.max(r.left,sr.left));
+    const horizontalEnough=overlap>=Math.min(r.width,sr.width)*0.45;
+    const verticalNear=r.top>=sr.bottom-30&&r.top<=sr.bottom+700;
+    return horizontalEnough&&verticalNear;
+  }
+
+  function looksLikeHtmlSource(el){
+    const value=editorText(el);
+    return /<\/?(?:p|div|table|tr|td|span|img|a|br|strong)\b/i.test(value);
+  }
+
+  function likelyTornSourceEditor(before=new Set(),allowFreshAnonymous=false){
     const score=el=>{
       const meta=elementMeta(el)+' '+String(el.className||'').toLowerCase();
       const tag=String(el.tagName||'').toLowerCase();
-      if(/sceditor-source/.test(meta))return 6;
-      if(/code|source|html|cm-|codemirror|monaco/.test(meta))return 5;
-      if(el.matches?.('[data-language="html"],[data-mode="html"]'))return 4;
-      // The live Torn composer currently exposes source mode as a large
-      // anonymous textarea, so a newly-created large textarea is valid.
-      if(tag==='textarea')return before.has(el)?1:3;
+      if(/sceditor-source/.test(meta))return 7;
+      if(/code|source|html|cm-|codemirror|monaco/.test(meta))return 6;
+      if(el.matches?.('[data-language="html"],[data-mode="html"]'))return 5;
+      if(tag==='textarea'&&composeAreaTextarea(el)&&looksLikeHtmlSource(el))return 4;
+      if(tag==='textarea'&&allowFreshAnonymous&&!before.has(el)&&composeAreaTextarea(el))return 3;
       return 0;
     };
     const eligible=sourceEditorCandidates().filter(el=>{
-      const r=el.getBoundingClientRect?.(),meta=elementMeta(el);
-      const largeEnough=!r||r.height>=70||r.width>=280;
-      const notSubject=!/subject|title/.test(meta);
-      return score(el)>0&&largeEnough&&notSubject;
+      const meta=elementMeta(el);
+      return !/subject|title/.test(meta)&&score(el)>0;
     });
     const fresh=eligible.filter(el=>!before.has(el)).sort((a,b)=>score(b)-score(a));
     return fresh[0]||eligible.sort((a,b)=>score(b)-score(a))[0]||null;
@@ -578,6 +594,19 @@
 
   function editorText(element){if(!element)return '';const tag=String(element.tagName||'').toLowerCase();return tag==='textarea'||tag==='input'?String(element.value||''):String(element.innerText||element.textContent||'');}
   function dispatchEditorEvents(element){const win=element?.ownerDocument?.defaultView||window;for(const type of ['input','change','keyup','blur'])try{element.dispatchEvent(new win.Event(type,{bubbles:true}));}catch{}}
+
+  function setSourceEditorHtml(element,html){
+    if(!element)return false;
+    const value=String(html||'');
+    const tag=String(element.tagName||'').toLowerCase();
+    if(tag==='textarea'||tag==='input')setNativeValue(element,value);
+    else{
+      try{element.focus();element.textContent=value;}catch{return false;}
+      dispatchEditorEvents(element);
+    }
+    const current=editorText(element);
+    return current.includes('<table')&&current.includes(SHOP_BANNER_URL);
+  }
 
   function setEditorContent(element,text,html=''){
     if(!element)return false;const tag=String(element.tagName||'').toLowerCase();
@@ -609,9 +638,9 @@
     });
   }
 
-  async function waitForSourceEditor(before=new Set(),timeoutMs=4000){
+  async function waitForSourceEditor(before=new Set(),timeoutMs=4000,allowFreshAnonymous=false){
     let source=null;const deadline=Date.now()+timeoutMs;
-    while(Date.now()<deadline&&!source){source=likelyTornSourceEditor(before);if(!source)await sleepMs(60);}
+    while(Date.now()<deadline&&!source){source=likelyTornSourceEditor(before,allowFreshAnonymous);if(!source)await sleepMs(60);}
     return source;
   }
 
@@ -628,24 +657,24 @@
     // Torn's message composer is SPA-backed and can occasionally carry source
     // mode across rapid consecutive messages. If source mode is already open,
     // use it directly rather than toggling it off and misclassifying the editor.
-    let source=likelyTornSourceEditor(new Set());
+    let source=likelyTornSourceEditor(new Set(),false);
     if(!source){
       const before=new Set(sourceEditorCandidates());
       try{toggle.click();}catch{return false;}
-      source=await waitForSourceEditor(before,4000);
+      source=await waitForSourceEditor(before,4000,true);
 
       // If the first click revealed the rich editor instead, we began in
       // source mode. Toggle once more and wait for the actual HTML source box.
       if(!source&&findComposeRichEditorBody()){
         const toggleAgain=findTornCodeEditorToggle()||toggle;
         try{toggleAgain.click();}catch{return false;}
-        source=await waitForSourceEditor(new Set(),3000);
+        source=await waitForSourceEditor(new Set(),3000,true);
       }
     }
     if(!source)return false;
-    if(!setEditorContent(source,html,''))return false;
+    if(!setSourceEditorHtml(source,html))return false;
 
-    await sleepMs(120);
+    await sleepMs(220);
     const toggleBack=findTornCodeEditorToggle()||toggle;
     try{toggleBack.click();}catch{return false;}
     return waitForRichBranding(html,2200);
