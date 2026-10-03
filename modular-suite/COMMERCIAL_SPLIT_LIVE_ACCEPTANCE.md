@@ -913,6 +913,31 @@ After installing the four Core alpha.8 consumers and loading a fresh Torn page:
 
 This closes the default launcher placement defect for the current Torn desktop layout.
 
+
+### MM_Customers alpha.7 rich-composer intermittent fallback / alpha.8 repair
+Live failure observed after several successful introductory messages:
+- **DEFECT** — the active Torn compose page reported `Message prepared in Torn composer as plain text fallback. Send remains manual.`
+- **DEFECT** — message body content was present but branded table formatting and banner imagery were gone.
+- The failure is consistent with Torn's SPA editor retaining source/rich mode state or loading the source editor late during rapid consecutive compose transitions.
+- alpha.7 downgraded to plain text after the first rich-editor miss, so a transient timing/state miss became a permanent formatting loss for that draft.
+
+Repair built in **MM_Customers v8.0.0-alpha.8**:
+- detects an already-open Torn source editor instead of blindly toggling it off,
+- distinguishes source-editor controls from ordinary textareas,
+- handles the case where the first toggle reveals rich mode because the composer began in source mode,
+- waits for the source editor and then verifies branded structure after toggling back,
+- retries branded composition up to 3 times before allowing plain-text fallback,
+- exposes `Waiting for Torn rich editor… branded message will retry automatically.` during transient misses,
+- plain fallback is now last-resort only after rich-editor retries fail,
+- final Send remains manual.
+
+Implementation checkpoints:
+- Customers alpha.8: `0bec58a3556705b87a99eee588753f7a6421807e`
+- regression assertions: `bb6c1c42f984aeae6d40723f6d9515243c6eebc5`
+- suite manifest alpha.23: `3d3f00455c56a83034422164ab66ffa293724cb9`
+
+**PENDING LIVE RETEST** — install alpha.8, discard/leave the current plain fallback draft unsent, re-run Prepare Message/Welcome for the same customer, and verify the banner plus branded three-column format return.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
