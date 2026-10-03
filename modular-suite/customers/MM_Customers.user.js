@@ -741,7 +741,8 @@
     }));
     root.querySelector('#mm-cu-save-api')?.addEventListener('click',()=>{
       const value=root.querySelector('#mm-cu-api')?.value||'';saveApiKey(value);
-      statusText=value.trim()?'Customers API key saved locally.':'Enter an API key first.';render();
+      statusText=value.trim()?'Customers API key saved locally. Syncing automatically…':'Enter an API key first.';render();
+      if(value.trim())setTimeout(()=>autoRefreshCustomers({force:true,switchToNew:true}),50);
     });
     root.querySelector('#mm-cu-clear-api')?.addEventListener('click',()=>{saveApiKey('');statusText='Customers API key cleared.';render();});
 
@@ -859,10 +860,8 @@
 
   function initializeCustomers(){
     createLauncher();installChannel();installRouteHooks();runPageHelpers();
-    if(apiKey()){
-      setTimeout(()=>autoRefreshCustomers({force:false,switchToNew:false}),1200);
-      setInterval(()=>{if(document.visibilityState==='visible')autoRefreshCustomers({force:false,switchToNew:false});},AUTO_SYNC_MS);
-    }
+    if(apiKey())setTimeout(()=>autoRefreshCustomers({force:false,switchToNew:false}),1200);
+    setInterval(()=>{if(apiKey()&&document.visibilityState==='visible')autoRefreshCustomers({force:false,switchToNew:false});},AUTO_SYNC_MS);
   }
 
   if(document.body)initializeCustomers();
