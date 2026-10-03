@@ -378,6 +378,29 @@ Findings:
 - **MISSING FEATURE** — no countdown/expiry-at display for current qualifying post-coupon sales, even though the 24-hour eligibility window makes time-to-expiry operationally important.
 - **MISSING FEATURE** — no qualifying purchase total or sale count is shown for eligible coupons; only the cashback amount is displayed, forcing the user to infer why the coupon qualifies.
 
+
+### MM_Customers Refunds live findings
+Observed Refunds view:
+- 2 preserved refund records, both completed for xepherion.
+- Refund 1: $20,000 cashback on $1,379,980 qualifying purchases, completed ~2d ago.
+- Refund 2: $20,000 cashback on $2,759,960 qualifying purchases, completed ~4d ago.
+- No pending refund is currently visible.
+
+Findings:
+- **PASS** — both displayed refund amounts reconcile to the configured $1M+ => $20,000 cashback tier and remain below the 10% purchase-value cap.
+- **PASS** — completed refund records are preserved through the commercial split.
+- **PASS** — completion logic is idempotent: completing an already-completed refund returns the existing record rather than consuming another coupon use.
+- **PASS** — completed redemptions append their sale IDs to coupon redemption history and set coupon uses from redemption count; those sale IDs are then excluded from future qualification.
+- **PASS** — only one pending refund per coupon is permitted because qualification is blocked while `pendingRefundId` exists.
+- **PASS / SAFETY** — money is not sent automatically. The script creates a pending record, routes the user to the customer profile, and requires manual payment plus a separate `Mark Paid` action.
+- **UX / SAFETY GAP** — `Mark Paid` has no confirmation dialog and no Torn money-transfer verification/reconciliation. A refund can be marked completed without proof that money was actually sent, or money can be sent without the record being marked completed.
+- **UX / WORKFLOW GAP** — pending refund action opens the customer's generic profile rather than a direct, amount-aware send-money workflow; the amount must be carried manually.
+- **AUDIT GAP** — Refunds list does not show coupon code, qualifying sale IDs, sale timestamps, completed timestamp, or payment reference/proof. Historical auditability is weak even though sale IDs are stored internally.
+- **UX / SCALE GAP** — no status filter (pending/completed/cancelled), customer search, date filter, amount filter, or summary totals.
+- **MISSING FEATURE** — no aggregate “pending cashback owed” amount or “cashback paid” total.
+- **MISSING FEATURE** — no explicit warning if a pending refund has aged unusually long after creation.
+- **DATA-INTEGRITY GAP** — refund `playerName` is snapshotted at creation and is not refreshed if the customer name is later enriched, so historical rows can retain stale numeric/display names.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
