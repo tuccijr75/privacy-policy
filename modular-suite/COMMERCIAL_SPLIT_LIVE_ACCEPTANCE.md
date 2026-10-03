@@ -871,6 +871,35 @@ Implementation checkpoints:
 
 **PENDING LIVE RETEST** — install the four consumer updates, reload Torn, then verify the MM dock is immediately left of Torn's native footer row with the same bottom edge and no overlap.
 
+
+### Core alpha.8 default Torn-footer docking
+Owner requirement: MM launchers should auto-snap to the bottom beside Torn's native icons **by default**, while still remaining movable/undockable afterward.
+
+Implemented in **Core v8.0.0-alpha.8**:
+- introduces a one-time default-layout revision migration,
+- clears legacy saved floating launcher positions once for this new footer-adjacent layout revision,
+- therefore all MM launchers start docked beside Torn's detected native footer row after the upgrade,
+- after the one-time migration, any user undock/move is persisted normally and is not continuously overridden,
+- retains alpha.7 lowest-row detection, native-gap alignment, and collision prevention.
+
+Consumers bumped to load Core alpha.8:
+- Customers alpha.7
+- Acquisitions alpha.6
+- Inventory/ROI alpha.7
+- Faction Armory alpha.16
+- suite manifest alpha.22
+
+Implementation checkpoints:
+- Core alpha.8: `2d26eb7dd075ff7c26105076377fca9261e46f5a`
+- Core tests: `ca763104bf469a5f38a48f74e8398c509799770e`
+- Customers alpha.7: `a32b22c7ef49ea7dddcf0794372095d415a1948f`
+- Acquisitions alpha.6: `2b931a32670254dd27885158c16a299671613d6b`
+- Inventory alpha.7: `4c4c2dc453b60b988cdc141b95f435632e4f65f9`
+- Faction alpha.16: `6e560e1d6a91c29f3d4abeec517015c2b09fec92`
+- manifest alpha.22: `45ace5ad8c8d3b2fddd31316171c9bb5a3274592`
+
+**PENDING LIVE RETEST** — install the four consumer updates, reload Torn, and verify first-load/default placement is automatically beside the Torn footer icons rather than preserving the previous upper floating row.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
