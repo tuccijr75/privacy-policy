@@ -464,6 +464,20 @@ Static/regression evidence:
 - Implementation commits: `23f848b35a303ed087caf0cec588561a15996ad7`, `15040c11bc74988a391be10582aa30fb5eb7219c`, manifest `84832d65688fb44f745a2415acceefc9e93947b8`.
 - **PENDING LIVE RETEST** — install alpha.2, prepare the same Restock alert, verify Subject/body auto-fill and branded formatting, do not press Send.
 
+
+### MM_Customers alpha.2 branded composer live retest
+Live retest of Restock -> RonyarBedwyr -> Prepare Alert after installing alpha.2:
+
+- **PASS** — Torn Messages routed to the correct recipient, RonyarBedwyr [4534960].
+- **PASS** — Subject auto-populated as `MANIC'S MAD HOUSE — Bazaar restock alert`; no clipboard paste was required.
+- **PASS** — the compose body auto-populated inside Torn's rich editor.
+- **PASS** — the live compose form contains the MANIC'S MAD HOUSE banner image, branded table structure, greeting, customer name, 12-SKU / 36-total-unit summary, three stock columns, favorites CTA, and RESTOCK ALERTS footer.
+- **PASS** — current alert content is structured item-by-item with quantities and prices rather than an unformatted copied block.
+- **PASS / SAFETY** — Torn's SEND button remains untouched; the script prepares only the draft.
+- **PASS** — the alpha.1 clipboard-only regression is repaired live.
+- **PASS** — rich-message formatting is present in the Torn editor; alpha.2's generated HTML includes explicit dark backgrounds, colored headings, banner, borders, and table layout.
+- **PENDING** — Mark Sent / Dismiss Pending state controls still need a live UI/state check after returning to MM_Customers Restock; no message should be sent merely to test the composer.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
