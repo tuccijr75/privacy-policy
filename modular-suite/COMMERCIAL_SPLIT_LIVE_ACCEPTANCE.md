@@ -180,6 +180,16 @@ Current stale ranked examples:
 - **UX FRICTION** — Import Capture remains visible even after Update Travel completed the capture/import pipeline automatically, reinforcing that two controls expose implementation mechanics rather than user intent.
 - **MISSING FEATURE** — no visible freshness threshold/state treatment (FRESH / AGING / STALE) despite exact age being available.
 
+
+### MM_Inventory Manager/ROI Tracker initial live findings
+- **BLOCKING DEFECT — FIXED IN SOURCE** — opening Inventory / ROI rendered `[object Promise]` instead of the inventory view.
+- Root cause: `inventoryHtml()` was accidentally declared `async` while `render()` concatenates its return value directly into HTML.
+- Source fix: `inventoryHtml()` is synchronous again in MM_Inventory Manager/ROI Tracker v8.0.0-alpha.2.
+- Regression coverage added to fail if `inventoryHtml` becomes async again; the userscript source is also syntax-compiled by the fixture.
+- Manifest updated to suite 8.0.0-alpha.13 / inventory-roi 8.0.0-alpha.2.
+- Source-fix commits: `fc1130a6382f84481aab790c56de10263a6fc570`, `d186769ef1b0ae9adc90e9a41b93ccc3f25b4419`, `be5120d41cee3304106bc1c5b1d5da065420d92a`.
+- **PENDING LIVE RECHECK** — installed alpha.1 still contains the defect; reinstall alpha.2 before testing shop refresh, sales refresh, listing guidance, FIFO cost basis, current ROI, realized ROI, and cost coverage.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
