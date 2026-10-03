@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.16
+// @version      8.0.0-alpha.17
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.16';
+  const VERSION='8.0.0-alpha.17';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -36,7 +36,7 @@
   const AUTO_SYNC_MS=60_000;
   const AUTO_SYNC_STALE_MS=45_000;
   const NAME_REPAIR_BATCH=12;
-  const PENDING_COMPOSE_TTL_MS=30*60*1000;
+  const PENDING_DELIVERY_TTL_MS=30*60*1000;
   const COMPOSE_BRIDGE_TTL_MS=90_000;
   const COMPOSE_SURFACE_STABLE_MS=350;
   const COMPOSE_POST_FILL_VERIFY_MS=400;
@@ -57,9 +57,9 @@
   let statusText='Ready.';
   let busy=false;
   let autoSyncRunning=false;
+  let customerAutoSyncTimer=null;
   let routeTimer=null;
   let lastHref=location.href;
-  let composeFillCleanup=null;
   let composeFillGeneration=0;
   let sendDetectorCleanup=null;
   let sendDetectorKey='';
@@ -348,7 +348,7 @@
       '<tr><td colspan="3" bgcolor="#181818" style="padding:11px 14px;border-top:1px solid #333333;">'+(footerTitle?'<strong style="color:#9be564;font-size:14px;">'+escapeMessageHtml(footerTitle)+'</strong><br><br>':'')+footer+'</td></tr></table>';
   }
 
-  function plainThreeColumnFallback({customerName,greeting='',centerText='',rightText='',columns=[],footerTitle='',footerLines=[],couponCode=''}){
+  function plainMessageText({customerName,greeting='',centerText='',rightText='',columns=[],footerTitle='',footerLines=[],couponCode=''}){
     const top=(greeting?greeting+'\n\n':'')+customerName+' | '+centerText+' | '+rightText;
     const colText=columns.map(col=>col.title+'\n'+(col.lines||[]).map(line=>'• '+line).join('\n')).join('\n\n');
     const footer=footerTitle?'\n\n'+footerTitle+'\n'+(footerLines||[]).map(line=>'• '+line).join('\n'):'';
@@ -421,7 +421,7 @@
       const footer=['Purchases must be made after the coupon is issued.','Eligible purchases remain available for 24 hours.','Each sale can only be used once.'];
       return {
         subject:SHOP_NAME+' — Cashback coupon reminder',
-        body:plainThreeColumnFallback({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' use'+(remaining===1?'':'s')+' left',columns,footerTitle:'IMPORTANT',footerLines:footer,couponCode:coupon.code}),
+        body:plainMessageText({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' use'+(remaining===1?'':'s')+' left',columns,footerTitle:'IMPORTANT',footerLines:footer,couponCode:coupon.code}),
         bodyHtml:brandedMessageHtml({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' use'+(remaining===1?'':'s')+' left',columns,footerTitle:'IMPORTANT',footerLines:footer,couponCode:coupon.code})
       };
     }
@@ -436,7 +436,7 @@
     const subject=first?'Welcome to '+SHOP_NAME+'!':'Welcome Back to '+SHOP_NAME+'!';
     return {
       subject,
-      body:plainThreeColumnFallback({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' redemption'+(remaining===1?'':'s')+' remaining',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer,couponCode:coupon.code}),
+      body:plainMessageText({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' redemption'+(remaining===1?'':'s')+' remaining',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer,couponCode:coupon.code}),
       bodyHtml:brandedMessageHtml({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' redemption'+(remaining===1?'':'s')+' remaining',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer,couponCode:coupon.code})
     };
   }
@@ -487,7 +487,7 @@
     ];
     return {
       subject:SHOP_NAME+' — Cashback ready: send coupon '+coupon.code,
-      body:plainThreeColumnFallback({
+      body:plainMessageText({
         customerName:name,greeting,
         centerText:'Cashback: '+money(q.cashback),
         rightText:purchaseCount+' qualifying purchase'+(purchaseCount===1?'':'s')+' · '+money(q.total),
@@ -526,7 +526,7 @@
     const greeting='Here’s what’s currently available at '+SHOP_NAME+', '+name+'.';
     return {
       subject:SHOP_NAME+' — Bazaar restock alert',
-      body:plainThreeColumnFallback({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' total units',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer}),
+      body:plainMessageText({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' total units',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer}),
       bodyHtml:brandedMessageHtml({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' total units',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer})
     };
   }
