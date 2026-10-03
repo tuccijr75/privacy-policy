@@ -180,7 +180,7 @@
 
   async function updateBazaar(mutator){
     await core.updateDomainState('bazaar',draft=>{
-      logic.ensureBazaarSlice(draft);
+      logic.ensureInventorySlice(draft);
       const out=mutator(draft);
       return out===undefined?draft:out;
     });
@@ -226,7 +226,7 @@
   }
 
   async         function inventoryHtml(){
-    const slice=state||{};logic.ensureBazaarSlice(slice);
+    const slice=state||{};logic.ensureInventorySlice(slice);
     const bm=slice.operations?.inventoryRoi||{};const rows=logic.inventoryRoiRows(slice);const sales=Object.values(slice.sales||{});
     const revenue30=sales.filter(s=>n(s.timestamp)>=Date.now()-30*86400000).reduce((sum,s)=>sum+n(s.total),0);
     const gross30=rows.reduce((sum,row)=>sum+n(row.realizedGrossProfit30),0),cogs30=rows.reduce((sum,row)=>sum+n(row.realizedCogs30),0),roi30=cogs30>0?gross30/cogs30*100:0;
