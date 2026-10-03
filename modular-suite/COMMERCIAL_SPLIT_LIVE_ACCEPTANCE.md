@@ -900,6 +900,19 @@ Implementation checkpoints:
 
 **PENDING LIVE RETEST** — install the four consumer updates, reload Torn, and verify first-load/default placement is automatically beside the Torn footer icons rather than preserving the previous upper floating row.
 
+
+### Core alpha.8 default footer docking — live acceptance
+After installing the four Core alpha.8 consumers and loading a fresh Torn page:
+- **PASS** — all four MM launchers defaulted to the bottom footer automatically.
+- **PASS** — the MM launchers are immediately to the left of Torn's native footer controls.
+- **PASS** — MM and Torn controls share the same bottom row / bottom edge.
+- **PASS** — fixed spacing is preserved between the MM dock and Torn's first native footer icon.
+- **PASS** — the previous separate upper MM launcher row is gone on fresh load.
+- **PASS** — launchers remain docked/reorderable with the existing pull-away / right-click undock behavior.
+- **PASS** — no manual repositioning was required after the alpha.8 one-time default-layout migration.
+
+This closes the default launcher placement defect for the current Torn desktop layout.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
