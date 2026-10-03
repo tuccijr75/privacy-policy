@@ -35,7 +35,7 @@
   const MAX_LOG_PAGES=25;
   const AUTO_SYNC_MS=60_000;
   const AUTO_SYNC_STALE_MS=45_000;
-  const NAME_REPAIR_BATCH=12;
+  const USERNAME_RESOLVE_BATCH=12;
   const PENDING_DELIVERY_TTL_MS=30*60*1000;
   const COMPOSE_BRIDGE_TTL_MS=90_000;
   const COMPOSE_SURFACE_STABLE_MS=350;
@@ -204,7 +204,7 @@
     for(const refund of Object.values(draft.refunds||{}))if(String(refund.playerId||'')===id)refund.playerName=safe;
   }
 
-  async function repairUsernames(limit=NAME_REPAIR_BATCH){
+  async function resolveMissingUsernames(limit=USERNAME_RESOLVE_BATCH){
     if(!apiKey())return 0;
     if(!state)state=await core.readLegacyState();
     const ids=Object.values(state?.customers||{}).filter(customer=>!hasRealUsername(customer)).map(customer=>String(customer.id||'')).filter(Boolean).slice(0,limit);
@@ -277,8 +277,8 @@
     let result=null;
     await updateCustomerState(draft=>{result=logic.importSalesEntries(draft,rows);return draft;});
     const newCustomerIds=Object.keys(state?.customers||{}).filter(id=>!beforeIds.has(id));
-    const repaired=await repairUsernames(NAME_REPAIR_BATCH);
-    return {...result,newCustomers:newCustomerIds.length,repairedNames:repaired};
+    const repaired=await resolveMissingUsernames(USERNAME_RESOLVE_BATCH);
+    return {...result,newCustomers:newCustomerIds.length,resolvedNames:repaired};
   }
 
   function newCustomerRows(){
@@ -293,7 +293,7 @@
     if(!state)state=await core.readLegacyState();
     const last=Date.parse(state?.operations?.customers?.lastSalesAt||'')||0;
     if(!force&&last&&Date.now()-last<AUTO_SYNC_STALE_MS){
-      if(await repairUsernames(NAME_REPAIR_BATCH)){if(document.getElementById(ROOT_ID))render();}
+      if(await resolveMissingUsernames(USERNAME_RESOLVE_BATCH)){if(document.getElementById(ROOT_ID))render();}
       return null;
     }
     autoSyncRunning=true;
@@ -303,7 +303,7 @@
       if(switchToNew&&newRows.length)activeView='new';
       statusText='Auto-synced sales: '+result.imported+' new sale'+(result.imported===1?'':'s')+
         (result.newCustomers?' · '+result.newCustomers+' new customer'+(result.newCustomers===1?'':'s'):'')+
-        (result.repairedNames?' · '+result.repairedNames+' name'+(result.repairedNames===1?'':'s')+' resolved':'')+'.';
+        (result.resolvedNames?' · '+result.resolvedNames+' name'+(result.resolvedNames===1?'':'s')+' resolved':'')+'.';
       if(document.getElementById(ROOT_ID))render();
       return result;
     }catch(error){
@@ -1445,7 +1445,7 @@
     root.querySelector('#mm-cu-refresh-sales')?.addEventListener('click',()=>run('Refreshing Bazaar customer sales…',async()=>{
       const r=await refreshSales();
       if(newCustomerRows().length)activeView='new';
-      return 'Sales refreshed: '+r.imported+' new · '+r.checked+' checked'+(r.newCustomers?' · '+r.newCustomers+' new customer'+(r.newCustomers===1?'':'s'):'')+(r.repairedNames?' · '+r.repairedNames+' name'+(r.repairedNames===1?'':'s')+' resolved':'')+(r.rejected?' · '+r.rejected+' rejected':'')+'.';
+      return 'Sales refreshed: '+r.imported+' new · '+r.checked+' checked'+(r.newCustomers?' · '+r.newCustomers+' new customer'+(r.newCustomers===1?'':'s'):'')+(r.resolvedNames?' · '+r.resolvedNames+' name'+(r.resolvedNames===1?'':'s')+' resolved':'')+(r.rejected?' · '+r.rejected+' rejected':'')+'.';
     }));
     root.querySelector('#mm-cu-save-api')?.addEventListener('click',()=>{
       const value=root.querySelector('#mm-cu-api')?.value||'';saveApiKey(value);
