@@ -327,6 +327,25 @@ Findings:
 - **CRM-WIDE CONSISTENCY GAP** — this module does not consume/expose a shared rule surface for applicable ROI/price/business thresholds, despite the broader v8 design goal of CRM-wide reusable business rules where applicable.
 - **UX GAP** — Settings is simple, but only because nearly all decision controls are absent; the simplicity does not yet support the module's actual job.
 
+
+### MM_Customers initial live baseline
+Observed Customers view on alpha.1:
+- 98 customer rows are currently visible from preserved shared sales/customer state.
+- Current visible segmentation: 55 NEW, 24 REGULAR, 18 LOYAL, 1 VIP.
+- 8 visible customer rows use a numeric Torn ID as the display name because no resolved buyer name is present.
+- Existing high-value/repeat examples are preserved, including a LOYAL customer with $117,500,000 across 5 purchases and a VIP customer with $67,790 across 10 purchases.
+
+Findings:
+- **PASS** — existing customer history survived the commercial split and renders without a baseline crash.
+- **PASS** — customer totals and purchase counts are visible directly in the list.
+- **DATA-QUALITY GAP** — unresolved buyers are displayed as raw numeric IDs; there is no name-enrichment/retry path in the Customers module.
+- **UX / SCALE GAP** — Customers has no search, segment filter, minimum-spend filter, contacted/uncontacted filter, coupon-status filter, or explicit sort control.
+- **UX / SCALE DEFECT** — `customersHtml()` silently truncates to the first 100 RFM-sorted customers with `.slice(0,100)`; there is no indication that additional customers would be hidden and no pagination/load-more workflow.
+- **UX / OBSERVABILITY GAP** — the Customers view shows no customer count summary, no last sales-refresh age, and no data-coverage window; the only baseline status is `Ready.`.
+- **COVERAGE DEFECT** — Customers Refresh Sales uses the same hard-coded 72-hour lookback as Inventory/ROI. On a clean state it cannot reconstruct customer lifetime totals or meaningful 30/60-day RFM segmentation by itself.
+- **EFFECTIVENESS GAP / SEGMENTATION** — the function is labeled RFM, but monetary value does not affect the segment assignment. Live data illustrates the consequence: a $117.5M / 5-purchase customer is LOYAL while a $67.8K / 10-purchase customer is VIP. Frequency/recency may be useful, but high-value customer prioritization needs an explicit monetary/value dimension or separate tier.
+- **UX / WORKFLOW GAP** — Prepare Welcome and Mark Sent + Issue are rendered for every customer without conditioning the action label/availability on `firstMessageSent` / `contacted`, making duplicate welcome/coupon workflows easier to trigger.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
