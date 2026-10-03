@@ -80,7 +80,7 @@ assert(userSourceAnon.includes("for(const selector of ['textarea'"));
 assert(userSourceAnon.includes('anonymous textarea'));
 assert(userSourceAnon.includes('function brandedMarkersFromHtml'));
 assert(userSourceAnon.includes("CASHBACK REMINDER','QUALIFYING PURCHASE','YOUR CASHBACK','SEND YOUR COUPON"));
-assert(userSourceAnon.includes('injectHtmlThroughTornCodeEditor(payload.bodyHtml)'));
+assert(userSourceAnon.includes('injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent)'));
 console.log('MM Customers anonymous source textarea regression: PASS');
 
 const userSourceScope=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
@@ -110,6 +110,9 @@ assert(userSourceTransport.includes('routeRecovery:genericRecovery'));
 assert(userSourceTransport.includes("String(tracked.state||'awaiting-send')==='awaiting-send'"));
 assert(userSourceTransport.includes('function clearMatchingPendingCompose'));
 assert(userSourceTransport.includes('composeFillGeneration'));
+assert(userSourceTransport.includes('const stillCurrent=()=>generation===composeFillGeneration'));
+assert(userSourceTransport.includes('waitForSourceEditor(before,4000,true,stillCurrent)'));
+assert(userSourceTransport.includes('waitForRichBranding(html,2400,stillCurrent)'));
 assert(userSourceTransport.includes("if(id&&(!xid||!recipientMatchesPayload(pending,findComposeRecipientInput())))return false;"));
 assert(userSourceTransport.includes("recipientName:pending.recipientName||state?.customers?.[String(pending.playerId||'')]?.name||''"));
 console.log('MM Customers recipient-aware compose transport regression: PASS');
