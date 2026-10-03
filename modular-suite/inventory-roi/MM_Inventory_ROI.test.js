@@ -14,4 +14,9 @@ const userSource=fs.readFileSync(__dirname+'/MM_Inventory_Manager_ROI_Tracker.us
 assert(!/async\s+function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml must remain synchronous because render concatenates its return value directly into HTML');
 assert(/function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml declaration missing');
 new Function(userSource);
-console.log('MM Inventory ROI userscript render regression: PASS');
+assert(userSource.includes("const VERSION='8.0.0-alpha.5';"));
+assert(userSource.includes('async function autoRefreshInventory'));
+assert(userSource.includes('SALES_BACKFILL_MS=31*24*60*60*1000'));
+assert(userSource.includes('Torn Inventory payload was unavailable or malformed.'));
+assert(!userSource.includes('payload.inventory=inventoryResult.value?.inventory??inventoryResult.value?.items??[]'));
+console.log('MM Inventory ROI userscript automation/render regression: PASS');
