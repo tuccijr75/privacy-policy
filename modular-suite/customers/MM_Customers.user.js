@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.12
+// @version      8.0.0-alpha.13
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.12';
+  const VERSION='8.0.0-alpha.13';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -632,18 +632,67 @@
       .filter(marker=>text.includes(marker));
   }
 
-  function richComposerHasBranding(expectedHtml=''){
+  function matchingBrandedTable(expectedHtml=''){
     const markers=brandedMarkersFromHtml(expectedHtml);
     const tables=[];
     const rich=findComposeRichEditorBody();
     if(rich)tables.push(...rich.querySelectorAll?.('table')||[]);
     for(const table of document.querySelectorAll('table'))if(!tables.includes(table)&&visible(table))tables.push(table);
-    return tables.some(table=>{
-      const banner=[...table.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL));
-      if(!banner)return false;
+    return tables.find(table=>{
       const text=String(table.innerText||table.textContent||'').replace(/\s+/g,' ').toUpperCase();
       return markers.length?markers.every(marker=>text.includes(marker)):text.includes("MANIC'S MAD HOUSE");
-    });
+    })||null;
+  }
+
+  function repairRenderedBrandedTable(expectedHtml=''){
+    const table=matchingBrandedTable(expectedHtml);
+    if(!table)return false;
+    let changed=false;
+    const doc=table.ownerDocument||document;
+
+    // Torn has intermittently dropped the "A" from the first rendered
+    // CASHBACK heading during source->visual conversion. Repair that exact
+    // visual-editor typo before the user sends.
+    try{
+      const walker=doc.createTreeWalker(table,NodeFilter.SHOW_TEXT);
+      const nodes=[];while(walker.nextNode())nodes.push(walker.currentNode);
+      for(const node of nodes){
+        const fixed=String(node.nodeValue||'').replace(/\bCSHBACK\b/g,'CASHBACK');
+        if(fixed!==node.nodeValue){node.nodeValue=fixed;changed=true;}
+      }
+    }catch{}
+
+    // Torn may also strip the external banner row while preserving the rest
+    // of the table. Restore the exact banner row from the expected branded
+    // payload when it is missing.
+    const wantsBanner=String(expectedHtml||'').includes(SHOP_BANNER_URL);
+    const hasBanner=[...table.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL));
+    if(wantsBanner&&!hasBanner){
+      try{
+        const holder=doc.createElement('div');holder.innerHTML=String(expectedHtml||'');
+        const sourceTable=holder.querySelector('table');
+        const bannerRow=[...(sourceTable?.querySelectorAll('tr')||[])].find(row=>[...row.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||'').includes(SHOP_BANNER_URL)));
+        if(bannerRow){
+          table.insertBefore(bannerRow.cloneNode(true),table.firstChild);
+          changed=true;
+        }
+      }catch{}
+    }
+
+    if(changed){
+      const rich=findComposeRichEditorBody()||table.closest?.('[contenteditable="true"]')||table.parentElement;
+      dispatchEditorEvents(rich||table);
+    }
+    return true;
+  }
+
+  function richComposerHasBranding(expectedHtml=''){
+    const table=matchingBrandedTable(expectedHtml);
+    if(!table)return false;
+    // A complete matching branded table is authoritative. Banner repair is
+    // best-effort because Torn can sanitize external images after insertion.
+    repairRenderedBrandedTable(expectedHtml);
+    return true;
   }
 
   async function waitForSourceEditor(before=new Set(),timeoutMs=4000,allowFreshAnonymous=false){
