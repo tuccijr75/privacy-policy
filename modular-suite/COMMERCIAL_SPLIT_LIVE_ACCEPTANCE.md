@@ -745,6 +745,19 @@ Implementation checkpoints:
 **Implementation boundary**:
 - suite manifest still declares MM Business Intelligence, but no BI implementation file is present on the current implementation branch. Automation cannot be applied to a non-existent implementation; BI remains a separate implementation/reconciliation task.
 
+
+### MM Inventory/ROI alpha.5 automatic refresh live check
+After installing alpha.5 and opening Inventory/ROI without pressing either refresh button:
+- **PASS** — v8.0.0-alpha.5 is live.
+- **PASS** — stale data refreshed automatically on open. Live status: `Auto-refresh: shop Bazaar OK / Inventory unavailable · sales sync 0 new.`
+- **PASS** — semantic Inventory failure is no longer reported as `Inventory OK`; the headline now explicitly shows `INVENTORY — API unavailable`.
+- **PASS** — Bazaar refreshed successfully and currently shows 10 SKUs.
+- **PASS** — Sales refreshed automatically; freshness advanced independently of manual controls.
+- **PASS / BACKFILL EVIDENCE** — 30D revenue is now $204,614,624, up from the pre-alpha.5 $199,923,150 baseline (+$4,691,474). This is consistent with the new one-time 31-day historical backfill filling previously unreachable older sale history before subsequent incremental sync.
+- **KNOWN GAP REMAINS** — 30D gross remains $52,021 and realized ROI 13.7%, confirming the previously documented headline scope mismatch: revenue is business-wide while gross/ROI only cover rows represented in the current inventory/listing set.
+- **KNOWN ENVIRONMENT LIMITATION** — personal inventory remains 0 because Torn currently returns that selection as unavailable; alpha.5 now preserves a prior valid snapshot when one exists rather than treating this response as a successful empty inventory. This live state had already been emptied by the older behavior, so preservation of a non-empty prior snapshot cannot be demonstrated from this account state without a future valid Inventory response.
+- Manual Refresh Shop / Refresh Sales remain available as fallback controls but were not used for this check.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
