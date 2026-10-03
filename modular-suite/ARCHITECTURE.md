@@ -1,47 +1,58 @@
 # MM Torn Modular Suite — v8 Architecture
 
-Status: APPROVED / NON-PRODUCTION
-Base: CRM v7.5.3
-Source branch: crm-v8-modular-suite
+Status: APPROVED / NON-PRODUCTION  
+Base: CRM v7.5.3  
+Source branch: `crm-v8-modular-suite`  
 Production remains unchanged.
 
 ## Product boundary
 
-The monolithic CRM is frozen as the migration source. New work is split by operator intent:
+The monolithic CRM is frozen as the migration source. Operator workflows are split by responsibility:
 
-1. MM Torn Core — shared data/API/storage contracts; no normal operational UI.
-2. MM Bazaar Manager — sell, list, customers, coupons, refunds, restock notifications.
-3. MM Market Scout — Bazaar + Item Market + travel acquisition, ROI, sell-through, one-click verified routing.
-4. MM Faction Armory — faction inventory, member readiness, builds, minimums, loans, leadership reporting.
-5. MM Business Intelligence — revenue, COGS, gross profit, ROI/GMROI, dead capital, demand, exports.
+1. **MM Torn Core** — shared data/API/storage contracts; no normal operational UI.
+2. **MM_Customers** — customer history, coupons, cashback, restock subscriptions and manual customer messaging.
+3. **MM_Acquisitions** — Bazaar + Item Market + Travel acquisition, live verification, ROI/sell-through ranking and acquisition-ledger synchronization.
+4. **MM_Inventory Manager/ROI Tracker** — own Bazaar/personal inventory, listing targets, sales velocity, FIFO cost basis and realized/current ROI.
+5. **MM Faction Armory** — faction inventory, member readiness, builds, minimums, loans and leadership reporting.
+6. **MM Business Intelligence** — portfolio/business analytics, finance and exports beyond the operational SKU ROI tracker.
 
-Communications remain inside Bazaar Manager and Faction Armory until duplication justifies extraction.
+The non-production **MM Bazaar Manager alpha.1** and **MM Market Scout alpha.8** are retained only as rollback/migration references. Bazaar Manager is superseded by MM_Customers + MM_Inventory Manager/ROI Tracker. Market Scout is superseded by MM_Acquisitions.
+
+## Operator intents
+
+- CUSTOMER -> MM_Customers
+- BUY -> MM_Acquisitions
+- STOCK / LIST / SKU ROI -> MM_Inventory Manager/ROI Tracker
+- EQUIP -> MM Faction Armory
+- ANALYZE -> MM Business Intelligence
+
+A sale has two owners by concern: Inventory/ROI owns stock/listing/SKU economics; Customers owns the post-sale customer relationship.
 
 ## Runtime rule
 
-A tool may only execute heavy domain work when that tool is opened or explicitly refreshed. Ordinary Torn page load must remain lightweight.
+A tool may execute heavy domain work only when that tool is opened or explicitly refreshed. Ordinary Torn page load remains lightweight.
 
 Core owns:
 - schema/migrations;
 - shared IndexedDB state;
 - source freshness metadata;
-- Torn API access/key handling;
-- market/item/player caches;
-- cross-tab coordination;
+- domain-scoped atomic updates;
 - common navigation/helpers;
+- shared dock and movable-panel contracts;
 - version/update contracts.
 
 Domain tools own:
 - their UI;
 - their calculations;
 - their explicit actions;
-- domain-specific refresh plans.
+- domain-specific refresh plans;
+- their own script-scoped Torn API credential where required.
 
 ## Shared state
 
-The existing CRM database is the migration source of truth. Migration is additive: existing customers, sales, coupons, refunds, acquisitions, market history, travel history, faction snapshots, member readiness, builds, settings and historical records are not rebuilt or re-keyed unless a later migration explicitly proves that necessary.
+The existing CRM database remains the migration source of truth. Migration is additive: existing customers, sales, coupons, refunds, acquisitions, market history, travel history, faction snapshots, member readiness, builds, settings and historical records are not rebuilt or re-keyed unless a later migration explicitly proves that necessary.
 
-Canonical record classes:
+Canonical record classes include:
 - Item
 - Acquisition
 - Sale
@@ -54,26 +65,49 @@ Canonical record classes:
 - BusinessRules
 - FreshnessState
 
+### Ownership within shared state
+
+**MM_Customers**
+- writes customer/sales/coupon/refund/subscriber state through the Core Bazaar domain;
+- refreshes Bazaar sale log 1226 on explicit request;
+- reads current Bazaar listings from the Inventory/ROI operational snapshot for restock messages;
+- does not acquire items or calculate acquisition ROI.
+
+**MM_Acquisitions**
+- writes procurement/market/travel state through the Core Market domain;
+- owns live acquisition discovery and routing;
+- owns purchase-log synchronization into `procurement.acquisitions`;
+- purchase logs 1112 (Item Market) and 1225 (Bazaar) feed the shared acquisition cost ledger.
+
+**MM_Inventory Manager/ROI Tracker**
+- writes its listing/inventory operational snapshot under `operations.inventoryRoi`;
+- may refresh sale log 1226 to obtain item-level revenue but does not recalculate or manage customers;
+- reads `procurement.acquisitions` for FIFO cost basis;
+- calculates current SKU ROI and realized matched-cost ROI;
+- never performs acquisition purchasing.
+
 ## Secret boundary
 
-Tampermonkey GM storage is script-scoped. API keys must not be copied into Torn page localStorage/IndexedDB merely to make modules share them.
+Tampermonkey GM storage is script-scoped. Raw Torn API keys are not copied into page-readable localStorage/IndexedDB merely to make modules share them.
 
-v8 therefore treats Core as the credential/API boundary. Domain scripts must consume approved Core data/services and must never expose or persist the raw Torn API key in page-readable storage.
-
-If the Core broker cannot be proven safe/reliable across Tampermonkey sandboxes, the fallback is per-tool credential storage, not insecure shared plaintext storage.
+Each domain userscript therefore keeps only the credential it needs in its own Tampermonkey GM storage. Core centralizes contracts/helpers but does not create a cross-script plaintext credential store.
 
 ## Refresh doctrine
 
 Normal workflow:
-task -> action -> result
+`task -> action -> result`
 
 Data workflow:
-need data -> current cache? -> use it
-                      -> stale? -> refresh source -> cache -> use it
+`need data -> current cache? -> use it`
+`                      -> stale? -> refresh source -> cache -> use it`
 
-Manual Sync buttons are exceptions, not prerequisites. Each source has one owner and one freshness state.
+Manual Sync buttons are exception controls, not prerequisites. Each source has a clear operational owner.
 
-Weav3r generation changes may trigger bounded market refresh in Market Scout only. Faction refresh is owned by Faction Armory. Sales/Bazaar state is owned by Bazaar Manager. BI reads shared state and does not trigger broad operational sync by default.
+- MM_Acquisitions owns market/travel refresh and purchase-ledger sync.
+- MM_Inventory Manager/ROI Tracker owns own-Bazaar/personal-inventory refresh and listing guidance.
+- MM_Customers owns explicit customer sale-history refresh.
+- Faction refresh is owned by Faction Armory.
+- BI reads shared state and does not trigger broad operational sync by default.
 
 ## Migration sequence
 
@@ -82,37 +116,39 @@ Phase 0 — freeze
 - Preserve v7.5.3 as the reference behavior.
 
 Phase 1 — Core
-- Define contracts.
-- Add compatibility reader for v7.5.3 state.
-- Prove zero-loss read/write round trip.
-- Add observability for source freshness and migration version.
+- Define contracts and compatibility reader.
+- Prove zero-loss read/write behavior and domain isolation.
 
-Phase 2 — Market Scout
-- Extract acquisition ranking, Weav3r, Item Market, travel buying and verified routing.
-- Acceptance: top opportunities route correctly; no above-ceiling buy; stale seller falls through; travel is acquisition-only.
+Phase 2 — acquisition extraction
+- Market Scout established the verified acquisition engine.
+- MM_Acquisitions becomes the active non-production acquisition product and adds explicit purchase-ledger sync.
 
 Phase 3 — Faction Armory
-- Extract all faction categories, member readiness, API-free request/reply flow, build comparison, minimums and leadership exports.
-- Acceptance: current gear cannot be downgraded automatically; missing/unknown gear becomes REVIEW; faction stock affects fulfillment, not target quality.
+- Extract faction inventory/readiness/build/minimum/reporting workflows.
 
-Phase 4 — Bazaar Manager
-- Reduce CRM to sell/list/customer operations.
-- Acceptance: current Bazaar inventory -> pricing/listing -> sale/customer workflow without procurement/faction/reporting clutter.
+Phase 4 — commercial split
+- MM_Customers extracts customer/coupon/cashback/restock workflows.
+- MM_Inventory Manager/ROI Tracker extracts inventory/listing/SKU economics.
+- MM Bazaar Manager is retained only until live acceptance of both replacements.
 
 Phase 5 — Business Intelligence
-- Extract reports and financial exports.
-- BI is read-mostly and never becomes a prerequisite for operational workflows.
+- Extract broader reports and financial exports.
+- BI remains read-mostly and never becomes a prerequisite for operational workflows.
 
-Phase 6 — retire monolith
-- Run parity/data-preservation harness.
-- Live browser acceptance for all four tools.
-- Explicit production approval before changing published production URLs.
+Phase 6 — retire superseded modules/monolith
+- Run data-preservation/static/live acceptance.
+- Explicit owner approval before changing published production URLs or retiring legacy/superseded scripts.
 
 ## Definition of done
 
-SELL -> Bazaar Manager
-BUY -> Market Scout
-EQUIP -> Faction Armory
-ANALYZE -> Business Intelligence
-
-Each visible product opens to one primary task view, has no redundant sync path, and can fail independently without disabling unrelated workflows.
+The suite is accepted when:
+- customer work is isolated to MM_Customers;
+- acquisition work is isolated to MM_Acquisitions;
+- stock/listing/SKU ROI work is isolated to MM_Inventory Manager/ROI Tracker;
+- faction readiness is isolated to MM Faction Armory;
+- broader analysis/export is isolated to MM Business Intelligence;
+- no normal page load starts heavy cross-domain work;
+- one module can fail without disabling unrelated modules;
+- shared data remains compatible and preserved;
+- live browser acceptance passes;
+- production promotion receives explicit owner approval.
