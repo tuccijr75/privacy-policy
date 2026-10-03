@@ -562,7 +562,7 @@
 
   function composePayloadForCurrentPage(){
     if(!location.hash.includes('compose'))return null;
-    const params=getComposeParams(),xid=getComposeXid(),now=Date.now(),pending=GM_getValue(PENDING_COMPOSE_KEY,null);
+    const xid=getComposeXid(),now=Date.now(),pending=GM_getValue(PENDING_COMPOSE_KEY,null);
     if(pending&&typeof pending==='object'){
       const age=now-Number(pending.createdAt||0);
       const pendingId=String(pending.playerId||'').trim();
