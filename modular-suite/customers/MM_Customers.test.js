@@ -14,27 +14,36 @@ logic.subscribeCustomer(db,'123');assert.strictEqual(logic.currentBazaarRows(db,
 
 const userSrc=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 assert.doesNotThrow(()=>new Function(userSrc));
-assert(userSrc.includes("const VERSION='8.0.0-alpha.13';"));
+assert(userSrc.includes("const VERSION='8.0.0-alpha.14';"));
 assert(userSrc.includes("const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';"));
 assert(userSrc.includes('function brandedMessageHtml'));
 assert(userSrc.includes('function fillMessageComposer'));
 assert(userSrc.includes('bodyHtml:brandedMessageHtml'));
-assert(userSrc.includes('data-restock-sent'));
+assert(!userSrc.includes('data-restock-sent'));
 assert(userSrc.includes('data-restock-dismiss'));
 assert(userSrc.includes('New Customers ('));
 assert(userSrc.includes('async function repairUsernames'));
 assert(userSrc.includes('function installMessageSendDetector'));
 assert(userSrc.includes('function completeTrackedSend'));
+assert(userSrc.includes("const DELIVERY_RECEIPTS_KEY='mm_customers_delivery_receipts_v1';"));
+assert(userSrc.includes('function newSentConfirmationEvidence'));
+assert(userSrc.includes('function deliveryFingerprintCount'));
+assert(userSrc.includes('event.isTrusted'));
+assert(userSrc.includes('event.submitter'));
+assert(userSrc.includes("state:'send-unconfirmed'"));
+assert(userSrc.includes('function recentFirstContactRecoveryRows'));
+assert(userSrc.includes('Restore to New Customers'));
+assert(!userSrc.includes("messageSentConfirmationVisible()||!location.hash.includes('compose')||!composeStillVisible"));
 assert(userSrc.includes("window.location.assign(url)"));
 assert(userSrc.includes("const PENDING_SEND_KEY='mm_customers_pending_send_v1';"));
 assert(userSrc.includes('AUTO_SYNC_MS=60_000'));
 assert(!userSrc.includes('data-mark-welcome'));
 assert(!userSrc.includes('navigator.clipboard'));
 assert(!userSrc.includes('copyAndOpenMessage'));
-console.log('MM_Customers logic + automation/composer regression tests: PASS');
+console.log('MM_Customers logic + verified-delivery automation/composer regression tests: PASS');
 const userSourceRich=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 new Function(userSourceRich);
-assert(userSourceRich.includes("const VERSION='8.0.0-alpha.13';"));
+assert(userSourceRich.includes("const VERSION='8.0.0-alpha.14';"));
 assert(userSourceRich.includes('function richComposerHasBranding'));
 assert(userSourceRich.includes('richFailures<3'));
 assert(userSourceRich.includes('Waiting for Torn rich editor… branded message will retry automatically.'));
@@ -44,7 +53,7 @@ console.log('MM Customers rich-composer resilience regression: PASS');
 
 const userSourceRefunds=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 new Function(userSourceRefunds);
-assert(userSourceRefunds.includes("const VERSION='8.0.0-alpha.13';"));
+assert(userSourceRefunds.includes("const VERSION='8.0.0-alpha.14';"));
 assert(userSourceRefunds.includes('function cashbackEligibleRows'));
 assert(userSourceRefunds.includes('function cashbackEligibilityReminderMessage'));
 assert(userSourceRefunds.includes('Send Cashback Reminder'));
@@ -56,7 +65,7 @@ console.log('MM Customers refund eligibility reminder regression: PASS');
 
 const userSourceCashbackRich=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 new Function(userSourceCashbackRich);
-assert(userSourceCashbackRich.includes("const VERSION='8.0.0-alpha.13';"));
+assert(userSourceCashbackRich.includes("const VERSION='8.0.0-alpha.14';"));
 assert(userSourceCashbackRich.includes("CASHBACK REMINDER|QUALIFYING PURCHASE|YOUR CASHBACK|SEND YOUR COUPON"));
 assert(userSourceCashbackRich.includes('Draft was NOT downgraded to plain text.'));
 assert(userSourceCashbackRich.includes('Preparing branded message… do not send until this notice disappears.'));
@@ -65,7 +74,7 @@ console.log('MM Customers cashback reminder rich-verification regression: PASS')
 
 const userSourceAnon=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 new Function(userSourceAnon);
-assert(userSourceAnon.includes("const VERSION='8.0.0-alpha.13';"));
+assert(userSourceAnon.includes("const VERSION='8.0.0-alpha.14';"));
 assert(userSourceAnon.includes("for(const selector of ['textarea'"));
 assert(userSourceAnon.includes('anonymous textarea'));
 assert(userSourceAnon.includes('function brandedMarkersFromHtml'));
@@ -75,7 +84,7 @@ console.log('MM Customers anonymous source textarea regression: PASS');
 
 const userSourceScope=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 new Function(userSourceScope);
-assert(userSourceScope.includes("const VERSION='8.0.0-alpha.13';"));
+assert(userSourceScope.includes("const VERSION='8.0.0-alpha.14';"));
 assert(userSourceScope.includes('function composeAreaTextarea'));
 assert(userSourceScope.includes('function looksLikeHtmlSource'));
 assert(userSourceScope.includes('allowFreshAnonymous&&!before.has(el)'));
@@ -87,7 +96,7 @@ console.log('MM Customers source textarea scoping regression: PASS');
 
 const userSourceRepair=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 new Function(userSourceRepair);
-assert(userSourceRepair.includes("const VERSION='8.0.0-alpha.13';"));
+assert(userSourceRepair.includes("const VERSION='8.0.0-alpha.14';"));
 assert(userSourceRepair.includes('function matchingBrandedTable'));
 assert(userSourceRepair.includes('function repairRenderedBrandedTable'));
 assert(userSourceRepair.includes("replace(/\\bCSHBACK\\b/g,'CASHBACK')"));
