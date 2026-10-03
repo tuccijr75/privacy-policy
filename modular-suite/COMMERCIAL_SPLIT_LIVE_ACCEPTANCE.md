@@ -168,6 +168,18 @@ Current stale ranked examples:
 - Monkey Plushie — Argentina — stock 809 — profit $30,200 — source profit/hr $5,734
 
 
+
+### MM_Acquisitions Travel refresh result
+- **PASS** — Update Travel successfully replaced the 15-hour-old travel state with seconds-old data.
+- **PASS** — browser capture and shared travel state timestamps agree, showing the fallback/import path completed coherently.
+- **PASS** — rankings materially changed after refresh, demonstrating that stale cached rows were actually replaced rather than merely re-timestamped.
+- **PASS** — fresh feed includes current Japan rows while the player is returning from Japan (for example Counterfeit Manga, Whale Meat, Cherry Blossom), confirming broad source coverage.
+- **UX / FEEDBACK GAP** — after refresh the persistent status surface reads “Ready.” rather than retaining a concise success summary such as “Travel updated · 20 routes · 18s ago.” The user must infer success from timestamps.
+- **EFFECTIVENESS GAP** — refreshed ranking is still global. Shark Fin (Hawaii) ranks #1 while the player is already in transit Japan → Torn; the panel does not distinguish “actionable now,” “relevant to current origin,” and “next-trip opportunity.”
+- **EFFECTIVENESS GAP** — Japan items are present but buried (#5 Counterfeit Manga, #16 Whale Meat, #17 Cherry Blossom). A trip-aware mode should have surfaced Japan while the user was still abroad and should now clearly mark all foreign purchases unavailable while in transit.
+- **UX FRICTION** — Import Capture remains visible even after Update Travel completed the capture/import pipeline automatically, reinforcing that two controls expose implementation mechanics rather than user intent.
+- **MISSING FEATURE** — no visible freshness threshold/state treatment (FRESH / AGING / STALE) despite exact age being available.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
