@@ -1028,6 +1028,35 @@ Implementation checkpoints:
 
 **PENDING LIVE RETEST** — install alpha.11, reopen the Arpello cashback reminder, and verify branded HTML renders without the warning.
 
+
+### MM_Customers alpha.11 live source inspection / alpha.12 fix
+The user left Torn's **Toggle Code Editor** source mode open after the alpha.11 failure. Live accessibility inspection exposed the actual editor state:
+- the compose source field is an **anonymous text field** with no identifying name/class exposed to accessibility,
+- its value currently contains a single `<p>...</p>` wrapping the plain-text cashback reminder,
+- it does **not** contain the branded `<table>` or banner image URL,
+- therefore the formatting failure happens before Torn renders the visual editor; the branded HTML is not reaching the correct source field.
+
+Root cause in alpha.11:
+- allowing every visible textarea as a source candidate fixed one edge case but created another: the pre-toggle probe could select an unrelated visible textarea elsewhere on Torn before source mode was opened.
+- once the wrong textarea was selected, the branded HTML was written to the wrong control, the real Torn source editor retained the plain `<p>` body, and verification correctly failed.
+
+Repair built in **MM_Customers v8.0.0-alpha.12**:
+- anonymous textareas are accepted only when they are geometrically inside the message-composer area,
+- an already-open anonymous source field is accepted only when its current value looks like HTML,
+- a blank anonymous textarea is accepted only when it appears **after** Toggle Code Editor is pressed,
+- normal Subject/title fields remain excluded,
+- explicit SCEditor/source/code-labelled controls still outrank anonymous candidates,
+- source injection now verifies the source value itself contains both `<table` and the MANIC'S MAD HOUSE banner URL before switching back to visual mode,
+- branded compose payload TTL is extended from 5m to 30m,
+- tracked send state now also retains body/bodyHtml so a reload/update can recover the branded draft instead of falling back to URL-only subject data.
+
+Implementation checkpoints:
+- Customers alpha.12 source scoping: `ef848f80e458458c3398cbd9ae20b162e7d9187f`
+- Customers alpha.12 payload recovery: `5516e6297d55f8ae2e8bfbb295d8b8184e6d59a1`
+- regression assertions: `f7e1adc372263b01f6e36b72905818fd1b099da6`
+
+**PENDING LIVE RETEST** — install alpha.12, reload/reopen the same Arpello cashback reminder, and verify source mode contains the branded table/banner HTML before visual verification.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
