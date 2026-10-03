@@ -199,6 +199,18 @@ Current stale ranked examples:
 - **EFFECTIVENESS / COVERAGE DEFECT** — `Refresh Sales` only requests the last 72 hours (`SALES_LOOKBACK_MS=72h`) while the product displays 7-day and 30-day velocity, 30-day revenue, 30-day realized profit, and 30-day ROI. On a fresh/clean shared state the module cannot reconstruct its own advertised 30-day metrics. Initial/backfill refresh should cover at least 30 days (preferably with an incremental watermark afterward).
 - **EXPECTED PENDING STATE** — Bazaar and personal inventory both show 0 SKUs / shop never until Refresh Shop runs, so item-level listing guidance and FIFO/current ROI cannot yet be accepted.
 
+
+### MM_Inventory Manager/ROI Tracker Refresh Shop live findings
+- **PASS** — Bazaar request and parsing work live while traveling; 12 Bazaar SKUs were loaded.
+- **PASS** — FIFO-derived current ROI appears for SKUs with acquisition basis (examples: Macana 11.1%, ATM Key 15.5%, Combat Helmet -9.1%, Invader H3 28.0%).
+- **DEFECT / FALSE SUCCESS** — personal Inventory reports `OK` but produces 0 SKUs. Torn's current inventory API may return the string “The inventory selection is no longer available”; the script treats any fulfilled HTTP response as success and passes that non-array value through to an empty parsed inventory.
+- **DATA-PRESERVATION DEFECT** — on a semantically unavailable inventory response, the current code writes an empty personal inventory snapshot, potentially erasing a previously useful cached snapshot instead of preserving it and marking it stale/unavailable.
+- **EFFECTIVENESS GAP** — stock-health classification has no overstock state. ATM Key is shown HEALTHY at 24 listed and ~0.03 sold/day, despite very high days-of-supply. Current logic labels any positive-demand listing HEALTHY when no top-up is required.
+- **EFFECTIVENESS GAP** — target logic uses only a 3-day minimum listing target and does not calculate days-of-supply / excess quantity / markdown priority.
+- **CORRECTNESS / SCOPE GAP** — top-level 30D REVENUE is computed from all sales, while 30D GROSS and REALIZED ROI are summed only across IDs currently present in Bazaar/personal inventory rows. Sold-out SKUs are omitted from gross/ROI, so the tiles have inconsistent scope and are not business-wide 30-day profitability.
+- **MISSING FEATURE** — no aggregate cost-coverage tile accompanies the realized-profit headline, making partial FIFO coverage easy to misread as complete profitability.
+- **UX GAP** — status “Bazaar OK · Inventory OK” reports transport success rather than usable-data success; semantic validation is required.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
