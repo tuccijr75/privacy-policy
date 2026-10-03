@@ -6,7 +6,7 @@
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.8
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/faction-armory/MM_Faction_Armory.logic.js
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/faction-armory/MM_Faction_Armory.logic.js?v=8.0.0-alpha.2
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
