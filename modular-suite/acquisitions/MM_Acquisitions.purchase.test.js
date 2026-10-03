@@ -1,0 +1,12 @@
+const fs=require('fs');const vm=require('vm');const assert=require('assert');
+const sandbox={globalThis:{}};vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(__dirname+'/MM_Acquisitions.purchase.logic.js','utf8'),sandbox,{filename:'MM_Acquisitions.purchase.logic.js'});
+const logic=sandbox.globalThis.MMTornAcquisitionLedger;assert(logic);
+const ts=Math.floor(Date.now()/1000)-60;
+const rows=logic.parseAcquisitionLog({id:'log1',timestamp:ts,data:{items:[{id:26,qty:2}],cost_total:2000,seller_id:7}},'Bazaar',{'26':{name:'AK-47'}});
+assert.strictEqual(rows.length,1);assert.strictEqual(rows[0].unitCost,1000);assert.strictEqual(rows[0].quantity,2);
+const proc=logic.ensureProcurement({catalog:{'26':{name:'AK-47'}}});
+assert.strictEqual(logic.mergeAcquisitionLogRows(proc,[{id:'log1',timestamp:ts,data:{items:[{id:26,qty:2}],cost_total:2000}}],'Bazaar'),1);
+assert.strictEqual(logic.mergeAcquisitionLogRows(proc,[{id:'log1',timestamp:ts,data:{items:[{id:26,qty:2}],cost_total:2000}}],'Bazaar'),0);
+assert.strictEqual(proc.acquisitions.length,1);
+console.log('MM_Acquisitions purchase-ledger tests: PASS');
