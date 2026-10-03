@@ -594,6 +594,60 @@ Implementation checkpoints:
 
 **PENDING LIVE RETEST** — install the four bumped scripts, refresh Torn, then test overlap against a Torn native footer icon and compare bottom edges.
 
+
+### Suite-wide automation / fluid-workflow acceptance rule
+Owner direction added 2026-10-03:
+- Every safe, deterministic step that can be automated should be automated across all active MM Torn scripts.
+- Manual buttons remain fallbacks for recovery/debugging, not the primary path, when a reliable automatic trigger exists.
+- A normal workflow should move from intent -> required Torn page/action -> state reconciliation with the fewest practical clicks.
+- Background refreshes should run automatically when API/data access exists and data is stale, with rate-limit/staleness guards rather than requiring repetitive Sync buttons.
+- Cross-module state changes should propagate automatically through the shared state/channel where safe.
+- User-visible manual boundaries remain for irreversible/external actions: final message Send, money transfer/payment, purchases, destructive removals, and other actions that require human confirmation.
+- Live acceptance now includes transition quality: no dead-end statuses, no manual bookkeeping after a confirmed action, and no duplicate “prepare then separately mark” workflow when the script can verify the action itself.
+
+
+### MM_Customers alpha.5 automation repair
+Owner-reported defects after alpha.4:
+- customer names could remain numeric IDs,
+- Prepare Welcome could remain stuck at “Opening Torn composer…” instead of routing,
+- sent messages did not automatically update customer/contact/coupon state,
+- new/uncontacted customers were difficult to find among the main customer list.
+
+Implemented in **MM_Customers v8.0.0-alpha.5**:
+- conditional **New Customers (N)** tab containing uncontacted customers; the tab is omitted when the queue is empty,
+- automatic username enrichment for unresolved numeric customers using Torn User Basic (v2 with v1 fallback), propagating the resolved name to customers, coupons, subscribers, sales, and refunds,
+- automatic name repair during customer sync and before composing to an unresolved customer,
+- direct same-tab Torn Messages navigation with `window.location.assign()`,
+- tracked outbound workflow state for Welcome / Reminder / Restock drafts,
+- after the human presses Torn **Send**, the script waits for Torn send confirmation/compose exit before automatically reconciling CRM state,
+- confirmed Welcome send automatically marks the customer contacted, records contact time/message count, and issues the coupon,
+- confirmed Reminder send automatically updates contact history,
+- confirmed Restock send automatically advances `lastNotified`, clears the pending notification, and records notification history,
+- redundant primary `Mark Sent + Issue` welcome action removed,
+- sales/customer sync runs automatically on startup/open when stale, every 60s while visible, and immediately after an API key is saved; manual Refresh remains a fallback,
+- manual refresh automatically opens the New Customers queue when actionable customers exist.
+
+Static regression checks:
+- userscript parses,
+- New Customers conditional tab present,
+- automated username repair present,
+- message send detector / tracked reconciliation present,
+- direct composer routing present,
+- legacy manual welcome-state button removed.
+
+Implementation checkpoints:
+- Customers alpha.5: `73aaf8b3f343da370de5513b2d2f8acdb2d65b8c`
+- auto-sync-after-key fix: `a085d5d5d78e5d14e61510f7afd720adfb1091bf`
+- regression assertions: `3f33ae97db663f845f0b1482b4232624bb2fe49f`
+- manifest alpha.17: `48ce55c2b9f2cc78be6a265aab6fa884dd7e8949`
+
+**PENDING LIVE RETEST**:
+1. install Customers alpha.5,
+2. open Customers and confirm unresolved numeric names begin resolving automatically,
+3. confirm New Customers tab appears only while uncontacted customers exist,
+4. Prepare Welcome for one unsent customer and verify immediate Torn Messages routing + auto-filled branded draft,
+5. do not send unless using a real intended customer message; if sent intentionally, verify the customer leaves New Customers and coupon/contact state updates automatically.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
