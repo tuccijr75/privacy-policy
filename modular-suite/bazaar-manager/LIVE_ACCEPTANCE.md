@@ -1,5 +1,8 @@
 # MM Bazaar Manager — Live Acceptance
 
+> **SUPERSEDED NON-PRODUCTION REFERENCE — 2026-10-02**  
+> Owner-directed architecture now splits this module into **MM_Customers** and **MM_Inventory Manager/ROI Tracker**. Do not continue this live gate as the active product gate. Use `../COMMERCIAL_SPLIT_LIVE_ACCEPTANCE.md`. This source remains only for rollback/migration comparison until replacement acceptance.
+
 Status: **NON-PRODUCTION / alpha.1**
 
 ## Scope
