@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.13
+// @version      8.0.0-alpha.14
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.13';
+  const VERSION='8.0.0-alpha.14';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -827,11 +827,18 @@
     const rows=memberRows();
     const missing=rows.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length;
     const vault=getVault();
+    const savedCount=savedKeyIds().length;
+    const staleSaved=staleSavedMemberCount();
+    const vaultUnlocked=Boolean(vaultSession?.key);
     return '<div class="mm-fa-card mm-fa-compact">'+
       '<div class="mm-fa-module-head">'+
-        '<div><b>Member readiness</b> <span class="mm-fa-muted">'+rows.length+' members · '+missing+' missing/stale · '+savedKeyIds().length+' keys saved</span></div>'+
-        '<div class="mm-fa-actions"><button id="mm-fa-refresh-keys" style="'+button()+'">Refresh Keys</button><button id="mm-fa-copy-request" style="'+button()+'">Copy Request</button></div>'+
+        '<div><b>Member readiness</b> <span class="mm-fa-muted">'+rows.length+' members · '+missing+' missing/stale · '+savedCount+' keys saved</span></div>'+
+        '<div class="mm-fa-actions">'+
+          (vault&&savedCount&&!vaultUnlocked?'<button id="mm-fa-unlock-vault" style="'+button(true)+'">Unlock Vault</button>':'')+
+          '<button id="mm-fa-refresh-keys" style="'+button()+'">Refresh Keys</button><button id="mm-fa-copy-request" style="'+button()+'">Copy Request</button>'+
+        '</div>'+
       '</div>'+
+      '<div class="mm-fa-muted" style="margin-bottom:4px;">Member-key vault: '+(vault?(vaultUnlocked?'UNLOCKED':'LOCKED'):'NOT CREATED')+' · stale saved profiles: '+staleSaved+(vaultUnlocked?' · automatic stale-profile refresh enabled for this session':'')+'</div>'+
       '<div class="mm-fa-actions">'+
         '<input id="mm-fa-member-key" class="mm-fa-input" style="flex:1 1 260px;min-width:180px;" type="password" autocomplete="off" placeholder="Member Limited Access API key">'+
         '<button id="mm-fa-import-once" style="'+button()+'">Import Once</button>'+
@@ -1130,6 +1137,21 @@
 
     root.querySelector('#mm-fa-refresh-faction')?.addEventListener('click',refreshFaction);
     root.querySelector('#mm-fa-copy-request')?.addEventListener('click',()=>copyText(missingDataRequest()).then(()=>{statusText='Member data request copied.';render();}));
+    root.querySelector('#mm-fa-unlock-vault')?.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Unlocking member-key vault…';render();
+      try{
+        await unlockVault(false);
+        const stale=staleSavedMemberCount();
+        statusText=stale
+          ?'Member-key vault unlocked. Checking '+stale+' stale saved profile'+(stale===1?'':'s')+' automatically…'
+          :'Member-key vault unlocked. No saved member profiles are stale.';
+      }catch(error){statusText='Vault unlock failed: '+(error?.message||String(error));}
+      finally{
+        busy=false;render();
+        if(vaultSession?.key&&staleSavedMemberCount())setTimeout(()=>autoRefreshArmory({forceFaction:false}),50);
+      }
+    });
     root.querySelector('#mm-fa-import-once')?.addEventListener('click',()=>importFromField(false));
     root.querySelector('#mm-fa-import-save')?.addEventListener('click',()=>importFromField(true));
     root.querySelector('#mm-fa-refresh-keys')?.addEventListener('click',async()=>{
