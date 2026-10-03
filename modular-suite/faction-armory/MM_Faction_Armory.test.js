@@ -238,7 +238,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.16';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.17';"));
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -247,7 +247,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.13';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.17';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -255,9 +255,70 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.16';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.17';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
 assert(userSource3.includes('setTimeout(()=>autoRefreshArmory({forceFaction:false}),50)'));
 console.log('MM Faction Armory explicit vault-unlock automation regression: PASS');
+
+
+const balancedProfile=logic.battleProfile({strength:100,defense:100,speed:100,dexterity:100});
+const idealPrimary=logic.generalTargetForSlot('primary',balancedProfile,'ideal');
+assert.strictEqual(idealPrimary.name,'Jackhammer','ideal procurement should reject a much more expensive premium primary when the performance gain is single-digit');
+assert(idealPrimary.marketValue<logic.catalogItemByName('ArmaLite M-15A4').marketValue,'value target must cost less than ArmaLite reference');
+
+const valueFaction={
+  current:{
+    'weapons|jack':{category:'weapons',itemId:'jack',name:'Jackhammer',availableCount:1,amountOwned:1,loanedCount:0},
+    'weapons|arma':{category:'weapons',itemId:'arma',name:'ArmaLite M-15A4',availableCount:1,amountOwned:1,loanedCount:0}
+  },
+  memberReadiness:{
+    roster:{'900':{memberId:'900',memberName:'Value Test',level:20}},
+    profiles:{'900':{
+      stats:{strength:100,defense:100,speed:100,dexterity:100},
+      equipment:{summary:'',items:[]},
+      ownedEquipment:{items:[]},
+      verifiedAt:new Date().toISOString()
+    }},
+    settings:{staleHours:72}
+  }
+};
+const valueRows=logic.memberRows(valueFaction,[]);
+const valueBuild=logic.compareMemberBuild(valueRows[0],valueFaction,valueRows,{procurementMode:'ideal'});
+const valuePrimary=valueBuild.items.find(x=>x.slot==='primary');
+assert.strictEqual(valuePrimary.route,'ISSUE');
+assert.strictEqual(valuePrimary.factionOptionName,'Jackhammer','faction stock allocation should issue the least-cost acceptable primary instead of consuming premium stock first');
+assert(valuePrimary.premiumCostMultiple>5,'build output should expose the premium cost multiple');
+assert(valuePrimary.premiumGainPct<10,'build output should expose the modest premium performance gain');
+assert(valuePrimary.valueNote.includes('VALUE TARGET'));
+
+const alreadyEquipped={
+  current:{},
+  memberReadiness:{
+    roster:{'901':{memberId:'901',memberName:'Already Equipped',level:20}},
+    profiles:{'901':{
+      stats:{strength:100,defense:100,speed:100,dexterity:100},
+      equipment:{summary:'PRIMARY: ArmaLite M-15A4',items:[{name:'ArmaLite M-15A4',type:'Primary'}]},
+      ownedEquipment:{items:[]},
+      verifiedAt:new Date().toISOString()
+    }},
+    settings:{staleHours:72}
+  }
+};
+const equippedRows=logic.memberRows(alreadyEquipped,[]);
+const equippedBuild=logic.compareMemberBuild(equippedRows[0],alreadyEquipped,equippedRows,{procurementMode:'ideal'});
+const equippedPrimary=equippedBuild.items.find(x=>x.slot==='primary');
+assert.strictEqual(equippedPrimary.route,'KEEP','price must affect new procurement, not force disposal of already-owned adequate premium gear');
+assert(equippedPrimary.currentMarketValue>equippedPrimary.targetMarketValue);
+console.log('MM Faction Armory price-aware build regression: PASS');
+
+const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
+new Function(userSourceValue);
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.17';"));
+assert(userSourceValue.includes('saved member API key'));
+assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
+assert(userSourceValue.includes('Find Best Source'));
+assert(userSourceValue.includes('data-armory-acquire'));
+assert(userSourceValue.includes("type:'armory-acquisition-request'"));
+console.log('MM Faction Armory acquisition handoff regression: PASS');
