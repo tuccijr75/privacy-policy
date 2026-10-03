@@ -487,6 +487,15 @@ After preparing (but not sending) the RonyarBedwyr alert and returning to Restoc
 - **PASS / SAFETY** — notification completion is now an explicit owner action after manual Torn send rather than being inferred from draft preparation.
 - **PENDING LIVE CHECK** — because this test message was intentionally not sent, use `Dismiss Pending` and verify the pending controls disappear while `last notified` remains unchanged.
 
+
+### MM_Customers alpha.2 Restock dismiss-pending live check
+After using `Dismiss Pending` on the intentionally unsent RonyarBedwyr test alert:
+- **PASS** — status reports `Pending restock alert dismissed.`.
+- **PASS** — `Mark Sent` and `Dismiss Pending` disappeared.
+- **PASS** — `Prepare Alert` remains available.
+- **PASS** — `last notified 2d ago` remained unchanged, so discarding an unsent draft does not falsely advance notification history.
+- **PASS (source-level)** — the dismiss handler only clears `pendingNotification`; it does not append `notificationHistory`, so discarded drafts are not recorded as sent notices.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
