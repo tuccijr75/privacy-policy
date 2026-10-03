@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.6
+// @version      0.1.0-alpha.7
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems. Reminds, rotates, and pre-fills; never sends automatically.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -33,7 +33,6 @@
     'mm-market-scout',
   ];
   const core = globalThis.MMTornCore;
-  const MESSAGE_SET_REV = 'symbolic-contact-v3';
 
   const MODES = {
     busy:   { label: 'Busy 5–8 min',  min: 5,  max: 8 },
@@ -41,45 +40,37 @@
     quiet:  { label: 'Quiet 15–20 min', min: 15, max: 20 },
   };
 
-  const DEFAULT_MESSAGES = [
-    '⚙️ <b>MM TORN SYSTEMS</b> | 🧰 Custom 50M+ • Repairs 25M+ | Bazaar | DM: <a href="/profiles.php?XID=4325346">MANIC-MIKE</a>',
-    '💰 <b>MM TORN SYSTEMS</b> | 📈 Bazaar • ROI • Procurement | 50M+ | DM: <a href="/profiles.php?XID=4325346">MANIC-MIKE</a>',
-    '🛡️ <b>MM TORN SYSTEMS</b> | ⚔️ Armory • Builds • War Prep | 50M+ | DM: <a href="/profiles.php?XID=4325346">MANIC-MIKE</a>',
-    '📱 <b>MM TORN SYSTEMS</b> | 🔌 TornPDA • PC • API • Analytics | 50M+ | DM: <a href="/profiles.php?XID=4325346">MANIC-MIKE</a>',
-    '📌 <b>MM TORN SYSTEMS</b> | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO + CONTACT</a> | 50M+ Custom • 25M+ Repairs',
-  ];
-
-  const defaults = {
-    enabled: true,
-    mode: 'normal',
-    index: 0,
-    nextAt: 0,
-    lastSentAt: 0,
-    messages: DEFAULT_MESSAGES,
-    autoFillWhenDue: true,
-    collapsed: false,
-    completedCount: 0,
-    lastCompletedAt: 0,
-    messageSetRev: MESSAGE_SET_REV,
-  };
+  const ROTATION_MESSAGES = Object.freeze([
+    '⚙ <b>MM TORN SYSTEMS</b> | 🧰 Custom 50M+ • Repair 25M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
+    '💰 <b>MM TORN SYSTEMS</b> | 📈 Bazaar • ROI • Procure | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
+    '🛡 <b>MM TORN SYSTEMS</b> | ⚔ Armory • Builds • War | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
+    '📱 <b>MM TORN SYSTEMS</b> | 🔌 TornPDA • API • Data | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
+    '📌 <b>MM TORN SYSTEMS</b> | 50M+ Custom • 25M+ Repair | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO + CONTACT</a>',
+  ]);
 
   const loadState = () => {
     const saved = GM_getValue(STORAGE_ID, null);
-    const state = saved && typeof saved === 'object' ? { ...defaults, ...saved } : { ...defaults };
-    if (state.messageSetRev !== MESSAGE_SET_REV) {
-      state.messages = [...DEFAULT_MESSAGES];
-      state.messageSetRev = MESSAGE_SET_REV;
-    }
-    if (!Array.isArray(state.messages) || !state.messages.length) state.messages = [...DEFAULT_MESSAGES];
-    if (!MODES[state.mode]) state.mode = 'normal';
-    state.index = Number.isInteger(state.index) ? Math.max(0, state.index % state.messages.length) : 0;
-    return state;
+    const src = saved && typeof saved === 'object' ? saved : {};
+    const mode = MODES[src.mode] ? src.mode : 'normal';
+    const rawIndex = Number.isInteger(src.index) ? src.index : 0;
+
+    return {
+      enabled: src.enabled !== false,
+      mode,
+      index: Math.max(0, rawIndex % ROTATION_MESSAGES.length),
+      nextAt: Number.isFinite(src.nextAt) ? src.nextAt : 0,
+      lastSentAt: Number.isFinite(src.lastSentAt) ? src.lastSentAt : 0,
+      completedCount: Number.isFinite(src.completedCount) ? src.completedCount : 0,
+      lastCompletedAt: Number.isFinite(src.lastCompletedAt) ? src.lastCompletedAt : 0,
+    };
   };
 
   let state = loadState();
   let panel = null;
   let lastFilledMessage = '';
   let lastComposer = null;
+  let panelSessionId = 0;
+  let sessionFilled = false;
 
   const saveState = () => GM_setValue(STORAGE_ID, state);
 
@@ -91,7 +82,7 @@
     return Math.round(minutes * 60_000);
   };
 
-  const currentMessage = () => state.messages[state.index % state.messages.length];
+  const currentMessage = () => ROTATION_MESSAGES[state.index % ROTATION_MESSAGES.length];
 
   const scheduleNext = (base = Date.now()) => {
     state.nextAt = base + randomDelayMs();
@@ -99,7 +90,7 @@
   };
 
   const rotate = () => {
-    state.index = (state.index + 1) % state.messages.length;
+    state.index = (state.index + 1) % ROTATION_MESSAGES.length;
     saveState();
   };
 
@@ -234,8 +225,9 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
   };
 
-  const fillComposer = ({ force = false } = {}) => {
+  const fillComposer = () => {
     if (!state.enabled) return { ok: false, reason: 'Assistant disabled.' };
+    if (sessionFilled) return { ok: false, reason: 'This posting session has already been filled once.' };
     if (document.visibilityState !== 'visible' || !document.hasFocus()) {
       return { ok: false, reason: 'Return to the focused Torn tab first.' };
     }
@@ -244,7 +236,7 @@
     if (!composer) return { ok: false, reason: 'Open Trade Chat first.' };
 
     const existing = composerValue(composer).trim();
-    if (existing && !force && existing !== lastFilledMessage.trim()) {
+    if (existing) {
       return { ok: false, reason: 'Trade composer already contains text.' };
     }
 
@@ -273,6 +265,7 @@
 
     lastFilledMessage = message;
     lastComposer = composer;
+    sessionFilled = true;
     render();
     return { ok: true };
   };
@@ -293,35 +286,27 @@
     setTimeout(minimizeTradeChat, 120);
   };
 
-  const prepareTradeOnPanelOpen = async () => {
-    if (!state.enabled) return;
+  const prepareTradeOnPanelOpen = async (sessionId) => {
+    if (!state.enabled || sessionId !== panelSessionId || sessionFilled) return;
     if (document.visibilityState !== 'visible' || !document.hasFocus()) {
       note('Return to the focused Torn tab first.');
       return;
     }
 
     const composer = await ensureTradeComposerFromUserGesture();
+    if (sessionId !== panelSessionId || sessionFilled) return;
     if (!composer) {
       note('Trade Chat could not be opened. Open it manually, then use Fill Trade.');
       return;
     }
 
-    const result = fillComposer({ force: false });
+    const result = fillComposer();
     note(
       result.ok
         ? 'Next rotation message is ready in Trade Chat. Review it, then send manually.'
         : result.reason,
       result.ok
     );
-  };
-
-  const maybeAutoFill = () => {
-    if (!state.enabled || !state.autoFillWhenDue || !state.nextAt || Date.now() < state.nextAt) return;
-    if (document.visibilityState !== 'visible' || !document.hasFocus()) return;
-    const composer = findTradeComposer();
-    if (!composer) return;
-    const existing = composerValue(composer).trim();
-    if (!existing) fillComposer();
   };
 
   const formatRemaining = () => {
@@ -377,7 +362,6 @@
       #${APP_ID} .mmta-meta { color:#aaa; }
       #${APP_ID} .mmta-actions { display:grid;grid-template-columns:1fr 1fr;gap:5px; }
       #${APP_ID} .mmta-actions button:first-child { border-color:#9a7418; }
-      #${APP_ID} .mmta-check { display:block;margin-top:7px;color:#bbb; }
       #${APP_ID} .mmta-note { margin-top:6px;color:#8fd59a; }
       @media(max-width:620px){
         [data-mm-dock-id="${MODULE_ID}"] .mmta-launch-timer { font-size:9px; }
@@ -499,12 +483,15 @@
 
   const openPanel = () => {
     const root = createPanel();
+    panelSessionId += 1;
+    sessionFilled = false;
     root.style.display = 'block';
     root.style.zIndex = '2147483647';
     core?.setDockLauncherActive?.(MODULE_ID, true);
     requestAnimationFrame(positionPanelDefault);
     render();
-    setTimeout(prepareTradeOnPanelOpen, 0);
+    const sessionId = panelSessionId;
+    setTimeout(() => prepareTradeOnPanelOpen(sessionId), 0);
   };
 
   const togglePanel = () => {
@@ -559,10 +546,7 @@
           <button type="button" data-act="skip">Next Copy</button>
           <button type="button" data-act="toggle"></button>
         </div>
-        <label class="mmta-check">
-          <input type="checkbox" data-role="autofill"> Fill automatically when due, only while Trade Chat is open and this Torn tab is focused
-        </label>
-        <div class="mmta-note" data-role="note">Never sends automatically.</div>
+        <div class="mmta-note" data-role="note">One fill per opened session. Never sends automatically.</div>
       </div>
     `;
     document.body.append(root);
@@ -581,7 +565,7 @@
         saveState();
         render();
       } else if (act === 'fill') {
-        const result = fillComposer({ force: false });
+        const result = fillComposer();
         note(result.ok ? 'Trade message filled. Review it, then press Send yourself.' : result.reason, result.ok);
       } else if (act === 'sent') {
         completeAssistedPost();
@@ -595,12 +579,6 @@
     root.querySelector('[data-role="mode"]').addEventListener('change', (event) => {
       state.mode = event.target.value;
       if (state.enabled) scheduleNext(Date.now());
-      saveState();
-      render();
-    });
-
-    root.querySelector('[data-role="autofill"]').addEventListener('change', (event) => {
-      state.autoFillWhenDue = event.target.checked;
       saveState();
       render();
     });
@@ -642,13 +620,12 @@
 
     panel.querySelector('[data-role="status"]').textContent =
       state.enabled
-        ? `Copy ${state.index + 1}/${state.messages.length} • ${Number(state.completedCount || 0)} completed`
+        ? `Copy ${state.index + 1}/${ROTATION_MESSAGES.length} • ${Number(state.completedCount || 0)} completed`
         : 'Paused';
     panel.querySelector('[data-role="message"]').textContent = message;
     panel.querySelector('[data-role="chars"]').textContent =
       `${codePointLength(message)}/${TRADE_LIMIT} chars`;
     panel.querySelector('[data-role="mode"]').value = state.mode;
-    panel.querySelector('[data-role="autofill"]').checked = !!state.autoFillWhenDue;
     panel.querySelector('[data-act="toggle"]').textContent = state.enabled ? 'Pause' : 'Resume';
   };
 
@@ -705,16 +682,9 @@
     document.addEventListener('keydown', observeManualSend, true);
     document.addEventListener('click', observeSendClick, true);
     document.addEventListener('input', observeComposerCleared, true);
-    window.addEventListener('focus', maybeAutoFill);
     window.addEventListener('resize', () => requestAnimationFrame(positionPanelDefault), { passive: true });
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') maybeAutoFill();
-    });
 
-    setInterval(() => {
-      render();
-      maybeAutoFill();
-    }, TICK_MS);
+    setInterval(render, TICK_MS);
   };
 
   if (document.readyState === 'loading') {
