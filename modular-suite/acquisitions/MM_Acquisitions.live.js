@@ -457,6 +457,100 @@
       return core.readLegacyState();
     }
 
+    function resolveProcurementItemId(state,itemId,itemName='') {
+      const explicit=asId(itemId);
+      if(/^\d+$/.test(explicit)) return explicit;
+      const wanted=String(itemName||'').trim().toLowerCase();
+      if(!wanted) return '';
+      for(const [id,row] of Object.entries(state?.procurement?.catalog||{})) {
+        if(String(row?.name||'').trim().toLowerCase()===wanted) return asId(id);
+      }
+      for(const row of Object.values(state?.marketIntel?.marketplace||{})) {
+        if(String(row?.itemName||'').trim().toLowerCase()===wanted) return asId(row?.itemId);
+      }
+      for(const row of state?.travelIntel?.rows||[]) {
+        if(String(row?.itemName||'').trim().toLowerCase()===wanted&&asId(row?.itemId)) return asId(row.itemId);
+      }
+      return '';
+    }
+
+    async function procurementSourceOptions(itemId,itemName='') {
+      let state=await core.readLegacyState();
+      const id=resolveProcurementItemId(state,itemId,itemName);
+      if(!id) return {itemId:'',itemName:String(itemName||''),sources:[],state};
+      try { await enrichItem(id); } catch {}
+      try { await refreshItemMarket(id); } catch {}
+      state=await core.readLegacyState();
+
+      const catalog=state?.procurement?.catalog?.[id]||{};
+      const resolvedName=String(itemName||catalog.name||state?.marketIntel?.marketplace?.[id]?.itemName||('Item '+id));
+      const maxAge=Math.max(30,Number(state?.businessRules?.maxListingAgeSec||180));
+      const snap=state?.procurement?.marketSnapshots?.[id]||{};
+      const snapAge=snap.fetchedAt?Math.max(0,(Date.now()-Date.parse(snap.fetchedAt))/1000):Infinity;
+      const itemMarketPrice=snapAge<=maxAge?Number(snap?.itemMarket?.lowest||0):0;
+      const bazaarRows=freshOrganicListings(state,id).slice(0,VERIFY_SELLERS);
+      const bestBazaar=bazaarRows[0]||null;
+      const travelRows=(state?.travelIntel?.rows||[])
+        .filter(row=>Number(row?.stock||0)>0&&(
+          asId(row?.itemId)===id||
+          String(row?.itemName||'').trim().toLowerCase()===resolvedName.trim().toLowerCase()
+        ))
+        .slice().sort((a,b)=>(Number(a.shopCost||0)||Number.MAX_SAFE_INTEGER)-(Number(b.shopCost||0)||Number.MAX_SAFE_INTEGER));
+      const bestTravel=travelRows[0]||null;
+
+      const sources=[];
+      if(bestBazaar) sources.push({
+        source:'Bazaar',price:Number(bestBazaar.price||0),quantity:Number(bestBazaar.quantity||0),
+        sellerId:asId(bestBazaar.sellerId),sellerName:String(bestBazaar.sellerName||'')
+      });
+      if(itemMarketPrice>0) sources.push({
+        source:'Item Market',price:itemMarketPrice,quantity:Number(snap?.itemMarket?.depth1Pct||1)
+      });
+      if(bestTravel&&Number(bestTravel.shopCost||0)>0) sources.push({
+        source:'Overseas',price:Number(bestTravel.shopCost||0),quantity:Number(bestTravel.stock||0),
+        country:String(bestTravel.country||''),profit:Number(bestTravel.profit||0)
+      });
+      sources.sort((a,b)=>Number(a.price||0)-Number(b.price||0));
+      return {itemId:id,itemName:resolvedName,sources,state};
+    }
+
+    async function routeProcurementRequest({itemId='',itemName='',preferredSource='Best'}={}) {
+      const result=await procurementSourceOptions(itemId,itemName);
+      const id=result.itemId;
+      if(!id) return {routed:false,reason:'item-id-unresolved',...result};
+      const preferred=String(preferredSource||'Best').toLowerCase();
+      const ordered=result.sources.filter(source=>preferred==='best'||String(source.source||'').toLowerCase()===preferred);
+      if(!ordered.length) return {routed:false,reason:'preferred-source-unavailable',...result};
+
+      for(const candidate of ordered) {
+        if(candidate.source==='Bazaar') {
+          const verify=await verifyBazaar(id,candidate.sellerId,candidate.price);
+          await persistBazaarResult(id,candidate.sellerId,verify);
+          if(!verify.verified) continue;
+          const url='https://www.torn.com/bazaar.php?userId='+encodeURIComponent(asId(candidate.sellerId));
+          navigate(url);
+          return {routed:true,source:'Bazaar',url,verified:verify,...result};
+        }
+        if(candidate.source==='Item Market') {
+          const fresh=await refreshItemMarket(id);
+          const livePrice=Number(fresh?.itemMarket?.lowest||0);
+          if(!(livePrice>0)) continue;
+          const catalog=(await core.readLegacyState())?.procurement?.catalog?.[id]||{};
+          const url=itemMarketPurchaseUrl(id,result.itemName,catalog.type||'');
+          navigate(url);
+          return {routed:true,source:'Item Market',url,price:livePrice,...result};
+        }
+        if(candidate.source==='Overseas') {
+          return {
+            routed:false,reason:'overseas-recommended',recommendedSource:'Overseas',
+            country:String(candidate.country||''),price:Number(candidate.price||0),stock:Number(candidate.quantity||0),
+            ...result
+          };
+        }
+      }
+      return {routed:false,reason:'source-verification-failed',...result};
+    }
+
     async function acquire(itemId) {
       if (!hasTornKey()) return {routed:false,reason:'api-key-required'};
       const id=asId(itemId);
@@ -505,7 +599,7 @@
 
     return Object.freeze({
       refreshGlobal,enrichItem,refreshItemMarket,refreshOpportunities,
-      verifyBazaar,acquire,itemMarketPurchaseUrl,importTravelRows
+      verifyBazaar,acquire,procurementSourceOptions,routeProcurementRequest,itemMarketPurchaseUrl,importTravelRows
     });
   }
 
