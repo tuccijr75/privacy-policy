@@ -116,7 +116,10 @@ assert(userSrc.includes('if(!apiKey()||!panelIsOpen())return;'));
 const initialize=sourceSection('  function initializeCustomers(){','\n\n  if(document.body)');
 assert(!initialize.includes('autoRefreshCustomers'),'initialization must not perform customer network work');
 assert(!initialize.includes('setInterval'),'initialization must not start polling');
-assert(userSrc.includes("if(!panelIsOpen())return;\n        reloadState().catch(()=>{});"),'cross-tab state reload must stay dormant while the panel is closed');
+assert(userSrc.includes('function startCustomerStateChannel'),'cross-tab channel must have an explicit open-panel lifecycle');
+assert(userSrc.includes('function stopCustomerStateChannel'),'cross-tab channel must be closable');
+assert(userSrc.includes("if(event?.data?.type!=='state-updated'||!panelIsOpen())return;"),'cross-tab reload must stay dormant while the panel is closed');
+assert(!initialize.includes('BroadcastChannel'),'initialization must not open a cross-tab channel');
 assert(!userSrc.includes('core.adoptLegacyCrmLauncher?.();'),'Core owns the legacy-launcher bridge');
 
 console.log('MM_Customers logic, feature-preservation, compose, delivery, cleanup and resource regressions: PASS');
