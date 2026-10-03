@@ -1083,6 +1083,69 @@ Implementation checkpoints:
 3. the heading reads `CASHBACK REMINDER`,
 4. the banner row is restored if Torn permits it.
 
+
+### Faction Armory alpha.17 + Acquisitions alpha.8 — key-count clarity, price-aware builds, source-comparison handoff
+Owner feedback:
+- `Refresh Keys` reported only `2`, creating ambiguity about whether only two faction members were detected.
+- Build / Stock / Acquire decisions needed tighter reconciliation.
+- procurement decisions needed to consider price/value, not performance alone; example: an ArmaLite M-15A4 reference value is ~21.57m versus Jackhammer ~4.03m, so a modest performance gain should not automatically justify the premium.
+- acquisition execution needed a simpler path across Overseas, Item Market and Bazaar.
+
+**Key-count clarification**
+- `Refresh Keys` operates only on encrypted member API keys currently saved in the Armory vault.
+- a result such as `2/2 succeeded` means **2 saved member API keys were found and refreshed**. It does **not** mean only two faction members were detected.
+- Members now labels this explicitly as `<roster count> roster members · ... · <key count> saved member API keys`.
+- refresh status now says the saved-key count is not the faction-member count.
+
+**Price-aware Build / Stock / Acquire model**
+- readiness remains performance-based: adequate gear already equipped/owned is not replaced merely because a cheaper alternative exists; its cost is already sunk.
+- price/value now affects **new procurement and faction-stock allocation**.
+- target selection evaluates generally available candidates by performance and reference price rather than forcing the highest-priced premium option.
+- Budget target: cheapest candidate retaining at least 80% of the best available performance for the slot/build bias.
+- Standard/Ideal value floor: candidates must retain at least 92% of best available performance before price can win.
+- Ideal premium gear only replaces the value target when the performance gain is at least 12% or premium cost is no more than 2.25× the value target.
+- live static-reference example for a balanced primary:
+  - Jackhammer reference: $4,025,949; performance proxy 38.97.
+  - ArmaLite M-15A4 reference: $21,571,985; performance proxy 41.95.
+  - ArmaLite is only ~7.6% higher on the current proxy at ~5.4× the reference cost, so **Jackhammer becomes the Ideal value target** rather than automatically buying ArmaLite.
+- when both acceptable items are already in faction stock, the least-cost item meeting the readiness floor is issued first, preserving scarce premium stock.
+- Build rows now expose Current Ref, Target Ref, premium reference cost, premium gain/cost multiple and a value note.
+- an already-equipped adequate ArmaLite still returns **KEEP**; price is used to avoid wasteful new purchases, not to force a downgrade of owned gear.
+
+**Acquisition completion workflow**
+- Faction Acquire now shows cached Item Market, Bazaar and Overseas prices when they can be resolved.
+- every acquisition line has:
+  - **Find Best Source**
+  - **Item Market**
+  - **Bazaar**
+  - **Overseas**
+- clicking a source hands the exact item/quantity/reason to MM_Acquisitions over the existing local BroadcastChannel.
+- MM_Acquisitions opens an Armory request card, refreshes source evidence and compares Bazaar / Item Market / Overseas.
+- Bazaar is live-verified against the seller before routing.
+- Item Market is refreshed before routing to the item page.
+- Overseas shows country, unit price, stock and requested total; **Open Travel Agency** routes to Torn's Travel Agency page.
+- purchase/travel confirmation remains manual; no item is auto-bought and no travel is auto-started.
+
+Static/functional checks:
+- Faction logic, Faction userscript, Faction tests, Acquisitions live service, Acquisitions userscript and Acquisitions tests all parse.
+- functional value check confirms Ideal balanced-primary target = Jackhammer, while an already-equipped ArmaLite remains KEEP.
+- functional faction-stock check confirms Jackhammer is issued before a much more expensive ArmaLite when both meet the floor.
+
+Implementation checkpoints:
+- Faction price-aware logic clean rebuild: `879a7754766a78dd817dfcda841dd8f7d337b59c`
+- Faction Armory alpha.17 clean UI/handoff: `6f876a5d97a490e05e179ab16b1556a0228a449a`
+- Faction tests: `96b20adb4367ad09c9d2473c5fcb9dbfbd718351`
+- Acquisitions source-routing service: `877611b529832370af5c2626af2b7ae05b8bc6c0`
+- Acquisitions alpha.8 UI + overseas handoff: `e086aab9a42c7d4bc196dea0b35d1b87622b3133`
+- Acquisitions tests: `7866dc661bc868fb722eb3f345af495b61893143`
+- suite manifest alpha.30: `a8ecbcb140d96a9ca822d28e0ea7aa1327e2c075`
+
+**PENDING LIVE RETEST**:
+1. install Faction alpha.17 and Acquisitions alpha.8,
+2. verify `Refresh Keys` clearly reports saved member-key count,
+3. inspect one known member Build for price/value output,
+4. use one Faction Acquire line → Find Best Source and verify the Acquisitions source-comparison/routing flow without completing a purchase.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
