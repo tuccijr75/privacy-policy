@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.10
+// @version      8.0.0-alpha.11
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.10';
+  const VERSION='8.0.0-alpha.11';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -547,19 +547,31 @@
 
   function sourceEditorCandidates(){
     const set=new Set();
-    for(const selector of ['.sceditor-source','textarea[class*="source" i]','textarea[class*="code" i]','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]','[role="textbox"][contenteditable="true"]'])for(const el of document.querySelectorAll(selector))if(visible(el))set.add(el);
+    // Torn's current source-mode editor can be an otherwise anonymous textarea.
+    // Keep all visible textareas in the candidate set and disambiguate by size,
+    // source-mode timing, and metadata rather than requiring a source/code class.
+    for(const selector of ['textarea','.sceditor-source','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]'])for(const el of document.querySelectorAll(selector))if(visible(el))set.add(el);
     return [...set];
   }
 
   function likelyTornSourceEditor(before=new Set()){
     const score=el=>{
       const meta=elementMeta(el)+' '+String(el.className||'').toLowerCase();
-      if(/sceditor-source/.test(meta))return 5;
-      if(/code|source|html|cm-|codemirror|monaco/.test(meta))return 4;
-      if(el.matches?.('[data-language="html"],[data-mode="html"]'))return 3;
+      const tag=String(el.tagName||'').toLowerCase();
+      if(/sceditor-source/.test(meta))return 6;
+      if(/code|source|html|cm-|codemirror|monaco/.test(meta))return 5;
+      if(el.matches?.('[data-language="html"],[data-mode="html"]'))return 4;
+      // The live Torn composer currently exposes source mode as a large
+      // anonymous textarea, so a newly-created large textarea is valid.
+      if(tag==='textarea')return before.has(el)?1:3;
       return 0;
     };
-    const eligible=sourceEditorCandidates().filter(el=>{const r=el.getBoundingClientRect?.();return score(el)>0&&(!r||r.height>=70||r.width>=280);});
+    const eligible=sourceEditorCandidates().filter(el=>{
+      const r=el.getBoundingClientRect?.(),meta=elementMeta(el);
+      const largeEnough=!r||r.height>=70||r.width>=280;
+      const notSubject=!/subject|title/.test(meta);
+      return score(el)>0&&largeEnough&&notSubject;
+    });
     const fresh=eligible.filter(el=>!before.has(el)).sort((a,b)=>score(b)-score(a));
     return fresh[0]||eligible.sort((a,b)=>score(b)-score(a))[0]||null;
   }
@@ -577,17 +589,24 @@
 
   const sleepMs=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
-  function richComposerHasBranding(){
+  function brandedMarkersFromHtml(html){
+    const text=String(html||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/gi,' ').replace(/\s+/g,' ').toUpperCase();
+    return ['CASHBACK REMINDER','QUALIFYING PURCHASE','YOUR CASHBACK','SEND YOUR COUPON','HOW IT WORKS','CASHBACK TIERS','RESTOCK ALERTS']
+      .filter(marker=>text.includes(marker));
+  }
+
+  function richComposerHasBranding(expectedHtml=''){
+    const markers=brandedMarkersFromHtml(expectedHtml);
+    const tables=[];
     const rich=findComposeRichEditorBody();
-    const docs=[document];
-    if(rich?.ownerDocument&&rich.ownerDocument!==document)docs.push(rich.ownerDocument);
-    const hasBanner=docs.some(doc=>[...doc.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL)));
-    const hasTable=Boolean(rich?.querySelector?.('table'))||docs.some(doc=>[...doc.querySelectorAll('table')].some(table=>visible(table)||table.ownerDocument!==document));
-    const text=String(rich?.innerText||rich?.textContent||'');
-    const hasBrandedText=/MANIC'S MAD HOUSE|CASHBACK REMINDER|QUALIFYING PURCHASE|YOUR CASHBACK|SEND YOUR COUPON|RESTOCK ALERTS|CASHBACK TIERS/.test(text);
-    // Verification must be template-agnostic. Cashback reminders intentionally
-    // do not contain the Welcome/Restock headings used by earlier templates.
-    return Boolean((hasBanner&&hasTable)||(hasTable&&hasBrandedText));
+    if(rich)tables.push(...rich.querySelectorAll?.('table')||[]);
+    for(const table of document.querySelectorAll('table'))if(!tables.includes(table)&&visible(table))tables.push(table);
+    return tables.some(table=>{
+      const banner=[...table.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL));
+      if(!banner)return false;
+      const text=String(table.innerText||table.textContent||'').replace(/\s+/g,' ').toUpperCase();
+      return markers.length?markers.every(marker=>text.includes(marker)):text.includes("MANIC'S MAD HOUSE");
+    });
   }
 
   async function waitForSourceEditor(before=new Set(),timeoutMs=4000){
@@ -596,10 +615,10 @@
     return source;
   }
 
-  async function waitForRichBranding(timeoutMs=1800){
+  async function waitForRichBranding(expectedHtml='',timeoutMs=1800){
     const deadline=Date.now()+timeoutMs;
-    while(Date.now()<deadline){if(richComposerHasBranding())return true;await sleepMs(60);}
-    return richComposerHasBranding();
+    while(Date.now()<deadline){if(richComposerHasBranding(expectedHtml))return true;await sleepMs(60);}
+    return richComposerHasBranding(expectedHtml);
   }
 
   async function injectHtmlThroughTornCodeEditor(htmlValue){
@@ -629,7 +648,7 @@
     await sleepMs(120);
     const toggleBack=findTornCodeEditorToggle()||toggle;
     try{toggleBack.click();}catch{return false;}
-    return waitForRichBranding(2200);
+    return waitForRichBranding(html,2200);
   }
 
   function composeFormattingNotice(text,kind='waiting'){
@@ -674,7 +693,7 @@
           if(!bodyOK){
             richFailures++;
             const body=findComposeRichEditorBody();
-            if(body)bodyOK=setEditorContent(body,payload.body,payload.bodyHtml)&&await waitForRichBranding(1200);
+            if(body)bodyOK=setEditorContent(body,payload.body,payload.bodyHtml)&&await waitForRichBranding(payload.bodyHtml,1200);
           }
           if(!bodyOK){
             statusText='Waiting for Torn rich editor… branded message will retry automatically.';
