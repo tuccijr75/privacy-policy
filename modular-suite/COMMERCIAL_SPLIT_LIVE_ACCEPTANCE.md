@@ -772,6 +772,31 @@ Observed:
 - **PASS / SAFETY** — no purchase was submitted; Verify & Buy/final purchase remain human actions.
 - **UX FRICTION** — full opportunity enrichment took roughly tens of seconds in this live run and exposed only a generic `Refreshing Weav3r opportunities + Torn Item Market…` status until completion. The automation works, but progress granularity / partial-source status would improve perceived fluidity.
 
+
+### MM Faction Armory alpha.12 live Settings check / alpha.13 blocker UX
+Live Settings inspection:
+- **PASS** — v8.0.0-alpha.12 is live.
+- **FACT** — no faction API key is currently saved; the Settings field shows the unsaved placeholder `Faction-compatible Limited/custom API key`.
+- **EXPECTED** — the 20h-old faction cache therefore could not auto-refresh. This is not an API-refresh defect; the prerequisite key is absent.
+- **PASS / SAFETY** — the saved member-key vault remained locked and no background passphrase prompt appeared.
+
+UX issue exposed:
+- with stale faction data and no faction key, the panel remained at generic `Ready.`, which hides the reason automation cannot proceed.
+- likewise, stale saved member profiles can be waiting on a locked vault without a visible explanation.
+
+Repair built in **MM Faction Armory v8.0.0-alpha.13**:
+- when faction data is due but no faction API key is saved, status explains that a key is required for automatic refresh,
+- when saved member profiles are stale but the encrypted vault is locked, status explains that unlocking the vault during an Armory session enables automatic refresh,
+- Settings now explicitly says either `Saved — automatic faction refresh is enabled when Torn data is due` or `Not saved — cached faction data cannot refresh automatically`,
+- no background passphrase prompt is introduced.
+
+Implementation checkpoints:
+- Faction alpha.13: `37ef6c48495e4a259a6e6bf26f0846a47fe9d0f4`
+- regression assertions: `f871009fc372d191bc9e5654bf453424f0e72d3d`
+- suite manifest alpha.19: `5b1d754cca82312a6da74036aef71712a8a719c8`
+
+**PENDING LIVE RETEST** — install alpha.13, reopen Armory with no faction key, and verify the stale-data blocker is explained rather than showing only `Ready.`.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
