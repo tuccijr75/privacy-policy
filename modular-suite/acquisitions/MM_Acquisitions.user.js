@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.3
+// @version      8.0.0-alpha.4
 // @description  Dedicated acquisition workflow for Bazaar, Item Market and Travel with live verification, ROI filters and purchase-ledger sync.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -29,6 +29,9 @@
   const TRAVEL_RETURN_KEY='mm_acquisitions_travel_return_v1';
   const WEAV_WATCH_LEASE_KEY='mm_acquisitions_weav_watch_lease_v1';
   const INSTANCE_ID='acq-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);
+  const AUTO_REFRESH_MS=60_000;
+  const PURCHASE_STALE_MS=120_000;
+  const OPPORTUNITY_STALE_MS=300_000;
 
   let activeView='deals';
   let state=null;
@@ -37,6 +40,8 @@
   let busy=false;
   let watchRunning=false;
   let watchTimer=null;
+  let autoRefreshRunning=false;
+  let autoRefreshTimer=null;
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornAcquisitionsLogic;
@@ -420,6 +425,38 @@
     finally{busy=false;render();}
   }
 
+  async function autoRefreshAcquisitions({force=false}={}){
+    if(autoRefreshRunning||busy||watchRunning||document.visibilityState!=='visible')return;
+    const root=document.getElementById(ROOT_ID);
+    if(!root||root.style.display==='none')return;
+    autoRefreshRunning=true;
+    try{
+      state=await core.readLegacyState();
+      try{await importTravelCapture({silent:true});}catch{}
+      const f=core.freshnessSnapshot(state||{});
+      const now=Date.now();
+      const purchaseAt=Date.parse(f.acquisitions||state?.procurement?.lastAcquisitionSyncAt||'')||0;
+      const itemMarketAt=Date.parse(f.itemMarket||'')||0;
+      if(apiKey()&&(force||!purchaseAt||now-purchaseAt>=PURCHASE_STALE_MS))await syncPurchases();
+      if(force||!itemMarketAt||now-itemMarketAt>=OPPORTUNITY_STALE_MS)await refreshOpportunities();
+      else render();
+    }catch(error){
+      console.warn('[MM_Acquisitions] automatic refresh failed',error);
+      statusText='Auto-refresh warning: '+(error?.message||String(error));
+      render();
+    }finally{autoRefreshRunning=false;}
+  }
+
+  function startAutoRefresh(){
+    if(autoRefreshTimer)return;
+    setTimeout(()=>autoRefreshAcquisitions({force:false}),900);
+    autoRefreshTimer=setInterval(()=>autoRefreshAcquisitions({force:false}),AUTO_REFRESH_MS);
+  }
+
+  function stopAutoRefresh(){
+    if(autoRefreshTimer){clearInterval(autoRefreshTimer);autoRefreshTimer=null;}
+  }
+
   function sourceStrip(){
     if(!state)return '';
     const f=core.freshnessSnapshot(state);
@@ -493,7 +530,7 @@
         '<button id="mm-acq-save-key" style="'+button(true)+'">Save</button>'+
         '<button id="mm-acq-clear-key" style="'+button()+'">Clear</button>'+
       '</div>'+
-      '<div style="font-size:10px;color:#888;margin-top:7px;">Weav3r generation is checked once per minute only while Acquisitions is open and visible, coordinated to one Torn tab. Full enrichment runs only when the generation changes. Torn API calls otherwise occur only after <b>Refresh Opportunities</b> or <b>Verify & Buy</b>.</div>'
+      '<div style="font-size:10px;color:#888;margin-top:7px;">While Acquisitions is open and visible, stale purchase logs and opportunity data refresh automatically with guarded intervals. Weav3r generation is checked once per minute. Verify & Buy and final purchase remain manual.</div>'
     )+
     card(
       '<b>Shared Acquisition Rules</b>'+
@@ -525,7 +562,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.3 · ACQUIRE / VERIFY / LEDGER</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.4 · ACQUIRE / VERIFY / LEDGER</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -562,8 +599,9 @@
     root.querySelector('#mm-acq-save-key')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-acq-api')?.value||'').trim();
       if(value)GM_setValue(API_KEY,value);
-      statusText=value?'MM Acquisitions API key saved.':'Enter a key to save.';
+      statusText=value?'MM Acquisitions API key saved. Refreshing automatically…':'Enter a key to save.';
       render();
+      if(value)setTimeout(()=>autoRefreshAcquisitions({force:true}),50);
     });
     root.querySelector('#mm-acq-clear-key')?.addEventListener('click',()=>{
       GM_deleteValue(API_KEY);
@@ -582,8 +620,9 @@
     root.style.display='block';
     core?.setDockLauncherActive?.('acquisitions',true);
     render();
-    reloadCachedState();
+    reloadCachedState().then(()=>autoRefreshAcquisitions({force:false}));
     startWatcher();
+    startAutoRefresh();
   }
 
   function close(){
@@ -591,6 +630,7 @@
     if(root)root.style.display='none';
     core?.setDockLauncherActive?.('acquisitions',false);
     stopWatcher();
+    stopAutoRefresh();
   }
 
   function createLauncher(){
