@@ -938,6 +938,18 @@ Implementation checkpoints:
 
 **PENDING LIVE RETEST** — install alpha.8, discard/leave the current plain fallback draft unsent, re-run Prepare Message/Welcome for the same customer, and verify the banner plus branded three-column format return.
 
+
+### MM_Customers alpha.8 rich-composer live retest
+Retest on the previously affected Bendi [4257955] compose flow:
+- **PASS** — branded banner image is restored.
+- **PASS** — branded welcome header, coupon strip, green coupon CTA, three-column HOW IT WORKS / CASHBACK TIERS / IMPORTANT layout, favorites banner, and RESTOCK ALERTS styling are all present.
+- **PASS** — recipient is Bendi [4257955].
+- **PASS** — subject is `Welcome to MANIC'S MAD HOUSE!`.
+- **PASS** — Torn rich editor is active with formatting toolbar; the draft is no longer plain-text fallback.
+- **PASS / SAFETY** — final SEND remains manual.
+
+This closes the intermittent rich-composer fallback defect for this reproduced case.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
