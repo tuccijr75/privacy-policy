@@ -10,3 +10,8 @@ const row=logic.inventoryRoiRows(db,now).find(r=>r.id==='26');assert(row);
 assert.strictEqual(Math.round(row.avgCost),100);assert.strictEqual(Math.round(row.currentRoiPct),60);
 assert.strictEqual(Math.round(row.realizedGrossProfit30),100);assert.strictEqual(Math.round(row.realizedRoiPct30),50);assert.strictEqual(Math.round(row.costCoveragePct30),100);
 console.log('MM Inventory ROI logic tests: PASS');
+const userSource=fs.readFileSync(__dirname+'/MM_Inventory_Manager_ROI_Tracker.user.js','utf8');
+assert(!/async\s+function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml must remain synchronous because render concatenates its return value directly into HTML');
+assert(/function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml declaration missing');
+new Function(userSource);
+console.log('MM Inventory ROI userscript render regression: PASS');
