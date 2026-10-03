@@ -983,6 +983,26 @@ Implementation checkpoints:
 
 **PENDING LIVE RETEST** — install alpha.9, open Refunds, verify eligible customers and purchase/refund details, then open one Send Cashback Reminder draft and verify the branded reminder before sending.
 
+
+### MM_Customers alpha.9 cashback-reminder formatting regression / alpha.10 repair
+Live reproduction on Arpello [4325089] cashback reminder:
+- **DEFECT** — subject/recipient were correct, but the compose body was plain text and the branded banner/table formatting was gone.
+- Root cause identified in the alpha.8/alpha.9 rich-format verifier: it only recognized templates containing `RESTOCK ALERTS` or `CASHBACK TIERS`. The new cashback-reminder template intentionally uses `QUALIFYING PURCHASES`, `YOUR CASHBACK`, `SEND YOUR COUPON`, and `CASHBACK REMINDER`, so successful HTML injection was misclassified as failure and the script then replaced it with the plain-text fallback.
+
+Repair built in **MM_Customers v8.0.0-alpha.10**:
+- rich-format verification is now template-agnostic: banner + table structure is sufficient, with cashback/reminder headings accepted as secondary structure evidence,
+- branded drafts are **never automatically downgraded to plain text** anymore,
+- if Torn's rich editor is temporarily unavailable, the script continues retrying and shows a visible `Preparing branded message… do not send until this notice disappears.` warning,
+- if all retries fail, the pending branded payload is retained and a visible `do not send` error is shown instead of silently creating an unformatted message,
+- plain text remains available only for workflows that intentionally have no HTML body.
+
+Implementation checkpoints:
+- Customers alpha.10: `14a4ec741ecd685091d60b9d7143bfe8895ef75e`
+- regression assertions: `d61b0976a7d6d6c760295281e945f540db694778`
+- suite manifest alpha.25: `c2da4c8f512b1e83cf35e1ee80bd28d38f42c6b3`
+
+**PENDING LIVE RETEST** — install alpha.10, leave the current Arpello plain draft unsent, reopen the cashback reminder, and confirm branded formatting persists.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
