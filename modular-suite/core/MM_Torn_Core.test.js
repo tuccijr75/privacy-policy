@@ -47,9 +47,17 @@ if (fresh.unified !== 'u' || fresh.itemMarket !== 'm' || fresh.faction !== 'f') 
 console.log('MERGE PASS');
 
 const coreSource = require('fs').readFileSync(__dirname+'/MM_Torn_Core.js','utf8');
-if (!coreSource.includes("const CORE_VERSION = '8.0.0-alpha.7';")) throw new Error('core alpha.7 version missing');
+if (!coreSource.includes("const CORE_VERSION = '8.0.0-alpha.8';")) throw new Error('core alpha.7 version missing');
 if (!coreSource.includes('const rawEntries=')) throw new Error('native footer geometry de-duplication missing');
 if (!coreSource.includes('bottomDistance:Math.abs(window.innerHeight-rowBottom)')) throw new Error('bottom-distance footer priority missing');
 if (!coreSource.includes('a.bottomDistance-b.bottomDistance')) throw new Error('lowest footer row comparator missing');
 if (!coreSource.includes('const gap=clamp(Number(native.nativeGap)||LAUNCHER_SNAP_GAP,2,8);')) throw new Error('native footer gap alignment missing');
 console.log('alpha.7 footer-row regression PASS');
+
+const coreSource2 = require('fs').readFileSync(__dirname+'/MM_Torn_Core.js','utf8');
+if (!coreSource2.includes("const CORE_VERSION = '8.0.0-alpha.8';")) throw new Error('core alpha.8 version missing');
+if (!coreSource2.includes("DOCK_DEFAULT_LAYOUT_REV='footer-adjacent-v2'")) throw new Error('default dock layout revision missing');
+if (!coreSource2.includes('function applyDefaultDockLayoutOnce()')) throw new Error('default dock migration missing');
+if (!coreSource2.includes('localStorage.removeItem(DOCK_FLOAT_KEY)')) throw new Error('legacy floating layout reset missing');
+if (!coreSource2.includes('applyDefaultDockLayoutOnce();')) throw new Error('default dock migration not invoked');
+console.log('default footer docking migration PASS');
