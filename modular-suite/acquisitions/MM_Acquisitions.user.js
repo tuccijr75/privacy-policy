@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.6
+// @version      8.0.0-alpha.7
 // @description  Dedicated acquisition workflow for Bazaar, Item Market and Travel with live verification, ROI filters and purchase-ledger sync.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -9,7 +9,7 @@
 // @run-at       document-idle
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.8
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.logic.js?v=8.0.0-alpha.1
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.live.js?v=8.0.0-alpha.1
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.live.js?v=8.0.0-alpha.2
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js?v=8.0.0-alpha.1
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -28,6 +28,7 @@
   const TRAVEL_FEED_KEY='mm_acquisitions_travel_feed_v1';
   const TRAVEL_RETURN_KEY='mm_acquisitions_travel_return_v1';
   const WEAV_WATCH_LEASE_KEY='mm_acquisitions_weav_watch_lease_v1';
+  const CHANNEL='mm_bazaar_crm_cross_tab_v1';
   const INSTANCE_ID='acq-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);
   const AUTO_REFRESH_MS=60_000;
   const PURCHASE_STALE_MS=120_000;
@@ -42,6 +43,9 @@
   let watchTimer=null;
   let autoRefreshRunning=false;
   let autoRefreshTimer=null;
+  let channel=null;
+  let armoryRequest=null;
+  let armorySources=null;
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornAcquisitionsLogic;
@@ -469,13 +473,91 @@
     '</div>';
   }
 
+  function armoryRequestHtml(){
+    if(!armoryRequest)return '';
+    const sources=Array.isArray(armorySources?.sources)?armorySources.sources:[];
+    const rows=sources.length?sources.map(source=>
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:6px 0;font-size:11px;">'+
+        '<div><b>'+esc(source.source)+'</b> · '+money(source.price)+(source.country?' · '+esc(source.country):'')+
+        (source.quantity?' · qty/stock '+Number(source.quantity).toLocaleString():'')+'</div>'+
+        '<button data-armory-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(source.source===armoryRequest.preferredSource)+(busy?'opacity:.5;':'')+'">Use '+esc(source.source)+'</button>'+
+      '</div>'
+    ).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">No live source comparison loaded yet.</div>';
+    return card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+        '<div><b>Faction Armory request: '+esc(armoryRequest.itemName)+'</b>'+
+          '<div style="font-size:10px;color:#888;">Need '+Number(armoryRequest.qty||1).toLocaleString()+' · '+esc(armoryRequest.armoryReason||'Faction requirement')+'</div>'+
+        '</div>'+
+        '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
+          '<button id="mm-acq-armory-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Compare Sources</button>'+
+          '<button data-armory-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Find Best Source</button>'+
+          '<button id="mm-acq-armory-clear" style="'+button()+'">Clear</button>'+
+        '</div>'+
+      '</div>'+rows
+    );
+  }
+
+  async function refreshArmorySources(){
+    if(!armoryRequest||busy)return;
+    busy=true;statusText='Comparing Bazaar, Item Market and overseas sources for '+armoryRequest.itemName+'…';render();
+    try{
+      armorySources=await service.procurementSourceOptions(armoryRequest.itemId,armoryRequest.itemName);
+      state=armorySources?.state||await core.readLegacyState();
+      statusText=armorySources?.sources?.length
+        ?'Source comparison ready for '+armoryRequest.itemName+'. Final purchase remains manual.'
+        :'No live source is currently cached/available for '+armoryRequest.itemName+'.';
+    }catch(error){statusText='Source comparison failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  async function routeArmoryRequest(preferredSource='Best'){
+    if(!armoryRequest||busy)return;
+    busy=true;statusText='Verifying '+preferredSource+' source for '+armoryRequest.itemName+'…';render();
+    try{
+      const result=await service.routeProcurementRequest({...armoryRequest,preferredSource});
+      armorySources=result;
+      if(result?.routed){
+        statusText='Verified '+result.source+' source for '+armoryRequest.itemName+'. Complete the purchase manually on Torn.';
+        return;
+      }
+      if(result?.reason==='overseas-recommended'){
+        activeView='travel';
+        statusText='Overseas is the selected source: '+String(result.country||'destination')+' · '+money(result.price||0)+' · stock '+Number(result.stock||0).toLocaleString()+'. Travel/purchase remains manual.';
+      }else if(result?.reason==='preferred-source-unavailable'){
+        statusText=preferredSource+' is not currently available for '+armoryRequest.itemName+'. Compare Sources for alternatives.';
+      }else if(result?.reason==='item-id-unresolved'){
+        statusText='Could not resolve a Torn item ID for '+armoryRequest.itemName+'.';
+      }else{
+        statusText='Could not route '+armoryRequest.itemName+': '+String(result?.reason||'no live source')+'.';
+      }
+    }catch(error){statusText='Armory procurement routing failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function installChannel(){
+    if(typeof BroadcastChannel==='undefined'||channel)return;
+    try{
+      channel=new BroadcastChannel(CHANNEL);
+      channel.addEventListener('message',event=>{
+        if(event?.data?.type!=='armory-acquisition-request')return;
+        armoryRequest={...(event.data.payload||{})};
+        armorySources=null;
+        activeView=String(armoryRequest.preferredSource||'').toLowerCase()==='overseas'?'travel':'deals';
+        open();
+        statusText='Faction Armory requested '+String(armoryRequest.itemName||'item')+' x'+Number(armoryRequest.qty||1).toLocaleString()+'. Comparing sources…';
+        render();
+        setTimeout(refreshArmorySources,80);
+      });
+    }catch(error){console.warn('[MM_Acquisitions] channel unavailable',error);}
+  }
+
   function dealsHtml(){
     if(!state)return card('<b>No cached market state available.</b>');
     const rows=logic.rankCachedOpportunities(state);
     const buyable=rows.filter(r=>r.purchaseReady).slice(0,12);
     const research=rows.filter(r=>!r.purchaseReady).slice(0,8);
 
-    return card(
+    return armoryRequestHtml()+card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
         '<div><b>Profit Opportunities</b><div style="font-size:10px;color:#888;">ROI + sell-through + profit velocity. Purchase routing always re-verifies first.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-reload" style="'+button()+'">Reload Cache</button><button id="mm-acq-sync-purchases" '+(busy?'disabled':'')+' style="'+button()+'">Sync Purchases</button><button id="mm-acq-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Opportunities</button></div>'+
@@ -507,7 +589,7 @@
     const rows=logic.rankCachedTravel(state).slice(0,20);
     const feed=readTravelFeed();
     const captureAge=feed?.capturedAt?age(new Date(Number(feed.capturedAt)).toISOString()):'none';
-    return card(
+    return armoryRequestHtml()+card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
         '<div><b>Travel Acquisition</b><div style="font-size:10px;color:#888;">TornW3B live stock/profit stays in Acquisitions; deeper forecast analytics move to BI.</div></div>'+
         '<div style="display:flex;gap:5px;"><button id="mm-acq-travel-import" style="'+button()+'">Import Capture</button><button id="mm-acq-travel-update" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Update Travel</button></div>'+
@@ -562,7 +644,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.6 · ACQUIRE / VERIFY / LEDGER</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.7 · ACQUIRE / VERIFY / LEDGER</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -596,6 +678,9 @@
       render();
     }));
     root.querySelectorAll('[data-acquire-item]').forEach(b=>b.addEventListener('click',()=>acquire(b.dataset.acquireItem)));
+    root.querySelector('#mm-acq-armory-refresh')?.addEventListener('click',refreshArmorySources);
+    root.querySelector('#mm-acq-armory-clear')?.addEventListener('click',()=>{armoryRequest=null;armorySources=null;statusText='Faction Armory acquisition request cleared.';render();});
+    root.querySelectorAll('[data-armory-route]').forEach(b=>b.addEventListener('click',()=>routeArmoryRequest(b.dataset.armoryRoute||'Best')));
     root.querySelector('#mm-acq-save-key')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-acq-api')?.value||'').trim();
       if(value)GM_setValue(API_KEY,value);
@@ -663,6 +748,7 @@
     installTravelCollector();
     return;
   }
-  if(document.body)createLauncher();
-  else window.addEventListener('DOMContentLoaded',createLauncher,{once:true});
+  function initializeAcquisitions(){createLauncher();installChannel();}
+  if(document.body)initializeAcquisitions();
+  else window.addEventListener('DOMContentLoaded',initializeAcquisitions,{once:true});
 })();
