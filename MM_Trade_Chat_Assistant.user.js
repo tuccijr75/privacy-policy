@@ -33,7 +33,7 @@
     'mm-market-scout',
   ];
   const core = globalThis.MMTornCore;
-  const MESSAGE_SET_REV = 'symbolic-contact-v2';
+  const MESSAGE_SET_REV = 'symbolic-contact-v3';
 
   const MODES = {
     busy:   { label: 'Busy 5–8 min',  min: 5,  max: 8 },
@@ -42,10 +42,10 @@
   };
 
   const DEFAULT_MESSAGES = [
-    '⚙️ <b>MM TORN SYSTEMS</b> | 🧰 Custom 50M+ • Repairs 25M+ | Bazaar • API | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
-    '💰 <b>MM TORN SYSTEMS</b> | 📈 Bazaar • ROI • Procurement • CRM | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
-    '🛡️ <b>MM TORN SYSTEMS</b> | ⚔️ Armory • Builds • War Prep • API | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
-    '📱 <b>MM TORN SYSTEMS</b> | 🔌 TornPDA • Desktop • API • Analytics | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
+    '⚙️ <b>MM TORN SYSTEMS</b> | 🧰 Custom 50M+ • Repairs 25M+ | Bazaar | DM: <a href="/profiles.php?XID=4325346">MANIC-MIKE</a>',
+    '💰 <b>MM TORN SYSTEMS</b> | 📈 Bazaar • ROI • Procurement | 50M+ | DM: <a href="/profiles.php?XID=4325346">MANIC-MIKE</a>',
+    '🛡️ <b>MM TORN SYSTEMS</b> | ⚔️ Armory • Builds • War Prep | 50M+ | DM: <a href="/profiles.php?XID=4325346">MANIC-MIKE</a>',
+    '📱 <b>MM TORN SYSTEMS</b> | 🔌 TornPDA • PC • API • Analytics | 50M+ | DM: <a href="/profiles.php?XID=4325346">MANIC-MIKE</a>',
     '📌 <b>MM TORN SYSTEMS</b> | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO + CONTACT</a> | 50M+ Custom • 25M+ Repairs',
   ];
 
