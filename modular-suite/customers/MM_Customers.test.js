@@ -11,4 +11,16 @@ const q=logic.couponQualification(db,coupon,now);assert.strictEqual(q.qualified,
 const refund=logic.createRefund(db,'123',new Date(now).toISOString());assert.strictEqual(refund.status,'pending');
 logic.completeRefund(db,refund.id,new Date(now+1000).toISOString());assert.strictEqual(db.coupons['123'].uses,1);
 logic.subscribeCustomer(db,'123');assert.strictEqual(logic.currentBazaarRows(db,db.subscribers['123']).length,1);
-console.log('MM_Customers logic tests: PASS');
+
+const userSrc=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
+assert.doesNotThrow(()=>new Function(userSrc));
+assert(userSrc.includes("const VERSION='8.0.0-alpha.2';"));
+assert(userSrc.includes("const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';"));
+assert(userSrc.includes('function brandedMessageHtml'));
+assert(userSrc.includes('function fillMessageComposer'));
+assert(userSrc.includes('bodyHtml:brandedMessageHtml'));
+assert(userSrc.includes('data-restock-sent'));
+assert(userSrc.includes('data-restock-dismiss'));
+assert(!userSrc.includes('navigator.clipboard'));
+assert(!userSrc.includes('copyAndOpenMessage'));
+console.log('MM_Customers logic + composer regression tests: PASS');
