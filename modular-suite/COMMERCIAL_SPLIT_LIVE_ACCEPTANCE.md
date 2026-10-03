@@ -222,6 +222,13 @@ Current stale ranked examples:
 - **UX / DIAGNOSTIC GAP** — result messaging gives checked/imported/rejected counts but not the actual coverage window (for example “last 72h”) or oldest/newest fetched sale. The user cannot tell whether 30-day metrics are fully backed by this module's own refresh.
 - **PENDING LIVE IDEMPOTENCE** — repeat Refresh Sales once with no intervening sale; expected result is 0 new with the same/near-same checked count.
 
+
+### MM_Inventory Manager/ROI Tracker live idempotence recheck
+- **PASS** — immediate repeat Refresh Sales returned `0 new · 77 checked`.
+- **PASS** — 30D revenue remained $199,923,150, 30D gross remained $52,021, realized ROI remained 13.7%, and acquisition lots remained 204.
+- **PASS** — no duplicate-sale inflation was observed in the live UI; sales freshness advanced normally.
+- **PASS** — live behavior matches the idempotent import contract already covered by logic fixtures.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
