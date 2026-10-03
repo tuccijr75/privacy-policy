@@ -35,6 +35,7 @@
   const AUTO_SYNC_MS=60_000;
   const AUTO_SYNC_STALE_MS=45_000;
   const NAME_REPAIR_BATCH=12;
+  const PENDING_COMPOSE_TTL_MS=30*60*1000;
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornCustomersLogic;
@@ -348,7 +349,7 @@
     const payload={playerId:id,subject:String(subject||''),body:String(body||''),bodyHtml:String(bodyHtml||''),createdAt};
     GM_setValue(PENDING_COMPOSE_KEY,payload);
     if(options?.kind){
-      GM_setValue(PENDING_SEND_KEY,{playerId:id,subject:payload.subject,kind:String(options.kind),createdAt,noticeId:options.noticeId||null,state:'awaiting-send'});
+      GM_setValue(PENDING_SEND_KEY,{playerId:id,subject:payload.subject,body:payload.body,bodyHtml:payload.bodyHtml,kind:String(options.kind),createdAt,noticeId:options.noticeId||null,state:'awaiting-send'});
     }else GM_deleteValue(PENDING_SEND_KEY);
     statusText='Opening Torn composer with the prepared message. Sending remains manual.';
     render();
@@ -503,8 +504,15 @@
   function composePayloadForCurrentPage(){
     const params=getComposeParams(),xid=String(params.get('XID')||params.get('xid')||'').trim(),pending=GM_getValue(PENDING_COMPOSE_KEY,null);
     if(pending&&typeof pending==='object'){
-      if(Date.now()-Number(pending.createdAt||0)>5*60*1000)GM_deleteValue(PENDING_COMPOSE_KEY);
+      if(Date.now()-Number(pending.createdAt||0)>PENDING_COMPOSE_TTL_MS)GM_deleteValue(PENDING_COMPOSE_KEY);
       else{const pendingId=String(pending.playerId||'').trim();if(!xid||!pendingId||xid===pendingId)return {playerId:pendingId||xid,subject:String(pending.subject||''),body:String(pending.body||''),bodyHtml:String(pending.bodyHtml||'')};}
+    }
+    const tracked=GM_getValue(PENDING_SEND_KEY,null);
+    if(tracked&&typeof tracked==='object'&&Date.now()-Number(tracked.createdAt||0)<=PENDING_COMPOSE_TTL_MS){
+      const trackedId=String(tracked.playerId||'').trim();
+      if((!xid||!trackedId||xid===trackedId)&&tracked.bodyHtml){
+        return {playerId:trackedId||xid,subject:String(tracked.subject||''),body:String(tracked.body||''),bodyHtml:String(tracked.bodyHtml||'')};
+      }
     }
     const urlSubject=params.get('subject'),urlBody=params.get('body');
     return urlSubject!==null||urlBody!==null?{playerId:xid,subject:urlSubject||'',body:urlBody||'',bodyHtml:''}:null;
