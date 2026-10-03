@@ -584,10 +584,7 @@
         GM_deleteValue(PENDING_COMPOSE_KEY);
       }
     }
-    const urlSubject=params.get('subject'),urlBody=params.get('body');
-    return urlSubject!==null||urlBody!==null
-      ? {composeId:'',playerId:xid,recipientName:'',subject:urlSubject||'',body:urlBody||'',bodyHtml:'',createdAt:0}
-      : null;
+    return null;
   }
 
   function elementMeta(element){
