@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.7
+// @version      0.1.0-alpha.8
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems. Reminds, rotates, and pre-fills; never sends automatically.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -41,11 +41,11 @@
   };
 
   const ROTATION_MESSAGES = Object.freeze([
-    '⚙ <b>MM TORN SYSTEMS</b> | 🧰 Custom 50M+ • Repair 25M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
-    '💰 <b>MM TORN SYSTEMS</b> | 📈 Bazaar • ROI • Procure | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
-    '🛡 <b>MM TORN SYSTEMS</b> | ⚔ Armory • Builds • War | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
-    '📱 <b>MM TORN SYSTEMS</b> | 🔌 TornPDA • API • Data | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
-    '📌 <b>MM TORN SYSTEMS</b> | 50M+ Custom • 25M+ Repair | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO + CONTACT</a>',
+    '<b>[*] MM TORN SYSTEMS</b> | Custom 50M+ • Repair 25M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
+    '<b>[$] MM TORN SYSTEMS</b> | Bazaar • ROI • Procure | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
+    '<b>[+] MM TORN SYSTEMS</b> | Armory • Builds • War | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
+    '<b>[@] MM TORN SYSTEMS</b> | TornPDA • API • Data | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
+    '<b>[i] MM TORN SYSTEMS</b> | 50M+ Custom • 25M+ Repair | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO + CONTACT</a>',
   ]);
 
   const loadState = () => {
