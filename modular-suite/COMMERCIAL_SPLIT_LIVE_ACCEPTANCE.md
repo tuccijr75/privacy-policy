@@ -211,6 +211,17 @@ Current stale ranked examples:
 - **MISSING FEATURE** — no aggregate cost-coverage tile accompanies the realized-profit headline, making partial FIFO coverage easy to misread as complete profitability.
 - **UX GAP** — status “Bazaar OK · Inventory OK” reports transport success rather than usable-data success; semantic validation is required.
 
+
+### MM_Inventory Manager/ROI Tracker Refresh Sales live findings
+- **PASS** — live sales refresh completed without visible error: 77 log rows checked, 2 new sales imported, no rejected count shown.
+- **PASS** — sales freshness updated immediately from `never` to current.
+- **PASS** — shared sales import changed 30D revenue coherently from $199,919,052 to $199,923,150 (+$4,098).
+- **PASS** — Inventory/ROI sale import is relationship-neutral: code only inserts sale records plus Inventory/ROI refresh metadata and does not create/recalculate customer, coupon, refund, or subscriber records.
+- **CORRECTNESS / SCOPE GAP CONFIRMED LIVE** — 30D gross stayed $52,021 and realized ROI stayed 13.7% while 30D revenue increased. This demonstrates that the three headline metrics can react to different SKU populations / cost-basis coverage and should not be presented as directly comparable business-wide totals without explicit scope/coverage labeling.
+- **COVERAGE DEFECT CONFIRMED** — refresh checked only the configured 72-hour lookback even though the module presents 7-day/30-day sales velocity and 30-day profitability. Existing shared history masks this on the current profile, but a fresh state would be incomplete.
+- **UX / DIAGNOSTIC GAP** — result messaging gives checked/imported/rejected counts but not the actual coverage window (for example “last 72h”) or oldest/newest fetched sale. The user cannot tell whether 30-day metrics are fully backed by this module's own refresh.
+- **PENDING LIVE IDEMPOTENCE** — repeat Refresh Sales once with no intervening sale; expected result is 0 new with the same/near-same checked count.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
