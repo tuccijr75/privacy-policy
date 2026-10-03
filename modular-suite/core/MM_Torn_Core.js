@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.6';
+  const CORE_VERSION = '8.0.0-alpha.7';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -343,7 +343,7 @@
   }
 
   function visibleBottomToolbarCandidate(){
-    const entries=[...document.querySelectorAll('a,button,[role="button"]')]
+    const rawEntries=[...document.querySelectorAll('a,button,[role="button"]')]
       .filter(node=>node instanceof HTMLElement)
       .filter(node=>!node.closest('#'+DOCK_ID)&&!node.matches('[data-mm-dock-id]')&&!node.classList.contains('mm-torn-floating-btn'))
       .map(node=>({node,r:node.getBoundingClientRect()}))
@@ -358,11 +358,27 @@
         return cs.display!=='none'&&cs.visibility!=='hidden'&&Number(cs.opacity||1)>0;
       });
 
+    // Torn can expose both a visual control and a nested/overlaid button-like
+    // element for the same footer icon. Collapse nearly identical geometry so
+    // duplicate accessibility wrappers cannot split or outweigh the real row.
+    const entries=[];
+    for(const entry of rawEntries){
+      const duplicate=entries.some(existing=>
+        Math.abs(existing.r.left-entry.r.left)<=2&&
+        Math.abs(existing.r.top-entry.r.top)<=2&&
+        Math.abs(existing.r.width-entry.r.width)<=3&&
+        Math.abs(existing.r.height-entry.r.height)<=3
+      );
+      if(!duplicate)entries.push(entry);
+    }
+
     if(entries.length<4)return null;
 
     // Torn's footer icons are not consistently inside a fixed/sticky parent.
     // Cluster the actual visible controls by their bottom edge, then choose
-    // the largest horizontally contiguous row nearest the viewport bottom.
+    // the horizontally contiguous row nearest the viewport bottom. Bottom
+    // proximity outranks row length so an upper action strip cannot steal the
+    // dock merely because it exposes more nested controls.
     const byBottom=entries.slice().sort((a,b)=>a.r.bottom-b.r.bottom);
     const bands=[];
     for(const entry of byBottom){
@@ -403,9 +419,9 @@
           firstRect:first.r,
           rowTop,
           rowBottom,
+          bottomDistance:Math.abs(window.innerHeight-rowBottom),
           nativeGap:clamp(nativeGap,2,8),
-          nativeHeight,
-          score:controls.length*100-Math.abs(window.innerHeight-rowBottom)*4-Math.abs(nativeHeight-42)
+          nativeHeight
         });
         run=[];
       };
@@ -419,7 +435,12 @@
       flush();
     }
 
-    return candidates.sort((a,b)=>b.score-a.score)[0]||null;
+    return candidates.sort((a,b)=>
+      a.bottomDistance-b.bottomDistance||
+      b.controls.length-a.controls.length||
+      Math.abs(a.nativeHeight-42)-Math.abs(b.nativeHeight-42)||
+      b.r.right-a.r.right
+    )[0]||null;
   }
 
   function launcherRect(node,rect=null){
@@ -526,7 +547,7 @@
 
     if(native){
       const first=native.firstRect;
-      const gap=LAUNCHER_SNAP_GAP;
+      const gap=clamp(Number(native.nativeGap)||LAUNCHER_SNAP_GAP,2,8);
       const desiredLeft=first.left-dock.offsetWidth-gap;
       const desiredTop=(native.rowBottom??first.bottom)-dock.offsetHeight;
 
