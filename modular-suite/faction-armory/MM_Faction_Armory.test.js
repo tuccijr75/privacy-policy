@@ -236,3 +236,12 @@ assert.strictEqual(snapState2.eventsAdded,1);
 assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 
 console.log('MM Faction Armory logic tests: PASS');
+const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
+new Function(userSource);
+assert(userSource.includes("const VERSION='8.0.0-alpha.12';"));
+assert(userSource.includes('async function autoRefreshArmory'));
+assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
+assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
+assert(userSource.includes('if(!vaultSession?.key)return []'));
+assert(userSource.includes('nextUsefulRefreshAt'));
+console.log('MM Faction Armory automation regression: PASS');
