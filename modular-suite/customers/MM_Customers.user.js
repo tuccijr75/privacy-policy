@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.9
+// @version      8.0.0-alpha.10
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.9';
+  const VERSION='8.0.0-alpha.10';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -582,9 +582,12 @@
     const docs=[document];
     if(rich?.ownerDocument&&rich.ownerDocument!==document)docs.push(rich.ownerDocument);
     const hasBanner=docs.some(doc=>[...doc.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL)));
-    const hasStructure=docs.some(doc=>[...doc.querySelectorAll('table')].some(table=>String(table.innerText||table.textContent||'').includes('RESTOCK ALERTS')||String(table.innerText||table.textContent||'').includes('CASHBACK TIERS')));
+    const hasTable=Boolean(rich?.querySelector?.('table'))||docs.some(doc=>[...doc.querySelectorAll('table')].some(table=>visible(table)||table.ownerDocument!==document));
     const text=String(rich?.innerText||rich?.textContent||'');
-    return Boolean((hasBanner&&hasStructure)||(hasStructure&&/MANIC'S MAD HOUSE|RESTOCK ALERTS|CASHBACK TIERS/.test(text)));
+    const hasBrandedText=/MANIC'S MAD HOUSE|CASHBACK REMINDER|QUALIFYING PURCHASE|YOUR CASHBACK|SEND YOUR COUPON|RESTOCK ALERTS|CASHBACK TIERS/.test(text);
+    // Verification must be template-agnostic. Cashback reminders intentionally
+    // do not contain the Welcome/Restock headings used by earlier templates.
+    return Boolean((hasBanner&&hasTable)||(hasTable&&hasBrandedText));
   }
 
   async function waitForSourceEditor(before=new Set(),timeoutMs=4000){
@@ -629,41 +632,63 @@
     return waitForRichBranding(2200);
   }
 
+  function composeFormattingNotice(text,kind='waiting'){
+    let box=document.getElementById('mm-cu-compose-format-status');
+    if(!box){
+      box=document.createElement('div');box.id='mm-cu-compose-format-status';
+      box.style.cssText='position:fixed;right:12px;bottom:68px;z-index:2147483647;max-width:420px;padding:8px 10px;border-radius:6px;font:12px Arial,sans-serif;box-shadow:0 5px 18px #0009;';
+      document.body.appendChild(box);
+    }
+    box.style.background=kind==='error'?'#4a1717':'#17313a';
+    box.style.border='1px solid '+(kind==='error'?'#a34a4a':'#397d8d');
+    box.style.color='#f3f3f3';
+    box.textContent=String(text||'');
+  }
+
+  function clearComposeFormattingNotice(){document.getElementById('mm-cu-compose-format-status')?.remove();}
+
   async function fillMessageComposer(){
     if(!location.pathname.includes('messages.php'))return;
     const payload=composePayloadForCurrentPage();if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
     let attempts=0,richFailures=0,observer=null,timer=null,inFlight=false,finished=false;
-    const stop=(success,rich=true)=>{finished=true;if(timer)clearInterval(timer);if(observer)observer.disconnect();if(success){GM_deleteValue(PENDING_COMPOSE_KEY);statusText=rich?'Message prepared in Torn composer with branded formatting. Send remains manual.':'Message prepared in Torn composer as plain text fallback after rich-editor retries failed. Send remains manual.';}};
+    const requiresBranding=Boolean(payload.bodyHtml);
+    const stop=(success,rich=true)=>{
+      finished=true;if(timer)clearInterval(timer);if(observer)observer.disconnect();
+      if(success){
+        GM_deleteValue(PENDING_COMPOSE_KEY);clearComposeFormattingNotice();
+        statusText=rich?'Message prepared in Torn composer with branded formatting. Send remains manual.':'Message prepared in Torn composer. Send remains manual.';
+      }else if(requiresBranding){
+        statusText='Branded formatting is not ready. Draft was NOT downgraded to plain text.';
+        composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry branded formatting.','error');
+      }
+    };
     const tryFill=async()=>{
       if(finished||inFlight)return false;inFlight=true;attempts++;
       try{
         const subject=findComposeSubjectInput();let subjectOK=false;
         if(subject){setNativeValue(subject,payload.subject);await sleepMs(25);subjectOK=String(subject.value||'').trim()===String(payload.subject||'').trim();}
-        let bodyOK=false,rich=Boolean(payload.bodyHtml);
+        let bodyOK=false,rich=requiresBranding;
 
-        if(payload.bodyHtml){
+        if(requiresBranding){
           bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml);
           if(!bodyOK){
             richFailures++;
             const body=findComposeRichEditorBody();
-            if(body)bodyOK=setEditorContent(body,payload.body,payload.bodyHtml)&&await waitForRichBranding(900);
+            if(body)bodyOK=setEditorContent(body,payload.body,payload.bodyHtml)&&await waitForRichBranding(1200);
           }
-          // A transient editor timing miss must not immediately downgrade the
-          // message to plain text. Retry branded composition first.
-          if(!bodyOK&&richFailures<3){
+          if(!bodyOK){
             statusText='Waiting for Torn rich editor… branded message will retry automatically.';
-            render();
+            composeFormattingNotice('Preparing branded message… do not send until this notice disappears.');
+            if(attempts>=40){stop(false,true);return false;}
             return false;
           }
-        }
-
-        if(!bodyOK){
-          rich=false;
+        }else{
           const body=findComposeBodyInput(subject)||findComposeRichEditorBody();
           if(body)bodyOK=setEditorContent(body,payload.body,'');
         }
+
         if(subjectOK&&bodyOK){stop(true,rich);return true;}
-        if(attempts>=40)stop(false,false);
+        if(attempts>=40)stop(false,rich);
         return false;
       }finally{inFlight=false;}
     };
