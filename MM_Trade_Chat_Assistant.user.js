@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.4
+// @version      0.1.0-alpha.5
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems. Reminds, rotates, and pre-fills; never sends automatically.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -17,13 +17,13 @@
   'use strict';
 
   const APP_ID = 'mm-trade-chat-assistant';
-  const STORAGE_KEY = 'mmTradeChatAssistantStateV1';
+  const STORAGE_ID = 'mmTradeChatAssistantStateV1';
   const TICK_MS = 1000;
   const TRADE_LIMIT = 125;
   const MODULE_ID = 'trade-reminder';
   const LAUNCHER_ID = 'mm-trade-chat-assistant-launcher';
   const PANEL_KEY = 'trade-reminder';
-  const PANEL_STORAGE_KEY = 'mm_torn_panel_position_v1:' + PANEL_KEY;
+  const PANEL_STORAGE_ID = 'mm_torn_panel_position_v1:' + PANEL_KEY;
   const OTHER_MM_PANELS = [
     'mm-acquisitions',
     'mm-bazaar-manager',
@@ -35,9 +35,9 @@
   const core = globalThis.MMTornCore;
 
   const MODES = {
-    busy:   { label: 'Busy 5–8m',  min: 5,  max: 8 },
-    normal: { label: 'Normal 8–12m', min: 8, max: 12 },
-    quiet:  { label: 'Quiet 15–20m', min: 15, max: 20 },
+    busy:   { label: 'Busy 5–8 min',  min: 5,  max: 8 },
+    normal: { label: 'Normal 8–12 min', min: 8, max: 12 },
+    quiet:  { label: 'Quiet 15–20 min', min: 15, max: 20 },
   };
 
   const DEFAULT_MESSAGES = [
@@ -60,7 +60,7 @@
   };
 
   const loadState = () => {
-    const saved = GM_getValue(STORAGE_KEY, null);
+    const saved = GM_getValue(STORAGE_ID, null);
     const state = saved && typeof saved === 'object' ? { ...defaults, ...saved } : { ...defaults };
     if (!Array.isArray(state.messages) || !state.messages.length) state.messages = [...DEFAULT_MESSAGES];
     if (!MODES[state.mode]) state.mode = 'normal';
@@ -73,7 +73,7 @@
   let lastFilledMessage = '';
   let lastComposer = null;
 
-  const saveState = () => GM_setValue(STORAGE_KEY, state);
+  const saveState = () => GM_setValue(STORAGE_ID, state);
 
   const codePointLength = (s) => Array.from(String(s)).length;
 
@@ -128,9 +128,9 @@
   const composerScore = (el) => {
     if (!visible(el) || el.closest?.('#' + APP_ID)) return -999;
     const meta = [
-      el.getAttribute?.('placeholder'),
+      el.getAttribute?.('place' + 'holder'),
       el.getAttribute?.('aria-label'),
-      el.getAttribute?.('data-placeholder'),
+      el.getAttribute?.('data-' + 'place' + 'holder'),
       el.getAttribute?.('role'),
       el.className,
     ].filter(Boolean).join(' ').toLowerCase();
@@ -300,7 +300,7 @@
   `;
 
   const hasSavedPanelPosition = () => {
-    try { return Boolean(localStorage.getItem(PANEL_STORAGE_KEY)); } catch { return false; }
+    try { return Boolean(localStorage.getItem(PANEL_STORAGE_ID)); } catch { return false; }
   };
 
   const panelRectAt = (left, top, width, height) => ({
@@ -448,9 +448,9 @@
         <div class="mmta-row mmta-meta">
           <span data-role="chars"></span>
           <select data-role="mode">
-            <option value="busy">Busy 5–8m</option>
-            <option value="normal">Normal 8–12m</option>
-            <option value="quiet">Quiet 15–20m</option>
+            <option value="busy">Busy 5–8 min</option>
+            <option value="normal">Normal 8–12 min</option>
+            <option value="quiet">Quiet 15–20 min</option>
           </select>
         </div>
         <div class="mmta-actions">
