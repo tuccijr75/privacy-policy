@@ -1237,8 +1237,10 @@ Verification:
 - updated MM_Customers test suite executes successfully in an isolated V8 harness, including syntax, delivery-safety, rich-composer, source-editor, cashback, recipient-routing, and stale-session regression assertions.
 
 Implementation checkpoints on patch branch:
-- recipient-aware composer: `f181cd701f4fedc8ee12eecb0304fd9a1bbe2814`
-- compose regression updates: `9236aedae4260ae2130c5cd4bceaa91572478e8f`
+- recipient-aware composer foundation: `f181cd701f4fedc8ee12eecb0304fd9a1bbe2814`
+- stale-route/session abort hardening: `87772b1e421624f5d396638d580ea904cfcea2fb`
+- rich-editor direct-innerHTML fallback removal: `eecf9423773409e1306c263547ec2ad4102d2317`
+- compose regression assertions: `5bac0928322fe9be92a62777592729ff91d5393f`
 - suite manifest alpha.32 / Customers alpha.15: `6d6ee243eaf4c641318842ccce74061351ced8e5`
 
 **PENDING LIVE RETEST**:
