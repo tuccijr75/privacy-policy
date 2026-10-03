@@ -277,8 +277,8 @@
     let result=null;
     await updateCustomerState(draft=>{result=logic.importSalesEntries(draft,rows);return draft;});
     const newCustomerIds=Object.keys(state?.customers||{}).filter(id=>!beforeIds.has(id));
-    const repaired=await resolveMissingUsernames(USERNAME_RESOLVE_BATCH);
-    return {...result,newCustomers:newCustomerIds.length,resolvedNames:repaired};
+    const resolved=await resolveMissingUsernames(USERNAME_RESOLVE_BATCH);
+    return {...result,newCustomers:newCustomerIds.length,resolvedNames:resolved};
   }
 
   function newCustomerRows(){
