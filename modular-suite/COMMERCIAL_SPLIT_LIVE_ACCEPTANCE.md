@@ -255,6 +255,30 @@ Findings:
 - **EFFECTIVENESS GAP** — `HEALTHY` is based on meeting a minimum target, not a bounded days-of-supply range; it therefore cannot distinguish appropriately stocked from materially overstocked slow sellers.
 - **EFFECTIVENESS GAP / PRICING** — planned price is the current Bazaar listing price when one exists, otherwise historical average sold price. The inventory/listing module does not compare that price with current market/Bazaar competitors, so “PLAN PRICE” is not yet market-aware listing guidance.
 
+
+### MM_Inventory Manager/ROI Tracker ATM Key overstock reconciliation
+Live expanded ATM Key row:
+- Bazaar qty 24 @ $230,999
+- Personal qty 0 (subject to known unavailable-inventory defect)
+- Sold 7d 1 / sold 30d 1 (~0.033/day)
+- 3D target 1
+- Add 0
+- Recent avg $231,999
+- Plan price $230,999
+- FIFO avg cost $200,000
+- Current ROI 15.5%
+- 30D gross $31,999
+- 30D ROI 16.0%
+- Cost coverage 100%
+
+Findings:
+- **PASS** — current ROI reconciles: ($230,999 - $200,000) / $200,000 ≈ 15.5%.
+- **PASS** — realized gross/ROI reconcile for the one covered sale: $231,999 - $200,000 = $31,999 gross, or ~16.0% ROI.
+- **CONFIRMED EFFECTIVENESS DEFECT** — `HEALTHY` is materially wrong as a stock-health label here. At 1 sale / 30 days, 24 listed units represent about **720 days of supply** using the module's own 30-day velocity.
+- **CONFIRMED EFFECTIVENESS DEFECT** — the module's target is 1 while 24 are listed, yet it exposes no excess-stock quantity, days-of-supply, overstock warning, or reduce/reprice action. By its own target, approximately 23 units are above target.
+- **UX / DECISION GAP** — ROI is positive, which can visually conflict with the far more important inventory-turn problem. Stock health and margin health need separate labels so “profitable” does not imply “healthy inventory.”
+- **PRICING GAP** — current own listing is $1,000 below the recent own-sale average, but no current competitive market context is shown, so the user cannot tell whether repricing would improve turnover without unnecessarily sacrificing margin.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
