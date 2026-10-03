@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Inventory Manager/ROI Tracker
 // @namespace    manic-mike.torn.inventory-roi
-// @version      8.0.0-alpha.1
+// @version      8.0.0-alpha.2
 // @description  Dedicated personal inventory, Bazaar listing guidance, sales velocity and FIFO ROI tracking.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.1';
+  const VERSION='8.0.0-alpha.2';
   const ROOT_ID='mm-inventory-roi';
   const LAUNCHER_ID='mm-inventory-roi-launcher';
   const STYLE_ID='mm-inventory-roi-style';
@@ -225,7 +225,7 @@
     area.select();let ok=false;try{ok=document.execCommand('copy');}catch{}area.remove();return ok;
   }
 
-  async         function inventoryHtml(){
+  function inventoryHtml(){
     const slice=state||{};logic.ensureInventorySlice(slice);
     const bm=slice.operations?.inventoryRoi||{};const rows=logic.inventoryRoiRows(slice);const sales=Object.values(slice.sales||{});
     const revenue30=sales.filter(s=>n(s.timestamp)>=Date.now()-30*86400000).reduce((sum,s)=>sum+n(s.total),0);
