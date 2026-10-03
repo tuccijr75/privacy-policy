@@ -3,7 +3,7 @@ const sandbox={globalThis:{}};vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(__dirname+'/MM_Customers.logic.js','utf8'),sandbox,{filename:'MM_Customers.logic.js'});
 const logic=sandbox.globalThis.MMTornCustomersLogic;assert(logic);
 const now=Date.now();
-const db=logic.ensureBazaarSlice({operations:{inventoryRoi:{listings:{26:{id:'26',name:'AK-47',quantity:2,price:12000}}}}});
+const db=logic.ensureCustomerSlice({operations:{inventoryRoi:{listings:{26:{id:'26',name:'AK-47',quantity:2,price:12000}}}}});
 const imported=logic.importSalesEntries(db,[{id:'sale-1',timestamp:Math.floor((now-1000)/1000),details:{id:1226},data:{buyer:{id:123,name:'Buyer'},item_id:26,item_name:'AK-47',quantity:1,cost_total:60000}}]);
 assert.strictEqual(imported.imported,1);assert.strictEqual(db.customers['123'].spent,60000);
 const coupon=logic.issueCoupon(db,'123',new Date(now-2000).toISOString());
