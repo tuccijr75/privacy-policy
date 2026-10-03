@@ -57,6 +57,17 @@ Run in this order so ROI has cost data before evaluation:
 9. Verify existing customers/coupons/refunds, one welcome/coupon flow, one cashback flow and one restock alert.
 10. Verify all three dock launchers can independently move/dock and all three panels can independently move/reset.
 
+## Live quality rubric
+
+Every replacement module must be evaluated on four dimensions, not just whether controls execute:
+
+1. **Functional correctness** — actions complete, data is accurate/current enough, state is preserved, and failures are safe.
+2. **Usability / friction** — the normal task should be obvious, require the fewest practical clicks, avoid redundant sync/reload controls, and explain stale/error states in plain language.
+3. **Job effectiveness** — the module must materially accomplish its declared job (for example, Acquisitions must surface actionable profitable purchases, not merely display market data).
+4. **Coverage / missing features** — record missing information, controls, automation, routing, filters, diagnostics, or workflow steps that materially improve the job. A feature being present does not count as a pass if it is confusing, low-value, or produces weak recommendations.
+
+For each live module classify findings as **PASS**, **DEFECT**, **UX FRICTION**, **EFFECTIVENESS GAP**, or **MISSING FEATURE**. Customer-visible changes remain a separate implementation/approval step unless they are required to repair a blocking defect.
+
 ## Live progress — 2026-10-03
 
 Confirmed on an authenticated Torn page while traveling:
@@ -72,6 +83,15 @@ Confirmed on an authenticated Torn page while traveling:
 - [ ] MM_Inventory Manager/ROI Tracker panel/data checks.
 - [ ] MM_Customers panel/data/workflow checks.
 - [ ] Dock/undock + panel movement acceptance.
+
+### MM_Acquisitions initial product/UX findings
+- **PASS** — panel opens on an authenticated Torn page while traveling and exposes Deals / Travel / Settings.
+- **PASS** — source freshness is visible: Weav3r, Item Market, Travel, purchase-ledger age/count, Torn-key state, and watcher state.
+- **PASS** — existing purchase ledger is preserved and visible (200 lots at first inspection).
+- **UX FRICTION** — three competing maintenance actions are presented together: Reload Cache, Sync Purchases, Refresh Opportunities. This conflicts with the intended task-first workflow and makes the user decide which prerequisite to run.
+- **EFFECTIVENESS GAP** — zero buyable deals is shown only as “No current cached opportunity meets the active business rules.” The panel does not identify which rules or evidence rejected candidates, so the user cannot tell whether there are genuinely no profitable deals, data is stale, or thresholds are too restrictive.
+- **UX FRICTION** — freshness indicators report ages but do not translate them into a recommended next action (current / stale / refresh needed).
+- **PENDING** — inspect the 8 research leads for reject reasons, ranking quality, price freshness, ROI, sell-through evidence, and purchase routing.
 
 ## Acceptance invariants
 
