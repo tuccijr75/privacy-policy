@@ -115,6 +115,7 @@ Do not merge until the alpha.17 branch is accepted for merge. After merge/instal
 
 1. Prepare a Welcome/Message from MM_Customers.
 2. Confirm Torn loads the correct Name, Subject, and full branded body on the first Compose page.
-3. Navigate to Outbox, then open a new generic Compose page and confirm MM_Customers does nothing to it.
-4. Repeat the original-compose test for Coupon Reminder, Cashback Reminder, and Restock Alert.
-5. Confirm customer/contact/coupon/restock state changes only after a real manual Send is confirmed by Torn.
+3. Repeat the original-compose test for Coupon Reminder, Cashback Reminder, and Restock Alert.
+4. Confirm customer/contact/coupon/restock state changes only after a real manual Send is confirmed by Torn.
+
+Outbox/recovery navigation is explicitly out of scope for alpha.17 acceptance.
