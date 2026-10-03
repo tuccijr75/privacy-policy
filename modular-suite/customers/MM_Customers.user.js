@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.15
+// @version      8.0.0-alpha.16
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.15';
+  const VERSION='8.0.0-alpha.16';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -37,10 +37,11 @@
   const AUTO_SYNC_STALE_MS=45_000;
   const NAME_REPAIR_BATCH=12;
   const PENDING_COMPOSE_TTL_MS=30*60*1000;
-  const COMPOSE_ROUTE_RECOVERY_MS=5*60*1000;
+  const COMPOSE_BRIDGE_TTL_MS=90_000;
   const COMPOSE_SURFACE_STABLE_MS=350;
-  const COMPOSE_POST_FILL_VERIFY_MS=500;
-  const COMPOSE_FILL_TIMEOUT_MS=45_000;
+  const COMPOSE_POST_FILL_VERIFY_MS=400;
+  const COMPOSE_FILL_TIMEOUT_MS=20_000;
+  const COMPOSE_MAX_FORMAT_ATTEMPTS=3;
   const DELIVERY_CONFIRM_WINDOW_MS=12_000;
   const FALSE_SEND_RECOVERY_MS=2*60*60*1000;
 
@@ -562,45 +563,27 @@
     const params=getComposeParams(),xid=getComposeXid(),now=Date.now(),pending=GM_getValue(PENDING_COMPOSE_KEY,null);
     if(pending&&typeof pending==='object'){
       const age=now-Number(pending.createdAt||0);
-      if(age>PENDING_COMPOSE_TTL_MS)GM_deleteValue(PENDING_COMPOSE_KEY);
-      else{
-        const pendingId=String(pending.playerId||'').trim();
-        const explicitMatch=!xid||!pendingId||xid===pendingId;
-        const genericRecovery=!xid&&Boolean(pendingId)&&age<=COMPOSE_ROUTE_RECOVERY_MS;
-        if(explicitMatch&&(xid||genericRecovery||!pendingId)){
-          return {
-            composeId:String(pending.composeId||''),
-            playerId:pendingId||xid,
-            recipientName:String(pending.recipientName||''),
-            subject:String(pending.subject||''),
-            body:String(pending.body||''),
-            bodyHtml:String(pending.bodyHtml||''),
-            createdAt:Number(pending.createdAt||0),
-            routeRecovery:genericRecovery
-          };
-        }
-      }
-    }
-    const tracked=GM_getValue(PENDING_SEND_KEY,null);
-    if(tracked&&typeof tracked==='object'&&now-Number(tracked.createdAt||0)<=PENDING_COMPOSE_TTL_MS){
-      const trackedId=String(tracked.playerId||'').trim(),trackedAge=now-Number(tracked.createdAt||0);
-      const explicitMatch=Boolean(xid)&&(!trackedId||xid===trackedId);
-      const genericRecovery=!xid&&Boolean(trackedId)&&trackedAge<=COMPOSE_ROUTE_RECOVERY_MS&&String(tracked.state||'awaiting-send')==='awaiting-send';
-      if((explicitMatch||genericRecovery||(!xid&&!trackedId))&&tracked.bodyHtml){
+      const pendingId=String(pending.playerId||'').trim();
+      if(age>COMPOSE_BRIDGE_TTL_MS){
+        GM_deleteValue(PENDING_COMPOSE_KEY);
+      }else if(xid&&pendingId&&xid===pendingId){
         return {
-          composeId:String(tracked.composeId||''),
-          playerId:trackedId||xid,
-          recipientName:String(tracked.recipientName||''),
-          subject:String(tracked.subject||''),
-          body:String(tracked.body||''),
-          bodyHtml:String(tracked.bodyHtml||''),
-          createdAt:Number(tracked.createdAt||0),
-          routeRecovery:genericRecovery
+          composeId:String(pending.composeId||''),
+          playerId:pendingId,
+          recipientName:String(pending.recipientName||''),
+          subject:String(pending.subject||''),
+          body:String(pending.body||''),
+          bodyHtml:String(pending.bodyHtml||''),
+          createdAt:Number(pending.createdAt||0)
         };
+      }else if(location.hash.includes('compose')){
+        // PENDING_COMPOSE_KEY is a one-shot bridge into the exact compose route.
+        // Never hydrate a later generic Compose page or a different recipient.
+        GM_deleteValue(PENDING_COMPOSE_KEY);
       }
     }
     const urlSubject=params.get('subject'),urlBody=params.get('body');
-    return urlSubject!==null||urlBody!==null?{playerId:xid,recipientName:'',subject:urlSubject||'',body:urlBody||'',bodyHtml:'',createdAt:0,routeRecovery:false}:null;
+    return urlSubject!==null||urlBody!==null?{playerId:xid,recipientName:'',subject:urlSubject||'',body:urlBody||'',bodyHtml:'',createdAt:0}:null;
   }
 
   function elementMeta(element){
@@ -893,46 +876,39 @@
     if(sameId||legacyMatch)GM_deleteValue(PENDING_COMPOSE_KEY);
   }
 
-  function restoreComposeTargetRoute(payload){
-    const id=String(payload?.playerId||'').trim(),xid=getComposeXid();
-    if(!id||xid===id||xid||!payload?.routeRecovery)return false;
-    statusText='Restoring the intended Torn recipient before formatting the draft.';
-    const url=canonicalComposeUrl(payload);
-    try{window.location.assign(url);}catch{location.href=url;}
-    return true;
-  }
-
   async function fillMessageComposer(){
     if(composeFillCleanup){try{composeFillCleanup();}catch{}composeFillCleanup=null;}
     const generation=++composeFillGeneration;
     if(!location.pathname.includes('messages.php'))return;
     const payload=composePayloadForCurrentPage();if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
-    if(restoreComposeTargetRoute(payload))return;
 
-    let observer=null,timer=null,inFlight=false,finished=false,readyKey='',readySince=0,fillAttempts=0;
+    let timer=null,inFlight=false,finished=false,readyKey='',readySince=0,fillAttempts=0;
     const startedAt=Date.now(),requiresBranding=Boolean(payload.bodyHtml);
     const cleanup=()=>{
       if(timer)clearInterval(timer);timer=null;
-      if(observer)observer.disconnect();observer=null;
       if(composeFillGeneration===generation)composeFillCleanup=null;
     };
     composeFillCleanup=cleanup;
-    const stop=(success,rich=true)=>{
+    const stop=(success,rich=true,showError=true)=>{
       if(finished)return;
       finished=true;cleanup();
       if(success){
         clearMatchingPendingCompose(payload);clearComposeFormattingNotice();
         statusText=rich?'Message prepared in Torn composer with recipient + branded formatting verified. Send remains manual.':'Message prepared in Torn composer with recipient verified. Send remains manual.';
-      }else if(requiresBranding){
-        statusText='Branded formatting is not ready. Draft was NOT downgraded to plain text.';
-        composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Use Reopen Draft in MM_Customers to retry.','error');
+      }else{
+        clearMatchingPendingCompose(payload);
+        if(showError&&requiresBranding){
+          statusText='Branded formatting is not ready. Draft was NOT downgraded to plain text.';
+          composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry.','error');
+        }else clearComposeFormattingNotice();
       }
     };
     const stillCurrent=()=>generation===composeFillGeneration&&location.pathname.includes('messages.php')&&location.hash.includes('compose')&&
       (!payload.playerId||getComposeXid()===String(payload.playerId||''));
     const tryFill=async()=>{
-      if(finished||inFlight||!stillCurrent())return false;
-      if(Date.now()-startedAt>=COMPOSE_FILL_TIMEOUT_MS){stop(false,requiresBranding);return false;}
+      if(finished||inFlight)return false;
+      if(!stillCurrent()){stop(false,requiresBranding,false);return false;}
+      if(Date.now()-startedAt>=COMPOSE_FILL_TIMEOUT_MS){stop(false,requiresBranding,true);return false;}
       inFlight=true;
       try{
         const xid=getComposeXid(),subject=findComposeSubjectInput(),recipient=findComposeRecipientInput(subject);
@@ -941,7 +917,7 @@
         if(!subject||!recipientOK||!editorReady){
           readyKey='';readySince=0;
           statusText=!subject?'Waiting for Torn compose form…':!recipientOK?'Waiting for Torn to resolve the intended recipient…':'Waiting for Torn message editor…';
-          composeFormattingNotice('Preparing message safely… waiting for Torn to finish loading the recipient and editor.');
+          composeFormattingNotice('Preparing message… waiting for Torn to finish loading the original compose form.');
           return false;
         }
 
@@ -960,7 +936,8 @@
           bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent);
           if(!bodyOK){
             readyKey='';readySince=0;
-            statusText='Waiting for Torn rich editor… branded message will retry automatically.';
+            if(fillAttempts>=COMPOSE_MAX_FORMAT_ATTEMPTS){stop(false,true,true);return false;}
+            statusText='Torn rich editor was not ready; retrying the original compose form.';
             composeFormattingNotice('Preparing branded message… do not send until this notice disappears.');
             return false;
           }
@@ -970,25 +947,21 @@
         }
 
         await sleepMs(COMPOSE_POST_FILL_VERIFY_MS);
-        if(!stillCurrent())return false;
+        if(!stillCurrent()){stop(false,requiresBranding,false);return false;}
         const verifySubject=findComposeSubjectInput();
         const verifyRecipient=findComposeRecipientInput(verifySubject);
         const verifyRecipientOK=(!payload.playerId)||(getComposeXid()===String(payload.playerId||'')&&recipientMatchesPayload(payload,verifyRecipient));
         subjectOK=Boolean(verifySubject)&&String(verifySubject.value||'').trim()===String(payload.subject||'').trim();
         bodyOK=requiresBranding?richComposerHasBranding(payload.bodyHtml):bodyOK;
-        if(verifyRecipientOK&&subjectOK&&bodyOK){stop(true,rich);return true;}
+        if(verifyRecipientOK&&subjectOK&&bodyOK){stop(true,rich,true);return true;}
 
         readyKey='';readySince=0;
-        if(fillAttempts>=12&&Date.now()-startedAt>15_000){
-          statusText='Torn keeps replacing the compose surface; MM_Customers is still retrying without clearing the draft.';
-        }
+        if(fillAttempts>=COMPOSE_MAX_FORMAT_ATTEMPTS){stop(false,requiresBranding,true);return false;}
         return false;
       }finally{inFlight=false;}
     };
     tryFill();
-    timer=setInterval(()=>{if(!finished)tryFill();},700);
-    observer=new MutationObserver(()=>{if(!finished)tryFill();});
-    observer.observe(document.documentElement,{childList:true,subtree:true});
+    timer=setInterval(()=>{if(!finished)tryFill();},500);
   }
 
   function normalizedDeliveryText(value){
@@ -1116,15 +1089,14 @@
     if(!id||!createdAt||Date.now()-createdAt>PENDING_COMPOSE_TTL_MS){if(initial)GM_deleteValue(PENDING_SEND_KEY);return;}
 
     const detectorKey=String(initial?.deliveryId||createdAt+'-'+id);
-    let active=true,verifyTimer=null,scanTimer=null,observer=null;
+    let active=true,verifyTimer=null,expiryTimer=null;
     sendDetectorKey=detectorKey;
 
     const cleanup=()=>{
       if(!active)return;
       active=false;
       if(verifyTimer)clearInterval(verifyTimer);
-      if(scanTimer)clearInterval(scanTimer);
-      if(observer)observer.disconnect();
+      if(expiryTimer)clearTimeout(expiryTimer);
       document.removeEventListener('click',clickHandler,true);
       document.removeEventListener('submit',submitHandler,true);
       if(sendDetectorKey===detectorKey){sendDetectorCleanup=null;sendDetectorKey='';}
@@ -1159,6 +1131,7 @@
       if(Date.now()-clickedAt>=DELIVERY_CONFIRM_WINDOW_MS&&pending.state!=='send-unconfirmed'){
         GM_setValue(PENDING_SEND_KEY,{...pending,state:'send-unconfirmed',verificationFailedAt:Date.now()});
         statusText='Send click was not confirmed by Torn. Customer state was NOT changed. Check Outbox before retrying.';
+        if(verifyTimer){clearInterval(verifyTimer);verifyTimer=null;}
       }
     };
 
@@ -1176,8 +1149,8 @@
         deliveryFingerprint:fingerprint,
         fingerprintBaselineCount:deliveryFingerprintCount(fingerprint)
       });
-      verifyTimer=setInterval(verifyAfterSend,250);
-      for(const delay of [350,900,1800,3500,7000,11000])setTimeout(verifyAfterSend,delay);
+      verifyTimer=setInterval(verifyAfterSend,500);
+      for(const delay of [350,1000,2500,5000,9000,12000])setTimeout(verifyAfterSend,delay);
     };
 
     const isExactTrackedSendControl=el=>{
@@ -1202,16 +1175,17 @@
     document.addEventListener('click',clickHandler,true);
     document.addEventListener('submit',submitHandler,true);
 
-    scanTimer=setInterval(()=>{
+    const remaining=Math.max(0,PENDING_COMPOSE_TTL_MS-(Date.now()-createdAt));
+    expiryTimer=setTimeout(()=>{
       const pending=currentPending();
-      if(!pending){cleanup();return;}
-      if(Date.now()-Number(pending.createdAt||0)>PENDING_COMPOSE_TTL_MS){GM_deleteValue(PENDING_SEND_KEY);cleanup();return;}
-      if(Number(pending.sendClickedAt||0))verifyAfterSend();
-    },500);
-    observer=new MutationObserver(()=>verifyAfterSend());
-    observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','disabled','aria-live']});
+      if(pending&&Date.now()-Number(pending.createdAt||0)>=PENDING_COMPOSE_TTL_MS)GM_deleteValue(PENDING_SEND_KEY);
+      cleanup();
+    },remaining+1000);
 
-    if(Number(initial.sendClickedAt||0)&&initial.state==='send-clicked')verifyAfterSend();
+    if(Number(initial.sendClickedAt||0)&&initial.state==='send-clicked'){
+      verifyTimer=setInterval(verifyAfterSend,500);
+      verifyAfterSend();
+    }
   }
 
   function runPageHelpers(){fillMessageComposer();installMessageSendDetector();}
