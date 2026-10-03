@@ -950,6 +950,39 @@ Retest on the previously affected Bendi [4257955] compose flow:
 
 This closes the intermittent rich-composer fallback defect for this reproduced case.
 
+
+### MM_Customers alpha.9 Refunds eligibility + cashback reminder workflow
+Owner requirement restored/refined:
+- Refunds must show customers who are **currently cashback eligible**, not only already-created refund records.
+- Each eligible row must show the qualifying purchase/purchases, qualifying total, coupon code, and calculated refund amount.
+- Each eligible row must provide **Send Cashback Reminder**.
+- The reminder must explicitly say it is a cashback reminder, that the customer already qualifies based on their recent qualifying sale/sales, show those qualifying purchases, show the refund amount, and ask them to send their coupon code.
+- Final Torn Send remains manual.
+
+Implemented in **MM_Customers v8.0.0-alpha.9**:
+- Refunds now begins with a `Cashback eligible now` section calculated from the existing coupon qualification engine and current 24-hour eligibility window.
+- eligible rows are ordered by cashback amount, then qualifying purchase total.
+- each row shows customer/ID, coupon code, qualifying-sale count, qualifying total, calculated cashback, and one line per qualifying sale including timestamp, item/quantity detail, and sale total.
+- `Send Cashback Reminder` resolves the customer's Torn username if needed, re-checks eligibility immediately before composing, then routes to Torn Messages.
+- branded reminder includes:
+  - `CASHBACK REMINDER — <name>, YOU ARE ELIGIBLE!`
+  - explicit cashback/refund amount,
+  - explicit qualifying purchase total,
+  - each qualifying sale/purchase with item details,
+  - coupon code,
+  - explicit instruction to send the coupon code now because the recorded recent purchase(s) already qualify,
+  - normal 24-hour / one-use qualification language.
+- the existing green `SEND MY COUPON CODE` CTA is retained in the branded message.
+- reminder uses tracked `kind:'reminder'` reconciliation after human Torn Send.
+- existing refund history remains below the eligibility queue.
+
+Implementation checkpoints:
+- Customers alpha.9: `b2cccf4b60f8e6ed8d2054eac53e53f32a2acaa0`
+- regression assertions: `2792e5a4507e3ea554254d8304201aaeaa76ef9d`
+- suite manifest alpha.24: `2f1d93cb0207b9ebef7d32b72df57dbda0715169`
+
+**PENDING LIVE RETEST** — install alpha.9, open Refunds, verify eligible customers and purchase/refund details, then open one Send Cashback Reminder draft and verify the branded reminder before sending.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
