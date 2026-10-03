@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.8
+// @version      0.1.0-alpha.9
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems. Reminds, rotates, and pre-fills; never sends automatically.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -41,11 +41,11 @@
   };
 
   const ROTATION_MESSAGES = Object.freeze([
-    '<b>[*] MM TORN SYSTEMS</b> | Custom 50M+ • Repair 25M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
-    '<b>[$] MM TORN SYSTEMS</b> | Bazaar • ROI • Procure | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
-    '<b>[+] MM TORN SYSTEMS</b> | Armory • Builds • War | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
-    '<b>[@] MM TORN SYSTEMS</b> | TornPDA • API • Data | 50M+ | DM: <a href="/profiles.php?XID=4325346">Manic-Mike [4325346]</a>',
-    '<b>[i] MM TORN SYSTEMS</b> | 50M+ Custom • 25M+ Repair | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO + CONTACT</a>',
+    '⚙ <b>MM TORN SYSTEMS</b> | Custom 50M+ • Repair 25M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
+    '↗ <b>MM TORN SYSTEMS</b> | Bazaar • ROI • Procure | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
+    '⚔ <b>MM TORN SYSTEMS</b> | Armory • Builds • War | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
+    '⌘ <b>MM TORN SYSTEMS</b> | TornPDA • API • Data | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
+    'ⓘ <b>MM TORN SYSTEMS</b> | 50M+ Custom • 25M+ Repair | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO</a>',
   ]);
 
   const loadState = () => {
@@ -149,38 +149,26 @@
     return chunks.join(' ').replace(/\s+/g, ' ').toLowerCase();
   };
 
-  const composerScore = (el) => {
-    if (!visible(el) || el.closest?.('#' + APP_ID)) return -999;
-    const meta = [
-      el.getAttribute?.('place' + 'holder'),
-      el.getAttribute?.('aria-label'),
-      el.getAttribute?.('data-' + 'place' + 'holder'),
-      el.getAttribute?.('role'),
-      el.className,
-    ].filter(Boolean).join(' ').toLowerCase();
+  const findTradeChatRoot = () => {
+    const direct = document.getElementById('public_trade');
+    if (direct instanceof HTMLElement) return direct;
 
-    const around = ancestorText(el);
-    let score = 0;
-    if (/message|chat|type|write|send/.test(meta)) score += 4;
-    if (/trade/.test(around)) score += 8;
-    if (/global|faction|company/.test(around) && !/trade/.test(around)) score -= 5;
-    if (el.matches('textarea')) score += 2;
-    if (el.matches('[contenteditable="true"]')) score += 3;
-    if (el.matches('input[type="text"]')) score += 1;
-    const r = el.getBoundingClientRect();
-    if (r.bottom > innerHeight * 0.45) score += 1;
-    return score;
+    return [...document.querySelectorAll('[id]')].find(el => {
+      if (!(el instanceof HTMLElement) || !visible(el)) return false;
+      const id = String(el.id || '').toLowerCase();
+      if (id.includes('public_trade')) return true;
+      const title = el.querySelector('[class*="header"] [class*="name"], [class*="title"], header');
+      return title?.textContent?.trim().toLowerCase() === 'trade';
+    }) || null;
   };
 
   const findTradeComposer = () => {
-    const candidates = [...document.querySelectorAll('textarea, input[type="text"], [contenteditable="true"]')]
-      .filter(visible)
-      .map(el => ({ el, score: composerScore(el) }))
-      .filter(x => x.score >= 7)
-      .sort((a, b) => b.score - a.score);
-    return candidates[0]?.el || null;
-  };
+    const tradeRoot = findTradeChatRoot();
+    if (!tradeRoot || !visible(tradeRoot)) return null;
 
+    const composer = tradeRoot.querySelector('textarea[class*="textarea"], textarea');
+    return composer instanceof HTMLTextAreaElement && visible(composer) ? composer : null;
+  };
 
   const waitForTradeComposer = (timeoutMs = 1800) => new Promise(resolve => {
     const start = Date.now();
@@ -209,20 +197,17 @@
     if (control) control.click();
   };
 
-  const composerValue = (el) => {
-    if (!el) return '';
-    if (el.matches('textarea, input')) return el.value || '';
-    return el.innerText || el.textContent || '';
-  };
+  const composerValue = (el) => el instanceof HTMLTextAreaElement ? (el.value || '') : '';
 
-  const setNativeValue = (el, value) => {
-    const proto = el instanceof HTMLTextAreaElement
-      ? HTMLTextAreaElement.prototype
-      : HTMLInputElement.prototype;
-    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
-    descriptor?.set?.call(el, value);
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+  const insertTradeMessage = (textarea, message) => {
+    if (!(textarea instanceof HTMLTextAreaElement)) return false;
+
+    textarea.focus({ preventScroll: true });
+    textarea.setRangeText(message, 0, textarea.value.length, 'end');
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.focus({ preventScroll: true });
+    textarea.selectionStart = textarea.selectionEnd = message.length;
+    return textarea.value === message;
   };
 
   const fillComposer = () => {
@@ -245,22 +230,8 @@
       return { ok: false, reason: 'Current rotation message exceeds 125 characters.' };
     }
 
-    composer.focus({ preventScroll: true });
-    if (composer.matches('textarea, input')) {
-      setNativeValue(composer, message);
-    } else {
-      const selection = getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(composer);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      document.execCommand('insertText', false, message);
-      selection.removeAllRanges();
-      composer.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        inputType: 'insertText',
-        data: message,
-      }));
+    if (!insertTradeMessage(composer, message)) {
+      return { ok: false, reason: 'Torn Trade composer rejected the formatted message.' };
     }
 
     lastFilledMessage = message;
