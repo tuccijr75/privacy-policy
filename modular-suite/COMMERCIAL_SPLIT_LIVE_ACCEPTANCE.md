@@ -436,6 +436,34 @@ Findings:
 - **UX / SAFETY GAP** — Prepare Alert is enabled without any visible warning that the same inventory may already have been notified 2d ago, and without showing underlying Bazaar snapshot age.
 - **WORKFLOW GAP** — no subscriber-level Mark Sent / Dismiss Pending / Snooze controls are exposed beside the prepared-alert action.
 
+
+### MM_Customers branded-message regression and alpha.2 repair
+Live restock Prepare Alert for RonyarBedwyr exposed a regression:
+- recipient routing opened Torn Messages correctly for XID 4534960,
+- but the new split Customers module only copied plain text to the clipboard and left the Torn Subject field empty,
+- the message did not auto-populate the composer,
+- the legacy branded dark-background/table/banner formatting was lost.
+
+Root cause:
+- alpha.1 `copyAndOpenMessage()` only used `navigator.clipboard` / textarea fallback, then navigated to Torn compose.
+- The pre-split CRM had a richer flow: persist a compose payload in Tampermonkey storage, open Torn compose, find the Subject/body editor, inject branded HTML through Torn's code/source editor, and leave Send manual.
+
+Repair built in **MM_Customers v8.0.0-alpha.2**:
+- restores a script-isolated pending compose payload (`mm_customers_pending_compose_v1`),
+- auto-fills Torn Subject + body while keeping final Send manual,
+- restores the branded MANIC'S MAD HOUSE banner/dark-background/three-column message format,
+- applies the same rich workflow to Welcome, Coupon Reminder, and Restock messages,
+- removes the clipboard-only compose path,
+- restores Restock `Mark Sent` and `Dismiss Pending` controls,
+- Mark Sent advances `lastNotified`, clears pending state, and records notification history.
+
+Static/regression evidence:
+- Customers userscript syntax parses successfully.
+- Existing customer/coupon/refund/restock logic fixture still passes when exercised.
+- Regression assertions cover alpha.2 version, rich template, pending compose payload, auto-fill, clipboard-path removal, and Restock sent/dismiss controls.
+- Implementation commits: `23f848b35a303ed087caf0cec588561a15996ad7`, `15040c11bc74988a391be10582aa30fb5eb7219c`, manifest `84832d65688fb44f745a2415acceefc9e93947b8`.
+- **PENDING LIVE RETEST** — install alpha.2, prepare the same Restock alert, verify Subject/body auto-fill and branded formatting, do not press Send.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
