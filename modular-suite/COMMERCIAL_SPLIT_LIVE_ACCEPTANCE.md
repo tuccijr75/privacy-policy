@@ -808,6 +808,26 @@ After saving the faction API key and reopening/remaining in Armory without press
 - **PASS** — refreshed state retained 103 faction inventory rows.
 - **PASS / SAFETY** — no member-key vault passphrase prompt was triggered by the faction refresh.
 
+
+### MM Faction Armory alpha.14 explicit member-vault automation control
+Live testing exposed that the saved-member automation prerequisite was not directly actionable: the vault could only be unlocked indirectly by using Refresh Keys / per-member Refresh, which conflicted with validating automatic refresh.
+
+Repair built in **v8.0.0-alpha.14**:
+- Members now displays `Member-key vault: LOCKED / UNLOCKED / NOT CREATED`,
+- Members shows the count of stale saved member profiles,
+- when a saved-key vault exists and is locked, an explicit **Unlock Vault** control appears,
+- unlocking the vault performs only the human-required passphrase step; it does not itself force every saved profile to refresh,
+- once unlocked, if stale saved profiles exist, the normal guarded automatic refresh is invoked immediately,
+- if no saved profile is stale, status states that explicitly,
+- background automation still never opens a passphrase prompt by itself.
+
+Implementation checkpoints:
+- Faction alpha.14: `443057fe1b792c20e09211b7a2483ce1f27a70ec`
+- regression assertions: `1d925776b4e78988bc8360ad12572dcb1a64665e`
+- suite manifest alpha.20: `087b7a3dbce7fcf404910d2d98ec336384865ba1`
+
+**PENDING LIVE RETEST** — install alpha.14, open Members, use Unlock Vault once, then verify stale saved profiles refresh automatically without pressing Refresh Keys or a member Refresh button.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
