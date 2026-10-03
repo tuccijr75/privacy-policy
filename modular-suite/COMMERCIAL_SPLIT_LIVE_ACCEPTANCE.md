@@ -555,6 +555,45 @@ Implementation checkpoints:
 
 **PENDING LIVE RETEST** — reinstall/update the four active userscripts, refresh Torn, undock one launcher, drag it toward another MM icon and toward a Torn native bottom icon, and confirm it settles at the fixed gap without overlap.
 
+
+### Shared launcher native-Torn collision / bottom-alignment follow-up
+Live alpha.5 retest result:
+- **PASS** — snapping between custom MM icons works well.
+- **PASS** — overlap onto other custom MM icons is blocked.
+- **FAIL** — floating MM launchers can still overlap Torn's default bottom icons.
+- **FAIL** — launcher row bottom alignment still does not match Torn's native row.
+
+Root cause in Core alpha.5:
+- native-toolbar detection required a fixed/sticky ancestor with a narrow size profile; Torn's current footer controls are not reliably exposed through that container shape.
+- dock positioning used centerline alignment rather than the native controls' actual bottom edge.
+
+Repair built in **MM Torn Core v8.0.0-alpha.6**:
+- detects visible bottom controls directly via `a, button, [role="button"]` geometry instead of requiring a fixed/sticky toolbar parent;
+- groups controls into horizontal bottom-edge bands and selects the strongest contiguous footer row;
+- treats those direct Torn controls as collision obstacles;
+- docks the MM group to the Torn row's measured bottom edge;
+- floating horizontal snaps align icon bottoms to the neighboring icon bottom instead of centerline;
+- fixed 4px separation remains in force.
+
+Active consumers bumped for cache refresh:
+- MM_Acquisitions v8.0.0-alpha.3
+- MM_Customers v8.0.0-alpha.4
+- MM_Inventory Manager/ROI Tracker v8.0.0-alpha.4
+- MM Torn Faction Armory v8.0.0-alpha.11
+- suite v8.0.0-alpha.16
+
+Static:
+- Core + all four active userscripts parse successfully.
+- regression assertions now cover direct Torn footer-control detection and bottom-edge alignment.
+
+Implementation checkpoints:
+- Core alpha.6: `a9ebfcd195c26be6186b0c9ef852ee71ffd6899b`
+- active consumers: `1f855fa5ebd2c438f2f2fccff370bccf5494760f`, `d86c42cf16eaeead50bc1aff4a88b51565b82ccd`, `39b261223cf91d564a110a6880a712fd78f7bddf`, `8eb54f62db9669d0aa8fdcdc8af0e6d4bd391616`
+- manifest: `c305d686987cafbca7486c1d18b0639e624d2db4`
+- test assertions: `763c95456da3ac3086c108a95d74b7eb6ded86e5`
+
+**PENDING LIVE RETEST** — install the four bumped scripts, refresh Torn, then test overlap against a Torn native footer icon and compare bottom edges.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
