@@ -15750,7 +15750,7 @@ function render() {
     }
 
     function messageSentConfirmationVisible() {
-        const nodes = [...document.querySelectorAll('[role="alert"], [class*="success" i], [class*="message" i], [class*="notification" i], [class*="toast" i]')]
+        const nodes = [...document.querySelectorAll('[role="alert"], [aria-live="assertive"], [aria-live="polite"], [class*="success" i], [class*="notification" i], [class*="toast" i]')]
             .filter(visible)
             .slice(-80);
         return nodes.some(el => {
@@ -15801,10 +15801,7 @@ function installFactionDataRequestSendDetector() {
         };
         const verify=()=>{
             if(!armed||!clickedAt) return;
-            const confirmed=
-                messageSentConfirmationVisible() ||
-                !location.hash.includes('compose') ||
-                !composeStillVisible(pending.subject);
+            const confirmed=messageSentConfirmationVisible();
             if(confirmed) {
                 cleanup(true);
                 completeFactionDataRequestSend(id,'messages-page-send-confirmed');
@@ -15824,18 +15821,17 @@ function installFactionDataRequestSendDetector() {
             setTimeout(verify,350);setTimeout(verify,1200);setTimeout(verify,3000);setTimeout(verify,4800);
         };
         const clickHandler=event=>{
-            if(!armed) return;
+            if(!armed||!event.isTrusted) return;
             const el=event.target?.closest?.('button, input[type="submit"], [role="button"]');
             if(!el||!visible(el)) return;
-            const text=String(el.innerText||el.value||el.getAttribute?.('aria-label')||el.getAttribute?.('title')||'').trim().toLowerCase();
-            if(/(^|\s)send(\s|$)|send message/.test(text)&&!/search|money|cash|trade|gift/.test(elementMeta(el))) arm();
+            const send=visibleSendButton();
+            if(send&&(el===send||send.contains?.(el)||el.contains?.(send))) arm();
         };
         const submitHandler=event=>{
-            if(!armed) return;
-            const form=event.target;
-            if(!(form instanceof HTMLFormElement)) return;
+            if(!armed||!event.isTrusted) return;
             const send=visibleSendButton();
-            if(send&&(form.contains(send)||composeStillVisible(pending.subject))) arm();
+            const submitter=event.submitter;
+            if(send&&submitter&&(submitter===send||send.contains?.(submitter)||submitter.contains?.(send))) arm();
         };
         document.addEventListener('click',clickHandler,true);
         document.addEventListener('submit',submitHandler,true);
@@ -15879,10 +15875,7 @@ function installFactionDataRequestSendDetector() {
             // Confirmation hierarchy:
             // 1) explicit Torn "message sent" UI
             // 2) compose form/subject disappears or route exits compose after the human Send click.
-            const confirmed =
-                messageSentConfirmationVisible() ||
-                !location.hash.includes('compose') ||
-                !composeStillVisible(pending.subject);
+            const confirmed = messageSentConfirmationVisible();
 
             if (confirmed) {
                 cleanup(true);
@@ -15912,21 +15905,20 @@ function installFactionDataRequestSendDetector() {
         };
 
         const clickHandler = event => {
-            if (!armed) return;
+            if (!armed || !event.isTrusted) return;
             const el = event.target?.closest?.('button, input[type="submit"], [role="button"]');
             if (!el || !visible(el)) return;
-            const text = String(el.innerText || el.value || el.getAttribute?.('aria-label') || el.getAttribute?.('title') || '').trim().toLowerCase();
-            if (/(^|\s)send(\s|$)|send message/.test(text) && !/search|money|cash|trade|gift/.test(elementMeta(el))) {
+            const send = visibleSendButton();
+            if (send && (el === send || send.contains?.(el) || el.contains?.(send))) {
                 armVerification();
             }
         };
 
         const submitHandler = event => {
-            if (!armed) return;
-            const form = event.target;
-            if (!(form instanceof HTMLFormElement)) return;
+            if (!armed || !event.isTrusted) return;
             const send = visibleSendButton();
-            if (send && (form.contains(send) || composeStillVisible(pending.subject))) armVerification();
+            const submitter = event.submitter;
+            if (send && submitter && (submitter === send || send.contains?.(submitter) || submitter.contains?.(send))) armVerification();
         };
 
         document.addEventListener('click', clickHandler, true);
