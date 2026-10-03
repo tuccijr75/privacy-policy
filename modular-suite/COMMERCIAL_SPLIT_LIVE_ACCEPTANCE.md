@@ -357,6 +357,27 @@ Findings:
 - **COVERAGE DEFECT CONFIRMED** — the refresh still checks only the module's 72-hour window. Cross-module shared history makes the current account look complete, but Customers cannot independently rebuild historical CRM state from a clean database.
 - **UX / STATE GAP** — no last-refresh timestamp or coverage range is visible in the Customers panel after refresh, so the user cannot tell how current or complete the CRM population is.
 
+
+### MM_Customers Coupons live findings
+Observed Coupons view:
+- 136 coupon records visible in preserved state.
+- 50 show `issued never`; 86 have an issuance timestamp.
+- 2 currently show `$5,000 eligible`; no $10,000/$20,000 eligibility is currently visible.
+- 1 coupon is fully redeemed; no pending-refund status is currently visible.
+
+Findings:
+- **PASS** — qualification logic enforces post-issue-only purchases: eligible sales must have timestamp >= coupon `issuedAt`.
+- **PASS** — qualification is bounded to the last 24 hours, excludes already-redeemed sale IDs, respects remaining uses, and blocks qualification while a cashback refund is pending.
+- **PASS** — cashback tiers remain $5,000 at $50k+, $10,000 at $250k+, $20,000 at $1M+, with a 10% purchase-value cap.
+- **UX / WORKFLOW DEFECT** — Coupons is effectively read-only. It shows eligibility but provides no direct Create Cashback, Coupon Reminder, Profile, or customer-open action. To act on one of the two eligible coupons, the user must return to Customers and manually find that customer.
+- **UX / SCALE DEFECT** — no search, eligible-only filter, issued/unissued filter, fully-redeemed filter, or sort-by-expiry/eligibility. With 136 records, actionable coupons are buried in status text.
+- **UX / PRIORITY DEFECT** — eligible coupons are not promoted to the top or summarized as an actionable queue; the most time-sensitive 24-hour work is visually mixed with non-actionable records.
+- **DATA-MODEL / CLUTTER GAP** — coupon records exist for many customers before actual issuance (`issued never`). The current model creates/retains coupon codes separately from issuance, causing the Coupons view to mix prospective coupons with active coupons.
+- **UX / TERMINOLOGY GAP** — `issued never · 2 uses left` can imply an active two-use benefit even though qualification correctly says “Coupon has not been issued yet.” Unissued coupons should be visually separated and labeled DRAFT / NOT ISSUED.
+- **DATA-QUALITY GAP** — coupon `playerName` is set when the coupon is first created and is not automatically refreshed if a customer's name is later enriched; Coupons can therefore retain stale numeric/display names.
+- **MISSING FEATURE** — no countdown/expiry-at display for current qualifying post-coupon sales, even though the 24-hour eligibility window makes time-to-expiry operationally important.
+- **MISSING FEATURE** — no qualifying purchase total or sale count is shown for eligible coupons; only the cashback amount is displayed, forcing the user to infer why the coupon qualifies.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
