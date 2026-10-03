@@ -797,6 +797,17 @@ Implementation checkpoints:
 
 **PENDING LIVE RETEST** — install alpha.13, reopen Armory with no faction key, and verify the stale-data blocker is explained rather than showing only `Ready.`.
 
+
+### MM Faction Armory alpha.13 automatic faction refresh live check
+After saving the faction API key and reopening/remaining in Armory without pressing Refresh Faction:
+- **PASS** — v8.0.0-alpha.13 is live.
+- **PASS** — Settings explicitly reports `Saved — automatic faction refresh is enabled when Torn data is due.`
+- **PASS** — automatic faction refresh executed with no manual Refresh Faction action.
+- **PASS** — status reports `Auto-refresh: faction checked.`
+- **PASS** — faction cache and roster freshness advanced from ~20h old to ~2s old.
+- **PASS** — refreshed state retained 103 faction inventory rows.
+- **PASS / SAFETY** — no member-key vault passphrase prompt was triggered by the faction refresh.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
