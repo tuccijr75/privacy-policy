@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.15
+// @version      8.0.0-alpha.17
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.15';
+  const VERSION='8.0.0-alpha.17';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -35,12 +35,13 @@
   const MAX_LOG_PAGES=25;
   const AUTO_SYNC_MS=60_000;
   const AUTO_SYNC_STALE_MS=45_000;
-  const NAME_REPAIR_BATCH=12;
-  const PENDING_COMPOSE_TTL_MS=30*60*1000;
-  const COMPOSE_ROUTE_RECOVERY_MS=5*60*1000;
+  const USERNAME_RESOLVE_BATCH=12;
+  const PENDING_DELIVERY_TTL_MS=30*60*1000;
+  const COMPOSE_BRIDGE_TTL_MS=90_000;
   const COMPOSE_SURFACE_STABLE_MS=350;
-  const COMPOSE_POST_FILL_VERIFY_MS=500;
-  const COMPOSE_FILL_TIMEOUT_MS=45_000;
+  const COMPOSE_POST_FILL_VERIFY_MS=400;
+  const COMPOSE_FILL_TIMEOUT_MS=20_000;
+  const COMPOSE_MAX_FORMAT_ATTEMPTS=3;
   const DELIVERY_CONFIRM_WINDOW_MS=12_000;
   const FALSE_SEND_RECOVERY_MS=2*60*60*1000;
 
@@ -56,9 +57,10 @@
   let statusText='Ready.';
   let busy=false;
   let autoSyncRunning=false;
+  let customerAutoSyncTimer=null;
+  let customerStateChannel=null;
   let routeTimer=null;
   let lastHref=location.href;
-  let composeFillCleanup=null;
   let composeFillGeneration=0;
   let sendDetectorCleanup=null;
   let sendDetectorKey='';
@@ -203,7 +205,7 @@
     for(const refund of Object.values(draft.refunds||{}))if(String(refund.playerId||'')===id)refund.playerName=safe;
   }
 
-  async function repairUsernames(limit=NAME_REPAIR_BATCH){
+  async function resolveMissingUsernames(limit=USERNAME_RESOLVE_BATCH){
     if(!apiKey())return 0;
     if(!state)state=await core.readLegacyState();
     const ids=Object.values(state?.customers||{}).filter(customer=>!hasRealUsername(customer)).map(customer=>String(customer.id||'')).filter(Boolean).slice(0,limit);
@@ -276,8 +278,8 @@
     let result=null;
     await updateCustomerState(draft=>{result=logic.importSalesEntries(draft,rows);return draft;});
     const newCustomerIds=Object.keys(state?.customers||{}).filter(id=>!beforeIds.has(id));
-    const repaired=await repairUsernames(NAME_REPAIR_BATCH);
-    return {...result,newCustomers:newCustomerIds.length,repairedNames:repaired};
+    const resolved=await resolveMissingUsernames(USERNAME_RESOLVE_BATCH);
+    return {...result,newCustomers:newCustomerIds.length,resolvedNames:resolved};
   }
 
   function newCustomerRows(){
@@ -292,7 +294,7 @@
     if(!state)state=await core.readLegacyState();
     const last=Date.parse(state?.operations?.customers?.lastSalesAt||'')||0;
     if(!force&&last&&Date.now()-last<AUTO_SYNC_STALE_MS){
-      if(await repairUsernames(NAME_REPAIR_BATCH)){if(document.getElementById(ROOT_ID))render();}
+      if(await resolveMissingUsernames(USERNAME_RESOLVE_BATCH)){if(document.getElementById(ROOT_ID))render();}
       return null;
     }
     autoSyncRunning=true;
@@ -302,7 +304,7 @@
       if(switchToNew&&newRows.length)activeView='new';
       statusText='Auto-synced sales: '+result.imported+' new sale'+(result.imported===1?'':'s')+
         (result.newCustomers?' · '+result.newCustomers+' new customer'+(result.newCustomers===1?'':'s'):'')+
-        (result.repairedNames?' · '+result.repairedNames+' name'+(result.repairedNames===1?'':'s')+' resolved':'')+'.';
+        (result.resolvedNames?' · '+result.resolvedNames+' name'+(result.resolvedNames===1?'':'s')+' resolved':'')+'.';
       if(document.getElementById(ROOT_ID))render();
       return result;
     }catch(error){
@@ -347,7 +349,7 @@
       '<tr><td colspan="3" bgcolor="#181818" style="padding:11px 14px;border-top:1px solid #333333;">'+(footerTitle?'<strong style="color:#9be564;font-size:14px;">'+escapeMessageHtml(footerTitle)+'</strong><br><br>':'')+footer+'</td></tr></table>';
   }
 
-  function plainThreeColumnFallback({customerName,greeting='',centerText='',rightText='',columns=[],footerTitle='',footerLines=[],couponCode=''}){
+  function plainMessageText({customerName,greeting='',centerText='',rightText='',columns=[],footerTitle='',footerLines=[],couponCode=''}){
     const top=(greeting?greeting+'\n\n':'')+customerName+' | '+centerText+' | '+rightText;
     const colText=columns.map(col=>col.title+'\n'+(col.lines||[]).map(line=>'• '+line).join('\n')).join('\n\n');
     const footer=footerTitle?'\n\n'+footerTitle+'\n'+(footerLines||[]).map(line=>'• '+line).join('\n'):'';
@@ -420,7 +422,7 @@
       const footer=['Purchases must be made after the coupon is issued.','Eligible purchases remain available for 24 hours.','Each sale can only be used once.'];
       return {
         subject:SHOP_NAME+' — Cashback coupon reminder',
-        body:plainThreeColumnFallback({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' use'+(remaining===1?'':'s')+' left',columns,footerTitle:'IMPORTANT',footerLines:footer,couponCode:coupon.code}),
+        body:plainMessageText({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' use'+(remaining===1?'':'s')+' left',columns,footerTitle:'IMPORTANT',footerLines:footer,couponCode:coupon.code}),
         bodyHtml:brandedMessageHtml({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' use'+(remaining===1?'':'s')+' left',columns,footerTitle:'IMPORTANT',footerLines:footer,couponCode:coupon.code})
       };
     }
@@ -435,7 +437,7 @@
     const subject=first?'Welcome to '+SHOP_NAME+'!':'Welcome Back to '+SHOP_NAME+'!';
     return {
       subject,
-      body:plainThreeColumnFallback({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' redemption'+(remaining===1?'':'s')+' remaining',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer,couponCode:coupon.code}),
+      body:plainMessageText({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' redemption'+(remaining===1?'':'s')+' remaining',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer,couponCode:coupon.code}),
       bodyHtml:brandedMessageHtml({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' redemption'+(remaining===1?'':'s')+' remaining',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer,couponCode:coupon.code})
     };
   }
@@ -486,7 +488,7 @@
     ];
     return {
       subject:SHOP_NAME+' — Cashback ready: send coupon '+coupon.code,
-      body:plainThreeColumnFallback({
+      body:plainMessageText({
         customerName:name,greeting,
         centerText:'Cashback: '+money(q.cashback),
         rightText:purchaseCount+' qualifying purchase'+(purchaseCount===1?'':'s')+' · '+money(q.total),
@@ -525,7 +527,7 @@
     const greeting='Here’s what’s currently available at '+SHOP_NAME+', '+name+'.';
     return {
       subject:SHOP_NAME+' — Bazaar restock alert',
-      body:plainThreeColumnFallback({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' total units',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer}),
+      body:plainMessageText({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' total units',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer}),
       bodyHtml:brandedMessageHtml({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' total units',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer})
     };
   }
@@ -559,48 +561,30 @@
   }
 
   function composePayloadForCurrentPage(){
-    const params=getComposeParams(),xid=getComposeXid(),now=Date.now(),pending=GM_getValue(PENDING_COMPOSE_KEY,null);
+    if(!location.hash.includes('compose'))return null;
+    const xid=getComposeXid(),now=Date.now(),pending=GM_getValue(PENDING_COMPOSE_KEY,null);
     if(pending&&typeof pending==='object'){
       const age=now-Number(pending.createdAt||0);
-      if(age>PENDING_COMPOSE_TTL_MS)GM_deleteValue(PENDING_COMPOSE_KEY);
-      else{
-        const pendingId=String(pending.playerId||'').trim();
-        const explicitMatch=!xid||!pendingId||xid===pendingId;
-        const genericRecovery=!xid&&Boolean(pendingId)&&age<=COMPOSE_ROUTE_RECOVERY_MS;
-        if(explicitMatch&&(xid||genericRecovery||!pendingId)){
-          return {
-            composeId:String(pending.composeId||''),
-            playerId:pendingId||xid,
-            recipientName:String(pending.recipientName||''),
-            subject:String(pending.subject||''),
-            body:String(pending.body||''),
-            bodyHtml:String(pending.bodyHtml||''),
-            createdAt:Number(pending.createdAt||0),
-            routeRecovery:genericRecovery
-          };
-        }
-      }
-    }
-    const tracked=GM_getValue(PENDING_SEND_KEY,null);
-    if(tracked&&typeof tracked==='object'&&now-Number(tracked.createdAt||0)<=PENDING_COMPOSE_TTL_MS){
-      const trackedId=String(tracked.playerId||'').trim(),trackedAge=now-Number(tracked.createdAt||0);
-      const explicitMatch=Boolean(xid)&&(!trackedId||xid===trackedId);
-      const genericRecovery=!xid&&Boolean(trackedId)&&trackedAge<=COMPOSE_ROUTE_RECOVERY_MS&&String(tracked.state||'awaiting-send')==='awaiting-send';
-      if((explicitMatch||genericRecovery||(!xid&&!trackedId))&&tracked.bodyHtml){
+      const pendingId=String(pending.playerId||'').trim();
+      const composeId=String(pending.composeId||'').trim();
+      if(!composeId||age>COMPOSE_BRIDGE_TTL_MS){
+        GM_deleteValue(PENDING_COMPOSE_KEY);
+      }else if(xid&&pendingId&&xid===pendingId){
         return {
-          composeId:String(tracked.composeId||''),
-          playerId:trackedId||xid,
-          recipientName:String(tracked.recipientName||''),
-          subject:String(tracked.subject||''),
-          body:String(tracked.body||''),
-          bodyHtml:String(tracked.bodyHtml||''),
-          createdAt:Number(tracked.createdAt||0),
-          routeRecovery:genericRecovery
+          composeId,
+          playerId:pendingId,
+          recipientName:String(pending.recipientName||''),
+          subject:String(pending.subject||''),
+          body:String(pending.body||''),
+          bodyHtml:String(pending.bodyHtml||''),
+          createdAt:Number(pending.createdAt||0)
         };
+      }else{
+        // Compose bridges are single-use and bound to the exact recipient route.
+        GM_deleteValue(PENDING_COMPOSE_KEY);
       }
     }
-    const urlSubject=params.get('subject'),urlBody=params.get('body');
-    return urlSubject!==null||urlBody!==null?{playerId:xid,recipientName:'',subject:urlSubject||'',body:urlBody||'',bodyHtml:'',createdAt:0,routeRecovery:false}:null;
+    return null;
   }
 
   function elementMeta(element){
@@ -649,10 +633,16 @@
     return plain===expectedName;
   }
 
-  function findComposeBodyInput(subjectInput){
-    const textareas=[...document.querySelectorAll('textarea')].filter(visible),labelled=textareas.find(el=>el!==subjectInput&&/message|body|mail|content/.test(elementMeta(el)));if(labelled)return labelled;
-    const editables=[...document.querySelectorAll('[contenteditable="true"],[role="textbox"][contenteditable],[role="textbox"]')].filter(visible);
-    return editables.find(el=>el!==subjectInput&&/message|body|mail|content|write|compose/.test(elementMeta(el)))||editables.find(el=>el!==subjectInput)||textareas.find(el=>el!==subjectInput)||null;
+  function findComposeBodyInput(subjectInput=findComposeSubjectInput()){
+    const scope=subjectInput?.closest?.('form')||document;
+    const textareas=[...scope.querySelectorAll('textarea')].filter(visible);
+    const labelled=textareas.find(el=>el!==subjectInput&&/message|body|mail|content/.test(elementMeta(el)));
+    if(labelled)return labelled;
+    const editables=[...scope.querySelectorAll('[contenteditable="true"],[role="textbox"][contenteditable],[role="textbox"]')].filter(visible);
+    return editables.find(el=>el!==subjectInput&&/message|body|mail|content|write|compose/.test(elementMeta(el)))||
+      editables.find(el=>el!==subjectInput)||
+      textareas.find(el=>el!==subjectInput)||
+      null;
   }
 
   function findComposeRichEditorBody(){
@@ -663,21 +653,27 @@
         if(body.isContentEditable||body.getAttribute('contenteditable')==='true'||/editor|wysiwyg|message|compose|sceditor|mail/.test(meta))return body;
       }catch{}
     }
-    return null;
+    const body=findComposeBodyInput();
+    const tag=String(body?.tagName||'').toLowerCase();
+    return body&&tag!=='textarea'&&tag!=='input'?body:null;
   }
 
   function findTornCodeEditorToggle(){
     const selectors=['[aria-label="Toggle Code Editor"]','[title="Toggle Code Editor"]','button[aria-label*="Code Editor" i]','button[title*="Code Editor" i]','[role="button"][aria-label*="Code Editor" i]','[role="button"][title*="Code Editor" i]'];
     for(const selector of selectors){const el=[...document.querySelectorAll(selector)].find(visible);if(el)return el;}
-    return [...document.querySelectorAll('button,a,[role="button"]')].filter(visible).find(el=>{const meta=[el.title,el.getAttribute('aria-label'),el.getAttribute('data-tooltip'),el.textContent].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();return meta==='{}'||meta==='{ }'||/toggle code editor|code editor|source code|source editor|html source/.test(meta);})||null;
+    return [...document.querySelectorAll('button,a,[role="button"]')].filter(visible).find(el=>{
+      const meta=[el.title,el.getAttribute('aria-label'),el.getAttribute('data-tooltip'),el.textContent].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
+      return meta==='{}'||meta==='{ }'||/toggle code editor|code editor|source code|source editor|html source/.test(meta);
+    })||null;
   }
 
   function sourceEditorCandidates(){
     const set=new Set();
-    // Torn's current source-mode editor can be an otherwise anonymous textarea.
-    // Keep all visible textareas in the candidate set and disambiguate by size,
-    // source-mode timing, and metadata rather than requiring a source/code class.
-    for(const selector of ['textarea','.sceditor-source','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]'])for(const el of document.querySelectorAll(selector))if(visible(el))set.add(el);
+    // Torn source mode may expose an anonymous textarea, so candidates are
+    // narrowed by compose-area geometry and source characteristics below.
+    for(const selector of ['textarea','.sceditor-source','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]']){
+      for(const el of document.querySelectorAll(selector))if(visible(el))set.add(el);
+    }
     return [...set];
   }
 
@@ -719,11 +715,26 @@
     return fresh[0]||eligible.sort((a,b)=>score(b)-score(a))[0]||null;
   }
 
-  function editorText(element){if(!element)return '';const tag=String(element.tagName||'').toLowerCase();return tag==='textarea'||tag==='input'?String(element.value||''):String(element.innerText||element.textContent||'');}
-  function dispatchEditorEvents(element){const win=element?.ownerDocument?.defaultView||window;for(const type of ['input','change','keyup','blur'])try{element.dispatchEvent(new win.Event(type,{bubbles:true}));}catch{}}
+  function editorText(element){
+    if(!element)return '';
+    const tag=String(element.tagName||'').toLowerCase();
+    return tag==='textarea'||tag==='input'?String(element.value||''):String(element.innerText||element.textContent||'');
+  }
+
+  function dispatchEditorEvents(element){
+    const win=element?.ownerDocument?.defaultView||window;
+    for(const type of ['input','change','keyup','blur']){
+      try{element.dispatchEvent(new win.Event(type,{bubbles:true}));}catch{}
+    }
+  }
+
+  function brandedSourceIsComplete(html=''){
+    const source=String(html||'');
+    return source.includes('<table')&&source.includes('</table>')&&source.includes(SHOP_BANNER_URL);
+  }
 
   function setSourceEditorHtml(element,html){
-    if(!element)return false;
+    if(!element||!brandedSourceIsComplete(html))return false;
     const value=String(html||'');
     const tag=String(element.tagName||'').toLowerCase();
     if(tag==='textarea'||tag==='input')setNativeValue(element,value);
@@ -736,82 +747,55 @@
   }
 
   function setPlainEditorText(element,text){
-    if(!element)return false;const tag=String(element.tagName||'').toLowerCase();
-    if(tag==='textarea'||tag==='input'){setNativeValue(element,text);return Boolean(editorText(element));}
-    try{element.focus();element.textContent=String(text||'');}catch{return false;}
+    if(!element)return false;
+    const value=String(text||''),tag=String(element.tagName||'').toLowerCase();
+    if(tag==='textarea'||tag==='input'){
+      setNativeValue(element,value);
+      return editorText(element)===value;
+    }
+    try{element.focus();element.textContent=value;}catch{return false;}
     dispatchEditorEvents(element);
-    return Boolean(String(element.innerText||element.textContent||'').trim());
+    return String(element.innerText||element.textContent||'')===value;
   }
 
   const sleepMs=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
-  function brandedMarkersFromHtml(html){
-    const text=String(html||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/gi,' ').replace(/\s+/g,' ').toUpperCase();
-    return ['CASHBACK REMINDER','QUALIFYING PURCHASE','YOUR CASHBACK','SEND YOUR COUPON','HOW IT WORKS','CASHBACK TIERS','RESTOCK ALERTS']
-      .filter(marker=>text.includes(marker));
+  function normalizeComposeText(value){
+    return String(value||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim().toUpperCase();
+  }
+
+  function brandedSourceSignature(expectedHtml=''){
+    try{
+      const doc=new DOMParser().parseFromString(String(expectedHtml||''),'text/html');
+      const markers=[...new Set([...doc.querySelectorAll('strong')]
+        .map(el=>normalizeComposeText(el.textContent||''))
+        .filter(text=>text.length>=3&&text.length<=160))]
+        .slice(0,12);
+      const requiresBanner=[...doc.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||'').includes(SHOP_BANNER_URL));
+      return {markers,requiresBanner};
+    }catch{
+      return {markers:[],requiresBanner:String(expectedHtml||'').includes(SHOP_BANNER_URL)};
+    }
   }
 
   function matchingBrandedTable(expectedHtml=''){
-    const markers=brandedMarkersFromHtml(expectedHtml);
-    const tables=[];
     const rich=findComposeRichEditorBody();
-    if(rich)tables.push(...rich.querySelectorAll?.('table')||[]);
-    for(const table of document.querySelectorAll('table'))if(!tables.includes(table)&&visible(table))tables.push(table);
+    if(!rich)return null;
+    const signature=brandedSourceSignature(expectedHtml);
+    const tables=rich.matches?.('table')?[rich]:[...(rich.querySelectorAll?.('table')||[])];
     return tables.find(table=>{
-      const text=String(table.innerText||table.textContent||'').replace(/\s+/g,' ').toUpperCase();
-      return markers.length?markers.every(marker=>text.includes(marker)):text.includes("MANIC'S MAD HOUSE");
+      const text=normalizeComposeText(table.innerText||table.textContent||'');
+      if(signature.markers.length&&!signature.markers.every(marker=>text.includes(marker)))return false;
+      if(signature.requiresBanner){
+        const hasBanner=[...table.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL));
+        if(!hasBanner)return false;
+      }
+      return signature.markers.length>0||signature.requiresBanner;
     })||null;
   }
 
-  function repairRenderedBrandedTable(expectedHtml=''){
-    const table=matchingBrandedTable(expectedHtml);
-    if(!table)return false;
-    let changed=false;
-    const doc=table.ownerDocument||document;
-
-    // Torn has intermittently dropped the "A" from the first rendered
-    // CASHBACK heading during source->visual conversion. Repair that exact
-    // visual-editor typo before the user sends.
-    try{
-      const walker=doc.createTreeWalker(table,NodeFilter.SHOW_TEXT);
-      const nodes=[];while(walker.nextNode())nodes.push(walker.currentNode);
-      for(const node of nodes){
-        const fixed=String(node.nodeValue||'').replace(/\bCSHBACK\b/g,'CASHBACK');
-        if(fixed!==node.nodeValue){node.nodeValue=fixed;changed=true;}
-      }
-    }catch{}
-
-    // Torn may also strip the external banner row while preserving the rest
-    // of the table. Restore the exact banner row from the expected branded
-    // payload when it is missing.
-    const wantsBanner=String(expectedHtml||'').includes(SHOP_BANNER_URL);
-    const hasBanner=[...table.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL));
-    if(wantsBanner&&!hasBanner){
-      try{
-        const holder=doc.createElement('div');holder.innerHTML=String(expectedHtml||'');
-        const sourceTable=holder.querySelector('table');
-        const bannerRow=[...(sourceTable?.querySelectorAll('tr')||[])].find(row=>[...row.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||'').includes(SHOP_BANNER_URL)));
-        if(bannerRow){
-          table.insertBefore(bannerRow.cloneNode(true),table.firstChild);
-          changed=true;
-        }
-      }catch{}
-    }
-
-    if(changed){
-      const rich=findComposeRichEditorBody()||table.closest?.('[contenteditable="true"]')||table.parentElement;
-      dispatchEditorEvents(rich||table);
-    }
-    return true;
-  }
-
   function richComposerHasBranding(expectedHtml=''){
-    const table=matchingBrandedTable(expectedHtml);
-    if(!table)return false;
-    // A complete matching branded table is authoritative. Banner repair is
-    // best-effort because Torn can sanitize external images after insertion.
-    repairRenderedBrandedTable(expectedHtml);
-    return true;
+    return Boolean(matchingBrandedTable(expectedHtml));
   }
 
   async function waitForSourceEditor(before=new Set(),timeoutMs=4000,allowFreshAnonymous=false,stillCurrent=null){
@@ -834,20 +818,12 @@
     return (!stillCurrent||stillCurrent())&&richComposerHasBranding(expectedHtml);
   }
 
-  function composeEditorSurfaceReady(){
-    const toggle=findTornCodeEditorToggle();if(!toggle)return false;
-    if(findComposeRichEditorBody())return true;
-    return Boolean(likelyTornSourceEditor(new Set(),true));
-  }
-
   async function injectHtmlThroughTornCodeEditor(htmlValue,stillCurrent=null){
-    const html=String(htmlValue||'').replace(/>\s+</g,'><').trim();if(!html)return false;
+    const html=String(htmlValue||'').replace(/>\s+</g,'><').trim();
+    if(!brandedSourceIsComplete(html))return false;
     if(stillCurrent&&!stillCurrent())return false;
     const toggle=findTornCodeEditorToggle();if(!toggle)return false;
 
-    // Treat the current editor mode as authoritative. Never toggle while Torn
-    // is still mounting the composer: that was the race that could make the
-    // first opened draft lose formatting while a later Outbox -> Compose worked.
     let source=likelyTornSourceEditor(new Set(),false);
     const rich=findComposeRichEditorBody();
     if(!source&&!rich)source=likelyTornSourceEditor(new Set(),true);
@@ -882,113 +858,115 @@
     box.textContent=String(text||'');
   }
 
-  function clearComposeFormattingNotice(){document.getElementById('mm-cu-compose-format-status')?.remove();}
-
-  function clearMatchingPendingCompose(payload){
-    const current=GM_getValue(PENDING_COMPOSE_KEY,null);if(!current||typeof current!=='object')return;
-    const currentId=String(current.composeId||''),payloadId=String(payload?.composeId||'');
-    const sameId=currentId&&payloadId&&currentId===payloadId;
-    const legacyMatch=!currentId&&!payloadId&&String(current.playerId||'')===String(payload?.playerId||'')&&
-      Number(current.createdAt||0)===Number(payload?.createdAt||0)&&String(current.subject||'')===String(payload?.subject||'');
-    if(sameId||legacyMatch)GM_deleteValue(PENDING_COMPOSE_KEY);
+  function clearComposeFormattingNotice(){
+    document.getElementById('mm-cu-compose-format-status')?.remove();
   }
 
-  function restoreComposeTargetRoute(payload){
-    const id=String(payload?.playerId||'').trim(),xid=getComposeXid();
-    if(!id||xid===id||xid||!payload?.routeRecovery)return false;
-    statusText='Restoring the intended Torn recipient before formatting the draft.';
-    const url=canonicalComposeUrl(payload);
-    try{window.location.assign(url);}catch{location.href=url;}
-    return true;
+  function clearMatchingPendingCompose(payload){
+    const current=GM_getValue(PENDING_COMPOSE_KEY,null);
+    const currentId=String(current?.composeId||''),payloadId=String(payload?.composeId||'');
+    if(currentId&&payloadId&&currentId===payloadId)GM_deleteValue(PENDING_COMPOSE_KEY);
   }
 
   async function fillMessageComposer(){
-    if(composeFillCleanup){try{composeFillCleanup();}catch{}composeFillCleanup=null;}
     const generation=++composeFillGeneration;
-    if(!location.pathname.includes('messages.php'))return;
-    const payload=composePayloadForCurrentPage();if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
-    if(restoreComposeTargetRoute(payload))return;
+    if(!location.pathname.includes('messages.php')||!location.hash.includes('compose'))return;
+    const payload=composePayloadForCurrentPage();
+    if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
 
-    let observer=null,timer=null,inFlight=false,finished=false,readyKey='',readySince=0,fillAttempts=0;
-    const startedAt=Date.now(),requiresBranding=Boolean(payload.bodyHtml);
-    const cleanup=()=>{
-      if(timer)clearInterval(timer);timer=null;
-      if(observer)observer.disconnect();observer=null;
-      if(composeFillGeneration===generation)composeFillCleanup=null;
-    };
-    composeFillCleanup=cleanup;
-    const stop=(success,rich=true)=>{
-      if(finished)return;
-      finished=true;cleanup();
-      if(success){
-        clearMatchingPendingCompose(payload);clearComposeFormattingNotice();
-        statusText=rich?'Message prepared in Torn composer with recipient + branded formatting verified. Send remains manual.':'Message prepared in Torn composer with recipient verified. Send remains manual.';
-      }else if(requiresBranding){
+    const startedAt=Date.now();
+    const requiresBranding=Boolean(payload.bodyHtml);
+    const hasBody=requiresBranding||Boolean(payload.body);
+    let fillAttempts=0,readyKey='',readySince=0;
+
+    const stillCurrent=()=>generation===composeFillGeneration&&
+      location.pathname.includes('messages.php')&&location.hash.includes('compose')&&
+      (!payload.playerId||getComposeXid()===String(payload.playerId||''));
+
+    const fail=(showError=true)=>{
+      clearMatchingPendingCompose(payload);
+      if(showError&&requiresBranding){
         statusText='Branded formatting is not ready. Draft was NOT downgraded to plain text.';
-        composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Use Reopen Draft in MM_Customers to retry.','error');
+        composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry.','error');
+      }else{
+        clearComposeFormattingNotice();
       }
     };
-    const stillCurrent=()=>generation===composeFillGeneration&&location.pathname.includes('messages.php')&&location.hash.includes('compose')&&
-      (!payload.playerId||getComposeXid()===String(payload.playerId||''));
-    const tryFill=async()=>{
-      if(finished||inFlight||!stillCurrent())return false;
-      if(Date.now()-startedAt>=COMPOSE_FILL_TIMEOUT_MS){stop(false,requiresBranding);return false;}
-      inFlight=true;
-      try{
-        const xid=getComposeXid(),subject=findComposeSubjectInput(),recipient=findComposeRecipientInput(subject);
-        const recipientOK=(!payload.playerId)||(xid===String(payload.playerId||'')&&recipientMatchesPayload(payload,recipient));
-        const editorReady=composeEditorSurfaceReady();
-        if(!subject||!recipientOK||!editorReady){
-          readyKey='';readySince=0;
-          statusText=!subject?'Waiting for Torn compose form…':!recipientOK?'Waiting for Torn to resolve the intended recipient…':'Waiting for Torn message editor…';
-          composeFormattingNotice('Preparing message safely… waiting for Torn to finish loading the recipient and editor.');
-          return false;
-        }
 
-        const surfaceKey=[xid,String(recipient?.value||recipient?.textContent||''),Boolean(findComposeRichEditorBody()),Boolean(likelyTornSourceEditor(new Set(),true))].join('|');
-        if(surfaceKey!==readyKey){readyKey=surfaceKey;readySince=Date.now();return false;}
-        if(Date.now()-readySince<COMPOSE_SURFACE_STABLE_MS)return false;
+    while(stillCurrent()&&Date.now()-startedAt<COMPOSE_FILL_TIMEOUT_MS){
+      const xid=getComposeXid();
+      const subject=findComposeSubjectInput();
+      const recipient=findComposeRecipientInput(subject);
+      const recipientOK=(!payload.playerId)||(xid===String(payload.playerId||'')&&recipientMatchesPayload(payload,recipient));
+      const rich=findComposeRichEditorBody();
+      const source=likelyTornSourceEditor(new Set(),true);
+      const editorReady=!hasBody||
+        (requiresBranding?Boolean(findTornCodeEditorToggle()&&(rich||source)):Boolean(findComposeBodyInput(subject)||rich));
 
-        fillAttempts++;
-        if(!stillCurrent())return false;
-        setNativeValue(subject,payload.subject);await sleepMs(30);
-        if(!stillCurrent())return false;
-        let subjectOK=String(subject.value||'').trim()===String(payload.subject||'').trim();
-        let bodyOK=false,rich=requiresBranding;
+      if(!subject||!recipientOK||!editorReady){
+        readyKey='';readySince=0;
+        statusText=!subject?'Waiting for Torn compose form…':!recipientOK?'Waiting for Torn to resolve the intended recipient…':'Waiting for Torn message editor…';
+        composeFormattingNotice('Preparing message… waiting for Torn to finish loading the original compose form.');
+        await sleepMs(500);
+        continue;
+      }
 
-        if(requiresBranding){
-          bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent);
-          if(!bodyOK){
-            readyKey='';readySince=0;
-            statusText='Waiting for Torn rich editor… branded message will retry automatically.';
-            composeFormattingNotice('Preparing branded message… do not send until this notice disappears.');
-            return false;
-          }
-        }else{
-          const body=findComposeBodyInput(subject)||findComposeRichEditorBody();
-          if(body)bodyOK=setPlainEditorText(body,payload.body);
-        }
+      const surfaceKey=[xid,String(recipient?.value||recipient?.textContent||''),Boolean(rich),Boolean(source)].join('|');
+      if(surfaceKey!==readyKey){
+        readyKey=surfaceKey;readySince=Date.now();
+        await sleepMs(COMPOSE_SURFACE_STABLE_MS);
+        continue;
+      }
+      if(Date.now()-readySince<COMPOSE_SURFACE_STABLE_MS){
+        await sleepMs(Math.max(40,COMPOSE_SURFACE_STABLE_MS-(Date.now()-readySince)));
+        continue;
+      }
 
+      fillAttempts++;
+      if(payload.subject)setNativeValue(subject,payload.subject);
+      await sleepMs(30);
+      if(!stillCurrent())break;
+
+      const subjectOK=!payload.subject||String(subject.value||'').trim()===String(payload.subject||'').trim();
+      let bodyOK=!hasBody;
+
+      if(requiresBranding){
+        bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent);
+      }else if(hasBody){
+        const body=findComposeBodyInput(subject)||findComposeRichEditorBody();
+        bodyOK=Boolean(body)&&setPlainEditorText(body,payload.body);
+      }
+
+      if(bodyOK){
         await sleepMs(COMPOSE_POST_FILL_VERIFY_MS);
-        if(!stillCurrent())return false;
+        if(!stillCurrent())break;
         const verifySubject=findComposeSubjectInput();
         const verifyRecipient=findComposeRecipientInput(verifySubject);
         const verifyRecipientOK=(!payload.playerId)||(getComposeXid()===String(payload.playerId||'')&&recipientMatchesPayload(payload,verifyRecipient));
-        subjectOK=Boolean(verifySubject)&&String(verifySubject.value||'').trim()===String(payload.subject||'').trim();
-        bodyOK=requiresBranding?richComposerHasBranding(payload.bodyHtml):bodyOK;
-        if(verifyRecipientOK&&subjectOK&&bodyOK){stop(true,rich);return true;}
-
-        readyKey='';readySince=0;
-        if(fillAttempts>=12&&Date.now()-startedAt>15_000){
-          statusText='Torn keeps replacing the compose surface; MM_Customers is still retrying without clearing the draft.';
+        const verifySubjectOK=!payload.subject||(Boolean(verifySubject)&&String(verifySubject.value||'').trim()===String(payload.subject||'').trim());
+        const verifyBodyOK=requiresBranding?richComposerHasBranding(payload.bodyHtml):bodyOK;
+        if(verifyRecipientOK&&verifySubjectOK&&verifyBodyOK&&subjectOK){
+          clearMatchingPendingCompose(payload);
+          clearComposeFormattingNotice();
+          statusText=requiresBranding
+            ? 'Message prepared in Torn composer with recipient + branded formatting verified. Send remains manual.'
+            : 'Message prepared in Torn composer with recipient verified. Send remains manual.';
+          return;
         }
-        return false;
-      }finally{inFlight=false;}
-    };
-    tryFill();
-    timer=setInterval(()=>{if(!finished)tryFill();},700);
-    observer=new MutationObserver(()=>{if(!finished)tryFill();});
-    observer.observe(document.documentElement,{childList:true,subtree:true});
+      }
+
+      if(fillAttempts>=COMPOSE_MAX_FORMAT_ATTEMPTS){
+        fail(true);
+        return;
+      }
+      readyKey='';readySince=0;
+      statusText=requiresBranding?'Torn rich editor was not ready; retrying the original compose form.':'Torn compose form changed while preparing the message; retrying.';
+      composeFormattingNotice(requiresBranding?'Preparing branded message… do not send until this notice disappears.':'Preparing message…');
+      await sleepMs(500);
+    }
+
+    if(stillCurrent())fail(true);
+    else clearComposeFormattingNotice();
   }
 
   function normalizedDeliveryText(value){
@@ -1073,10 +1051,6 @@
     return pending&&composeMatchesPending(pending)?candidates[0]:null;
   }
 
-  function messageSentConfirmationVisible(){
-    return sentConfirmationTexts().length>0;
-  }
-
   async function completeTrackedSend(pending,evidence=''){
     const id=String(pending?.playerId||'').trim(),kind=String(pending?.kind||'');
     if(!id||!kind)return false;
@@ -1104,32 +1078,28 @@
     });
     rememberDeliveryReceipt(pending,evidence);
     GM_deleteValue(PENDING_SEND_KEY);
-    statusText=kind==='welcome'?'Torn confirmed the welcome was sent; customer updated and coupon issued.':kind==='restock'?'Torn confirmed the restock alert was sent; notification state updated.':'Torn confirmed the message was sent; customer contact history updated.';
+    statusText=kind==='welcome'
+      ? 'Torn confirmed the welcome was sent; customer updated and coupon issued.'
+      : kind==='restock'
+        ? 'Torn confirmed the restock alert was sent; notification state updated.'
+        : 'Torn confirmed the message was sent; customer contact history updated.';
     return true;
   }
 
   function installMessageSendDetector(){
     if(sendDetectorCleanup){try{sendDetectorCleanup();}catch{}sendDetectorCleanup=null;sendDetectorKey='';}
     if(!location.pathname.includes('messages.php'))return;
+
     const initial=GM_getValue(PENDING_SEND_KEY,null);
     const id=String(initial?.playerId||'').trim(),createdAt=Number(initial?.createdAt||0);
-    if(!id||!createdAt||Date.now()-createdAt>PENDING_COMPOSE_TTL_MS){if(initial)GM_deleteValue(PENDING_SEND_KEY);return;}
+    if(!id||!createdAt||Date.now()-createdAt>PENDING_DELIVERY_TTL_MS){
+      if(initial)GM_deleteValue(PENDING_SEND_KEY);
+      return;
+    }
 
     const detectorKey=String(initial?.deliveryId||createdAt+'-'+id);
-    let active=true,verifyTimer=null,scanTimer=null,observer=null;
+    let active=true,expiryTimer=null,verifying=false;
     sendDetectorKey=detectorKey;
-
-    const cleanup=()=>{
-      if(!active)return;
-      active=false;
-      if(verifyTimer)clearInterval(verifyTimer);
-      if(scanTimer)clearInterval(scanTimer);
-      if(observer)observer.disconnect();
-      document.removeEventListener('click',clickHandler,true);
-      document.removeEventListener('submit',submitHandler,true);
-      if(sendDetectorKey===detectorKey){sendDetectorCleanup=null;sendDetectorKey='';}
-    };
-    sendDetectorCleanup=cleanup;
 
     const currentPending=()=>{
       const value=GM_getValue(PENDING_SEND_KEY,null);
@@ -1137,34 +1107,56 @@
       return value;
     };
 
-    const verifyAfterSend=()=>{
+    const cleanup=()=>{
       if(!active)return;
-      const pending=currentPending();
-      if(!pending){cleanup();return;}
-      const clickedAt=Number(pending.sendClickedAt||0);
-      if(!clickedAt)return;
+      active=false;
+      if(expiryTimer)clearTimeout(expiryTimer);
+      document.removeEventListener('click',clickHandler,true);
+      document.removeEventListener('submit',submitHandler,true);
+      if(sendDetectorKey===detectorKey){sendDetectorCleanup=null;sendDetectorKey='';}
+    };
+    sendDetectorCleanup=cleanup;
 
-      const successText=newSentConfirmationEvidence(pending.confirmationBaseline||[]);
-      const fingerprint=String(pending.deliveryFingerprint||messageDeliveryFingerprint(pending));
-      const baselineCount=Math.max(0,Number(pending.fingerprintBaselineCount||0));
-      const transcriptConfirmed=Boolean(fingerprint&&deliveryFingerprintCount(fingerprint)>baselineCount);
-      const evidence=successText?'torn-success-ui':transcriptConfirmed?'conversation-transcript':'';
+    const verifyDeliveryAfterSend=async()=>{
+      if(verifying||!active)return;
+      verifying=true;
+      try{
+        while(active){
+          const pending=currentPending();
+          if(!pending){cleanup();return;}
+          const clickedAt=Number(pending.sendClickedAt||0);
+          if(!clickedAt||pending.state!=='send-clicked')return;
 
-      if(evidence){
-        cleanup();
-        completeTrackedSend(pending,evidence).catch(error=>console.warn('[MM Customers] Sent-message state update failed',error));
-        return;
-      }
+          const successText=newSentConfirmationEvidence(pending.confirmationBaseline||[]);
+          const fingerprint=String(pending.deliveryFingerprint||messageDeliveryFingerprint(pending));
+          const baselineCount=Math.max(0,Number(pending.fingerprintBaselineCount||0));
+          const transcriptConfirmed=Boolean(fingerprint&&deliveryFingerprintCount(fingerprint)>baselineCount);
+          const evidence=successText?'torn-success-ui':transcriptConfirmed?'conversation-transcript':'';
 
-      if(Date.now()-clickedAt>=DELIVERY_CONFIRM_WINDOW_MS&&pending.state!=='send-unconfirmed'){
-        GM_setValue(PENDING_SEND_KEY,{...pending,state:'send-unconfirmed',verificationFailedAt:Date.now()});
-        statusText='Send click was not confirmed by Torn. Customer state was NOT changed. Check Outbox before retrying.';
+          if(evidence){
+            cleanup();
+            try{await completeTrackedSend(pending,evidence);}
+            catch(error){console.warn('[MM Customers] Sent-message state update failed',error);}
+            return;
+          }
+
+          if(Date.now()-clickedAt>=DELIVERY_CONFIRM_WINDOW_MS){
+            GM_setValue(PENDING_SEND_KEY,{...pending,state:'send-unconfirmed',verificationFailedAt:Date.now()});
+            statusText='Send click was not confirmed by Torn. Customer state was NOT changed. Check Outbox before retrying.';
+            if(document.getElementById(ROOT_ID)?.style.display!=='none')render();
+            cleanup();
+            return;
+          }
+          await sleepMs(500);
+        }
+      }finally{
+        verifying=false;
       }
     };
 
     const arm=()=>{
       const pending=currentPending();
-      if(!active||!pending||pending.state==='send-clicked'||pending.state==='send-unconfirmed')return;
+      if(!active||!pending||pending.state!=='awaiting-send')return;
       if(!composeMatchesPending(pending))return;
       const clickedAt=Date.now();
       const fingerprint=messageDeliveryFingerprint(pending);
@@ -1176,8 +1168,7 @@
         deliveryFingerprint:fingerprint,
         fingerprintBaselineCount:deliveryFingerprintCount(fingerprint)
       });
-      verifyTimer=setInterval(verifyAfterSend,250);
-      for(const delay of [350,900,1800,3500,7000,11000])setTimeout(verifyAfterSend,delay);
+      verifyDeliveryAfterSend();
     };
 
     const isExactTrackedSendControl=el=>{
@@ -1202,32 +1193,38 @@
     document.addEventListener('click',clickHandler,true);
     document.addEventListener('submit',submitHandler,true);
 
-    scanTimer=setInterval(()=>{
+    const remaining=Math.max(0,PENDING_DELIVERY_TTL_MS-(Date.now()-createdAt));
+    expiryTimer=setTimeout(()=>{
       const pending=currentPending();
-      if(!pending){cleanup();return;}
-      if(Date.now()-Number(pending.createdAt||0)>PENDING_COMPOSE_TTL_MS){GM_deleteValue(PENDING_SEND_KEY);cleanup();return;}
-      if(Number(pending.sendClickedAt||0))verifyAfterSend();
-    },500);
-    observer=new MutationObserver(()=>verifyAfterSend());
-    observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','disabled','aria-live']});
+      if(pending&&Date.now()-Number(pending.createdAt||0)>=PENDING_DELIVERY_TTL_MS)GM_deleteValue(PENDING_SEND_KEY);
+      cleanup();
+    },remaining+1000);
 
-    if(Number(initial.sendClickedAt||0)&&initial.state==='send-clicked')verifyAfterSend();
+    if(Number(initial.sendClickedAt||0)&&initial.state==='send-clicked')verifyDeliveryAfterSend();
   }
 
-  function runPageHelpers(){fillMessageComposer();installMessageSendDetector();}
+  function runPageHelpers(){
+    if(!location.hash.includes('compose')){
+      composeFillGeneration++;
+      GM_deleteValue(PENDING_COMPOSE_KEY);
+      clearComposeFormattingNotice();
+    }
+    fillMessageComposer();
+    installMessageSendDetector();
+  }
 
   function onRouteChanged(){
     if(routeTimer)clearTimeout(routeTimer);
-    routeTimer=setTimeout(()=>{if(location.href===lastHref)return;lastHref=location.href;runPageHelpers();},120);
+    routeTimer=setTimeout(()=>{
+      if(location.href===lastHref)return;
+      lastHref=location.href;
+      runPageHelpers();
+    },120);
   }
 
   function installRouteHooks(){
-    window.addEventListener('hashchange',onRouteChanged);window.addEventListener('popstate',onRouteChanged);
-    for(const method of ['pushState','replaceState']){
-      const original=history[method];if(original?.__mmCustomersWrapped)continue;
-      const wrapped=function(...args){const result=original.apply(this,args);onRouteChanged();return result;};
-      wrapped.__mmCustomersWrapped=true;history[method]=wrapped;
-    }
+    window.addEventListener('hashchange',onRouteChanged);
+    window.addEventListener('popstate',onRouteChanged);
   }
 
   function refundProfileUrl(refund){
@@ -1323,13 +1320,14 @@
   function pendingDeliveryHtml(){
     const pending=GM_getValue(PENDING_SEND_KEY,null);
     if(!pending||typeof pending!=='object')return '';
-    if(Date.now()-Number(pending.createdAt||0)>PENDING_COMPOSE_TTL_MS)return '';
+    if(Date.now()-Number(pending.createdAt||0)>PENDING_DELIVERY_TTL_MS)return '';
     const customer=state?.customers?.[String(pending.playerId||'').trim()];
     const name=customer?.name||pending.playerId||'customer';
     const stateLabel=pending.state==='send-unconfirmed'?'SEND CLICK UNCONFIRMED':pending.state==='send-clicked'?'WAITING FOR TORN CONFIRMATION':'DRAFT PREPARED';
     return card('<div class="mm-cu-row"><div class="mm-cu-main"><b>Pending delivery · '+esc(name)+'</b><div class="mm-cu-muted">'+esc(stateLabel)+' · '+esc(pending.subject||'')+'</div>'+
       (pending.state==='send-unconfirmed'?'<div class="mm-cu-warn mm-cu-mini" style="margin-top:3px;">Torn did not provide confirmation. Customer state was left unchanged; verify Outbox before confirming or resending.</div>':'')+
-      '</div><div class="mm-cu-actions"><button data-pending-reopen="1" style="'+button(true)+'">Reopen Draft</button>'+
+      '</div><div class="mm-cu-actions">'+
+      (pending.state!=='send-clicked'?'<button data-pending-reopen="1" style="'+button(true)+'">Reopen Draft</button>':'')+
       (pending.state==='send-unconfirmed'?'<button data-pending-confirm="1" style="'+button()+'">Confirm Sent</button>':'')+
       '<button data-pending-cancel="1" style="'+button()+'">Cancel Tracking</button></div></div>');
   }
@@ -1393,8 +1391,23 @@
     };
     root.querySelector('[data-pending-reopen]')?.addEventListener('click',()=>{
       const pending=GM_getValue(PENDING_SEND_KEY,null);if(!pending)return;
+      if(pending.state==='send-clicked'){
+        statusText='Torn send verification is still running. Wait for confirmation before reopening.';
+        render();
+        return;
+      }
       const createdAt=Date.now();
-      const payload={composeId:'cu-reopen-'+createdAt+'-'+String(pending.playerId||''),playerId:pending.playerId,recipientName:pending.recipientName||state?.customers?.[String(pending.playerId||'')]?.name||'',subject:pending.subject,body:pending.body,bodyHtml:pending.bodyHtml,createdAt};
+      const tracking={...pending,state:'awaiting-send',sendClickedAt:null,verificationFailedAt:null,confirmationBaseline:null,deliveryFingerprint:null,fingerprintBaselineCount:null};
+      GM_setValue(PENDING_SEND_KEY,tracking);
+      const payload={
+        composeId:'cu-reopen-'+createdAt+'-'+String(tracking.playerId||''),
+        playerId:tracking.playerId,
+        recipientName:tracking.recipientName||state?.customers?.[String(tracking.playerId||'')]?.name||'',
+        subject:tracking.subject,
+        body:tracking.body,
+        bodyHtml:tracking.bodyHtml,
+        createdAt
+      };
       GM_setValue(PENDING_COMPOSE_KEY,payload);
       const url=canonicalComposeUrl(payload);
       try{window.location.assign(url);}catch{location.href=url;}
@@ -1428,14 +1441,22 @@
     root.querySelector('#mm-cu-refresh-sales')?.addEventListener('click',()=>run('Refreshing Bazaar customer sales…',async()=>{
       const r=await refreshSales();
       if(newCustomerRows().length)activeView='new';
-      return 'Sales refreshed: '+r.imported+' new · '+r.checked+' checked'+(r.newCustomers?' · '+r.newCustomers+' new customer'+(r.newCustomers===1?'':'s'):'')+(r.repairedNames?' · '+r.repairedNames+' name'+(r.repairedNames===1?'':'s')+' resolved':'')+(r.rejected?' · '+r.rejected+' rejected':'')+'.';
+      return 'Sales refreshed: '+r.imported+' new · '+r.checked+' checked'+(r.newCustomers?' · '+r.newCustomers+' new customer'+(r.newCustomers===1?'':'s'):'')+(r.resolvedNames?' · '+r.resolvedNames+' name'+(r.resolvedNames===1?'':'s')+' resolved':'')+(r.rejected?' · '+r.rejected+' rejected':'')+'.';
     }));
     root.querySelector('#mm-cu-save-api')?.addEventListener('click',()=>{
       const value=root.querySelector('#mm-cu-api')?.value||'';saveApiKey(value);
-      statusText=value.trim()?'Customers API key saved locally. Syncing automatically…':'Enter an API key first.';render();
-      if(value.trim())setTimeout(()=>autoRefreshCustomers({force:true,switchToNew:true}),50);
+      statusText=value.trim()?'Customers API key saved locally. Syncing while MM_Customers is open…':'Enter an API key first.';render();
+      if(value.trim()){
+        startCustomerAutoSync();
+        setTimeout(()=>autoRefreshCustomers({force:true,switchToNew:true}),50);
+      }
     });
-    root.querySelector('#mm-cu-clear-api')?.addEventListener('click',()=>{saveApiKey('');statusText='Customers API key cleared.';render();});
+    root.querySelector('#mm-cu-clear-api')?.addEventListener('click',()=>{
+      saveApiKey('');
+      stopCustomerAutoSync();
+      statusText='Customers API key cleared.';
+      render();
+    });
 
     root.querySelectorAll('[data-welcome]').forEach(b=>b.addEventListener('click',()=>run('Preparing customer message…',async()=>{
       const id=b.dataset.welcome;
@@ -1518,15 +1539,39 @@
     return root;
   }
 
+  function panelIsOpen(){
+    const root=document.getElementById(ROOT_ID);
+    return Boolean(root&&root.style.display!=='none');
+  }
+
+  function stopCustomerAutoSync(){
+    if(customerAutoSyncTimer)clearInterval(customerAutoSyncTimer);
+    customerAutoSyncTimer=null;
+  }
+
+  function startCustomerAutoSync(){
+    stopCustomerAutoSync();
+    if(!apiKey()||!panelIsOpen())return;
+    customerAutoSyncTimer=setInterval(()=>{
+      if(panelIsOpen()&&document.visibilityState==='visible'){
+        autoRefreshCustomers({force:false,switchToNew:false});
+      }
+    },AUTO_SYNC_MS);
+  }
+
   function open(){
     createPanel();
     const root=document.getElementById(ROOT_ID);root.style.display='block';
     core.setDockLauncherActive?.('customers',true);
+    startCustomerStateChannel();
+    startCustomerAutoSync();
     reloadState()
       .then(()=>{render();return autoRefreshCustomers({force:false,switchToNew:true});})
       .catch(error=>{statusText=error?.message||String(error);render();});
   }
   function close(){
+    stopCustomerAutoSync();
+    stopCustomerStateChannel();
     const root=document.getElementById(ROOT_ID);if(root)root.style.display='none';
     core.setDockLauncherActive?.('customers',false);
   }
@@ -1541,27 +1586,32 @@
         onClick:()=>{const root=document.getElementById(ROOT_ID);if(root&&root.style.display!=='none')close();else open();}
       });
       if(b)b.id=LAUNCHER_ID;
-      core.adoptLegacyCrmLauncher?.();
       return;
     }
   }
 
-  function installChannel(){
-    if(typeof BroadcastChannel==='undefined')return;
+  function stopCustomerStateChannel(){
+    try{customerStateChannel?.close?.();}catch{}
+    customerStateChannel=null;
+  }
+
+  function startCustomerStateChannel(){
+    stopCustomerStateChannel();
+    if(typeof BroadcastChannel==='undefined'||!panelIsOpen())return;
     try{
       const channel=new BroadcastChannel('mm_bazaar_crm_cross_tab_v1');
       channel.addEventListener('message',event=>{
-        if(event?.data?.type!=='state-updated')return;
-        if(document.getElementById(ROOT_ID)?.style.display==='none')return;
+        if(event?.data?.type!=='state-updated'||!panelIsOpen())return;
         reloadState().catch(()=>{});
       });
+      customerStateChannel=channel;
     }catch{}
   }
 
   function initializeCustomers(){
-    createLauncher();installChannel();installRouteHooks();runPageHelpers();
-    if(apiKey())setTimeout(()=>autoRefreshCustomers({force:false,switchToNew:false}),1200);
-    setInterval(()=>{if(apiKey()&&document.visibilityState==='visible')autoRefreshCustomers({force:false,switchToNew:false});},AUTO_SYNC_MS);
+    createLauncher();
+    installRouteHooks();
+    runPageHelpers();
   }
 
   if(document.body)initializeCustomers();

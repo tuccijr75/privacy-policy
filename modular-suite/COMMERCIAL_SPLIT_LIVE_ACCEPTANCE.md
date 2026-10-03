@@ -1265,3 +1265,89 @@ Implementation checkpoints on patch branch:
 ## Promotion boundary
 
 Do not retire the legacy monolith, MM Bazaar Manager, or MM Market Scout until the three replacement scripts pass live acceptance and the owner explicitly approves retirement/promotion.
+
+
+## MM_Customers alpha.16 — one-shot compose transport / resource reduction
+
+Live symptom after alpha.15 merge:
+- opening a prepared message could leave Torn Messages stuck on its loading surface while the userscript remained active
+- the user does not require automatic draft restoration after navigating Outbox → Compose; only the original prepared Compose page must work
+
+Repair in alpha.16:
+- compose hydration is one-shot and only applies when the live Compose XID exactly matches the customer that initiated the action
+- generic Compose and different-recipient routes immediately discard the pending compose bridge instead of restoring or hydrating it
+- PENDING_SEND delivery tracking no longer acts as a source for editor hydration
+- automatic route restoration was removed
+- compose fill no longer attaches a document-wide MutationObserver; it uses one bounded 500 ms timer with a 20 s timeout and at most three rich-format attempts
+- pre-send delivery tracking no longer attaches a document-wide attribute MutationObserver or 500 ms scan loop
+- delivery verification only starts after a trusted manual Send click; expiry uses one timeout
+- recipient, subject, branded-content verification, and confirmed-delivery state safety remain intact
+
+Static/V8 verification:
+- userscript parses
+- customer logic loads and core sales/coupon checks pass
+- route recovery symbols are absent
+- resource-heavy compose/send observers and pre-send scan timer are absent
+- manual-send trust gate and recipient safety remain present
+- suite manifest: 8.0.0-alpha.33
+- MM_Customers: 8.0.0-alpha.16
+
+Live acceptance still required:
+1. From MM_Customers, prepare a single customer message.
+2. The original Torn Compose page must load Name, Subject, and branded body without remaining on the loading spinner.
+3. Navigate away to Outbox, then open a fresh generic Compose page; MM_Customers must not repopulate or redirect it.
+4. Return to MM_Customers and separately verify Welcome, Coupon Reminder, Cashback Reminder, and Restock Alert.
+5. Confirm customer/contact/coupon/restock state still changes only after a real manual Send receives Torn confirmation.
+
+
+## MM_Customers alpha.17 — patch consolidation and source cleanup
+
+Owner direction:
+- audit the entire MM_Customers structure before merging,
+- identify accumulated runtime patches/workarounds,
+- replace patch behavior with the correct source implementation,
+- remove obsolete patch layers without removing features.
+
+Audit result:
+- the message-template source and customer-domain logic were structurally sound,
+- accumulated risk was concentrated in the Torn composer adapter, send-confirmation transport, and always-on lifecycle work,
+- `MM_Customers.logic.js` required no patch-removal rewrite,
+- Core compatibility remains consistent with the approved modular architecture.
+
+Source cleanup completed:
+- removed rendered CASHBACK-heading mutation and banner-row reinsertion,
+- removed hard-coded branded verification markers; verification is now derived from the canonical HTML payload,
+- removed legacy pending-compose tuple matching,
+- removed generic compose URL hydration; MM_Customers now touches only its own one-shot draft,
+- removed history `pushState` / `replaceState` monkey patching,
+- replaced repeated delivery verification timers with one bounded async verifier started only by a trusted manual Send,
+- renamed the canonical plain message renderer from fallback terminology to `plainMessageText`,
+- renamed username repair terminology to missing-username resolution,
+- moved automatic sales sync from page-load scope to the open MM_Customers panel lifecycle,
+- moved the Customers BroadcastChannel from page-load scope to the open panel lifecycle,
+- removed the Customers-side duplicate legacy-launcher adoption call because Core already owns that migration bridge,
+- fixed unconfirmed Reopen Draft so it explicitly returns delivery state to `awaiting-send` before a resend,
+- retained the historical first-contact recovery UI, Torn anonymous source-textarea compatibility, API v1 username fallback, legacy Bazaar listing fallback, and Core legacy-data/launcher compatibility because those are explicit recovery/migration features rather than runtime patches.
+
+Resource invariants after cleanup:
+- no MM_Customers `MutationObserver`,
+- no page-load customer network sync,
+- no always-on Customers cross-tab channel,
+- no pre-send polling loop,
+- no history-method wrapping,
+- the only `setInterval` is panel-scoped auto-sync,
+- composer preparation and post-Send verification are bounded to the active user workflow.
+
+Versions:
+- MM_Customers: `8.0.0-alpha.17`
+- suite: `8.0.0-alpha.34`
+
+Detailed inventory: `modular-suite/customers/CLEANUP_AUDIT.md`.
+
+Static/V8 verification passes for syntax, customer sale/coupon/refund/restock logic, shared compose-path preservation, source-level branding verification, removal of obsolete patch layers, trusted manual-send gating, panel-scoped resource lifecycle, and manifest versions.
+
+**PENDING LIVE ACCEPTANCE / DO NOT MERGE YET**:
+1. prepare a Welcome/Message from MM_Customers and verify Name + Subject + complete branded body on the first Torn Compose load,
+2. navigate Outbox → generic Compose and verify MM_Customers does not repopulate or redirect it,
+3. repeat the original-compose test for Coupon Reminder, Cashback Reminder, and Restock Alert,
+4. verify customer/contact/coupon/restock state changes only after Torn confirms a real manual Send.
