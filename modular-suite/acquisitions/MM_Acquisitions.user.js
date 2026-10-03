@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.7
+// @version      8.0.0-alpha.8
 // @description  Dedicated acquisition workflow for Bazaar, Item Market and Travel with live verification, ROI filters and purchase-ledger sync.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -491,6 +491,7 @@
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
           '<button id="mm-acq-armory-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Compare Sources</button>'+
           '<button data-armory-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Find Best Source</button>'+
+          (armorySources?.reason==='overseas-recommended'?'<button id="mm-acq-armory-travel-agency" style="'+button(true)+'">Open Travel Agency</button>':'')+
           '<button id="mm-acq-armory-clear" style="'+button()+'">Clear</button>'+
         '</div>'+
       '</div>'+rows
@@ -522,7 +523,8 @@
       }
       if(result?.reason==='overseas-recommended'){
         activeView='travel';
-        statusText='Overseas is the selected source: '+String(result.country||'destination')+' · '+money(result.price||0)+' · stock '+Number(result.stock||0).toLocaleString()+'. Travel/purchase remains manual.';
+        const qty=Math.max(1,Number(armoryRequest?.qty||1));
+        statusText='Overseas is the selected source: '+String(result.country||'destination')+' · '+money(result.price||0)+' each · '+money(Number(result.price||0)*qty)+' for '+qty.toLocaleString()+' · stock '+Number(result.stock||0).toLocaleString()+'. Use Open Travel Agency when ready; travel/purchase remains manual.';
       }else if(result?.reason==='preferred-source-unavailable'){
         statusText=preferredSource+' is not currently available for '+armoryRequest.itemName+'. Compare Sources for alternatives.';
       }else if(result?.reason==='item-id-unresolved'){
@@ -644,7 +646,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.7 · ACQUIRE / VERIFY / LEDGER</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.8 · ACQUIRE / VERIFY / LEDGER</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -679,6 +681,7 @@
     }));
     root.querySelectorAll('[data-acquire-item]').forEach(b=>b.addEventListener('click',()=>acquire(b.dataset.acquireItem)));
     root.querySelector('#mm-acq-armory-refresh')?.addEventListener('click',refreshArmorySources);
+    root.querySelector('#mm-acq-armory-travel-agency')?.addEventListener('click',()=>{location.href='https://www.torn.com/travelagency.php';});
     root.querySelector('#mm-acq-armory-clear')?.addEventListener('click',()=>{armoryRequest=null;armorySources=null;statusText='Faction Armory acquisition request cleared.';render();});
     root.querySelectorAll('[data-armory-route]').forEach(b=>b.addEventListener('click',()=>routeArmoryRequest(b.dataset.armoryRoute||'Best')));
     root.querySelector('#mm-acq-save-key')?.addEventListener('click',()=>{
