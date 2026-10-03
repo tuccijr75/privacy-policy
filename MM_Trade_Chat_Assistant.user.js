@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.5
+// @version      0.1.0-alpha.6
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems. Reminds, rotates, and pre-fills; never sends automatically.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -33,6 +33,7 @@
     'mm-market-scout',
   ];
   const core = globalThis.MMTornCore;
+  const MESSAGE_SET_REV = 'symbolic-contact-v2';
 
   const MODES = {
     busy:   { label: 'Busy 5–8 min',  min: 5,  max: 8 },
@@ -41,11 +42,11 @@
   };
 
   const DEFAULT_MESSAGES = [
-    '🟨 <b>MM TORN SYSTEMS</b> 🟥 | <b>50M+</b> Custom | 🛠 Repairs 25M+ | ⚙ Bazaar • Faction • API • CRM | <u>DM</u>',
-    '🟨 <b>MM TORN SYSTEMS</b> 🟥 | Bazaar • ROI • Procurement • CRM | <b>50M+</b> custom | 🛠 Repairs 25M+ | <u>DM</u>',
-    '🟨 <b>MM TORN SYSTEMS</b> 🟥 | Faction • Armory • Builds • War Prep • API | <b>50M+</b> custom | <u>DM</u>',
-    '🟨 <b>MM TORN SYSTEMS</b> 🟥 | TornPDA • Desktop • API • Analytics | <b>50M+</b> custom | 🛠 25M+ repairs | <u>DM</u>',
-    '<b>MM TORN SYSTEMS</b> | <b>50M+</b> custom | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO</a> | <u>DM</u>',
+    '⚙️ <b>MM TORN SYSTEMS</b> | 🧰 Custom 50M+ • Repairs 25M+ | Bazaar • API | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
+    '💰 <b>MM TORN SYSTEMS</b> | 📈 Bazaar • ROI • Procurement • CRM | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
+    '🛡️ <b>MM TORN SYSTEMS</b> | ⚔️ Armory • Builds • War Prep • API | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
+    '📱 <b>MM TORN SYSTEMS</b> | 🔌 TornPDA • Desktop • API • Analytics | 50M+ | <a href="/profiles.php?XID=4325346">DM MIKE</a>',
+    '📌 <b>MM TORN SYSTEMS</b> | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO + CONTACT</a> | 50M+ Custom • 25M+ Repairs',
   ];
 
   const defaults = {
@@ -57,11 +58,18 @@
     messages: DEFAULT_MESSAGES,
     autoFillWhenDue: true,
     collapsed: false,
+    completedCount: 0,
+    lastCompletedAt: 0,
+    messageSetRev: MESSAGE_SET_REV,
   };
 
   const loadState = () => {
     const saved = GM_getValue(STORAGE_ID, null);
     const state = saved && typeof saved === 'object' ? { ...defaults, ...saved } : { ...defaults };
+    if (state.messageSetRev !== MESSAGE_SET_REV) {
+      state.messages = [...DEFAULT_MESSAGES];
+      state.messageSetRev = MESSAGE_SET_REV;
+    }
     if (!Array.isArray(state.messages) || !state.messages.length) state.messages = [...DEFAULT_MESSAGES];
     if (!MODES[state.mode]) state.mode = 'normal';
     state.index = Number.isInteger(state.index) ? Math.max(0, state.index % state.messages.length) : 0;
@@ -95,15 +103,13 @@
     saveState();
   };
 
-  const markSent = () => {
-    const now = Date.now();
-    if (now - state.lastSentAt < 5000) return;
-    state.lastSentAt = now;
-    rotate();
-    scheduleNext(now);
-    lastFilledMessage = '';
-    render();
-  };
+  const buttonLabel = (el) => [
+    el?.getAttribute?.('aria-label'),
+    el?.getAttribute?.('title'),
+    el?.getAttribute?.('data-title'),
+    el?.innerText,
+    el?.textContent,
+  ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
 
   const visible = (el) => {
     if (!(el instanceof HTMLElement)) return false;
@@ -111,6 +117,33 @@
     if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
     const r = el.getBoundingClientRect();
     return r.width > 4 && r.height > 4;
+  };
+
+
+  const findTradeOpenControl = () => {
+    const controls = [...document.querySelectorAll('button,[role="button"]')]
+      .filter(visible)
+      .filter(el => !el.closest?.('#' + APP_ID));
+
+    return controls.find(el => {
+      const label = buttonLabel(el);
+      if (!/(^|\s)trade(\s|$)/.test(label)) return false;
+      if (/minimi[sz]e|close/.test(label)) return false;
+      return !/mm trade rotation/.test(ancestorText(el, 4));
+    }) || null;
+  };
+
+  const findTradeMinimizeControl = () => {
+    const controls = [...document.querySelectorAll('button,[role="button"]')]
+      .filter(visible)
+      .filter(el => !el.closest?.('#' + APP_ID));
+
+    return controls.find(el => {
+      const label = buttonLabel(el);
+      const around = ancestorText(el, 5);
+      return (/trade/.test(label) && /minimi[sz]e/.test(label))
+        || (/minimi[sz]e/.test(label) && /trade/.test(around));
+    }) || null;
   };
 
   const ancestorText = (el, maxDepth = 8) => {
@@ -155,6 +188,34 @@
       .filter(x => x.score >= 7)
       .sort((a, b) => b.score - a.score);
     return candidates[0]?.el || null;
+  };
+
+
+  const waitForTradeComposer = (timeoutMs = 1800) => new Promise(resolve => {
+    const start = Date.now();
+    const check = () => {
+      const composer = findTradeComposer();
+      if (composer) return resolve(composer);
+      if (Date.now() - start >= timeoutMs) return resolve(null);
+      setTimeout(check, 80);
+    };
+    check();
+  });
+
+  const ensureTradeComposerFromUserGesture = async () => {
+    const existing = findTradeComposer();
+    if (existing) return existing;
+
+    const control = findTradeOpenControl();
+    if (!control) return null;
+
+    control.click();
+    return waitForTradeComposer();
+  };
+
+  const minimizeTradeChat = () => {
+    const control = findTradeMinimizeControl();
+    if (control) control.click();
   };
 
   const composerValue = (el) => {
@@ -214,6 +275,44 @@
     lastComposer = composer;
     render();
     return { ok: true };
+  };
+
+
+  const completeAssistedPost = () => {
+    const now = Date.now();
+    if (now - state.lastSentAt < 5000) return;
+    state.lastSentAt = now;
+    state.completedCount = Number(state.completedCount || 0) + 1;
+    state.lastCompletedAt = now;
+    rotate();
+    scheduleNext(now);
+    lastFilledMessage = '';
+    lastComposer = null;
+    render();
+    closePanel();
+    setTimeout(minimizeTradeChat, 120);
+  };
+
+  const prepareTradeOnPanelOpen = async () => {
+    if (!state.enabled) return;
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) {
+      note('Return to the focused Torn tab first.');
+      return;
+    }
+
+    const composer = await ensureTradeComposerFromUserGesture();
+    if (!composer) {
+      note('Trade Chat could not be opened. Open it manually, then use Fill Trade.');
+      return;
+    }
+
+    const result = fillComposer({ force: false });
+    note(
+      result.ok
+        ? 'Next rotation message is ready in Trade Chat. Review it, then send manually.'
+        : result.reason,
+      result.ok
+    );
   };
 
   const maybeAutoFill = () => {
@@ -405,6 +504,7 @@
     core?.setDockLauncherActive?.(MODULE_ID, true);
     requestAnimationFrame(positionPanelDefault);
     render();
+    setTimeout(prepareTradeOnPanelOpen, 0);
   };
 
   const togglePanel = () => {
@@ -484,8 +584,7 @@
         const result = fillComposer({ force: false });
         note(result.ok ? 'Trade message filled. Review it, then press Send yourself.' : result.reason, result.ok);
       } else if (act === 'sent') {
-        markSent();
-        note('Marked sent. Next copy scheduled.', true);
+        completeAssistedPost();
       } else if (act === 'skip') {
         rotate();
         render();
@@ -542,7 +641,9 @@
     countNode.classList.toggle('due', countdown === 'DUE');
 
     panel.querySelector('[data-role="status"]').textContent =
-      state.enabled ? `Copy ${state.index + 1}/${state.messages.length}` : 'Paused';
+      state.enabled
+        ? `Copy ${state.index + 1}/${state.messages.length} • ${Number(state.completedCount || 0)} completed`
+        : 'Paused';
     panel.querySelector('[data-role="message"]').textContent = message;
     panel.querySelector('[data-role="chars"]').textContent =
       `${codePointLength(message)}/${TRADE_LIMIT} chars`;
@@ -552,23 +653,39 @@
   };
 
   const observeManualSend = (event) => {
-    if (!state.enabled) return;
-    const composer = findTradeComposer();
-    if (!composer || event.target !== composer) return;
+    if (!state.enabled || !lastFilledMessage) return;
+    const composer = lastComposer || findTradeComposer();
+    if (!composer) return;
 
-    if (event.type === 'keydown' && event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
-      const before = composerValue(composer).trim();
-      const expected = (lastFilledMessage || currentMessage()).trim();
-      if (before && before === expected) setTimeout(markSent, 200);
+    if (event.type === 'keydown' && event.target === composer
+        && event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
+      composer.dataset.mmTradeSubmitIntent = '1';
     }
+  };
+
+  const observeSendClick = (event) => {
+    if (!state.enabled || !lastFilledMessage) return;
+    const composer = lastComposer || findTradeComposer();
+    const button = event.target?.closest?.('button,[role="button"]');
+    if (!composer || !button || button.closest?.('#' + APP_ID)) return;
+
+    const cr = composer.getBoundingClientRect();
+    const br = button.getBoundingClientRect();
+    const nearComposer = br.left >= cr.left - 12
+      && br.top <= cr.bottom + 20
+      && br.bottom >= cr.top - 20
+      && br.left <= cr.right + 90;
+
+    if (nearComposer) composer.dataset.mmTradeSubmitIntent = '1';
   };
 
   const observeComposerCleared = (event) => {
     if (!state.enabled || !lastFilledMessage) return;
-    const composer = findTradeComposer();
+    const composer = lastComposer || findTradeComposer();
     if (!composer || event.target !== composer) return;
-    if (!composerValue(composer).trim()) {
-      setTimeout(markSent, 150);
+    if (!composerValue(composer).trim() && composer.dataset.mmTradeSubmitIntent === '1') {
+      delete composer.dataset.mmTradeSubmitIntent;
+      setTimeout(completeAssistedPost, 150);
     }
   };
 
@@ -586,6 +703,7 @@
     render();
 
     document.addEventListener('keydown', observeManualSend, true);
+    document.addEventListener('click', observeSendClick, true);
     document.addEventListener('input', observeComposerCleared, true);
     window.addEventListener('focus', maybeAutoFill);
     window.addEventListener('resize', () => requestAnimationFrame(positionPanelDefault), { passive: true });
