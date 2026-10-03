@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.2
+// @version      0.1.0-alpha.3
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems. Reminds, rotates, and pre-fills; never sends automatically.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -433,12 +433,14 @@
     });
 
     requestAnimationFrame(() => {
+      const head = root.querySelector('.mmta-head');
       core?.makePanelDraggable?.(
         root,
-        root.querySelector('.mmta-head'),
+        head,
         PANEL_KEY,
         { right: '', top: innerWidth <= 620 ? '54px' : '82px' }
       );
+      head?.addEventListener('dblclick', () => setTimeout(positionPanelDefault, 0));
       positionPanelDefault();
     });
 
