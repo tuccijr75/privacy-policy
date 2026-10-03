@@ -694,6 +694,57 @@ After the real Welcome to birkodi [4488297] was sent and Torn confirmed it:
 - **PASS (same atomic source transaction)** — the confirmed Welcome handler also issues the customer's coupon at the same timestamp it marks first contact, so SAVE-4488297 activation does not require separate bookkeeping.
 - **PASS** — the panel continued auto-syncing after the send and remained usable on return to Torn Home.
 
+
+### Suite automation implementation pass — Inventory / Acquisitions / Faction
+Following the owner mandate to automate safe deterministic work:
+
+**MM Inventory Manager/ROI Tracker v8.0.0-alpha.5**
+- stale Shop and Sales data refresh automatically on open,
+- guarded visible-tab checks run every 60s,
+- Shop data is considered stale after 2m; Sales after 1m,
+- first alpha.5 sales refresh performs a 31-day backfill so 30-day metrics can be reconstructed on a clean/current module state, then returns to the normal 72h incremental window,
+- saving the API key immediately triggers automatic refresh,
+- semantic Torn API failures no longer count as success: malformed/unavailable Bazaar or Inventory payloads are rejected,
+- invalid Inventory responses no longer overwrite a previously valid cached inventory snapshot with an empty object,
+- manual Refresh Shop / Refresh Sales remain recovery fallbacks.
+
+**MM_Acquisitions v8.0.0-alpha.4**
+- on open, current shared state and any newer captured travel feed are imported automatically,
+- purchase logs auto-sync when older than 2m,
+- opportunity data auto-refreshes when Item Market evidence is older than 5m,
+- a 60s visible/open guard checks freshness without buying anything,
+- saving the API key immediately triggers the guarded automatic refresh,
+- Weav3r generation watch remains coordinated once per minute,
+- Verify & Buy plus final purchase remain manual.
+
+**MM Faction Armory v8.0.0-alpha.12**
+- on open, faction inventory/roster auto-refreshes only when Torn's own `nextUsefulRefreshAt` says a refresh can be useful; fallback stale threshold is 1h,
+- while open, a 5m guard checks whether faction data is due,
+- saved member API profiles can auto-refresh only when the encrypted vault is already unlocked in the current session, preventing surprise passphrase prompts,
+- at most 2 stale member profiles are refreshed per automatic pass,
+- member staleness follows the existing readiness stale-hours setting (default 72h),
+- saving the faction API key triggers an immediate guarded refresh,
+- manual Refresh controls remain recovery fallbacks.
+
+Static/regression evidence:
+- all three updated userscripts parse successfully,
+- Inventory tests cover automatic refresh/backfill and semantic snapshot preservation,
+- Acquisitions tests cover stale purchase/opportunity automation while preserving manual purchase boundary,
+- Faction tests cover nextUsefulRefreshAt, unlocked-vault guard, and bounded member refresh,
+- suite manifest is now **v8.0.0-alpha.18**.
+
+Implementation checkpoints:
+- Inventory alpha.5: `9cd0af513e16f9e1e7899d31dbd463616fa1eea3`
+- Inventory tests: `53e72c5a1b5117ee399c654f07116b60762a8e2a`
+- Acquisitions alpha.4: `1c84111bd05d0a8820cc95b333b0fd25e78edbc1`
+- Acquisitions tests: `e08b43aacd7eaec4904be4cc550a8c0d4511f431`
+- Faction Armory alpha.12: `a7919adf1f053a49c186df09100d70535fc23943`
+- Faction tests: `1e7626d91326fbe45e4d7b24d6c4f91cf7b88a28`
+- suite manifest alpha.18: `f31a13f5cbc8e1405f02515dc1ff454afa85b44c`
+
+**Implementation boundary**:
+- suite manifest still declares MM Business Intelligence, but no BI implementation file is present on the current implementation branch. Automation cannot be applied to a non-existent implementation; BI remains a separate implementation/reconciliation task.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
