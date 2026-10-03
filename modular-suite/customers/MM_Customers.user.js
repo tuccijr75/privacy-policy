@@ -1324,13 +1324,14 @@
   function pendingDeliveryHtml(){
     const pending=GM_getValue(PENDING_SEND_KEY,null);
     if(!pending||typeof pending!=='object')return '';
-    if(Date.now()-Number(pending.createdAt||0)>PENDING_COMPOSE_TTL_MS)return '';
+    if(Date.now()-Number(pending.createdAt||0)>PENDING_DELIVERY_TTL_MS)return '';
     const customer=state?.customers?.[String(pending.playerId||'').trim()];
     const name=customer?.name||pending.playerId||'customer';
     const stateLabel=pending.state==='send-unconfirmed'?'SEND CLICK UNCONFIRMED':pending.state==='send-clicked'?'WAITING FOR TORN CONFIRMATION':'DRAFT PREPARED';
     return card('<div class="mm-cu-row"><div class="mm-cu-main"><b>Pending delivery · '+esc(name)+'</b><div class="mm-cu-muted">'+esc(stateLabel)+' · '+esc(pending.subject||'')+'</div>'+
       (pending.state==='send-unconfirmed'?'<div class="mm-cu-warn mm-cu-mini" style="margin-top:3px;">Torn did not provide confirmation. Customer state was left unchanged; verify Outbox before confirming or resending.</div>':'')+
-      '</div><div class="mm-cu-actions"><button data-pending-reopen="1" style="'+button(true)+'">Reopen Draft</button>'+
+      '</div><div class="mm-cu-actions">'+
+      (pending.state!=='send-clicked'?'<button data-pending-reopen="1" style="'+button(true)+'">Reopen Draft</button>':'')+
       (pending.state==='send-unconfirmed'?'<button data-pending-confirm="1" style="'+button()+'">Confirm Sent</button>':'')+
       '<button data-pending-cancel="1" style="'+button()+'">Cancel Tracking</button></div></div>');
   }
@@ -1394,8 +1395,23 @@
     };
     root.querySelector('[data-pending-reopen]')?.addEventListener('click',()=>{
       const pending=GM_getValue(PENDING_SEND_KEY,null);if(!pending)return;
+      if(pending.state==='send-clicked'){
+        statusText='Torn send verification is still running. Wait for confirmation before reopening.';
+        render();
+        return;
+      }
       const createdAt=Date.now();
-      const payload={composeId:'cu-reopen-'+createdAt+'-'+String(pending.playerId||''),playerId:pending.playerId,recipientName:pending.recipientName||state?.customers?.[String(pending.playerId||'')]?.name||'',subject:pending.subject,body:pending.body,bodyHtml:pending.bodyHtml,createdAt};
+      const tracking={...pending,state:'awaiting-send',sendClickedAt:null,verificationFailedAt:null,confirmationBaseline:null,deliveryFingerprint:null,fingerprintBaselineCount:null};
+      GM_setValue(PENDING_SEND_KEY,tracking);
+      const payload={
+        composeId:'cu-reopen-'+createdAt+'-'+String(tracking.playerId||''),
+        playerId:tracking.playerId,
+        recipientName:tracking.recipientName||state?.customers?.[String(tracking.playerId||'')]?.name||'',
+        subject:tracking.subject,
+        body:tracking.body,
+        bodyHtml:tracking.bodyHtml,
+        createdAt
+      };
       GM_setValue(PENDING_COMPOSE_KEY,payload);
       const url=canonicalComposeUrl(payload);
       try{window.location.assign(url);}catch{location.href=url;}
@@ -1433,10 +1449,18 @@
     }));
     root.querySelector('#mm-cu-save-api')?.addEventListener('click',()=>{
       const value=root.querySelector('#mm-cu-api')?.value||'';saveApiKey(value);
-      statusText=value.trim()?'Customers API key saved locally. Syncing automatically…':'Enter an API key first.';render();
-      if(value.trim())setTimeout(()=>autoRefreshCustomers({force:true,switchToNew:true}),50);
+      statusText=value.trim()?'Customers API key saved locally. Syncing while MM_Customers is open…':'Enter an API key first.';render();
+      if(value.trim()){
+        startCustomerAutoSync();
+        setTimeout(()=>autoRefreshCustomers({force:true,switchToNew:true}),50);
+      }
     });
-    root.querySelector('#mm-cu-clear-api')?.addEventListener('click',()=>{saveApiKey('');statusText='Customers API key cleared.';render();});
+    root.querySelector('#mm-cu-clear-api')?.addEventListener('click',()=>{
+      saveApiKey('');
+      stopCustomerAutoSync();
+      statusText='Customers API key cleared.';
+      render();
+    });
 
     root.querySelectorAll('[data-welcome]').forEach(b=>b.addEventListener('click',()=>run('Preparing customer message…',async()=>{
       const id=b.dataset.welcome;
@@ -1519,15 +1543,37 @@
     return root;
   }
 
+  function panelIsOpen(){
+    const root=document.getElementById(ROOT_ID);
+    return Boolean(root&&root.style.display!=='none');
+  }
+
+  function stopCustomerAutoSync(){
+    if(customerAutoSyncTimer)clearInterval(customerAutoSyncTimer);
+    customerAutoSyncTimer=null;
+  }
+
+  function startCustomerAutoSync(){
+    stopCustomerAutoSync();
+    if(!apiKey()||!panelIsOpen())return;
+    customerAutoSyncTimer=setInterval(()=>{
+      if(panelIsOpen()&&document.visibilityState==='visible'){
+        autoRefreshCustomers({force:false,switchToNew:false});
+      }
+    },AUTO_SYNC_MS);
+  }
+
   function open(){
     createPanel();
     const root=document.getElementById(ROOT_ID);root.style.display='block';
     core.setDockLauncherActive?.('customers',true);
+    startCustomerAutoSync();
     reloadState()
       .then(()=>{render();return autoRefreshCustomers({force:false,switchToNew:true});})
       .catch(error=>{statusText=error?.message||String(error);render();});
   }
   function close(){
+    stopCustomerAutoSync();
     const root=document.getElementById(ROOT_ID);if(root)root.style.display='none';
     core.setDockLauncherActive?.('customers',false);
   }
@@ -1542,7 +1588,6 @@
         onClick:()=>{const root=document.getElementById(ROOT_ID);if(root&&root.style.display!=='none')close();else open();}
       });
       if(b)b.id=LAUNCHER_ID;
-      core.adoptLegacyCrmLauncher?.();
       return;
     }
   }
@@ -1560,9 +1605,10 @@
   }
 
   function initializeCustomers(){
-    createLauncher();installChannel();installRouteHooks();runPageHelpers();
-    if(apiKey())setTimeout(()=>autoRefreshCustomers({force:false,switchToNew:false}),1200);
-    setInterval(()=>{if(apiKey()&&document.visibilityState==='visible')autoRefreshCustomers({force:false,switchToNew:false});},AUTO_SYNC_MS);
+    createLauncher();
+    installChannel();
+    installRouteHooks();
+    runPageHelpers();
   }
 
   if(document.body)initializeCustomers();
