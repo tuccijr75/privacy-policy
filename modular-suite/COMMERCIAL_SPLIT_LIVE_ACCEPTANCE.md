@@ -229,6 +229,32 @@ Current stale ranked examples:
 - **PASS** — no duplicate-sale inflation was observed in the live UI; sales freshness advanced normally.
 - **PASS** — live behavior matches the idempotent import contract already covered by logic fixtures.
 
+
+### MM_Inventory Manager/ROI Tracker Macana item-level reconciliation
+Live expanded Macana row:
+- Bazaar qty 1
+- Bazaar price $99,999
+- Personal qty 0 (subject to the known unavailable-inventory defect)
+- Sold 7d 2
+- Sold 30d 2
+- 30d velocity ~0.07/day
+- 3D target 1
+- Add 0
+- Recent avg / plan price $99,999
+- FIFO avg cost $89,988
+- Current ROI 11.1%
+- 30D gross $20,022
+- 30D ROI 11.1%
+- Cost coverage 100%
+
+Findings:
+- **PASS** — current ROI reconciles: ($99,999 - $89,988) / $89,988 ≈ 11.1%.
+- **PASS** — two fully cost-covered units at ~$10,011 gross profit/unit reconcile to displayed 30D gross $20,022.
+- **PASS** — realized ROI and current ROI are coherent in this case because realized sale price and current/plan price are both $99,999 and FIFO basis is fully covered.
+- **SEMANTIC / EFFECTIVENESS DEFECT** — “3D TARGET” is not truly three days of supply for low-volume items. The formula forces `max(1, ceil(daily30*3))` whenever demand is positive. At ~0.07/day, target 1 is roughly 15 days of supply.
+- **EFFECTIVENESS GAP** — `HEALTHY` is based on meeting a minimum target, not a bounded days-of-supply range; it therefore cannot distinguish appropriately stocked from materially overstocked slow sellers.
+- **EFFECTIVENESS GAP / PRICING** — planned price is the current Bazaar listing price when one exists, otherwise historical average sold price. The inventory/listing module does not compare that price with current market/Bazaar competitors, so “PLAN PRICE” is not yet market-aware listing guidance.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
