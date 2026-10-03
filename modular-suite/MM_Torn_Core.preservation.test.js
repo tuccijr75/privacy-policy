@@ -6,12 +6,15 @@ if (!c) throw new Error('MMTornCore unavailable');
 
 const fs = require('fs');
 const coreSource = fs.readFileSync(__dirname + '/core/MM_Torn_Core.js', 'utf8');
-if (!coreSource.includes("CORE_VERSION = '8.0.0-alpha.5'")) throw new Error('core launcher fix version missing');
+if (!coreSource.includes("CORE_VERSION = '8.0.0-alpha.6'")) throw new Error('core launcher fix version missing');
 if (!coreSource.includes('const LAUNCHER_SNAP_GAP=4')) throw new Error('fixed launcher gap missing');
 if (!coreSource.includes('function launcherTooClose')) throw new Error('launcher overlap guard missing');
 if (!coreSource.includes('function resolveLauncherPosition')) throw new Error('launcher snap resolver missing');
 if (!coreSource.includes('native?.controls')) throw new Error('native Torn icon collision targets missing');
 if (!coreSource.includes('obstacles:launcherObstacleRects(button)')) throw new Error('floating drag collision snapshot missing');
+if (!coreSource.includes("document.querySelectorAll('a,button,[role=\"button\"]')")) throw new Error('direct Torn footer control detection missing');
+if (!coreSource.includes('native.rowBottom??first.bottom')) throw new Error('bottom-edge dock alignment missing');
+if (!coreSource.includes('const alignedTop=clamp(o.bottom-height')) throw new Error('neighbor bottom-edge alignment missing');
 
 
 const fixture = {
