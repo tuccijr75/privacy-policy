@@ -1057,6 +1057,32 @@ Implementation checkpoints:
 
 **PENDING LIVE RETEST** — install alpha.12, reload/reopen the same Arpello cashback reminder, and verify source mode contains the branded table/banner HTML before visual verification.
 
+
+### MM_Customers alpha.12 formatted reminder / false error + heading typo / alpha.13 repair
+Live Arpello [4325089] retest after alpha.12:
+- **PASS** — branded table formatting is now rendering correctly again.
+- **DEFECT** — the red `Formatting is not ready yet` warning still remained even though the formatted table was present.
+- **DEFECT** — the first visual heading rendered as `CSHBACK REMINDER`, missing the `A` in `CASHBACK`.
+- **OBSERVED** — the banner image row was not visible in this rendered reminder even though the rest of the branded table rendered.
+
+Root cause / repair in **MM_Customers v8.0.0-alpha.13**:
+- a complete branded table whose text contains the expected markers is now treated as authoritative formatting success, so Torn sanitizing/dropping an external image no longer produces a false hard failure warning,
+- the verifier now identifies the actual matching branded table first rather than requiring the banner image as a prerequisite,
+- after source→visual conversion, the script repairs any exact `CSHBACK` typo to `CASHBACK` before Send,
+- if Torn strips the MANIC'S MAD HOUSE banner row while preserving the rest of the table, the script best-effort restores the exact expected banner row into the visual editor and dispatches editor events,
+- existing no-auto-downgrade safety remains in place.
+
+Implementation checkpoints:
+- Customers alpha.13: `da156d78cba1171366aabe7ca7683a64b3ebd65e`
+- regression assertions: `3ba022c624a4117a7a6cd555601fc4b5b747d4c2`
+- suite manifest alpha.28: `9996baf15d61372c33a0bd7c3192abf305625131`
+
+**PENDING LIVE RETEST** — install alpha.13, reopen the same Arpello cashback reminder, and verify:
+1. formatting remains correct,
+2. the red error disappears,
+3. the heading reads `CASHBACK REMINDER`,
+4. the banner row is restored if Torn permits it.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
