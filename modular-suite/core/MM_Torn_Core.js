@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.7';
+  const CORE_VERSION = '8.0.0-alpha.8';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -264,6 +264,8 @@
   const DOCK_STYLE_ID='mm-torn-module-dock-style';
   const DOCK_ORDER_KEY='mm_torn_module_dock_order_v1';
   const DOCK_FLOAT_KEY='mm_torn_module_float_positions_v1';
+  const DOCK_DEFAULT_LAYOUT_KEY='mm_torn_module_default_layout_rev_v1';
+  const DOCK_DEFAULT_LAYOUT_REV='footer-adjacent-v2';
   const PANEL_POSITION_PREFIX='mm_torn_panel_position_v1:';
   const LAUNCHER_EDGE_MARGIN=4;
   const LAUNCHER_SNAP_GAP=4;
@@ -317,6 +319,16 @@
       delete state[key];
     }
     dockWriteFloatState(state);
+  }
+
+  function applyDefaultDockLayoutOnce(){
+    try{
+      if(localStorage.getItem(DOCK_DEFAULT_LAYOUT_KEY)===DOCK_DEFAULT_LAYOUT_REV)return;
+      // One-time migration for this layout revision: start every MM launcher
+      // docked beside Torn's footer. Any later user undock/move is persisted.
+      localStorage.removeItem(DOCK_FLOAT_KEY);
+      localStorage.setItem(DOCK_DEFAULT_LAYOUT_KEY,DOCK_DEFAULT_LAYOUT_REV);
+    }catch{}
   }
 
   function injectDockStyle(){
@@ -703,6 +715,7 @@
 
   function ensureDock(){
     if(typeof document==='undefined'||!document.body)return null;
+    applyDefaultDockLayoutOnce();
     injectDockStyle();
     let dock=document.getElementById(DOCK_ID);
     if(!dock){
