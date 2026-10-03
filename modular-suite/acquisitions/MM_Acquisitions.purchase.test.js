@@ -12,10 +12,31 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.6'));
+assert(userSource.includes('// @version      8.0.0-alpha.7'));
 assert(userSource.includes('async function autoRefreshAcquisitions'));
 assert(userSource.includes('AUTO_REFRESH_MS=60_000'));
 assert(userSource.includes('PURCHASE_STALE_MS=120_000'));
 assert(userSource.includes('OPPORTUNITY_STALE_MS=300_000'));
 assert(userSource.includes('Verify & Buy and final purchase remain manual'));
 console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS');
+
+const liveSource=fs.readFileSync(__dirname+'/MM_Acquisitions.live.js','utf8');
+new Function(liveSource);
+assert(liveSource.includes('function resolveProcurementItemId'));
+assert(liveSource.includes('async function procurementSourceOptions'));
+assert(liveSource.includes('async function routeProcurementRequest'));
+assert(liveSource.includes("source:'Bazaar'"));
+assert(liveSource.includes("source:'Item Market'"));
+assert(liveSource.includes("source:'Overseas'"));
+assert(liveSource.includes("reason:'overseas-recommended'"));
+
+const userSourceArmory=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
+new Function(userSourceArmory);
+assert(userSourceArmory.includes('// @version      8.0.0-alpha.7'));
+assert(userSourceArmory.includes('MM_Acquisitions.live.js?v=8.0.0-alpha.2'));
+assert(userSourceArmory.includes("type!=='armory-acquisition-request'"));
+assert(userSourceArmory.includes('Faction Armory request: '));
+assert(userSourceArmory.includes('Compare Sources'));
+assert(userSourceArmory.includes('Find Best Source'));
+assert(userSourceArmory.includes('Final purchase remains manual.'));
+console.log('MM_Acquisitions armory procurement routing regression: PASS');
