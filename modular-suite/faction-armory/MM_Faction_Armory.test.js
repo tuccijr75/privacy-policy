@@ -316,6 +316,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
 assert(userSourceValue.includes("const VERSION='8.0.0-alpha.17';"));
+assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.2'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
 assert(userSourceValue.includes('Find Best Source'));
