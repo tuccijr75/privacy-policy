@@ -828,6 +828,17 @@ Implementation checkpoints:
 
 **PENDING LIVE RETEST** — install alpha.14, open Members, use Unlock Vault once, then verify stale saved profiles refresh automatically without pressing Refresh Keys or a member Refresh button.
 
+
+### MM Faction Armory alpha.14 member-vault unlock live check
+After installing alpha.14 and using the dedicated Unlock Vault control:
+- **PASS** — v8.0.0-alpha.14 is live.
+- **PASS** — vault state is explicitly visible as `UNLOCKED`.
+- **PASS** — status reports `Member-key vault unlocked. No saved member profiles are stale.`
+- **PASS** — Members reports `stale saved profiles: 0` and `automatic stale-profile refresh enabled for this session`.
+- **PASS / NO-OP CORRECTNESS** — no member API refresh was launched because the one saved profile (Speed-e-vinyl) is currently within the existing stale-hours policy.
+- **PASS / SAFETY** — Refresh Keys remained untouched; the human action was limited to the required passphrase boundary.
+- **PENDING CONDITION** — automatic stale-member refresh itself can only be live-demonstrated once a saved profile actually crosses the configured stale threshold (default 72h), unless the policy is intentionally changed for testing.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
