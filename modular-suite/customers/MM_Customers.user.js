@@ -735,12 +735,12 @@
     return current.includes('<table')&&current.includes(SHOP_BANNER_URL);
   }
 
-  function setEditorContent(element,text,html=''){
+  function setPlainEditorText(element,text){
     if(!element)return false;const tag=String(element.tagName||'').toLowerCase();
-    if(tag==='textarea'||tag==='input'){setNativeValue(element,html||text);return Boolean(editorText(element));}
-    try{element.focus();if(html)element.innerHTML=html;else element.textContent=text;}catch{return false;}
+    if(tag==='textarea'||tag==='input'){setNativeValue(element,text);return Boolean(editorText(element));}
+    try{element.focus();element.textContent=String(text||'');}catch{return false;}
     dispatchEditorEvents(element);
-    return html?Boolean(element.querySelector?.('table')):Boolean(String(element.innerText||element.textContent||'').trim());
+    return Boolean(String(element.innerText||element.textContent||'').trim());
   }
 
   const sleepMs=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -966,7 +966,7 @@
           }
         }else{
           const body=findComposeBodyInput(subject)||findComposeRichEditorBody();
-          if(body)bodyOK=setEditorContent(body,payload.body,'');
+          if(body)bodyOK=setPlainEditorText(body,payload.body);
         }
 
         await sleepMs(COMPOSE_POST_FILL_VERIFY_MS);
