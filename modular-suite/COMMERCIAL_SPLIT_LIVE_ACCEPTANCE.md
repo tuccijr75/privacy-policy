@@ -346,6 +346,17 @@ Findings:
 - **EFFECTIVENESS GAP / SEGMENTATION** — the function is labeled RFM, but monetary value does not affect the segment assignment. Live data illustrates the consequence: a $117.5M / 5-purchase customer is LOYAL while a $67.8K / 10-purchase customer is VIP. Frequency/recency may be useful, but high-value customer prioritization needs an explicit monetary/value dimension or separate tier.
 - **UX / WORKFLOW GAP** — Prepare Welcome and Mark Sent + Issue are rendered for every customer without conditioning the action label/availability on `firstMessageSent` / `contacted`, making duplicate welcome/coupon workflows easier to trigger.
 
+
+### MM_Customers Refresh Sales live findings
+- **PASS** — live refresh completed without visible error: `0 new · 77 checked`.
+- **PASS** — Customers correctly reuses the shared sales ledger instead of duplicating the two sales already imported by Inventory/ROI.
+- **PASS** — customer recalculation runs even when no new sale rows are inserted; visible customer population changed from 98 to 99 after refresh, proving CRM state was rebuilt from the newer shared sales ledger.
+- **PASS** — segmentation recalculated from shared state; visible mix changed from 55 NEW / 24 REGULAR / 18 LOYAL / 1 VIP to 56 NEW / 23 REGULAR / 19 LOYAL / 1 VIP.
+- **UX / OBSERVABILITY DEFECT** — status `0 new` only describes sale-row insertion. It can coincide with meaningful customer creation, spend/frequency updates, or segment changes. Refresh feedback should report sale rows plus customer records created/updated and segment changes.
+- **DATA-QUALITY GAP** — numeric-name rows increased from 8 to 9 after recalculation, confirming new customer records can still be created without a resolved display name.
+- **COVERAGE DEFECT CONFIRMED** — the refresh still checks only the module's 72-hour window. Cross-module shared history makes the current account look complete, but Customers cannot independently rebuild historical CRM state from a clean database.
+- **UX / STATE GAP** — no last-refresh timestamp or coverage range is visible in the Customers panel after refresh, so the user cannot tell how current or complete the CRM population is.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
