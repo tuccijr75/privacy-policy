@@ -238,7 +238,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.13';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.14';"));
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -253,3 +253,11 @@ assert(userSource2.includes('save a faction API key to enable automatic refresh'
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
 assert(userSource2.includes('Not saved — cached faction data cannot refresh automatically.'));
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
+
+const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
+assert(userSource3.includes("const VERSION='8.0.0-alpha.14';"));
+assert(userSource3.includes('mm-fa-unlock-vault'));
+assert(userSource3.includes('Member-key vault: '));
+assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
+assert(userSource3.includes('setTimeout(()=>autoRefreshArmory({forceFaction:false}),50)'));
+console.log('MM Faction Armory explicit vault-unlock automation regression: PASS');
