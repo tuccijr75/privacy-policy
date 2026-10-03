@@ -135,6 +135,8 @@ Findings:
 - **MISSING FEATURE** — no total procurement budget / per-run spend budget.
 - **UX FRICTION / MOBILE** — Settings uses a fixed four-column grid; on narrow mobile widths this is likely unnecessarily compressed and should collapse responsively.
 
+- **MISSING TEST COVERAGE** — no dedicated MM_Acquisitions ranking regression test currently proves that visible `maxPrice`, `minSellerCount`, demand, confidence, and freshness rules exclude inappropriate candidates. Purchase-ledger parsing has tests, but ranking/business-rule enforcement needs its own fixture suite before acceptance.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
