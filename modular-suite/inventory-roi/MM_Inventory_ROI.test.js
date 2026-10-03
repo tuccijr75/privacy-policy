@@ -1,0 +1,12 @@
+const fs=require('fs');const vm=require('vm');const assert=require('assert');
+const sandbox={globalThis:{}};vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(__dirname+'/MM_Inventory_ROI.logic.js','utf8'),sandbox,{filename:'MM_Inventory_ROI.logic.js'});
+const logic=sandbox.globalThis.MMTornInventoryRoiLogic;assert(logic);
+const now=Date.now();
+const db=logic.ensureBazaarSlice({procurement:{acquisitions:[{id:'a1',itemId:'26',itemName:'AK-47',quantity:10,unitCost:100,acquiredAt:new Date(now-5*86400000).toISOString(),source:'Bazaar'}]},operations:{inventoryRoi:{}}});
+logic.importSalesEntries(db,[{id:'s1',timestamp:Math.floor((now-2*86400000)/1000),details:{id:1226},data:{buyer:{id:123,name:'Buyer'},item_id:26,item_name:'AK-47',quantity:2,cost_each:150,cost_total:300}}]);
+logic.updateShopSnapshot(db,{bazaar:[{id:26,name:'AK-47',quantity:1,price:160}],inventory:[{id:26,name:'AK-47',quantity:5}]});
+const row=logic.inventoryRoiRows(db,now).find(r=>r.id==='26');assert(row);
+assert.strictEqual(Math.round(row.avgCost),100);assert.strictEqual(Math.round(row.currentRoiPct),60);
+assert.strictEqual(Math.round(row.realizedGrossProfit30),100);assert.strictEqual(Math.round(row.realizedRoiPct30),50);assert.strictEqual(Math.round(row.costCoveragePct30),100);
+console.log('MM Inventory ROI logic tests: PASS');
