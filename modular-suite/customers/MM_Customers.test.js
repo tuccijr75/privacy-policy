@@ -14,7 +14,7 @@ logic.subscribeCustomer(db,'123');assert.strictEqual(logic.currentBazaarRows(db,
 
 const userSrc=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 assert.doesNotThrow(()=>new Function(userSrc));
-assert(userSrc.includes("const VERSION='8.0.0-alpha.10';"));
+assert(userSrc.includes("const VERSION='8.0.0-alpha.11';"));
 assert(userSrc.includes("const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';"));
 assert(userSrc.includes('function brandedMessageHtml'));
 assert(userSrc.includes('function fillMessageComposer'));
@@ -34,7 +34,7 @@ assert(!userSrc.includes('copyAndOpenMessage'));
 console.log('MM_Customers logic + automation/composer regression tests: PASS');
 const userSourceRich=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 new Function(userSourceRich);
-assert(userSourceRich.includes("const VERSION='8.0.0-alpha.10';"));
+assert(userSourceRich.includes("const VERSION='8.0.0-alpha.11';"));
 assert(userSourceRich.includes('function richComposerHasBranding'));
 assert(userSourceRich.includes('richFailures<3'));
 assert(userSourceRich.includes('Waiting for Torn rich editor… branded message will retry automatically.'));
@@ -44,7 +44,7 @@ console.log('MM Customers rich-composer resilience regression: PASS');
 
 const userSourceRefunds=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 new Function(userSourceRefunds);
-assert(userSourceRefunds.includes("const VERSION='8.0.0-alpha.10';"));
+assert(userSourceRefunds.includes("const VERSION='8.0.0-alpha.11';"));
 assert(userSourceRefunds.includes('function cashbackEligibleRows'));
 assert(userSourceRefunds.includes('function cashbackEligibilityReminderMessage'));
 assert(userSourceRefunds.includes('Send Cashback Reminder'));
@@ -56,9 +56,19 @@ console.log('MM Customers refund eligibility reminder regression: PASS');
 
 const userSourceCashbackRich=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 new Function(userSourceCashbackRich);
-assert(userSourceCashbackRich.includes("const VERSION='8.0.0-alpha.10';"));
+assert(userSourceCashbackRich.includes("const VERSION='8.0.0-alpha.11';"));
 assert(userSourceCashbackRich.includes("CASHBACK REMINDER|QUALIFYING PURCHASE|YOUR CASHBACK|SEND YOUR COUPON"));
 assert(userSourceCashbackRich.includes('Draft was NOT downgraded to plain text.'));
 assert(userSourceCashbackRich.includes('Preparing branded message… do not send until this notice disappears.'));
 assert(!userSourceCashbackRich.includes('plain text fallback after rich-editor retries failed'));
 console.log('MM Customers cashback reminder rich-verification regression: PASS');
+
+const userSourceAnon=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
+new Function(userSourceAnon);
+assert(userSourceAnon.includes("const VERSION='8.0.0-alpha.11';"));
+assert(userSourceAnon.includes("for(const selector of ['textarea'"));
+assert(userSourceAnon.includes('anonymous textarea'));
+assert(userSourceAnon.includes('function brandedMarkersFromHtml'));
+assert(userSourceAnon.includes("CASHBACK REMINDER','QUALIFYING PURCHASE','YOUR CASHBACK','SEND YOUR COUPON"));
+assert(userSourceAnon.includes('waitForRichBranding(payload.bodyHtml,1200)'));
+console.log('MM Customers anonymous source textarea regression: PASS');
