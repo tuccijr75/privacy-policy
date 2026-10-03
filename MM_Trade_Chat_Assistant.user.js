@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.3
+// @version      0.1.0-alpha.4
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems. Reminds, rotates, and pre-fills; never sends automatically.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -24,6 +24,14 @@
   const LAUNCHER_ID = 'mm-trade-chat-assistant-launcher';
   const PANEL_KEY = 'trade-reminder';
   const PANEL_STORAGE_KEY = 'mm_torn_panel_position_v1:' + PANEL_KEY;
+  const OTHER_MM_PANELS = [
+    'mm-acquisitions',
+    'mm-bazaar-manager',
+    'mm-customers',
+    'mm-faction-armory',
+    'mm-inventory-roi',
+    'mm-market-scout',
+  ];
   const core = globalThis.MMTornCore;
 
   const MODES = {
@@ -246,7 +254,7 @@
 
       #${APP_ID} {
         display:none;position:fixed;z-index:2147483646;width:min(390px,calc(100vw - 24px));
-        max-height:calc(100vh - 108px);overflow:hidden;color:#eee;background:#111;border:1px solid #8b6a2f;
+        max-height:calc(100vh - 88px);overflow:hidden;color:#eee;background:#111;border:1px solid #8b6a2f;
         border-radius:8px;box-shadow:0 12px 35px #000b;font:12px/1.35 Arial,sans-serif;
       }
       #${APP_ID} * { box-sizing:border-box; }
@@ -295,12 +303,77 @@
     try { return Boolean(localStorage.getItem(PANEL_STORAGE_KEY)); } catch { return false; }
   };
 
+  const panelRectAt = (left, top, width, height) => ({
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+  });
+
+  const overlapArea = (a, b, gap = 8) => {
+    const left = Math.max(a.left - gap, b.left);
+    const right = Math.min(a.right + gap, b.right);
+    const top = Math.max(a.top - gap, b.top);
+    const bottom = Math.min(a.bottom + gap, b.bottom);
+    return Math.max(0, right - left) * Math.max(0, bottom - top);
+  };
+
+  const visibleMmPanelRects = () => OTHER_MM_PANELS
+    .map(id => document.getElementById(id))
+    .filter(el => el instanceof HTMLElement && el !== panel)
+    .filter(el => {
+      const cs = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity || 1) > 0
+        && r.width > 80 && r.height > 60;
+    })
+    .map(el => el.getBoundingClientRect());
+
+  const resolveBottomCenterPanelPosition = () => {
+    const rect = panel.getBoundingClientRect();
+    const width = rect.width || Math.min(390, Math.max(280, innerWidth - 24));
+    const height = rect.height || 250;
+    const edge = 8;
+    const bottomGap = innerWidth <= 620 ? 58 : 72;
+    const maxLeft = Math.max(edge, innerWidth - width - edge);
+    const maxTop = Math.max(edge, innerHeight - height - edge);
+    const baseLeft = Math.min(maxLeft, Math.max(edge, (innerWidth - width) / 2));
+    const baseTop = Math.min(maxTop, Math.max(edge, innerHeight - height - bottomGap));
+    const obstacles = visibleMmPanelRects();
+    const stepX = width + 12;
+    const stepY = Math.max(56, Math.min(height * 0.72, 180));
+
+    const candidates = [
+      [baseLeft, baseTop],
+      [baseLeft - stepX, baseTop],
+      [baseLeft + stepX, baseTop],
+      [baseLeft, baseTop - stepY],
+      [baseLeft - stepX * 0.55, baseTop - stepY],
+      [baseLeft + stepX * 0.55, baseTop - stepY],
+      [baseLeft, baseTop - stepY * 2],
+    ].map(([left, top]) => ({
+      left: Math.min(maxLeft, Math.max(edge, left)),
+      top: Math.min(maxTop, Math.max(edge, top)),
+    }));
+
+    const scored = candidates.map(pos => {
+      const candidate = panelRectAt(pos.left, pos.top, width, height);
+      const overlap = obstacles.reduce((sum, obstacle) => sum + overlapArea(candidate, obstacle), 0);
+      const distance = Math.hypot(pos.left - baseLeft, pos.top - baseTop);
+      return { ...pos, overlap, distance };
+    }).sort((a, b) => a.overlap - b.overlap || a.distance - b.distance);
+
+    return scored[0] || { left: baseLeft, top: baseTop };
+  };
+
   const positionPanelDefault = () => {
     if (!panel || panel.style.display === 'none' || hasSavedPanelPosition()) return;
-    const width = panel.getBoundingClientRect().width || Math.min(390, Math.max(280, innerWidth - 24));
-    panel.style.left = Math.round(Math.max(4, (innerWidth - width) / 2)) + 'px';
+    const pos = resolveBottomCenterPanelPosition();
+    panel.style.left = Math.round(pos.left) + 'px';
     panel.style.right = 'auto';
-    panel.style.top = (innerWidth <= 620 ? 54 : 82) + 'px';
+    panel.style.top = Math.round(pos.top) + 'px';
     panel.style.bottom = 'auto';
   };
 
@@ -328,6 +401,7 @@
   const openPanel = () => {
     const root = createPanel();
     root.style.display = 'block';
+    root.style.zIndex = '2147483647';
     core?.setDockLauncherActive?.(MODULE_ID, true);
     requestAnimationFrame(positionPanelDefault);
     render();
@@ -438,9 +512,12 @@
         root,
         head,
         PANEL_KEY,
-        { right: '', top: innerWidth <= 620 ? '54px' : '82px' }
+        { right: '', top: '' }
       );
       head?.addEventListener('dblclick', () => setTimeout(positionPanelDefault, 0));
+      root.addEventListener('pointerdown', () => {
+        root.style.zIndex = '2147483647';
+      }, { passive: true });
       positionPanelDefault();
     });
 
