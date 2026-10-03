@@ -1,5 +1,8 @@
 # MM Market Scout v8.0.0-alpha.5 — Live Acceptance
 
+> **SUPERSEDED NON-PRODUCTION REFERENCE — 2026-10-02**  
+> Owner-directed architecture now replaces Market Scout with **MM_Acquisitions**. Do not continue this live gate as the active acquisition product gate. Use `../COMMERCIAL_SPLIT_LIVE_ACCEPTANCE.md`. This source remains only for rollback/migration comparison until replacement acceptance.
+
 **Status:** INSTALLED / LIVE ACCEPTANCE IN PROGRESS  
 **Branch:** `crm-v8-modular-suite`  
 **Userscript:** `modular-suite/market-scout/MM_Market_Scout.user.js`  
