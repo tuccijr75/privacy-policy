@@ -45,3 +45,11 @@ const fresh = c.freshnessSnapshot({
 });
 if (fresh.unified !== 'u' || fresh.itemMarket !== 'm' || fresh.faction !== 'f') throw new Error('freshness snapshot mismatch');
 console.log('MERGE PASS');
+
+const coreSource = require('fs').readFileSync(__dirname+'/MM_Torn_Core.js','utf8');
+if (!coreSource.includes("const CORE_VERSION = '8.0.0-alpha.7';")) throw new Error('core alpha.7 version missing');
+if (!coreSource.includes('const rawEntries=')) throw new Error('native footer geometry de-duplication missing');
+if (!coreSource.includes('bottomDistance:Math.abs(window.innerHeight-rowBottom)')) throw new Error('bottom-distance footer priority missing');
+if (!coreSource.includes('a.bottomDistance-b.bottomDistance')) throw new Error('lowest footer row comparator missing');
+if (!coreSource.includes('const gap=clamp(Number(native.nativeGap)||LAUNCHER_SNAP_GAP,2,8);')) throw new Error('native footer gap alignment missing');
+console.log('alpha.7 footer-row regression PASS');
