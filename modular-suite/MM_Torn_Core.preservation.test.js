@@ -3,6 +3,17 @@ require('./core/MM_Torn_Core.js');
 const c = globalThis.MMTornCore;
 if (!c) throw new Error('MMTornCore unavailable');
 
+
+const fs = require('fs');
+const coreSource = fs.readFileSync(__dirname + '/core/MM_Torn_Core.js', 'utf8');
+if (!coreSource.includes("CORE_VERSION = '8.0.0-alpha.5'")) throw new Error('core launcher fix version missing');
+if (!coreSource.includes('const LAUNCHER_SNAP_GAP=4')) throw new Error('fixed launcher gap missing');
+if (!coreSource.includes('function launcherTooClose')) throw new Error('launcher overlap guard missing');
+if (!coreSource.includes('function resolveLauncherPosition')) throw new Error('launcher snap resolver missing');
+if (!coreSource.includes('native?.controls')) throw new Error('native Torn icon collision targets missing');
+if (!coreSource.includes('obstacles:launcherObstacleRects(button)')) throw new Error('floating drag collision snapshot missing');
+
+
 const fixture = {
   schema: 11,
   customers: { '1': { id:'1', name:'Buyer', spent:123 } },
