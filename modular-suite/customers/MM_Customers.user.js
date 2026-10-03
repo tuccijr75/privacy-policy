@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.1
+// @version      8.0.0-alpha.2
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.1';
+  const VERSION='8.0.0-alpha.2';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -25,6 +25,9 @@
   const SHOP_NAME="MANIC'S MAD HOUSE";
   const OWNER_NAME='Manic-Mike';
   const OWNER_ID='4325346';
+  const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';
+  const SHOP_BANNER_URL='https://i.postimg.cc/qvV31ggb/Chat-GPT-Image-Sep-20-2026-09-46-21-PM.png';
+  const FAVORITE_CTA='★ ADD '+OWNER_NAME+' TO YOUR FAVORITES ★  Keep '+SHOP_NAME+' easy to find for future purchases and restocks.';
   const API_BASE='https://api.torn.com/v2';
   const SALES_LOOKBACK_MS=72*60*60*1000;
   const MAX_LOG_PAGES=25;
@@ -188,44 +191,226 @@
     return result;
   }
 
-  async function copyText(value){
-    const text=String(value||'');
-    try{await navigator.clipboard.writeText(text);return true;}catch{}
-    const area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);
-    area.select();let ok=false;try{ok=document.execCommand('copy');}catch{}area.remove();return ok;
+  function escapeMessageHtml(value){
+    return String(value??'')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
-  async function copyAndOpenMessage(playerId,subject,body){
-    await copyText('Subject: '+subject+'\n\n'+body);
-    statusText='Message copied. Torn composer is opening; sending remains manual.';
+  function brandedMessageHtml({customerName,greeting='',centerText='',rightText='',columns=[],footerTitle='',footerLines=[],couponCode=''}){
+    const safeName=escapeMessageHtml(customerName||'Customer');
+    const headerColors=['#f2c94c','#53c7ff','#ff9f43'];
+    const cells=columns.slice(0,3).map((col,index)=>{
+      const lines=(col.lines||[]).map(item=>'<span style="color:#f3f3f3;">&#8226;&nbsp;'+escapeMessageHtml(item)+'</span><br>').join('');
+      return '<td width="33%" valign="top" bgcolor="'+(index%2?'#171717':'#111111')+'" style="width:33.333%;vertical-align:top;padding:12px 14px;'+(index<2?'border-right:1px solid #333333;':'')+'">'+
+        '<strong style="color:'+headerColors[index]+';font-size:15px;">'+escapeMessageHtml(col.title||'')+'</strong><br><br>'+lines+'</td>';
+    }).join('');
+    const footer=(footerLines||[]).map(line=>'<span style="color:#f3f3f3;">'+escapeMessageHtml(line)+'</span><br>').join('');
+    const safeCoupon=String(couponCode||'').trim();
+    const couponHref=safeCoupon?'https://www.torn.com/messages.php#/p=compose&XID='+encodeURIComponent(OWNER_ID)+'&subject='+encodeURIComponent('Coupon Code '+safeCoupon):'';
+    const couponActionRow=safeCoupon
+      ? '<tr><td colspan="3" bgcolor="#102614" align="center" style="padding:14px;text-align:center;border-top:2px solid #53d769;border-bottom:1px solid #2f6d39;">'+
+        '<a href="'+couponHref+'" style="display:inline-block;background:#53d769;color:#071b0b;font-weight:bold;font-size:16px;text-decoration:none;padding:11px 18px;border:1px solid #8bf09a;border-radius:4px;">SEND MY COUPON CODE — '+escapeMessageHtml(safeCoupon)+'</a><br>'+
+        '<span style="display:inline-block;margin-top:7px;color:#d7f7dc;font-size:12px;">Opens a message to '+escapeMessageHtml(OWNER_NAME)+' with your coupon code in the subject. Review it, then press Send.</span></td></tr>'
+      : '';
+    return '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:900px;border-collapse:collapse;background-color:#0d0d0d;color:#f2f2f2;font-family:Arial,Helvetica,sans-serif;">'+
+      '<tr><td colspan="3" bgcolor="#000000" align="center" style="padding:0;text-align:center;"><img src="'+SHOP_BANNER_URL+'" alt="'+escapeMessageHtml(SHOP_NAME)+'" width="900" style="display:block;width:100%;max-width:900px;height:auto;border:0;"></td></tr>'+
+      (greeting?'<tr><td colspan="3" bgcolor="#121212" align="center" style="padding:12px 14px;text-align:center;border-top:1px solid #333333;border-bottom:1px solid #333333;"><strong style="color:#f2c94c;font-size:18px;">'+escapeMessageHtml(greeting)+'</strong></td></tr>':'')+
+      '<tr bgcolor="#1a1a1a"><td width="33%" align="center" style="width:33.333%;padding:10px;text-align:center;"><strong style="color:#ffffff;">'+safeName+'</strong></td>'+
+      '<td width="33%" align="center" style="width:33.333%;padding:10px;text-align:center;"><strong style="color:#53c7ff;">'+escapeMessageHtml(centerText)+'</strong></td>'+
+      '<td width="33%" align="center" style="width:33.333%;padding:10px;text-align:center;"><strong style="color:#f2c94c;">'+escapeMessageHtml(rightText)+'</strong></td></tr>'+
+      couponActionRow+'<tr>'+cells+'</tr>'+
+      '<tr><td colspan="3" bgcolor="#3a2a00" align="center" style="padding:12px 14px;text-align:center;border-top:2px solid #f2c94c;border-bottom:1px solid #6b5315;"><strong style="color:#ffd95a;font-size:16px;">'+escapeMessageHtml(FAVORITE_CTA)+'</strong></td></tr>'+
+      '<tr><td colspan="3" bgcolor="#181818" style="padding:11px 14px;border-top:1px solid #333333;">'+(footerTitle?'<strong style="color:#9be564;font-size:14px;">'+escapeMessageHtml(footerTitle)+'</strong><br><br>':'')+footer+'</td></tr></table>';
+  }
+
+  function plainThreeColumnFallback({customerName,greeting='',centerText='',rightText='',columns=[],footerTitle='',footerLines=[],couponCode=''}){
+    const top=(greeting?greeting+'\n\n':'')+customerName+' | '+centerText+' | '+rightText;
+    const colText=columns.map(col=>col.title+'\n'+(col.lines||[]).map(line=>'• '+line).join('\n')).join('\n\n');
+    const footer=footerTitle?'\n\n'+footerTitle+'\n'+(footerLines||[]).map(line=>'• '+line).join('\n'):'';
+    const couponLine=couponCode?'\n\nSEND MY COUPON CODE — '+couponCode+'\nhttps://www.torn.com/messages.php#/p=compose&XID='+OWNER_ID+'&subject='+encodeURIComponent('Coupon Code '+couponCode):'';
+    return top+'\n\n'+colText+couponLine+'\n\n★ ★ ★ ADD ME TO FAVORITES ★ ★ ★\n'+FAVORITE_CTA+footer;
+  }
+
+  function composeMessage(playerId,subject,body,bodyHtml=''){
+    const id=String(playerId||'').trim();
+    GM_setValue(PENDING_COMPOSE_KEY,{playerId:id,subject:String(subject||''),body:String(body||''),bodyHtml:String(bodyHtml||''),createdAt:Date.now()});
+    statusText='Opening Torn composer with the prepared message. Sending remains manual.';
     render();
-    setTimeout(()=>{location.href='https://www.torn.com/messages.php#/p=compose&XID='+encodeURIComponent(String(playerId));},80);
+    const url='https://www.torn.com/messages.php#/p=compose&XID='+encodeURIComponent(id)+'&subject='+encodeURIComponent(String(subject||''));
+    setTimeout(()=>{location.href=url;},80);
   }
 
   function customerMessage(customer,coupon,reminder=false){
     const name=String(customer?.name||'there');
     const remaining=logic.couponRemaining(coupon);
     if(reminder){
+      const q=logic.couponQualification(state||{},coupon);
+      const columns=[
+        {title:'YOUR COUPON',lines:['Code: '+coupon.code,remaining+' redemption'+(remaining===1?'':'s')+' remaining',q.qualified?'Recent purchases currently qualify for '+money(q.cashback)+' cashback.':'Use it on your next qualifying purchase.']},
+        {title:'HOW TO USE IT',lines:['Buy normally from my Bazaar','Message me your coupon code after the purchase','I verify the purchase and send cashback manually']},
+        {title:'CASHBACK TIERS',lines:['$50,000+ → $5,000 cashback','$250,000+ → $10,000 cashback','$1,000,000+ → $20,000 cashback']}
+      ];
+      const greeting='WELCOME BACK, '+name+' — DON\'T FORGET YOUR COUPON!';
+      const footer=['Purchases must be made after the coupon is issued.','Eligible purchases remain available for 24 hours.','Each sale can only be used once.'];
       return {
-        subject:SHOP_NAME+' — cashback coupon reminder',
-        body:'Hi '+name+',\n\nYour '+SHOP_NAME+' coupon is '+coupon.code+'. You have '+remaining+' use'+(remaining===1?'':'s')+' remaining.\n\nCashback tiers: $50,000+ = $5,000; $250,000+ = $10,000; $1,000,000+ = $20,000. Qualifying purchases must be made after the coupon was issued and remain eligible for 24 hours. Message me the coupon code after your qualifying Bazaar purchase.\n\n— '+OWNER_NAME
+        subject:SHOP_NAME+' — Cashback coupon reminder',
+        body:plainThreeColumnFallback({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' use'+(remaining===1?'':'s')+' left',columns,footerTitle:'IMPORTANT',footerLines:footer,couponCode:coupon.code}),
+        bodyHtml:brandedMessageHtml({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' use'+(remaining===1?'':'s')+' left',columns,footerTitle:'IMPORTANT',footerLines:footer,couponCode:coupon.code})
       };
     }
+    const first=!customer?.contacted&&!customer?.firstMessageSent&&!n(customer?.messageCount);
+    const greeting=(first?'WELCOME TO ':'WELCOME BACK TO ')+SHOP_NAME+', '+name+'!';
+    const columns=[
+      {title:'HOW IT WORKS',lines:['1. Buy normally from my Bazaar','2. Message me your coupon code','3. I verify the purchase','4. Cashback is sent']},
+      {title:'CASHBACK TIERS',lines:['$50,000+ → $5,000 cashback','$250,000+ → $10,000 cashback','$1,000,000+ → $20,000 cashback']},
+      {title:'IMPORTANT',lines:['Purchases must be made after the coupon is issued','Qualifying purchases remain eligible for 24 hours','Each sale can only be used once']}
+    ];
+    const footer=['Reply RESTOCK to receive restock notifications.','Reply STOP at any time to leave the notification list.'];
+    const subject=first?'Welcome to '+SHOP_NAME+'!':'Welcome Back to '+SHOP_NAME+'!';
     return {
-      subject:SHOP_NAME+' — thanks for your purchase',
-      body:'Hi '+name+',\n\nThanks for buying from '+SHOP_NAME+'. Your cashback coupon is '+coupon.code+'.\n\nCashback tiers: $50,000+ = $5,000; $250,000+ = $10,000; $1,000,000+ = $20,000. Purchases count only after the coupon is issued and remain eligible for 24 hours. Send me the coupon code after a qualifying purchase.\n\nIf you want restock alerts, reply RESTOCK. Reply STOP any time to stop alerts.\n\n— '+OWNER_NAME
+      subject,
+      body:plainThreeColumnFallback({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' redemption'+(remaining===1?'':'s')+' remaining',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer,couponCode:coupon.code}),
+      bodyHtml:brandedMessageHtml({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' redemption'+(remaining===1?'':'s')+' remaining',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer,couponCode:coupon.code})
     };
   }
 
   function restockMessage(sub,rows){
-    const limited=rows.slice(0,12);
-    const lines=limited.map(row=>'- '+String(row.name||'Item')+' — '+fmt(row.quantity)+' available'+(n(row.price)?' @ '+money(row.price):''));
+    const name=String(sub?.name||'there');
+    const limited=rows.slice(0,30),omitted=Math.max(0,rows.length-limited.length),chunks=[[],[],[]];
+    limited.forEach((row,index)=>chunks[index%3].push(String(row.name||'Item')+' — Qty '+fmt(row.quantity)+' — '+(n(row.price)?money(row.price)+' each':'price unavailable')));
+    const columns=chunks.map((lines,index)=>({title:index===0?'CURRENT STOCK':'MORE STOCK',lines:lines.length?lines:['No additional items']}));
+    const totalUnits=rows.reduce((sum,row)=>sum+n(row.quantity),0);
+    const footer=['Stock and prices can change quickly and are first come, first served.'].concat(omitted?[fmt(omitted)+' additional item'+(omitted===1?'':'s')+' omitted to keep this message compact.']:[]).concat(['Reply STOP if you no longer want restock alerts.']);
+    const greeting='Here’s what’s currently available at '+SHOP_NAME+', '+name+'.';
     return {
       subject:SHOP_NAME+' — Bazaar restock alert',
-      body:'Hi '+String(sub?.name||'there')+',\n\nCurrent Bazaar stock matching your alerts:\n'+lines.join('\n')+
-        (rows.length>limited.length?'\n- plus '+(rows.length-limited.length)+' more item(s)':'')+
-        '\n\nStock and prices can change quickly and nothing is reserved.\n\n— '+OWNER_NAME
+      body:plainThreeColumnFallback({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' total units',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer}),
+      bodyHtml:brandedMessageHtml({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' total units',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer})
     };
+  }
+
+  function visible(el){
+    if(!el||!el.isConnected)return false;
+    const r=el.getBoundingClientRect(),s=getComputedStyle(el);
+    return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';
+  }
+
+  function setNativeValue(element,value){
+    if(!element)return;
+    const win=element.ownerDocument?.defaultView||window,tag=String(element.tagName||'').toLowerCase();
+    const proto=tag==='textarea'?win.HTMLTextAreaElement?.prototype:win.HTMLInputElement?.prototype;
+    const setter=proto?Object.getOwnPropertyDescriptor(proto,'value')?.set:null;
+    if(setter)setter.call(element,String(value));else element.value=String(value);
+    try{if(element._valueTracker)element._valueTracker.setValue('');}catch{}
+    try{element.dispatchEvent(new win.InputEvent('input',{bubbles:true,inputType:'insertText',data:String(value)}));}
+    catch{element.dispatchEvent(new win.Event('input',{bubbles:true}));}
+    element.dispatchEvent(new win.Event('change',{bubbles:true}));element.dispatchEvent(new win.Event('blur',{bubbles:true}));
+  }
+
+  function getComposeParams(){const hash=location.hash||'',amp=hash.indexOf('&');return amp>=0?new URLSearchParams(hash.slice(amp+1)):new URLSearchParams();}
+
+  function composePayloadForCurrentPage(){
+    const params=getComposeParams(),xid=String(params.get('XID')||params.get('xid')||'').trim(),pending=GM_getValue(PENDING_COMPOSE_KEY,null);
+    if(pending&&typeof pending==='object'){
+      if(Date.now()-Number(pending.createdAt||0)>5*60*1000)GM_deleteValue(PENDING_COMPOSE_KEY);
+      else{const pendingId=String(pending.playerId||'').trim();if(!xid||!pendingId||xid===pendingId)return {playerId:pendingId||xid,subject:String(pending.subject||''),body:String(pending.body||''),bodyHtml:String(pending.bodyHtml||'')};}
+    }
+    const urlSubject=params.get('subject'),urlBody=params.get('body');
+    return urlSubject!==null||urlBody!==null?{playerId:xid,subject:urlSubject||'',body:urlBody||'',bodyHtml:''}:null;
+  }
+
+  function elementMeta(element){
+    if(!element)return '';
+    const labels=element.labels?[...element.labels].map(label=>label.textContent||'').join(' '):'';
+    return [element.name,element.id,element.placeholder,element.getAttribute?.('aria-label'),element.getAttribute?.('data-placeholder'),element.getAttribute?.('title'),labels].filter(Boolean).join(' ').toLowerCase();
+  }
+
+  function findComposeSubjectInput(){
+    const selectors=['input[placeholder="Subject"]','input[placeholder*="subject" i]','input[name*="subject" i]','input[id*="subject" i]','input[aria-label*="subject" i]','textarea[placeholder="Subject"]','textarea[placeholder*="subject" i]'];
+    for(const selector of selectors){const el=[...document.querySelectorAll(selector)].find(visible);if(el)return el;}
+    return [...document.querySelectorAll('input:not([type="hidden"]),textarea')].filter(visible).find(el=>/subject|title/.test(elementMeta(el)))||null;
+  }
+
+  function findComposeBodyInput(subjectInput){
+    const textareas=[...document.querySelectorAll('textarea')].filter(visible),labelled=textareas.find(el=>el!==subjectInput&&/message|body|mail|content/.test(elementMeta(el)));if(labelled)return labelled;
+    const editables=[...document.querySelectorAll('[contenteditable="true"],[role="textbox"][contenteditable],[role="textbox"]')].filter(visible);
+    return editables.find(el=>el!==subjectInput&&/message|body|mail|content|write|compose/.test(elementMeta(el)))||editables.find(el=>el!==subjectInput)||textareas.find(el=>el!==subjectInput)||null;
+  }
+
+  function findComposeRichEditorBody(){
+    for(const frame of [...document.querySelectorAll('iframe')].filter(visible)){
+      try{
+        const doc=frame.contentDocument||frame.contentWindow?.document,body=doc?.body;if(!body)continue;
+        const meta=[frame.id,frame.name,frame.className,frame.title,frame.getAttribute('aria-label'),body.className,body.getAttribute('contenteditable'),body.getAttribute('role')].filter(Boolean).join(' ').toLowerCase();
+        if(body.isContentEditable||body.getAttribute('contenteditable')==='true'||/editor|wysiwyg|message|compose|sceditor|mail/.test(meta))return body;
+      }catch{}
+    }
+    return null;
+  }
+
+  function findTornCodeEditorToggle(){
+    const selectors=['[aria-label="Toggle Code Editor"]','[title="Toggle Code Editor"]','button[aria-label*="Code Editor" i]','button[title*="Code Editor" i]','[role="button"][aria-label*="Code Editor" i]','[role="button"][title*="Code Editor" i]'];
+    for(const selector of selectors){const el=[...document.querySelectorAll(selector)].find(visible);if(el)return el;}
+    return [...document.querySelectorAll('button,a,[role="button"]')].filter(visible).find(el=>{const meta=[el.title,el.getAttribute('aria-label'),el.getAttribute('data-tooltip'),el.textContent].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();return meta==='{}'||meta==='{ }'||/toggle code editor|code editor|source code|source editor|html source/.test(meta);})||null;
+  }
+
+  function sourceEditorCandidates(){
+    const set=new Set();
+    for(const selector of ['textarea','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]','[role="textbox"][contenteditable="true"]'])for(const el of document.querySelectorAll(selector))if(visible(el))set.add(el);
+    return [...set];
+  }
+
+  function likelyTornSourceEditor(before=new Set()){
+    return sourceEditorCandidates().filter(el=>!before.has(el)).find(el=>{const meta=elementMeta(el)+' '+String(el.className||'').toLowerCase(),rect=el.getBoundingClientRect?.();return (!rect||rect.height>=80||rect.width>=300)&&(/code|source|html|editor|cm-|codemirror|monaco/.test(meta)||String(el.tagName||'').toLowerCase()==='textarea'||el.isContentEditable);})||
+      sourceEditorCandidates().find(el=>/code|source|html|cm-|codemirror|monaco/.test(elementMeta(el)+' '+String(el.className||'').toLowerCase()))||null;
+  }
+
+  function editorText(element){if(!element)return '';const tag=String(element.tagName||'').toLowerCase();return tag==='textarea'||tag==='input'?String(element.value||''):String(element.innerText||element.textContent||'');}
+  function dispatchEditorEvents(element){const win=element?.ownerDocument?.defaultView||window;for(const type of ['input','change','keyup','blur'])try{element.dispatchEvent(new win.Event(type,{bubbles:true}));}catch{}}
+
+  function setEditorContent(element,text,html=''){
+    if(!element)return false;const tag=String(element.tagName||'').toLowerCase();
+    if(tag==='textarea'||tag==='input'){setNativeValue(element,html||text);return Boolean(editorText(element));}
+    try{element.focus();if(html)element.innerHTML=html;else element.textContent=text;}catch{return false;}
+    dispatchEditorEvents(element);
+    return html?Boolean(element.querySelector?.('table')):Boolean(String(element.innerText||element.textContent||'').trim());
+  }
+
+  const sleepMs=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+
+  async function injectHtmlThroughTornCodeEditor(htmlValue){
+    const html=String(htmlValue||'').replace(/>\s+</g,'><').trim();if(!html)return false;
+    const toggle=findTornCodeEditorToggle();if(!toggle)return false;
+    const before=new Set(sourceEditorCandidates());try{toggle.click();}catch{return false;}
+    let source=null;const deadline=Date.now()+2000;while(Date.now()<deadline&&!source){source=likelyTornSourceEditor(before);if(!source)await sleepMs(50);}
+    if(!source){try{toggle.click();}catch{}return false;}
+    if(!setEditorContent(source,html,'')){try{toggle.click();}catch{}return false;}
+    await sleepMs(120);const toggleBack=findTornCodeEditorToggle()||toggle;try{toggleBack.click();}catch{return false;}await sleepMs(180);
+    const rich=findComposeRichEditorBody();
+    if(rich&&String(rich.innerText||rich.textContent||'').trim())return true;
+    return Boolean([...document.querySelectorAll('table')].find(table=>visible(table)&&String(table.innerText||table.textContent||'').includes('RESTOCK ALERTS')));
+  }
+
+  async function fillMessageComposer(){
+    if(!location.pathname.includes('messages.php'))return;
+    const payload=composePayloadForCurrentPage();if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
+    let attempts=0,observer=null,timer=null,inFlight=false,finished=false;
+    const stop=(success,rich=true)=>{finished=true;if(timer)clearInterval(timer);if(observer)observer.disconnect();if(success){GM_deleteValue(PENDING_COMPOSE_KEY);statusText=rich?'Message prepared in Torn composer with branded formatting. Send remains manual.':'Message prepared in Torn composer as plain text fallback. Send remains manual.';}};
+    const tryFill=async()=>{
+      if(finished||inFlight)return false;inFlight=true;attempts++;
+      try{
+        const subject=findComposeSubjectInput();let subjectOK=false;
+        if(subject){setNativeValue(subject,payload.subject);await sleepMs(25);subjectOK=String(subject.value||'').trim()===String(payload.subject||'').trim();}
+        let bodyOK=false,rich=Boolean(payload.bodyHtml);
+        if(payload.bodyHtml){bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml);if(!bodyOK){const body=findComposeRichEditorBody();if(body)bodyOK=setEditorContent(body,payload.body,payload.bodyHtml);}}
+        if(!bodyOK){rich=false;const body=findComposeBodyInput(subject)||findComposeRichEditorBody();if(body)bodyOK=setEditorContent(body,payload.body,'');}
+        if(subjectOK&&bodyOK){stop(true,rich);return true;}
+        if(attempts>=40)stop(false,false);
+        return false;
+      }finally{inFlight=false;}
+    };
+    tryFill();timer=setInterval(()=>{if(!finished)tryFill();},750);observer=new MutationObserver(()=>{if(!finished&&attempts<40)tryFill();});observer.observe(document.documentElement,{childList:true,subtree:true});
   }
 
   function refundProfileUrl(refund){
@@ -270,7 +455,7 @@
       const matching=logic.currentBazaarRows(state,sub);
       return '<details class="mm-cu-member"><summary><span><b>'+esc(sub.name||sub.id)+'</b> <span class="mm-cu-muted">['+esc(sub.id)+']</span></span><span class="mm-cu-muted">'+matching.length+' matching SKU(s)</span></summary>'+
         '<div class="mm-cu-detail"><div class="mm-cu-muted">Interests: '+esc(sub.interests?.length?sub.interests.join(', '):'All items')+' · last notified '+when(sub.lastNotified)+'</div>'+
-        '<div class="mm-cu-actions" style="margin-top:5px;"><button data-restock-alert="'+esc(sub.id)+'" style="'+button(true)+'">Prepare Alert</button><button data-restock-interests="'+esc(sub.id)+'" style="'+button()+'">Interests</button><button data-restock-remove="'+esc(sub.id)+'" style="'+button()+'">Remove</button></div></div></details>';
+        '<div class="mm-cu-actions" style="margin-top:5px;"><button data-restock-alert="'+esc(sub.id)+'" style="'+button(true)+'">Prepare Alert</button>'+(sub.pendingNotification?'<button data-restock-sent="'+esc(sub.id)+'" style="'+button(true)+'">Mark Sent</button><button data-restock-dismiss="'+esc(sub.id)+'" style="'+button()+'">Dismiss Pending</button>':'')+'<button data-restock-interests="'+esc(sub.id)+'" style="'+button()+'">Interests</button><button data-restock-remove="'+esc(sub.id)+'" style="'+button()+'">Remove</button></div></div></details>';
     }).join('');
   }
 
@@ -335,7 +520,7 @@
 
     root.querySelectorAll('[data-welcome]').forEach(b=>b.addEventListener('click',async()=>{
       const id=b.dataset.welcome;const customer=state?.customers?.[id];const coupon=state?.coupons?.[id]||logic.ensureCoupon(state,customer);
-      if(!customer||!coupon)return;const msg=customerMessage(customer,coupon,false);await copyAndOpenMessage(id,msg.subject,msg.body);
+      if(!customer||!coupon)return;const msg=customerMessage(customer,coupon,false);composeMessage(id,msg.subject,msg.body,msg.bodyHtml);
     }));
     root.querySelectorAll('[data-mark-welcome]').forEach(b=>b.addEventListener('click',()=>run('Saving sent welcome…',async()=>{
       const id=b.dataset.markWelcome;
@@ -349,7 +534,7 @@
     })));
     root.querySelectorAll('[data-reminder]').forEach(b=>b.addEventListener('click',async()=>{
       const id=b.dataset.reminder;const customer=state?.customers?.[id];const coupon=state?.coupons?.[id];if(!customer||!coupon)return;
-      const msg=customerMessage(customer,coupon,true);await copyAndOpenMessage(id,msg.subject,msg.body);
+      const msg=customerMessage(customer,coupon,true);composeMessage(id,msg.subject,msg.body,msg.bodyHtml);
     }));
     root.querySelectorAll('[data-subscribe]').forEach(b=>b.addEventListener('click',()=>run('Updating restock subscription…',async()=>{
       const id=b.dataset.subscribe;
@@ -367,8 +552,23 @@
       const rows=logic.currentBazaarRows(state,sub);if(!rows.length){statusText='No matching current Bazaar inventory. Refresh MM Inventory Manager/ROI Tracker first.';render();return;}
       const msg=restockMessage(sub,rows);
       await updateCustomerState(draft=>{const s=draft.subscribers[id];if(s){s.lastPrepared=new Date().toISOString();s.pendingNotification={id:'notice-'+Date.now(),type:'bazaar-inventory',preparedAt:s.lastPrepared,itemCount:rows.length};}});
-      await copyAndOpenMessage(id,msg.subject,msg.body);
+      composeMessage(id,msg.subject,msg.body,msg.bodyHtml);
     }));
+    root.querySelectorAll('[data-restock-sent]').forEach(b=>b.addEventListener('click',()=>run('Marking restock alert sent…',async()=>{
+      const id=b.dataset.restockSent;
+      await updateCustomerState(draft=>{
+        const sub=draft.subscribers[id];if(!sub?.pendingNotification)throw new Error('No pending restock alert.');
+        const sentAt=new Date().toISOString(),notice={...sub.pendingNotification,playerId:id,playerName:sub.name,sentAt};
+        sub.lastNotified=sentAt;sub.pendingNotification=null;
+        draft.notificationHistory=Array.isArray(draft.notificationHistory)?draft.notificationHistory:[];
+        draft.notificationHistory.unshift(notice);draft.notificationHistory=draft.notificationHistory.slice(0,500);
+      });
+      return 'Restock alert marked sent.';
+    })));
+    root.querySelectorAll('[data-restock-dismiss]').forEach(b=>b.addEventListener('click',()=>run('Dismissing pending restock alert…',async()=>{
+      const id=b.dataset.restockDismiss;await updateCustomerState(draft=>{if(draft.subscribers[id])draft.subscribers[id].pendingNotification=null;});
+      return 'Pending restock alert dismissed.';
+    })));
     root.querySelectorAll('[data-restock-interests]').forEach(b=>b.addEventListener('click',()=>run('Updating interests…',async()=>{
       const id=b.dataset.restockInterests;const sub=state?.subscribers?.[id];if(!sub)throw new Error('Subscriber not found.');
       const value=prompt('Comma-separated item names or item IDs. Blank = all items.',(sub.interests||[]).join(', '));if(value==null)return 'No change.';
@@ -429,8 +629,9 @@
   }
 
   if(document.body){
-    createLauncher();installChannel();
+    createLauncher();installChannel();fillMessageComposer();
   }else{
-    window.addEventListener('DOMContentLoaded',()=>{createLauncher();installChannel();},{once:true});
+    window.addEventListener('DOMContentLoaded',()=>{createLauncher();installChannel();fillMessageComposer();},{once:true});
   }
+  window.addEventListener('hashchange',()=>{if(location.pathname.includes('messages.php'))fillMessageComposer();});
 })();
