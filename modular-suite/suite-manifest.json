@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "8.0.0-alpha.21",
+  "suiteVersion": "8.0.0-alpha.22",
   "status": "non-production",
   "baseVersion": "7.5.3",
   "branch": "crm-v8-modular-suite",
@@ -15,35 +15,35 @@
       "name": "MM Torn Core",
       "role": "credential-api-storage-contracts",
       "visible": false,
-      "version": "8.0.0-alpha.7",
+      "version": "8.0.0-alpha.8",
       "status": "implemented-non-production"
     },
     {
       "id": "customers",
       "name": "MM_Customers",
       "role": "customer-crm-coupons-cashback-restock",
-      "version": "8.0.0-alpha.6",
+      "version": "8.0.0-alpha.7",
       "status": "implemented-non-production"
     },
     {
       "id": "acquisitions",
       "name": "MM_Acquisitions",
       "role": "acquire-market-travel-purchase-ledger",
-      "version": "8.0.0-alpha.5",
+      "version": "8.0.0-alpha.6",
       "status": "implemented-non-production"
     },
     {
       "id": "inventory-roi",
       "name": "MM_Inventory Manager/ROI Tracker",
       "role": "inventory-listing-sales-velocity-fifo-roi",
-      "version": "8.0.0-alpha.6",
+      "version": "8.0.0-alpha.7",
       "status": "implemented-non-production"
     },
     {
       "id": "faction-armory",
       "name": "MM Faction Armory",
       "role": "faction-inventory-builds-readiness",
-      "version": "8.0.0-alpha.15",
+      "version": "8.0.0-alpha.16",
       "status": "implemented-non-production"
     },
     {
