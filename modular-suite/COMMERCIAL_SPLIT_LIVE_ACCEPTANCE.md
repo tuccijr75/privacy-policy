@@ -685,6 +685,15 @@ After the human pressed Torn SEND for birkodi [4488297]:
 - **PASS / TORN** — Torn exited compose to Inbox and displayed `Message sent to birkodi`, providing an explicit send confirmation signal for the Customers send detector.
 - **PENDING CRM STATE CHECK** — open MM_Customers next and verify birkodi is no longer in New Customers, contact/message state advanced, and SAVE-4488297 was issued automatically without a manual Mark Sent step.
 
+
+### MM_Customers alpha.5 automatic send-state reconciliation — birkodi
+After the real Welcome to birkodi [4488297] was sent and Torn confirmed it:
+- **PASS** — New Customers automatically changed from 19 to 18 with no manual Refresh and no `Mark Sent + Issue` action.
+- **PASS** — birkodi is no longer present in the active New Customers queue.
+- **PASS / STATE** — this proves the tracked Torn send detector completed the welcome-state transaction because New Customers is defined from `contacted / firstMessageSent / messageCount`.
+- **PASS (same atomic source transaction)** — the confirmed Welcome handler also issues the customer's coupon at the same timestamp it marks first contact, so SAVE-4488297 activation does not require separate bookkeeping.
+- **PASS** — the panel continued auto-syncing after the send and remained usable on return to Torn Home.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
