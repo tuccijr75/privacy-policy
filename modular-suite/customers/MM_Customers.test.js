@@ -1,134 +1,121 @@
-const fs=require('fs');const vm=require('vm');const assert=require('assert');
-const sandbox={globalThis:{}};vm.createContext(sandbox);
+const fs=require('fs');
+const vm=require('vm');
+const assert=require('assert');
+
+const sandbox={globalThis:{}};
+vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(__dirname+'/MM_Customers.logic.js','utf8'),sandbox,{filename:'MM_Customers.logic.js'});
-const logic=sandbox.globalThis.MMTornCustomersLogic;assert(logic);
+const logic=sandbox.globalThis.MMTornCustomersLogic;
+assert(logic);
+
 const now=Date.now();
-const db=logic.ensureCustomerSlice({operations:{inventoryRoi:{listings:{26:{id:'26',name:'AK-47',quantity:2,price:12000}}}}});
-const imported=logic.importSalesEntries(db,[{id:'sale-1',timestamp:Math.floor((now-1000)/1000),details:{id:1226},data:{buyer:{id:123,name:'Buyer'},item_id:26,item_name:'AK-47',quantity:1,cost_total:60000}}]);
-assert.strictEqual(imported.imported,1);assert.strictEqual(db.customers['123'].spent,60000);
+const db=logic.ensureCustomerSlice({
+  operations:{inventoryRoi:{listings:{26:{id:'26',name:'AK-47',quantity:2,price:12000}}}}
+});
+
+const sale={id:'sale-1',timestamp:Math.floor((now-1000)/1000),details:{id:1226},data:{buyer:{id:123,name:'Buyer'},item_id:26,item_name:'AK-47',quantity:1,cost_total:60000}};
+const imported=logic.importSalesEntries(db,[sale]);
+assert.strictEqual(imported.imported,1);
+assert.strictEqual(db.customers['123'].spent,60000);
+assert.strictEqual(logic.importSalesEntries(db,[sale]).imported,0,'duplicate sales must remain idempotent');
+
 const coupon=logic.issueCoupon(db,'123',new Date(now-2000).toISOString());
-const q=logic.couponQualification(db,coupon,now);assert.strictEqual(q.qualified,true);assert.strictEqual(q.cashback,5000);
-const refund=logic.createRefund(db,'123',new Date(now).toISOString());assert.strictEqual(refund.status,'pending');
-logic.completeRefund(db,refund.id,new Date(now+1000).toISOString());assert.strictEqual(db.coupons['123'].uses,1);
-logic.subscribeCustomer(db,'123');assert.strictEqual(logic.currentBazaarRows(db,db.subscribers['123']).length,1);
+const q=logic.couponQualification(db,coupon,now);
+assert.strictEqual(q.qualified,true);
+assert.strictEqual(q.cashback,5000);
+
+const refund=logic.createRefund(db,'123',new Date(now).toISOString());
+assert.strictEqual(refund.status,'pending');
+logic.completeRefund(db,refund.id,new Date(now+1000).toISOString());
+assert.strictEqual(db.coupons['123'].uses,1);
+
+logic.subscribeCustomer(db,'123');
+assert.strictEqual(logic.currentBazaarRows(db,db.subscribers['123']).length,1);
 
 const userSrc=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 assert.doesNotThrow(()=>new Function(userSrc));
-assert(userSrc.includes("const VERSION='8.0.0-alpha.16';"));
+assert(userSrc.includes("const VERSION='8.0.0-alpha.17';"));
 assert(userSrc.includes("const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';"));
-assert(userSrc.includes('function brandedMessageHtml'));
-assert(userSrc.includes('function fillMessageComposer'));
-assert(userSrc.includes('bodyHtml:brandedMessageHtml'));
-assert(!userSrc.includes('data-restock-sent'));
-assert(userSrc.includes('data-restock-dismiss'));
-assert(userSrc.includes('New Customers ('));
-assert(userSrc.includes('async function repairUsernames'));
-assert(userSrc.includes('function installMessageSendDetector'));
-assert(userSrc.includes('function completeTrackedSend'));
+assert(userSrc.includes("const PENDING_SEND_KEY='mm_customers_pending_send_v1';"));
 assert(userSrc.includes("const DELIVERY_RECEIPTS_KEY='mm_customers_delivery_receipts_v1';"));
-assert(userSrc.includes('function newSentConfirmationEvidence'));
-assert(userSrc.includes('function deliveryFingerprintCount'));
-assert(userSrc.includes('event.isTrusted'));
-assert(userSrc.includes('event.submitter'));
-assert(userSrc.includes("state:'send-unconfirmed'"));
+
+function sourceSection(startMarker,endMarker){
+  const start=userSrc.indexOf(startMarker);
+  assert(start>=0,'missing source marker: '+startMarker);
+  const end=endMarker?userSrc.indexOf(endMarker,start+startMarker.length):userSrc.length;
+  assert(end>start,'missing source end marker: '+endMarker);
+  return userSrc.slice(start,end);
+}
+
+// Message feature preservation.
+assert(userSrc.includes('function brandedMessageHtml'));
+assert(userSrc.includes('function plainMessageText'));
+assert(userSrc.includes('function customerMessage'));
+assert(userSrc.includes('function cashbackEligibilityReminderMessage'));
+assert(userSrc.includes('function restockMessage'));
+assert.strictEqual((userSrc.match(/composeMessage\(/g)||[]).length,5,'four message actions must share one compose transport');
+assert(userSrc.includes('Prepare Cashback Reminder'));
+assert(userSrc.includes('QUALIFYING PURCHASE'));
+assert(userSrc.includes('Refund amount: '));
+assert(userSrc.includes('New Customers ('));
+assert(userSrc.includes('function resolveMissingUsernames'));
 assert(userSrc.includes('function recentFirstContactRecoveryRows'));
 assert(userSrc.includes('Restore to New Customers'));
-assert(!userSrc.includes("messageSentConfirmationVisible()||!location.hash.includes('compose')||!composeStillVisible"));
-assert(userSrc.includes("window.location.assign(url)"));
-assert(userSrc.includes("const PENDING_SEND_KEY='mm_customers_pending_send_v1';"));
-assert(userSrc.includes('AUTO_SYNC_MS=60_000'));
-assert(!userSrc.includes('data-mark-welcome'));
+assert(!userSrc.includes('data-restock-sent'));
+assert(userSrc.includes('data-restock-dismiss'));
+
+// Composer source is one-shot and verified from the canonical source payload.
+const composePayload=sourceSection('  function composePayloadForCurrentPage(){','\n  function elementMeta(element){');
+assert(composePayload.includes('COMPOSE_BRIDGE_TTL_MS'));
+assert(composePayload.includes('Compose bridges are single-use and bound to the exact recipient route.'));
+assert(!composePayload.includes('PENDING_SEND_KEY'),'delivery tracking must never hydrate the editor');
+assert(!userSrc.includes('COMPOSE_ROUTE_RECOVERY_MS'));
+assert(!userSrc.includes('routeRecovery'));
+assert(!userSrc.includes('restoreComposeTargetRoute'));
+assert(userSrc.includes('function findComposeRecipientInput'));
+assert(userSrc.includes('function recipientMatchesPayload'));
+assert(userSrc.includes("value.includes('['+id+']')"));
+assert(userSrc.includes('function brandedSourceIsComplete'));
+assert(userSrc.includes('function brandedSourceSignature'));
+assert(userSrc.includes('function matchingBrandedTable'));
+assert(userSrc.includes('const hasBody=requiresBranding||Boolean(payload.body);'),'subject-only compose links must not require body injection');
+assert(userSrc.includes('injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent)'));
+assert(userSrc.includes('recipient + branded formatting verified'));
+
+// Old runtime repair layers must stay gone.
+assert(!userSrc.includes('function repairRenderedBrandedTable'));
+assert(!userSrc.includes('brandedMarkersFromHtml'));
+assert(!userSrc.includes("replace(/\\bCSHBACK\\b/g,'CASHBACK')"));
+assert(!userSrc.includes('table.insertBefore(bannerRow.cloneNode(true),table.firstChild)'));
+assert(!userSrc.includes('setEditorContent('));
 assert(!userSrc.includes('navigator.clipboard'));
 assert(!userSrc.includes('copyAndOpenMessage'));
-console.log('MM_Customers logic + verified-delivery automation/composer regression tests: PASS');
-const userSourceRich=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
-new Function(userSourceRich);
-assert(userSourceRich.includes("const VERSION='8.0.0-alpha.16';"));
-assert(userSourceRich.includes('function richComposerHasBranding'));
-assert(userSourceRich.includes('function composeEditorSurfaceReady'));
-assert(userSourceRich.includes('Torn rich editor was not ready; retrying the original compose form.'));
-assert(userSourceRich.includes('Never toggle while Torn'));
-assert(userSourceRich.includes('recipient + branded formatting verified'));
-assert(!userSourceRich.includes('setEditorContent(body,payload.body,payload.bodyHtml)'));
-console.log('MM Customers rich-composer resilience regression: PASS');
+assert(!userSrc.includes('MutationObserver'));
+assert(!userSrc.includes('history[method]'));
+assert(!userSrc.includes('scanTimer'));
+assert(!userSrc.includes('verifyTimer'));
+assert.strictEqual((userSrc.match(/\.innerHTML\s*=/g)||[]).length,1,'only the MM_Customers panel renderer may assign innerHTML');
 
-const userSourceRefunds=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
-new Function(userSourceRefunds);
-assert(userSourceRefunds.includes("const VERSION='8.0.0-alpha.16';"));
-assert(userSourceRefunds.includes('function cashbackEligibleRows'));
-assert(userSourceRefunds.includes('function cashbackEligibilityReminderMessage'));
-assert(userSourceRefunds.includes('Prepare Cashback Reminder'));
-assert(userSourceRefunds.includes('QUALIFYING PURCHASE'));
-assert(userSourceRefunds.includes('Refund amount: '));
-assert(userSourceRefunds.includes("composeMessage(id,msg.subject,msg.body,msg.bodyHtml,{kind:'reminder'})"));
-assert(userSourceRefunds.includes('No customers are currently eligible for cashback.'));
-console.log('MM Customers refund eligibility reminder regression: PASS');
+// Delivery tracking remains manual-send gated and bounded.
+assert(userSrc.includes('function installMessageSendDetector'));
+assert(userSrc.includes('function completeTrackedSend'));
+assert(userSrc.includes('verifyDeliveryAfterSend'));
+assert(userSrc.includes('event.isTrusted'));
+assert(userSrc.includes('event.submitter'));
+assert(userSrc.includes("pending.state!=='awaiting-send'"));
+assert(userSrc.includes("state:'send-unconfirmed'"));
+assert(userSrc.includes("state:'awaiting-send',sendClickedAt:null"));
+assert(userSrc.includes('PENDING_DELIVERY_TTL_MS=30*60*1000'));
+assert(userSrc.includes("if(id&&(!xid||!recipientMatchesPayload(pending,findComposeRecipientInput())))return false;"));
 
-const userSourceCashbackRich=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
-new Function(userSourceCashbackRich);
-assert(userSourceCashbackRich.includes("const VERSION='8.0.0-alpha.16';"));
-assert(userSourceCashbackRich.includes("CASHBACK REMINDER','QUALIFYING PURCHASE','YOUR CASHBACK','SEND YOUR COUPON"));
-assert(userSourceCashbackRich.includes('Draft was NOT downgraded to plain text.'));
-assert(userSourceCashbackRich.includes('Preparing branded message… do not send until this notice disappears.'));
-assert(!userSourceCashbackRich.includes('plain text fallback after rich-editor retries failed'));
-console.log('MM Customers cashback reminder rich-verification regression: PASS');
+// Resource doctrine: no page-load customer sync; the only interval is panel-scoped.
+assert.strictEqual((userSrc.match(/setInterval\(/g)||[]).length,1);
+assert(userSrc.includes('function startCustomerAutoSync'));
+assert(userSrc.includes('function stopCustomerAutoSync'));
+assert(userSrc.includes('if(!apiKey()||!panelIsOpen())return;'));
+const initialize=sourceSection('  function initializeCustomers(){','\n\n  if(document.body)');
+assert(!initialize.includes('autoRefreshCustomers'),'initialization must not perform customer network work');
+assert(!initialize.includes('setInterval'),'initialization must not start polling');
+assert(!userSrc.includes('core.adoptLegacyCrmLauncher?.();'),'Core owns the legacy-launcher bridge');
 
-const userSourceAnon=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
-new Function(userSourceAnon);
-assert(userSourceAnon.includes("const VERSION='8.0.0-alpha.16';"));
-assert(userSourceAnon.includes("for(const selector of ['textarea'"));
-assert(userSourceAnon.includes('anonymous textarea'));
-assert(userSourceAnon.includes('function brandedMarkersFromHtml'));
-assert(userSourceAnon.includes("CASHBACK REMINDER','QUALIFYING PURCHASE','YOUR CASHBACK','SEND YOUR COUPON"));
-assert(userSourceAnon.includes('injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent)'));
-console.log('MM Customers anonymous source textarea regression: PASS');
-
-const userSourceScope=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
-new Function(userSourceScope);
-assert(userSourceScope.includes("const VERSION='8.0.0-alpha.16';"));
-assert(userSourceScope.includes('function composeAreaTextarea'));
-assert(userSourceScope.includes('function looksLikeHtmlSource'));
-assert(userSourceScope.includes('allowFreshAnonymous&&!before.has(el)'));
-assert(userSourceScope.includes('function setSourceEditorHtml'));
-assert(userSourceScope.includes('likelyTornSourceEditor(new Set(),false)'));
-assert(userSourceScope.includes('PENDING_COMPOSE_TTL_MS=30*60*1000'));
-assert(userSourceScope.includes('bodyHtml:payload.bodyHtml'));
-console.log('MM Customers source textarea scoping regression: PASS');
-
-const userSourceTransport=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
-new Function(userSourceTransport);
-assert(userSourceTransport.includes("const VERSION='8.0.0-alpha.16';"));
-assert(userSourceTransport.includes('COMPOSE_BRIDGE_TTL_MS=90_000'));
-assert(userSourceTransport.includes('COMPOSE_SURFACE_STABLE_MS=350'));
-assert(userSourceTransport.includes('COMPOSE_POST_FILL_VERIFY_MS=400'));
-assert(userSourceTransport.includes('COMPOSE_FILL_TIMEOUT_MS=20_000'));
-assert(userSourceTransport.includes('COMPOSE_MAX_FORMAT_ATTEMPTS=3'));
-assert(userSourceTransport.includes('function findComposeRecipientInput'));
-assert(userSourceTransport.includes('function recipientMatchesPayload'));
-assert(userSourceTransport.includes("value.includes('['+id+']')"));
-assert(userSourceTransport.includes('function canonicalComposeUrl'));
-assert(userSourceTransport.includes('PENDING_COMPOSE_KEY is a one-shot bridge into the exact compose route.'));
-assert(!userSourceTransport.includes('COMPOSE_ROUTE_RECOVERY_MS'));
-assert(!userSourceTransport.includes('routeRecovery'));
-assert(!userSourceTransport.includes('restoreComposeTargetRoute'));
-assert(userSourceTransport.includes('function clearMatchingPendingCompose'));
-assert(userSourceTransport.includes('composeFillGeneration'));
-assert(userSourceTransport.includes('const stillCurrent=()=>generation===composeFillGeneration'));
-assert(userSourceTransport.includes('waitForSourceEditor(before,4000,true,stillCurrent)'));
-assert(userSourceTransport.includes('waitForRichBranding(html,2400,stillCurrent)'));
-assert(userSourceTransport.includes("if(id&&(!xid||!recipientMatchesPayload(pending,findComposeRecipientInput())))return false;"));
-assert(userSourceTransport.includes("recipientName:pending.recipientName||state?.customers?.[String(pending.playerId||'')]?.name||''"));
-assert(!userSourceTransport.includes("observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true"));
-assert(!userSourceTransport.includes("observer=new MutationObserver(()=>{if(!finished)tryFill();})"));
-assert(!userSourceTransport.includes('scanTimer=setInterval'));
-console.log('MM Customers one-shot recipient-aware compose transport regression: PASS');
-
-const userSourceRepair=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
-new Function(userSourceRepair);
-assert(userSourceRepair.includes("const VERSION='8.0.0-alpha.16';"));
-assert(userSourceRepair.includes('function matchingBrandedTable'));
-assert(userSourceRepair.includes('function repairRenderedBrandedTable'));
-assert(userSourceRepair.includes("replace(/\\bCSHBACK\\b/g,'CASHBACK')"));
-assert(userSourceRepair.includes('table.insertBefore(bannerRow.cloneNode(true),table.firstChild)'));
-assert(userSourceRepair.includes('A complete matching branded table is authoritative'));
-console.log('MM Customers cashback heading repair regression: PASS');
+console.log('MM_Customers logic, feature-preservation, compose, delivery, cleanup and resource regressions: PASS');
