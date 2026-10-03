@@ -186,7 +186,7 @@
     if(!key)return Promise.reject(new Error('Save a Torn API key in MM Acquisitions Settings first.'));
     const url=new URL(path.startsWith('http')?path:'https://api.torn.com/v2'+path);
     url.searchParams.set('key',key);
-    url.searchParams.set('comment','MM MM Acquisitions');
+    url.searchParams.set('comment','MM_Acquisitions');
     return gmJson(url.toString());
   }
 
@@ -196,7 +196,7 @@
     const url=new URL('https://api.torn.com/user/'+encodeURIComponent(String(sellerId||'')));
     url.searchParams.set('selections','bazaar');
     url.searchParams.set('key',key);
-    url.searchParams.set('comment','MM MM Acquisitions');
+    url.searchParams.set('comment','MM_Acquisitions');
     return gmJson(url.toString());
   }
 
@@ -359,7 +359,7 @@
         state=result.state;
       }
     }catch(error){
-      console.warn('[MM MM Acquisitions] Weav3r watch failed',error);
+      console.warn('[MM_Acquisitions] Weav3r watch failed',error);
     }finally{
       watchRunning=false;
     }
@@ -525,14 +525,14 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM MM Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.1 · ACQUIRE / VERIFY / LEDGER</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.1 · ACQUIRE / VERIFY / LEDGER</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
         '<div style="display:flex;gap:5px;margin-bottom:7px;">'+
-          '<button data-scout-view="deals" style="'+button(activeView==='deals')+'">Deals</button>'+
-          '<button data-scout-view="travel" style="'+button(activeView==='travel')+'">Travel</button>'+
-          '<button data-scout-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
+          '<button data-acq-view="deals" style="'+button(activeView==='deals')+'">Deals</button>'+
+          '<button data-acq-view="travel" style="'+button(activeView==='travel')+'">Travel</button>'+
+          '<button data-acq-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
         '</div>'+
         '<div style="padding:5px 7px;background:#151515;border:1px solid #333;border-radius:5px;color:#d7ad4b;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(statusText)+'</div>'+
         sourceStrip()+
@@ -549,7 +549,7 @@
       window.innerWidth<=620?{right:'4px',top:'54px'}:{right:'12px',top:'90px'}
     );
     root.querySelector('#mm-acq-close')?.addEventListener('click',close);
-    root.querySelectorAll('[data-scout-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.scoutView||'deals';render();}));
+    root.querySelectorAll('[data-acq-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.acqView||'deals';render();}));
     root.querySelectorAll('#mm-acq-reload').forEach(b=>b.addEventListener('click',reloadCachedState));
     root.querySelector('#mm-acq-live-refresh')?.addEventListener('click',refreshOpportunities);
     root.querySelector('#mm-acq-sync-purchases')?.addEventListener('click',syncPurchases);
@@ -597,8 +597,8 @@
     if(!document.body)return;
     if(core?.registerDockLauncher){
       const b=core.registerDockLauncher({
-        id:'scout',
-        label:'MM MM Acquisitions',
+        id:'acquisitions',
+        label:'MM_Acquisitions',
         accent:'#4d7f65',
          icon:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h11M4 12h8M4 17h5M16 5l4 4-7 7-4 1 1-4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
         onClick:()=>{
