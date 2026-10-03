@@ -656,6 +656,17 @@ Initial static pass under the new automation rule:
 - **Faction Armory** still uses explicit Refresh Faction / Refresh Keys / per-member Refresh. Target: stale-on-open faction refresh and guarded background refresh of saved member keys, respecting Torn API timing and avoiding wasteful repeated member calls.
 - **Business Intelligence** remains on the implementation/acceptance queue and must follow the same automation rule once its active implementation surface is reconciled.
 
+
+### MM_Customers alpha.5 live open / automatic queue check
+After installing alpha.5 and opening MM_Customers:
+- **PASS** — v8.0.0-alpha.5 is live.
+- **PASS** — automatic sales sync ran on open without pressing Refresh: `Auto-synced sales: 0 new sales.`
+- **PASS** — conditional `New Customers (19)` tab is present because 19 customers currently require first-contact follow-up.
+- **PASS** — the visible queue is the new-customer work queue rather than the full historical customer list.
+- **PASS** — previously numeric customer names are being resolved automatically. Examples now render as real Torn names, including birkodi [4488297], Thorndike [4441675], BeterBarks [4505317], Bearded [3681146], Apothe [3463955], Hell_Fire [27581], and Blysz [3025831].
+- **PASS** — no `Resolving name…` placeholder is currently visible in the active queue.
+- **PENDING LIVE** — test Prepare Welcome on one queued customer, verify immediate Torn Messages routing + branded prefill, then only if an actual intended message is sent verify automatic removal from New Customers and automatic contact/coupon state reconciliation.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
