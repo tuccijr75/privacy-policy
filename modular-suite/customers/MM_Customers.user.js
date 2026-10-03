@@ -1596,7 +1596,7 @@
       const channel=new BroadcastChannel('mm_bazaar_crm_cross_tab_v1');
       channel.addEventListener('message',event=>{
         if(event?.data?.type!=='state-updated')return;
-        if(document.getElementById(ROOT_ID)?.style.display==='none')return;
+        if(!panelIsOpen())return;
         reloadState().catch(()=>{});
       });
     }catch{}
