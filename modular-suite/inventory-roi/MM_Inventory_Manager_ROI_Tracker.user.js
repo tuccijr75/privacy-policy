@@ -178,7 +178,7 @@
     render();
   }
 
-  async function updateBazaar(mutator){
+  async function updateInventoryState(mutator){
     await core.updateDomainState('bazaar',draft=>{
       logic.ensureInventorySlice(draft);
       const out=mutator(draft);
@@ -191,7 +191,7 @@
     if(!apiKey())throw new Error('Save a Torn API key in Settings first.');
     const rows=await fetchSalesLogs((Date.now()-SALES_LOOKBACK_MS)/1000);
     let result=null;
-    await updateBazaar(draft=>{result=logic.importSalesEntries(draft,rows);return draft;});
+    await updateInventoryState(draft=>{result=logic.importSalesEntries(draft,rows);return draft;});
     return result;
   }
 
@@ -201,7 +201,7 @@
     if(bazaarResult.status!=='fulfilled'&&inventoryResult.status!=='fulfilled'){
       throw new Error('Bazaar and inventory refresh both failed: '+String(bazaarResult.reason?.message||'Bazaar error')+'; '+String(inventoryResult.reason?.message||'Inventory error'));
     }
-    await updateBazaar(draft=>{
+    await updateInventoryState(draft=>{
       const payload={at:new Date().toISOString()};
       if(bazaarResult.status==='fulfilled')payload.bazaar=bazaarResult.value?.bazaar??[];
       if(inventoryResult.status==='fulfilled')payload.inventory=inventoryResult.value?.inventory??inventoryResult.value?.items??[];
