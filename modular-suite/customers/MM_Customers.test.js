@@ -14,13 +14,21 @@ logic.subscribeCustomer(db,'123');assert.strictEqual(logic.currentBazaarRows(db,
 
 const userSrc=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 assert.doesNotThrow(()=>new Function(userSrc));
-assert(userSrc.includes("const VERSION='8.0.0-alpha.2';"));
+assert(userSrc.includes("const VERSION='8.0.0-alpha.5';"));
 assert(userSrc.includes("const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';"));
 assert(userSrc.includes('function brandedMessageHtml'));
 assert(userSrc.includes('function fillMessageComposer'));
 assert(userSrc.includes('bodyHtml:brandedMessageHtml'));
 assert(userSrc.includes('data-restock-sent'));
 assert(userSrc.includes('data-restock-dismiss'));
+assert(userSrc.includes('New Customers ('));
+assert(userSrc.includes('async function repairUsernames'));
+assert(userSrc.includes('function installMessageSendDetector'));
+assert(userSrc.includes('function completeTrackedSend'));
+assert(userSrc.includes("window.location.assign(url)"));
+assert(userSrc.includes("const PENDING_SEND_KEY='mm_customers_pending_send_v1';"));
+assert(userSrc.includes('AUTO_SYNC_MS=60_000'));
+assert(!userSrc.includes('data-mark-welcome'));
 assert(!userSrc.includes('navigator.clipboard'));
 assert(!userSrc.includes('copyAndOpenMessage'));
-console.log('MM_Customers logic + composer regression tests: PASS');
+console.log('MM_Customers logic + automation/composer regression tests: PASS');
