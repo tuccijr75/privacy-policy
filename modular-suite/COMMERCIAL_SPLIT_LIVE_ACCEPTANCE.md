@@ -190,6 +190,15 @@ Current stale ranked examples:
 - Source-fix commits: `fc1130a6382f84481aab790c56de10263a6fc570`, `d186769ef1b0ae9adc90e9a41b93ccc3f25b4419`, `be5120d41cee3304106bc1c5b1d5da065420d92a`.
 - **PENDING LIVE RECHECK** — installed alpha.1 still contains the defect; reinstall alpha.2 before testing shop refresh, sales refresh, listing guidance, FIFO cost basis, current ROI, realized ROI, and cost coverage.
 
+
+### MM_Inventory Manager/ROI Tracker alpha.2 baseline recheck
+- **PASS** — alpha.2 renders the Inventory / ROI view normally; the prior `[object Promise]` failure is gone.
+- **PASS** — shared acquisition ledger is visible at 204 lots after reinstall/update, confirming data preservation across the userscript update.
+- **PASS** — pre-existing shared sales remain available; the panel currently computes 30D revenue of $199,919,052 before this module has run its own sales refresh.
+- **UX / STATE-LABEL DEFECT** — the header says `sales never` while 30-day sales data is visibly being used. This label means “Inventory/ROI has never refreshed sales,” not “there is no sales data,” and should be renamed to distinguish refresh age from data coverage.
+- **EFFECTIVENESS / COVERAGE DEFECT** — `Refresh Sales` only requests the last 72 hours (`SALES_LOOKBACK_MS=72h`) while the product displays 7-day and 30-day velocity, 30-day revenue, 30-day realized profit, and 30-day ROI. On a fresh/clean shared state the module cannot reconstruct its own advertised 30-day metrics. Initial/backfill refresh should cover at least 30 days (preferably with an incremental watermark afterward).
+- **EXPECTED PENDING STATE** — Bazaar and personal inventory both show 0 SKUs / shop never until Refresh Shop runs, so item-level listing guidance and FIFO/current ROI cannot yet be accepted.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
