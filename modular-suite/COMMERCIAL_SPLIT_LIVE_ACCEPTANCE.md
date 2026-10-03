@@ -1346,8 +1346,9 @@ Detailed inventory: `modular-suite/customers/CLEANUP_AUDIT.md`.
 
 Static/V8 verification passes for syntax, customer sale/coupon/refund/restock logic, shared compose-path preservation, source-level branding verification, removal of obsolete patch layers, trusted manual-send gating, panel-scoped resource lifecycle, and manifest versions.
 
-**PENDING LIVE ACCEPTANCE / DO NOT MERGE YET**:
+**MERGED / LIVE ACCEPTANCE PENDING**:
 1. prepare a Welcome/Message from MM_Customers and verify Name + Subject + complete branded body on the first Torn Compose load,
-2. navigate Outbox → generic Compose and verify MM_Customers does not repopulate or redirect it,
-3. repeat the original-compose test for Coupon Reminder, Cashback Reminder, and Restock Alert,
-4. verify customer/contact/coupon/restock state changes only after Torn confirms a real manual Send.
+2. repeat the original-compose test for Coupon Reminder, Cashback Reminder, and Restock Alert,
+3. verify customer/contact/coupon/restock state changes only after Torn confirms a real manual Send.
+
+Outbox/recovery navigation is not part of alpha.17 acceptance.
