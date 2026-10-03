@@ -401,6 +401,25 @@ Findings:
 - **MISSING FEATURE** — no explicit warning if a pending refund has aged unusually long after creation.
 - **DATA-INTEGRITY GAP** — refund `playerName` is snapshotted at creation and is not refreshed if the customer name is later enriched, so historical rows can retain stale numeric/display names.
 
+
+### MM_Customers Restock live baseline
+Observed Restock view:
+- 2 preserved subscribers: RonyarBedwyr [4534960] and WhenPigsFry [2063619].
+- Both currently show 12 matching SKUs, sourced from the current Inventory/ROI Bazaar snapshot.
+
+Findings:
+- **PASS** — restock subscribers survived the commercial split.
+- **PASS** — Restock reads the Inventory/ROI-owned Bazaar snapshot rather than duplicating listing ownership.
+- **PASS / SAFETY** — Prepare Alert copies/prepares a message and opens Torn composer; sending remains manual.
+- **DEFECT / NOTIFICATION STATE** — Prepare Alert sets `lastPrepared` and `pendingNotification`, but there is no “Mark Sent” completion path and no code updates `lastNotified`. The UI can therefore permanently show `last notified never` even after alerts are actually sent.
+- **DEFECT / DUPLICATE RISK** — because `pendingNotification` is not consumed/cleared and no sent state/cooldown is enforced, the same subscriber can have the same current-stock alert prepared repeatedly with no duplicate suppression.
+- **UX / STALE-DATA GAP** — Restock shows match counts without showing the age of the underlying Bazaar snapshot. Current matches can look live even when Inventory/ROI data is stale.
+- **EFFECTIVENESS GAP** — there is no “newly restocked since last notification” comparison. With blank interests (all items), every current Bazaar SKU can be included on every alert rather than only meaningful stock changes.
+- **MISSING FEATURE** — no notification cooldown, minimum time between alerts, or per-item suppression policy.
+- **MISSING FEATURE** — no subscriber-level history of prepared/sent alerts, item sets, or notification outcomes despite `notificationHistory` existing in state initialization.
+- **UX / SCALE GAP** — no search/filter by subscriber, interests, last notified age, or matching count.
+- **UX GAP** — Interests editing uses a raw prompt with comma-separated exact names/IDs instead of selectable current/recent items, making mistakes likely.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
