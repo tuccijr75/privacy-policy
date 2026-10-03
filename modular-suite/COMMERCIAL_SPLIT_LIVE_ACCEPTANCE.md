@@ -93,6 +93,16 @@ Confirmed on an authenticated Torn page while traveling:
 - **UX FRICTION** — freshness indicators report ages but do not translate them into a recommended next action (current / stale / refresh needed).
 - **PENDING** — inspect the 8 research leads for reject reasons, ranking quality, price freshness, ROI, sell-through evidence, and purchase routing.
 
+
+### MM_Acquisitions purchase-sync live findings
+- **PASS** — Sync Purchases completed without visible error and refreshed purchase freshness to current.
+- **PASS** — shared purchase ledger remained intact and is now visibly at 204 lots.
+- **PASS** — Item Market freshness updated to seconds-old data and the panel surfaced live Verify & Buy candidates afterward.
+- **UX / OBSERVABILITY GAP** — result text reported “0 new lots” while the panel-visible ledger count changed from the stale 200-lot view to 204. This can be logically consistent if the opened panel was stale, but the result needs explicit before/after/current counts so the user is not left reconciling contradictory-looking numbers.
+- **EFFECTIVENESS GAP** — current top deals are not capital-aware. Visible Torn cash was about $606k while recommendations required roughly $231M–$900M each. Max-buy exists in Settings, but the primary acquisition workflow does not model or explain available purchasing capital.
+- **HIGH-RISK EFFECTIVENESS GAP** — rare collectible recommendations can show extreme market-proxy economics (for example, a $625M buy with a projected $36.48B exit / 5737% ROI and ~65% three-day sell-through). The ranking code derives this from market proxy/depth/history signals and does not require personal sale evidence; these should not be treated as equivalent-confidence “Best Buyable Deals” without stronger liquidity/confidence safeguards.
+- **UX FRICTION** — Sync Purchases is primarily a shared cost-ledger maintenance task for downstream ROI accounting, yet it is presented beside the core acquisition action. Consider moving it to maintenance/settings or folding it into a single smart refresh when stale.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
