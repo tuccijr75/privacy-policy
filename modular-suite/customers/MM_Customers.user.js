@@ -171,7 +171,7 @@
     render();
   }
 
-  async function updateBazaar(mutator){
+  async function updateCustomerState(mutator){
     await core.updateDomainState('bazaar',draft=>{
       logic.ensureCustomerSlice(draft);
       const out=mutator(draft);
@@ -184,7 +184,7 @@
     if(!apiKey())throw new Error('Save a Torn API key in Settings first.');
     const rows=await fetchSalesLogs((Date.now()-SALES_LOOKBACK_MS)/1000);
     let result=null;
-    await updateBazaar(draft=>{result=logic.importSalesEntries(draft,rows);return draft;});
+    await updateCustomerState(draft=>{result=logic.importSalesEntries(draft,rows);return draft;});
     return result;
   }
 
@@ -339,7 +339,7 @@
     }));
     root.querySelectorAll('[data-mark-welcome]').forEach(b=>b.addEventListener('click',()=>run('Saving sent welcome…',async()=>{
       const id=b.dataset.markWelcome;
-      await updateBazaar(draft=>{
+      await updateCustomerState(draft=>{
         const customer=draft.customers[id];if(!customer)throw new Error('Customer not found.');
         const coupon=logic.issueCoupon(draft,id);
         customer.contacted=true;customer.firstMessageSent=true;customer.messageCount=n(customer.messageCount)+1;customer.lastContacted=new Date().toISOString();
@@ -353,12 +353,12 @@
     }));
     root.querySelectorAll('[data-subscribe]').forEach(b=>b.addEventListener('click',()=>run('Updating restock subscription…',async()=>{
       const id=b.dataset.subscribe;
-      await updateBazaar(draft=>{if(draft.subscribers[id])logic.unsubscribeCustomer(draft,id);else logic.subscribeCustomer(draft,id);});
+      await updateCustomerState(draft=>{if(draft.subscribers[id])logic.unsubscribeCustomer(draft,id);else logic.subscribeCustomer(draft,id);});
       return state?.subscribers?.[id]?'Restock alerts enabled.':'Restock alerts updated.';
     })));
     root.querySelectorAll('[data-profile]').forEach(b=>b.addEventListener('click',()=>{location.href='https://www.torn.com/profiles.php?XID='+encodeURIComponent(b.dataset.profile);}));
     root.querySelectorAll('[data-refund-start]').forEach(b=>b.addEventListener('click',()=>run('Creating cashback record…',async()=>{
-      let refund;await updateBazaar(draft=>{refund=logic.createRefund(draft,b.dataset.refundStart);});
+      let refund;await updateCustomerState(draft=>{refund=logic.createRefund(draft,b.dataset.refundStart);});
       return 'Pending cashback created: '+money(refund.amount)+'. Send money manually, then Mark Paid.';
     })));
 
@@ -366,20 +366,20 @@
       const id=b.dataset.restockAlert;const sub=state?.subscribers?.[id];if(!sub)return;
       const rows=logic.currentBazaarRows(state,sub);if(!rows.length){statusText='No matching current Bazaar inventory. Refresh MM Inventory Manager/ROI Tracker first.';render();return;}
       const msg=restockMessage(sub,rows);
-      await updateBazaar(draft=>{const s=draft.subscribers[id];if(s){s.lastPrepared=new Date().toISOString();s.pendingNotification={id:'notice-'+Date.now(),type:'bazaar-inventory',preparedAt:s.lastPrepared,itemCount:rows.length};}});
+      await updateCustomerState(draft=>{const s=draft.subscribers[id];if(s){s.lastPrepared=new Date().toISOString();s.pendingNotification={id:'notice-'+Date.now(),type:'bazaar-inventory',preparedAt:s.lastPrepared,itemCount:rows.length};}});
       await copyAndOpenMessage(id,msg.subject,msg.body);
     }));
     root.querySelectorAll('[data-restock-interests]').forEach(b=>b.addEventListener('click',()=>run('Updating interests…',async()=>{
       const id=b.dataset.restockInterests;const sub=state?.subscribers?.[id];if(!sub)throw new Error('Subscriber not found.');
       const value=prompt('Comma-separated item names or item IDs. Blank = all items.',(sub.interests||[]).join(', '));if(value==null)return 'No change.';
-      await updateBazaar(draft=>{draft.subscribers[id].interests=[...new Set(value.split(',').map(x=>x.trim()).filter(Boolean))];});
+      await updateCustomerState(draft=>{draft.subscribers[id].interests=[...new Set(value.split(',').map(x=>x.trim()).filter(Boolean))];});
       return 'Restock interests updated.';
     })));
-    root.querySelectorAll('[data-restock-remove]').forEach(b=>b.addEventListener('click',()=>run('Removing subscriber…',async()=>{await updateBazaar(draft=>logic.unsubscribeCustomer(draft,b.dataset.restockRemove));return 'Restock subscriber removed.';})));
+    root.querySelectorAll('[data-restock-remove]').forEach(b=>b.addEventListener('click',()=>run('Removing subscriber…',async()=>{await updateCustomerState(draft=>logic.unsubscribeCustomer(draft,b.dataset.restockRemove));return 'Restock subscriber removed.';})));
 
     root.querySelectorAll('[data-refund-open]').forEach(b=>b.addEventListener('click',()=>{const r=state?.refunds?.[b.dataset.refundOpen];if(r)location.href=refundProfileUrl(r);}));
-    root.querySelectorAll('[data-refund-paid]').forEach(b=>b.addEventListener('click',()=>run('Saving cashback completion…',async()=>{let r;await updateBazaar(draft=>{r=logic.completeRefund(draft,b.dataset.refundPaid);});return 'Cashback '+money(r.amount)+' marked paid.';})));
-    root.querySelectorAll('[data-refund-cancel]').forEach(b=>b.addEventListener('click',()=>run('Cancelling cashback…',async()=>{await updateBazaar(draft=>logic.cancelRefund(draft,b.dataset.refundCancel));return 'Pending cashback cancelled.';})));
+    root.querySelectorAll('[data-refund-paid]').forEach(b=>b.addEventListener('click',()=>run('Saving cashback completion…',async()=>{let r;await updateCustomerState(draft=>{r=logic.completeRefund(draft,b.dataset.refundPaid);});return 'Cashback '+money(r.amount)+' marked paid.';})));
+    root.querySelectorAll('[data-refund-cancel]').forEach(b=>b.addEventListener('click',()=>run('Cancelling cashback…',async()=>{await updateCustomerState(draft=>logic.cancelRefund(draft,b.dataset.refundCancel));return 'Pending cashback cancelled.';})));
   }
 
   function createPanel(){
