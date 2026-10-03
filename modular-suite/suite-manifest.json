@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "8.0.0-alpha.29",
+  "suiteVersion": "8.0.0-alpha.30",
   "status": "non-production",
   "baseVersion": "7.5.3",
   "branch": "crm-v8-modular-suite",
@@ -29,7 +29,7 @@
       "id": "acquisitions",
       "name": "MM_Acquisitions",
       "role": "acquire-market-travel-purchase-ledger",
-      "version": "8.0.0-alpha.7",
+      "version": "8.0.0-alpha.8",
       "status": "implemented-non-production"
     },
     {
