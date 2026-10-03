@@ -814,16 +814,24 @@
     return true;
   }
 
-  async function waitForSourceEditor(before=new Set(),timeoutMs=4000,allowFreshAnonymous=false){
+  async function waitForSourceEditor(before=new Set(),timeoutMs=4000,allowFreshAnonymous=false,stillCurrent=null){
     let source=null;const deadline=Date.now()+timeoutMs;
-    while(Date.now()<deadline&&!source){source=likelyTornSourceEditor(before,allowFreshAnonymous);if(!source)await sleepMs(60);}
-    return source;
+    while(Date.now()<deadline&&!source){
+      if(stillCurrent&&!stillCurrent())return null;
+      source=likelyTornSourceEditor(before,allowFreshAnonymous);
+      if(!source)await sleepMs(60);
+    }
+    return stillCurrent&&!stillCurrent()?null:source;
   }
 
-  async function waitForRichBranding(expectedHtml='',timeoutMs=1800){
+  async function waitForRichBranding(expectedHtml='',timeoutMs=1800,stillCurrent=null){
     const deadline=Date.now()+timeoutMs;
-    while(Date.now()<deadline){if(richComposerHasBranding(expectedHtml))return true;await sleepMs(60);}
-    return richComposerHasBranding(expectedHtml);
+    while(Date.now()<deadline){
+      if(stillCurrent&&!stillCurrent())return false;
+      if(richComposerHasBranding(expectedHtml))return true;
+      await sleepMs(60);
+    }
+    return (!stillCurrent||stillCurrent())&&richComposerHasBranding(expectedHtml);
   }
 
   function composeEditorSurfaceReady(){
@@ -832,8 +840,9 @@
     return Boolean(likelyTornSourceEditor(new Set(),true));
   }
 
-  async function injectHtmlThroughTornCodeEditor(htmlValue){
+  async function injectHtmlThroughTornCodeEditor(htmlValue,stillCurrent=null){
     const html=String(htmlValue||'').replace(/>\s+</g,'><').trim();if(!html)return false;
+    if(stillCurrent&&!stillCurrent())return false;
     const toggle=findTornCodeEditorToggle();if(!toggle)return false;
 
     // Treat the current editor mode as authoritative. Never toggle while Torn
@@ -846,16 +855,18 @@
 
     if(!source){
       const before=new Set(sourceEditorCandidates());
+      if(stillCurrent&&!stillCurrent())return false;
       try{toggle.click();}catch{return false;}
-      source=await waitForSourceEditor(before,4000,true);
+      source=await waitForSourceEditor(before,4000,true,stillCurrent);
     }
-    if(!source)return false;
+    if(!source||(stillCurrent&&!stillCurrent()))return false;
     if(!setSourceEditorHtml(source,html))return false;
 
     await sleepMs(220);
+    if(stillCurrent&&!stillCurrent())return false;
     const toggleBack=findTornCodeEditorToggle()||toggle;
     try{toggleBack.click();}catch{return false;}
-    return waitForRichBranding(html,2400);
+    return waitForRichBranding(html,2400,stillCurrent);
   }
 
   function composeFormattingNotice(text,kind='waiting'){
@@ -917,8 +928,10 @@
         composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Use Reopen Draft in MM_Customers to retry.','error');
       }
     };
+    const stillCurrent=()=>generation===composeFillGeneration&&location.pathname.includes('messages.php')&&location.hash.includes('compose')&&
+      (!payload.playerId||getComposeXid()===String(payload.playerId||''));
     const tryFill=async()=>{
-      if(finished||inFlight||generation!==composeFillGeneration)return false;
+      if(finished||inFlight||!stillCurrent())return false;
       if(Date.now()-startedAt>=COMPOSE_FILL_TIMEOUT_MS){stop(false,requiresBranding);return false;}
       inFlight=true;
       try{
@@ -937,12 +950,14 @@
         if(Date.now()-readySince<COMPOSE_SURFACE_STABLE_MS)return false;
 
         fillAttempts++;
+        if(!stillCurrent())return false;
         setNativeValue(subject,payload.subject);await sleepMs(30);
+        if(!stillCurrent())return false;
         let subjectOK=String(subject.value||'').trim()===String(payload.subject||'').trim();
         let bodyOK=false,rich=requiresBranding;
 
         if(requiresBranding){
-          bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml);
+          bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent);
           if(!bodyOK){
             readyKey='';readySince=0;
             statusText='Waiting for Torn rich editor… branded message will retry automatically.';
@@ -955,6 +970,7 @@
         }
 
         await sleepMs(COMPOSE_POST_FILL_VERIFY_MS);
+        if(!stillCurrent())return false;
         const verifySubject=findComposeSubjectInput();
         const verifyRecipient=findComposeRecipientInput(verifySubject);
         const verifyRecipientOK=(!payload.playerId)||(getComposeXid()===String(payload.playerId||'')&&recipientMatchesPayload(payload,verifyRecipient));
@@ -972,7 +988,7 @@
     tryFill();
     timer=setInterval(()=>{if(!finished)tryFill();},700);
     observer=new MutationObserver(()=>{if(!finished)tryFill();});
-    observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','value','aria-busy','aria-hidden']});
+    observer.observe(document.documentElement,{childList:true,subtree:true});
   }
 
   function normalizedDeliveryText(value){
