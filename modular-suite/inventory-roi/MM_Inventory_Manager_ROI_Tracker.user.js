@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Inventory Manager/ROI Tracker
 // @namespace    manic-mike.torn.inventory-roi
-// @version      8.0.0-alpha.4
+// @version      8.0.0-alpha.5
 // @description  Dedicated personal inventory, Bazaar listing guidance, sales velocity and FIFO ROI tracking.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.4';
+  const VERSION='8.0.0-alpha.5';
   const ROOT_ID='mm-inventory-roi';
   const LAUNCHER_ID='mm-inventory-roi-launcher';
   const STYLE_ID='mm-inventory-roi-style';
@@ -27,7 +27,11 @@
   const OWNER_ID='4325346';
   const API_BASE='https://api.torn.com/v2';
   const SALES_LOOKBACK_MS=72*60*60*1000;
-  const MAX_LOG_PAGES=25;
+  const SALES_BACKFILL_MS=31*24*60*60*1000;
+  const MAX_LOG_PAGES=100;
+  const AUTO_SYNC_MS=60_000;
+  const SALES_STALE_MS=60_000;
+  const SHOP_STALE_MS=120_000;
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornInventoryRoiLogic;
@@ -40,6 +44,7 @@
   let activeView='inventory';
   let statusText='Ready.';
   let busy=false;
+  let autoSyncRunning=false;
 
   const n=v=>Number.isFinite(Number(v))?Number(v):0;
   const esc=value=>String(value??'')
@@ -187,35 +192,83 @@
     state=await core.readLegacyState();
   }
 
-  async function refreshSales(){
+  async function refreshSales({backfill=false}={}){
     if(!apiKey())throw new Error('Save a Torn API key in Settings first.');
-    const rows=await fetchSalesLogs((Date.now()-SALES_LOOKBACK_MS)/1000);
+    if(!state)state=await core.readLegacyState();
+    const bm=state?.operations?.inventoryRoi||{};
+    const needsBackfill=backfill||!bm.salesBackfillCompleteAt;
+    const lookback=needsBackfill?SALES_BACKFILL_MS:SALES_LOOKBACK_MS;
+    const rows=await fetchSalesLogs((Date.now()-lookback)/1000);
     let result=null;
-    await updateInventoryState(draft=>{result=logic.importSalesEntries(draft,rows);return draft;});
-    return result;
+    await updateInventoryState(draft=>{
+      result=logic.importSalesEntries(draft,rows);
+      const inv=draft.operations.inventoryRoi;
+      inv.salesCoverageFrom=new Date(Date.now()-lookback).toISOString();
+      if(needsBackfill)inv.salesBackfillCompleteAt=new Date().toISOString();
+      return draft;
+    });
+    return {...result,backfilled:needsBackfill,lookbackMs:lookback};
+  }
+
+  function collectionPayload(value){
+    return Array.isArray(value)||(value&&typeof value==='object');
   }
 
   async function refreshShop(){
     if(!apiKey())throw new Error('Save a Torn API key in Settings first.');
     const [bazaarResult,inventoryResult]=await Promise.allSettled([apiV1('bazaar'),apiV1('inventory')]);
-    if(bazaarResult.status!=='fulfilled'&&inventoryResult.status!=='fulfilled'){
-      throw new Error('Bazaar and inventory refresh both failed: '+String(bazaarResult.reason?.message||'Bazaar error')+'; '+String(inventoryResult.reason?.message||'Inventory error'));
-    }
+    const bazaarPayload=bazaarResult.status==='fulfilled'?bazaarResult.value?.bazaar:undefined;
+    const inventoryPayload=inventoryResult.status==='fulfilled'?(inventoryResult.value?.inventory??inventoryResult.value?.items):undefined;
+    const bazaarOk=bazaarResult.status==='fulfilled'&&collectionPayload(bazaarPayload);
+    const inventoryOk=inventoryResult.status==='fulfilled'&&collectionPayload(inventoryPayload);
+    const bazaarError=bazaarOk?'':bazaarResult.status==='rejected'
+      ?String(bazaarResult.reason?.message||bazaarResult.reason)
+      :'Torn Bazaar payload was unavailable or malformed.';
+    const inventoryError=inventoryOk?'':inventoryResult.status==='rejected'
+      ?String(inventoryResult.reason?.message||inventoryResult.reason)
+      :'Torn Inventory payload was unavailable or malformed.';
+    if(!bazaarOk&&!inventoryOk)throw new Error('Bazaar and inventory refresh both failed: '+bazaarError+'; '+inventoryError);
     await updateInventoryState(draft=>{
       const payload={at:new Date().toISOString()};
-      if(bazaarResult.status==='fulfilled')payload.bazaar=bazaarResult.value?.bazaar??[];
-      if(inventoryResult.status==='fulfilled')payload.inventory=inventoryResult.value?.inventory??inventoryResult.value?.items??[];
+      if(bazaarOk)payload.bazaar=bazaarPayload;
+      if(inventoryOk)payload.inventory=inventoryPayload;
       logic.updateShopSnapshot(draft,payload);
       draft.operations.inventoryRoi.lastShopRefresh={
-        at:payload.at,
-        bazaarOk:bazaarResult.status==='fulfilled',
-        inventoryOk:inventoryResult.status==='fulfilled',
-        bazaarError:bazaarResult.status==='rejected'?String(bazaarResult.reason?.message||bazaarResult.reason):'',
-        inventoryError:inventoryResult.status==='rejected'?String(inventoryResult.reason?.message||inventoryResult.reason):''
+        at:payload.at,bazaarOk,inventoryOk,bazaarError,inventoryError
       };
       return draft;
     });
-    return {bazaarOk:bazaarResult.status==='fulfilled',inventoryOk:inventoryResult.status==='fulfilled'};
+    return {bazaarOk,inventoryOk,bazaarError,inventoryError};
+  }
+
+  async function autoRefreshInventory({force=false}={}){
+    if(autoSyncRunning||!apiKey())return null;
+    if(!state)state=await core.readLegacyState();
+    const bm=state?.operations?.inventoryRoi||{},now=Date.now();
+    const salesAt=Date.parse(bm.lastSalesAt||'')||0;
+    const shopAt=Date.parse(bm.lastShopRefresh?.at||bm.lastBazaarAt||'')||0;
+    const salesStale=force||!salesAt||now-salesAt>=SALES_STALE_MS||!bm.salesBackfillCompleteAt;
+    const shopStale=force||!shopAt||now-shopAt>=SHOP_STALE_MS;
+    if(!salesStale&&!shopStale)return null;
+    autoSyncRunning=true;
+    try{
+      const messages=[];
+      if(shopStale){
+        try{
+          const shop=await refreshShop();
+          messages.push('shop '+(shop.bazaarOk?'Bazaar OK':'Bazaar unavailable')+' / '+(shop.inventoryOk?'Inventory OK':'Inventory unavailable'));
+        }catch(error){messages.push('shop warning: '+(error?.message||String(error)));}
+      }
+      if(salesStale){
+        try{
+          const sales=await refreshSales();
+          messages.push((sales.backfilled?'31d sales backfill':'sales sync')+' '+sales.imported+' new');
+        }catch(error){messages.push('sales warning: '+(error?.message||String(error)));}
+      }
+      statusText='Auto-refresh: '+messages.join(' · ')+'.';
+      if(document.getElementById(ROOT_ID))render();
+      return messages;
+    }finally{autoSyncRunning=false;}
   }
 
   async function copyText(value){
@@ -265,7 +318,7 @@
     root.querySelector('#mm-ir-refresh-sales')?.addEventListener('click',()=>run('Refreshing sales history…',async()=>{const r=await refreshSales();return 'Sales refreshed: '+r.imported+' new · '+r.checked+' checked'+(r.rejected?' · '+r.rejected+' rejected':'')+'.';}));
     root.querySelector('#mm-ir-refresh-shop')?.addEventListener('click',()=>run('Refreshing Bazaar and inventory…',async()=>{const r=await refreshShop();return 'Shop refreshed: Bazaar '+(r.bazaarOk?'OK':'failed')+' · Inventory '+(r.inventoryOk?'OK':'failed')+'.';}));
     root.querySelector('#mm-ir-open-bazaar')?.addEventListener('click',()=>{location.href='https://www.torn.com/bazaar.php';});
-    root.querySelector('#mm-ir-save-api')?.addEventListener('click',()=>{const value=root.querySelector('#mm-ir-api')?.value||'';saveApiKey(value);statusText=value.trim()?'Inventory/ROI API key saved locally.':'Enter an API key first.';render();});
+    root.querySelector('#mm-ir-save-api')?.addEventListener('click',()=>{const value=root.querySelector('#mm-ir-api')?.value||'';saveApiKey(value);statusText=value.trim()?'Inventory/ROI API key saved locally. Refreshing automatically…':'Enter an API key first.';render();if(value.trim())setTimeout(()=>autoRefreshInventory({force:true}),50);});
     root.querySelector('#mm-ir-clear-api')?.addEventListener('click',()=>{saveApiKey('');statusText='Inventory/ROI API key cleared.';render();});
   }
 
@@ -281,7 +334,7 @@
     createPanel();
     const root=document.getElementById(ROOT_ID);root.style.display='block';
     core.setDockLauncherActive?.('inventory-roi',true);
-    reloadState().catch(error=>{statusText=error?.message||String(error);render();});
+    reloadState().then(()=>autoRefreshInventory({force:false})).catch(error=>{statusText=error?.message||String(error);render();});
   }
   function close(){
     const root=document.getElementById(ROOT_ID);if(root)root.style.display='none';
@@ -310,9 +363,12 @@
     }catch{}
   }
 
-  if(document.body){
+  function initializeInventoryRoi(){
     createLauncher();installChannel();
-  }else{
-    window.addEventListener('DOMContentLoaded',()=>{createLauncher();installChannel();},{once:true});
+    if(apiKey())setTimeout(()=>autoRefreshInventory({force:false}),1800);
+    setInterval(()=>{if(apiKey()&&document.visibilityState==='visible')autoRefreshInventory({force:false});},AUTO_SYNC_MS);
   }
+
+  if(document.body)initializeInventoryRoi();
+  else window.addEventListener('DOMContentLoaded',initializeInventoryRoi,{once:true});
 })();
