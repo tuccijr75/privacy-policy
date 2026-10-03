@@ -496,6 +496,29 @@ After using `Dismiss Pending` on the intentionally unsent RonyarBedwyr test aler
 - **PASS** — `last notified 2d ago` remained unchanged, so discarding an unsent draft does not falsely advance notification history.
 - **PASS (source-level)** — the dismiss handler only clears `pendingNotification`; it does not append `notificationHistory`, so discarded drafts are not recorded as sent notices.
 
+
+### MM_Customers Settings live findings
+Observed MM_Customers v8.0.0-alpha.2 Settings:
+- Torn API key field
+- Save / Clear
+- key-storage / purpose disclosure
+- no customer, coupon, cashback, segmentation, messaging, or restock business controls
+
+Findings:
+- **PASS** — API key isolation is clearly disclosed: script-scoped Tampermonkey storage, not copied into shared IndexedDB/localStorage and not shared with other scripts.
+- **MISSING FEATURE** — cashback tiers are hard-coded ($50k->$5k, $250k->$10k, $1M->$20k) with no owner-configurable thresholds/amounts.
+- **MISSING FEATURE** — 10% maximum cashback cap is hard-coded with no setting.
+- **MISSING FEATURE** — 24-hour coupon qualification window is hard-coded with no setting.
+- **MISSING FEATURE** — coupon maximum uses is hard-coded at 2 with no setting.
+- **MISSING FEATURE** — customer segment thresholds (VIP/LOYAL/REGULAR/NEW/AT RISK) are hard-coded and monetary value is not part of segmentation; there is no segmentation policy editor.
+- **MISSING FEATURE** — no restock notification cooldown / dedupe interval / newly-restocked-only policy.
+- **MISSING FEATURE** — no messaging-template settings for banner, shop name, owner signature, favorites CTA, welcome/reminder/restock copy, or whether branded vs plain formatting is preferred.
+- **MISSING FEATURE** — no sales-history/backfill depth or refresh policy despite customer totals and 30/60-day segmentation depending on historical coverage.
+- **MISSING FEATURE** — no customer-list defaults (sort/filter/page size) despite scale issues already observed.
+- **MISSING FEATURE** — no refund workflow policy (confirmation requirement, aged-pending threshold, audit/reference requirement).
+- **EFFECTIVENESS GAP** — core commercial policy is embedded in source constants rather than owner-editable rules, so routine business-policy changes require a script release.
+- **UX GAP** — Settings is visually simple but does not actually control most of the behaviors the Customers product owns.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
