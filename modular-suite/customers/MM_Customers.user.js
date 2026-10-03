@@ -732,9 +732,7 @@
 
   function brandedSourceIsComplete(html=''){
     const source=String(html||'');
-    if(!source.includes('<table')||!source.includes(SHOP_BANNER_URL))return false;
-    const text=source.replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/gi,' ').replace(/\s+/g,' ').toUpperCase();
-    return !/\bCSHBACK\b/.test(text);
+    return source.includes('<table')&&source.includes('</table>')&&source.includes(SHOP_BANNER_URL);
   }
 
   function setSourceEditorHtml(element,html){
