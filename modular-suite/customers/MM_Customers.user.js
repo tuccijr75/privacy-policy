@@ -188,7 +188,7 @@
     return result;
   }
 
-  async   async function copyText(value){
+  async function copyText(value){
     const text=String(value||'');
     try{await navigator.clipboard.writeText(text);return true;}catch{}
     const area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);
