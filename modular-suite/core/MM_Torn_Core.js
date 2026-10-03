@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.5';
+  const CORE_VERSION = '8.0.0-alpha.6';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -343,56 +343,82 @@
   }
 
   function visibleBottomToolbarCandidate(){
-    const candidates=[];
-    for(const el of document.querySelectorAll('body *')){
-      if(!(el instanceof HTMLElement))continue;
-      if(el.id===DOCK_ID||el.closest('#'+DOCK_ID)||el.classList.contains('mm-torn-floating-btn'))continue;
-      const cs=getComputedStyle(el);
-      if(!['fixed','sticky'].includes(cs.position))continue;
-      const r=el.getBoundingClientRect();
-      if(r.width<120||r.width>700||r.height<30||r.height>90)continue;
-      if(window.innerHeight-r.bottom>18||r.bottom<window.innerHeight-100)continue;
-
-      const controls=[...el.querySelectorAll('a,button')]
-        .map(node=>({node,r:node.getBoundingClientRect()}))
-        .filter(entry=>{
-          const rr=entry.r;
-          return rr.width>=28&&rr.width<=64&&rr.height>=28&&rr.height<=64
-            && rr.bottom<=window.innerHeight+2
-            && rr.top>=window.innerHeight-110;
-        })
-        .sort((a,b)=>a.r.left-b.r.left);
-
-      if(controls.length<4)continue;
-
-      const rowTop=Math.min(...controls.map(entry=>entry.r.top));
-      const rowBottom=Math.max(...controls.map(entry=>entry.r.bottom));
-      const rowSpread=rowBottom-rowTop;
-      if(rowSpread>72)continue;
-
-      const first=controls[0];
-      const gaps=[];
-      for(let i=1;i<controls.length;i++){
-        const gap=controls[i].r.left-controls[i-1].r.right;
-        if(gap>=0&&gap<=14)gaps.push(gap);
-      }
-      const nativeGap=gaps.length
-        ? gaps.slice().sort((a,b)=>a-b)[Math.floor(gaps.length/2)]
-        : 3;
-
-      const heights=controls.map(entry=>entry.r.height).sort((a,b)=>a-b);
-      const nativeHeight=heights[Math.floor(heights.length/2)]||first.r.height;
-
-      candidates.push({
-        el,
-        r,
-        controls,
-        firstRect:first.r,
-        nativeGap:clamp(nativeGap,2,7),
-        nativeHeight,
-        score:controls.length*10-Math.abs(nativeHeight-42)-Math.abs(window.innerHeight-first.r.bottom)
+    const entries=[...document.querySelectorAll('a,button,[role="button"]')]
+      .filter(node=>node instanceof HTMLElement)
+      .filter(node=>!node.closest('#'+DOCK_ID)&&!node.matches('[data-mm-dock-id]')&&!node.classList.contains('mm-torn-floating-btn'))
+      .map(node=>({node,r:node.getBoundingClientRect()}))
+      .filter(entry=>{
+        const rr=entry.r;
+        if(rr.width<28||rr.width>64||rr.height<28||rr.height>64)return false;
+        if(rr.right<0||rr.left>window.innerWidth)return false;
+        if(rr.bottom>window.innerHeight+3)return false;
+        if(rr.bottom<window.innerHeight-72)return false;
+        if(rr.top<window.innerHeight-120)return false;
+        const cs=getComputedStyle(entry.node);
+        return cs.display!=='none'&&cs.visibility!=='hidden'&&Number(cs.opacity||1)>0;
       });
+
+    if(entries.length<4)return null;
+
+    // Torn's footer icons are not consistently inside a fixed/sticky parent.
+    // Cluster the actual visible controls by their bottom edge, then choose
+    // the largest horizontally contiguous row nearest the viewport bottom.
+    const byBottom=entries.slice().sort((a,b)=>a.r.bottom-b.r.bottom);
+    const bands=[];
+    for(const entry of byBottom){
+      let band=bands.find(group=>Math.abs(group.bottom-entry.r.bottom)<=7);
+      if(!band){
+        band={bottom:entry.r.bottom,items:[]};
+        bands.push(band);
+      }
+      band.items.push(entry);
+      band.bottom=band.items.reduce((sum,item)=>sum+item.r.bottom,0)/band.items.length;
     }
+
+    const candidates=[];
+    for(const band of bands){
+      const sorted=band.items.slice().sort((a,b)=>a.r.left-b.r.left);
+      let run=[];
+      const flush=()=>{
+        if(run.length<4){run=[];return;}
+        const controls=run.slice();
+        const first=controls[0];
+        const last=controls[controls.length-1];
+        const bottoms=controls.map(entry=>entry.r.bottom).sort((a,b)=>a-b);
+        const tops=controls.map(entry=>entry.r.top).sort((a,b)=>a-b);
+        const heights=controls.map(entry=>entry.r.height).sort((a,b)=>a-b);
+        const rowBottom=bottoms[Math.floor(bottoms.length/2)];
+        const rowTop=tops[Math.floor(tops.length/2)];
+        const nativeHeight=heights[Math.floor(heights.length/2)]||first.r.height;
+        const gaps=[];
+        for(let i=1;i<controls.length;i++){
+          const gap=controls[i].r.left-controls[i-1].r.right;
+          if(gap>=-2&&gap<=16)gaps.push(Math.max(0,gap));
+        }
+        const nativeGap=gaps.length?gaps.sort((a,b)=>a-b)[Math.floor(gaps.length/2)]:LAUNCHER_SNAP_GAP;
+        candidates.push({
+          el:first.node.parentElement||first.node,
+          r:{left:first.r.left,top:Math.min(...controls.map(e=>e.r.top)),right:last.r.right,bottom:Math.max(...controls.map(e=>e.r.bottom)),width:last.r.right-first.r.left,height:Math.max(...controls.map(e=>e.r.bottom))-Math.min(...controls.map(e=>e.r.top))},
+          controls,
+          firstRect:first.r,
+          rowTop,
+          rowBottom,
+          nativeGap:clamp(nativeGap,2,8),
+          nativeHeight,
+          score:controls.length*100-Math.abs(window.innerHeight-rowBottom)*4-Math.abs(nativeHeight-42)
+        });
+        run=[];
+      };
+      for(const entry of sorted){
+        if(!run.length){run=[entry];continue;}
+        const prev=run[run.length-1];
+        const gap=entry.r.left-prev.r.right;
+        if(gap>=-2&&gap<=18)run.push(entry);
+        else{flush();run=[entry];}
+      }
+      flush();
+    }
+
     return candidates.sort((a,b)=>b.score-a.score)[0]||null;
   }
 
@@ -445,19 +471,23 @@
       if(free(point))candidates.push(point);
     };
 
-    if(snap&&Math.abs(raw.top-maxTop)<=LAUNCHER_SNAP_DISTANCE)add(raw.left,maxTop,'bottom');
+    const native=visibleBottomToolbarCandidate();
+    const nativeRowTop=native
+      ? clamp((native.rowBottom??native.firstRect.bottom)-height,LAUNCHER_EDGE_MARGIN,maxTop)
+      : maxTop;
+    if(snap&&Math.abs(raw.top-nativeRowTop)<=LAUNCHER_SNAP_DISTANCE)add(raw.left,nativeRowTop,'bottom');
 
     for(const o of obs){
-      const centerTop=o.top+(o.height-height)/2;
+      const alignedTop=clamp(o.bottom-height,LAUNCHER_EDGE_MARGIN,maxTop);
       const centerLeft=o.left+(o.width-width)/2;
       const nearHorizontal=raw.top<o.bottom+LAUNCHER_SNAP_DISTANCE&&raw.top+height>o.top-LAUNCHER_SNAP_DISTANCE;
       const nearVertical=raw.left<o.right+LAUNCHER_SNAP_DISTANCE&&raw.left+width>o.left-LAUNCHER_SNAP_DISTANCE;
       const force=colliding.includes(o);
 
       if(force||(snap&&nearHorizontal&&Math.abs((raw.left+width)-o.left)<=LAUNCHER_SNAP_DISTANCE))
-        add(o.left-width-LAUNCHER_SNAP_GAP,centerTop);
+        add(o.left-width-LAUNCHER_SNAP_GAP,alignedTop);
       if(force||(snap&&nearHorizontal&&Math.abs(raw.left-o.right)<=LAUNCHER_SNAP_DISTANCE))
-        add(o.right+LAUNCHER_SNAP_GAP,centerTop);
+        add(o.right+LAUNCHER_SNAP_GAP,alignedTop);
       if(force||(snap&&nearVertical&&Math.abs((raw.top+height)-o.top)<=LAUNCHER_SNAP_DISTANCE))
         add(centerLeft,o.top-height-LAUNCHER_SNAP_GAP);
       if(force||(snap&&nearVertical&&Math.abs(raw.top-o.bottom)<=LAUNCHER_SNAP_DISTANCE))
@@ -498,13 +528,13 @@
       const first=native.firstRect;
       const gap=LAUNCHER_SNAP_GAP;
       const desiredLeft=first.left-dock.offsetWidth-gap;
-      const desiredTop=first.top+(first.height-dock.offsetHeight)/2;
+      const desiredTop=(native.rowBottom??first.bottom)-dock.offsetHeight;
 
       dock.style.right='auto';
       dock.style.bottom='auto';
 
       if(desiredLeft>=4){
-        // Exact target: immediately left of Torn's first native button, same centerline.
+        // Exact target: immediately left of Torn's first native button, same bottom edge.
         dock.style.left=Math.round(desiredLeft)+'px';
         dock.style.top=Math.round(clamp(desiredTop,4,window.innerHeight-dock.offsetHeight-4))+'px';
       }else{
