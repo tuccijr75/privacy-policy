@@ -758,6 +758,20 @@ After installing alpha.5 and opening Inventory/ROI without pressing either refre
 - **KNOWN ENVIRONMENT LIMITATION** — personal inventory remains 0 because Torn currently returns that selection as unavailable; alpha.5 now preserves a prior valid snapshot when one exists rather than treating this response as a successful empty inventory. This live state had already been emptied by the older behavior, so preservation of a non-empty prior snapshot cannot be demonstrated from this account state without a future valid Inventory response.
 - Manual Refresh Shop / Refresh Sales remain available as fallback controls but were not used for this check.
 
+
+### MM_Acquisitions alpha.4 automatic refresh live check
+Opened Acquisitions and did not press Sync Purchases, Refresh Opportunities, Import Capture, or Update Travel.
+
+Observed:
+- **PASS** — v8.0.0-alpha.4 is live.
+- **PASS** — purchase ledger auto-synced immediately; freshness advanced from hours old to seconds/minutes old while lot count remained 204, confirming dedupe/no duplicate lots.
+- **PASS** — stale opportunity refresh started automatically and completed without a manual refresh button.
+- **PASS** — Item Market freshness advanced from ~59m old to seconds old.
+- **PASS** — Best Buyable Deals repopulated after the automatic refresh.
+- **PASS / NO-OP CORRECTNESS** — Travel remained ~3h old because no newer captured travel feed was available; automatic import did not fabricate freshness.
+- **PASS / SAFETY** — no purchase was submitted; Verify & Buy/final purchase remain human actions.
+- **UX FRICTION** — full opportunity enrichment took roughly tens of seconds in this live run and exposed only a generic `Refreshing Weav3r opportunities + Torn Item Market…` status until completion. The automation works, but progress granularity / partial-source status would improve perceived fluidity.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
