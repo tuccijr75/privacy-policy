@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.1
+// @version      0.1.0-alpha.2
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems. Reminds, rotates, and pre-fills; never sends automatically.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
 // @run-at       document-idle
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.8
 // @grant        GM_getValue
 // @grant        GM_setValue
 // ==/UserScript==
@@ -19,6 +20,11 @@
   const STORAGE_KEY = 'mmTradeChatAssistantStateV1';
   const TICK_MS = 1000;
   const TRADE_LIMIT = 125;
+  const MODULE_ID = 'trade-reminder';
+  const LAUNCHER_ID = 'mm-trade-chat-assistant-launcher';
+  const PANEL_KEY = 'trade-reminder';
+  const PANEL_STORAGE_KEY = 'mm_torn_panel_position_v1:' + PANEL_KEY;
+  const core = globalThis.MMTornCore;
 
   const MODES = {
     busy:   { label: 'Busy 5–8m',  min: 5,  max: 8 },
@@ -220,13 +226,144 @@
     return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
   };
 
+  const injectStyle = () => {
+    if (document.getElementById(APP_ID + '-style')) return;
+    const style = document.createElement('style');
+    style.id = APP_ID + '-style';
+    style.textContent = `
+      [data-mm-dock-id="${MODULE_ID}"] .mmta-launch-face {
+        position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;
+      }
+      [data-mm-dock-id="${MODULE_ID}"] .mmta-launch-bell {
+        position:absolute;width:27px!important;height:27px!important;opacity:.24;filter:drop-shadow(0 1px 1px #000);pointer-events:none;
+      }
+      [data-mm-dock-id="${MODULE_ID}"] .mmta-launch-timer {
+        position:relative;z-index:1;color:#f1f3f4;font:700 9.5px/1 Arial,sans-serif;letter-spacing:-.25px;
+        text-shadow:0 1px 2px #000,0 0 3px #000;pointer-events:none;
+      }
+      [data-mm-dock-id="${MODULE_ID}"][data-mm-due="1"] .mmta-launch-timer { color:#ffd66d; }
+      [data-mm-dock-id="${MODULE_ID}"][data-mm-due="1"] .mmta-launch-bell { opacity:.38; }
+
+      #${APP_ID} {
+        display:none;position:fixed;z-index:2147483646;width:min(390px,calc(100vw - 24px));
+        max-height:calc(100vh - 108px);overflow:hidden;color:#eee;background:#111;border:1px solid #8b6a2f;
+        border-radius:8px;box-shadow:0 12px 35px #000b;font:12px/1.35 Arial,sans-serif;
+      }
+      #${APP_ID} * { box-sizing:border-box; }
+      #${APP_ID} .mmta-head {
+        height:40px;display:flex;align-items:center;justify-content:space-between;gap:8px;
+        padding:0 8px 0 10px;background:#151515;border-bottom:1px solid #6f5426;
+      }
+      #${APP_ID} .mmta-head strong { color:#e7b83f;font-size:13px; }
+      #${APP_ID} button,#${APP_ID} select {
+        color:#eee;background:#242424;border:1px solid #555;border-radius:5px;padding:5px 7px;
+      }
+      #${APP_ID} button:hover { border-color:#9a7418; }
+      #${APP_ID} .mmta-close { width:27px;height:27px;padding:0;font-size:16px;line-height:1; }
+      #${APP_ID} .mmta-body { padding:8px 10px 10px;overflow:auto;max-height:calc(100vh - 150px); }
+      #${APP_ID} .mmta-row { display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px; }
+      #${APP_ID} [data-role="countdown"].due { color:#e7b83f; }
+      #${APP_ID} .mmta-message {
+        min-height:52px;padding:7px;border:1px solid #333;border-radius:5px;background:#090909;
+        white-space:pre-wrap;word-break:break-word;margin-bottom:7px;
+      }
+      #${APP_ID} .mmta-meta { color:#aaa; }
+      #${APP_ID} .mmta-actions { display:grid;grid-template-columns:1fr 1fr;gap:5px; }
+      #${APP_ID} .mmta-actions button:first-child { border-color:#9a7418; }
+      #${APP_ID} .mmta-check { display:block;margin-top:7px;color:#bbb; }
+      #${APP_ID} .mmta-note { margin-top:6px;color:#8fd59a; }
+      @media(max-width:620px){
+        [data-mm-dock-id="${MODULE_ID}"] .mmta-launch-timer { font-size:9px; }
+        #${APP_ID}{width:calc(100vw - 8px);max-height:calc(100vh - 62px)}
+        #${APP_ID} .mmta-body{max-height:calc(100vh - 106px)}
+      }
+    `;
+    document.head.appendChild(style);
+  };
+
+  const launcherMarkup = () => `
+    <span class="mmta-launch-face" aria-hidden="true">
+      <svg class="mmta-launch-bell" viewBox="0 0 24 24">
+        <path d="M6.8 16.5h10.4l-1.5-2.1V10a3.7 3.7 0 0 0-7.4 0v4.4zM10 18.2a2.2 2.2 0 0 0 4 0"
+          fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="mmta-launch-timer" data-mm-trade-timer>--:--</span>
+    </span>
+  `;
+
+  const hasSavedPanelPosition = () => {
+    try { return Boolean(localStorage.getItem(PANEL_STORAGE_KEY)); } catch { return false; }
+  };
+
+  const positionPanelDefault = () => {
+    if (!panel || panel.style.display === 'none' || hasSavedPanelPosition()) return;
+    const width = panel.getBoundingClientRect().width || Math.min(390, Math.max(280, innerWidth - 24));
+    panel.style.left = Math.round(Math.max(4, (innerWidth - width) / 2)) + 'px';
+    panel.style.right = 'auto';
+    panel.style.top = (innerWidth <= 620 ? 54 : 82) + 'px';
+    panel.style.bottom = 'auto';
+  };
+
+  const formatLauncherTimer = () => {
+    if (!state.enabled) return '--:--';
+    if (!state.nextAt) return '0:00';
+    const delta = Math.max(0, state.nextAt - Date.now());
+    const sec = Math.ceil(delta / 1000);
+    return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  };
+
+  const renderLauncher = () => {
+    const button = document.querySelector('[data-mm-dock-id="' + MODULE_ID + '"]');
+    if (!button) return;
+    const timer = button.querySelector('[data-mm-trade-timer]');
+    if (timer) timer.textContent = formatLauncherTimer();
+    button.dataset.mmDue = state.enabled && state.nextAt && Date.now() >= state.nextAt ? '1' : '0';
+  };
+
+  const closePanel = () => {
+    if (panel) panel.style.display = 'none';
+    core?.setDockLauncherActive?.(MODULE_ID, false);
+  };
+
+  const openPanel = () => {
+    const root = createPanel();
+    root.style.display = 'block';
+    core?.setDockLauncherActive?.(MODULE_ID, true);
+    requestAnimationFrame(positionPanelDefault);
+    render();
+  };
+
+  const togglePanel = () => {
+    const root = createPanel();
+    if (root.style.display === 'none' || !root.style.display) openPanel();
+    else closePanel();
+  };
+
+  const createLauncher = () => {
+    if (!core?.registerDockLauncher) return null;
+    const button = core.registerDockLauncher({
+      id: MODULE_ID,
+      label: 'MM Trade Reminder',
+      accent: '#75602f',
+      icon: launcherMarkup(),
+      onClick: togglePanel,
+    });
+    if (button) {
+      button.id = LAUNCHER_ID;
+      renderLauncher();
+    }
+    return button;
+  };
+
   const createPanel = () => {
-    const root = document.createElement('div');
+    if (panel?.isConnected) return panel;
+    injectStyle();
+    const root = document.createElement('section');
     root.id = APP_ID;
     root.innerHTML = `
       <div class="mmta-head">
         <strong>MM Trade Rotation</strong>
-        <button type="button" data-act="collapse">–</button>
+        <button type="button" class="mmta-close" data-act="close" aria-label="Close">×</button>
       </div>
       <div class="mmta-body">
         <div class="mmta-row">
@@ -254,48 +391,16 @@
         <div class="mmta-note" data-role="note">Never sends automatically.</div>
       </div>
     `;
-
-    const style = document.createElement('style');
-    style.textContent = `
-      #${APP_ID} {
-        position: fixed; right: 16px; bottom: 74px; z-index: 2147483000;
-        width: 330px; color: #eee; background: #111; border: 1px solid #9a7418;
-        border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.45);
-        font: 12px/1.35 Arial, sans-serif;
-      }
-      #${APP_ID} * { box-sizing: border-box; }
-      #${APP_ID} .mmta-head { display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-bottom:1px solid #4a3b17; }
-      #${APP_ID} .mmta-head strong { color:#e7b83f; font-size:13px; }
-      #${APP_ID} button, #${APP_ID} select {
-        color:#eee; background:#242424; border:1px solid #555; border-radius:5px; padding:5px 7px;
-      }
-      #${APP_ID} button:hover { border-color:#b88a1d; }
-      #${APP_ID} .mmta-body { padding:8px 10px 10px; }
-      #${APP_ID} .mmta-row { display:flex; gap:8px; align-items:center; justify-content:space-between; margin-bottom:6px; }
-      #${APP_ID} [data-role="countdown"].due { color:#e7b83f; }
-      #${APP_ID} .mmta-message {
-        min-height:52px; padding:7px; border:1px solid #333; border-radius:5px;
-        background:#090909; white-space:pre-wrap; word-break:break-word; margin-bottom:7px;
-      }
-      #${APP_ID} .mmta-meta { color:#aaa; }
-      #${APP_ID} .mmta-actions { display:grid; grid-template-columns:1fr 1fr; gap:5px; }
-      #${APP_ID} .mmta-actions button:first-child { border-color:#9a7418; }
-      #${APP_ID} .mmta-check { display:block; margin-top:7px; color:#bbb; }
-      #${APP_ID} .mmta-note { margin-top:6px; color:#8fd59a; }
-      #${APP_ID}.collapsed .mmta-body { display:none; }
-    `;
-    document.documentElement.append(style);
     document.body.append(root);
+    panel = root;
 
     root.addEventListener('click', (event) => {
       const button = event.target.closest('button[data-act]');
       if (!button) return;
       const act = button.dataset.act;
 
-      if (act === 'collapse') {
-        state.collapsed = !state.collapsed;
-        saveState();
-        render();
+      if (act === 'close') {
+        closePanel();
       } else if (act === 'toggle') {
         state.enabled = !state.enabled;
         if (state.enabled && !state.nextAt) scheduleNext();
@@ -327,6 +432,16 @@
       render();
     });
 
+    requestAnimationFrame(() => {
+      core?.makePanelDraggable?.(
+        root,
+        root.querySelector('.mmta-head'),
+        PANEL_KEY,
+        { right: '', top: innerWidth <= 620 ? '54px' : '82px' }
+      );
+      positionPanelDefault();
+    });
+
     return root;
   };
 
@@ -338,9 +453,8 @@
   };
 
   const render = () => {
+    renderLauncher();
     if (!panel) return;
-    panel.classList.toggle('collapsed', !!state.collapsed);
-    panel.querySelector('[data-act="collapse"]').textContent = state.collapsed ? '+' : '–';
 
     const message = currentMessage();
     const countdown = formatRemaining();
@@ -380,14 +494,22 @@
   };
 
   const boot = () => {
-    if (document.getElementById(APP_ID)) return;
-    panel = createPanel();
+    if (document.querySelector('[data-mm-dock-id="' + MODULE_ID + '"]')) return;
+    injectStyle();
+
+    if (!core?.registerDockLauncher) {
+      setTimeout(boot, 300);
+      return;
+    }
+
     if (state.enabled && !state.nextAt) scheduleNext();
+    createLauncher();
     render();
 
     document.addEventListener('keydown', observeManualSend, true);
     document.addEventListener('input', observeComposerCleared, true);
     window.addEventListener('focus', maybeAutoFill);
+    window.addEventListener('resize', () => requestAnimationFrame(positionPanelDefault), { passive: true });
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') maybeAutoFill();
     });
