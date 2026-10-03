@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.4
+// @version      8.0.0-alpha.5
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.4';
+  const VERSION='8.0.0-alpha.5';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -26,11 +26,15 @@
   const OWNER_NAME='Manic-Mike';
   const OWNER_ID='4325346';
   const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';
+  const PENDING_SEND_KEY='mm_customers_pending_send_v1';
   const SHOP_BANNER_URL='https://i.postimg.cc/qvV31ggb/Chat-GPT-Image-Sep-20-2026-09-46-21-PM.png';
   const FAVORITE_CTA='★ ADD '+OWNER_NAME+' TO YOUR FAVORITES ★  Keep '+SHOP_NAME+' easy to find for future purchases and restocks.';
   const API_BASE='https://api.torn.com/v2';
   const SALES_LOOKBACK_MS=72*60*60*1000;
   const MAX_LOG_PAGES=25;
+  const AUTO_SYNC_MS=60_000;
+  const AUTO_SYNC_STALE_MS=45_000;
+  const NAME_REPAIR_BATCH=12;
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornCustomersLogic;
@@ -43,6 +47,9 @@
   let activeView='customers';
   let statusText='Ready.';
   let busy=false;
+  let autoSyncRunning=false;
+  let routeTimer=null;
+  let lastHref=location.href;
 
   const n=v=>Number.isFinite(Number(v))?Number(v):0;
   const esc=value=>String(value??'')
@@ -133,6 +140,72 @@
     return requestJson(url.toString());
   }
 
+  function extractUsernameFromApiPayload(data,playerId){
+    const id=String(playerId||'').trim();
+    for(const candidate of [data?.profile?.name,data?.user?.name,data?.name,data?.player_name,data?.username]){
+      const name=String(candidate||'').trim();
+      if(name&&name!==id&&!/^\d+$/.test(name))return name;
+    }
+    return '';
+  }
+
+  function publicApiRequestV1(playerId){
+    const key=apiKey(),id=String(playerId||'').trim();
+    if(!key)return Promise.reject(new Error('Customers API key is not saved.'));
+    const url=new URL('https://api.torn.com/user/'+encodeURIComponent(id));
+    url.searchParams.set('selections','basic');url.searchParams.set('key',key);url.searchParams.set('comment','MM Customers');
+    return requestJson(url.toString());
+  }
+
+  async function fetchTornUsername(playerId){
+    const id=String(playerId||'').trim();
+    if(!/^\d+$/.test(id))throw new Error('Invalid Torn player ID: '+id);
+    let v2Error=null;
+    try{
+      const data=await apiV2('/user/'+encodeURIComponent(id)+'/basic');
+      const name=extractUsernameFromApiPayload(data,id);if(name)return name;
+    }catch(error){v2Error=error;}
+    try{
+      const data=await publicApiRequestV1(id);
+      const name=extractUsernameFromApiPayload(data,id);if(name)return name;
+    }catch(v1Error){
+      throw new Error('Username lookup failed for ['+id+']. '+(v2Error?.message||'v2 returned no usable username')+'; v1 fallback: '+(v1Error?.message||String(v1Error)));
+    }
+    throw new Error('Torn returned no usable username for ['+id+'].');
+  }
+
+  function hasRealUsername(record){
+    if(!record)return false;
+    const id=String(record.id??record.playerId??'').trim();
+    const name=String(record.name??record.playerName??'').trim();
+    return Boolean(name&&name!==id&&!/^\d+$/.test(name));
+  }
+
+  function applyUsername(draft,playerId,name){
+    const id=String(playerId||'').trim(),safe=String(name||'').trim();
+    if(!id||!safe)return;
+    if(draft.customers?.[id])draft.customers[id].name=safe;
+    if(draft.coupons?.[id])draft.coupons[id].playerName=safe;
+    if(draft.subscribers?.[id])draft.subscribers[id].name=safe;
+    for(const sale of Object.values(draft.sales||{}))if(String(sale.playerId||'')===id)sale.playerName=safe;
+    for(const refund of Object.values(draft.refunds||{}))if(String(refund.playerId||'')===id)refund.playerName=safe;
+  }
+
+  async function repairUsernames(limit=NAME_REPAIR_BATCH){
+    if(!apiKey())return 0;
+    if(!state)state=await core.readLegacyState();
+    const ids=Object.values(state?.customers||{}).filter(customer=>!hasRealUsername(customer)).map(customer=>String(customer.id||'')).filter(Boolean).slice(0,limit);
+    if(!ids.length)return 0;
+    const resolved={};
+    for(const id of ids){
+      try{resolved[id]=await fetchTornUsername(id);}catch(error){console.warn('[MM Customers] Username lookup failed',id,error);}
+      await new Promise(resolve=>setTimeout(resolve,120));
+    }
+    const entries=Object.entries(resolved);if(!entries.length)return 0;
+    await updateCustomerState(draft=>{for(const [id,name] of entries)applyUsername(draft,id,name);});
+    return entries.length;
+  }
+
     function nextUrlFromMetadata(data){
     const next=data?._metadata?.links?.next??data?.metadata?.links?.next??data?._metadata?.next??data?.pagination?.next??null;
     if(typeof next!=='string'||!next.trim())return '';
@@ -185,10 +258,48 @@
 
   async function refreshSales(){
     if(!apiKey())throw new Error('Save a Torn API key in Settings first.');
+    if(!state)state=await core.readLegacyState();
+    const beforeIds=new Set(Object.keys(state?.customers||{}));
     const rows=await fetchSalesLogs((Date.now()-SALES_LOOKBACK_MS)/1000);
     let result=null;
     await updateCustomerState(draft=>{result=logic.importSalesEntries(draft,rows);return draft;});
-    return result;
+    const newCustomerIds=Object.keys(state?.customers||{}).filter(id=>!beforeIds.has(id));
+    const repaired=await repairUsernames(NAME_REPAIR_BATCH);
+    return {...result,newCustomers:newCustomerIds.length,repairedNames:repaired};
+  }
+
+  function newCustomerRows(){
+    return logic.customerRfmRows(state||{})
+      .filter(row=>!state?.removedCustomers?.[row.id])
+      .filter(row=>!row.contacted&&!row.firstMessageSent&&!n(row.messageCount))
+      .sort((a,b)=>(Date.parse(b.firstPurchase||b.createdAt||0)||0)-(Date.parse(a.firstPurchase||a.createdAt||0)||0));
+  }
+
+  async function autoRefreshCustomers({force=false,switchToNew=false}={}){
+    if(autoSyncRunning||!apiKey())return null;
+    if(!state)state=await core.readLegacyState();
+    const last=Date.parse(state?.operations?.customers?.lastSalesAt||'')||0;
+    if(!force&&last&&Date.now()-last<AUTO_SYNC_STALE_MS){
+      if(await repairUsernames(NAME_REPAIR_BATCH)){if(document.getElementById(ROOT_ID))render();}
+      return null;
+    }
+    autoSyncRunning=true;
+    try{
+      const result=await refreshSales();
+      const newRows=newCustomerRows();
+      if(switchToNew&&newRows.length)activeView='new';
+      statusText='Auto-synced sales: '+result.imported+' new sale'+(result.imported===1?'':'s')+
+        (result.newCustomers?' · '+result.newCustomers+' new customer'+(result.newCustomers===1?'':'s'):'')+
+        (result.repairedNames?' · '+result.repairedNames+' name'+(result.repairedNames===1?'':'s')+' resolved':'')+'.';
+      if(document.getElementById(ROOT_ID))render();
+      return result;
+    }catch(error){
+      console.warn('[MM Customers] Automatic customer sync failed',error);
+      if(document.getElementById(ROOT_ID)?.style.display!=='none'){
+        statusText='Auto-sync warning: '+(error?.message||String(error));render();
+      }
+      return null;
+    }finally{autoSyncRunning=false;}
   }
 
   function escapeMessageHtml(value){
@@ -232,13 +343,17 @@
     return top+'\n\n'+colText+couponLine+'\n\n★ ★ ★ ADD ME TO FAVORITES ★ ★ ★\n'+FAVORITE_CTA+footer;
   }
 
-  function composeMessage(playerId,subject,body,bodyHtml=''){
-    const id=String(playerId||'').trim();
-    GM_setValue(PENDING_COMPOSE_KEY,{playerId:id,subject:String(subject||''),body:String(body||''),bodyHtml:String(bodyHtml||''),createdAt:Date.now()});
+  function composeMessage(playerId,subject,body,bodyHtml='',options={}){
+    const id=String(playerId||'').trim(),createdAt=Date.now();
+    const payload={playerId:id,subject:String(subject||''),body:String(body||''),bodyHtml:String(bodyHtml||''),createdAt};
+    GM_setValue(PENDING_COMPOSE_KEY,payload);
+    if(options?.kind){
+      GM_setValue(PENDING_SEND_KEY,{playerId:id,subject:payload.subject,kind:String(options.kind),createdAt,noticeId:options.noticeId||null,state:'awaiting-send'});
+    }else GM_deleteValue(PENDING_SEND_KEY);
     statusText='Opening Torn composer with the prepared message. Sending remains manual.';
     render();
-    const url='https://www.torn.com/messages.php#/p=compose&XID='+encodeURIComponent(id)+'&subject='+encodeURIComponent(String(subject||''));
-    setTimeout(()=>{location.href=url;},80);
+    const url='https://www.torn.com/messages.php#/p=compose&XID='+encodeURIComponent(id)+'&subject='+encodeURIComponent(payload.subject);
+    try{window.location.assign(url);}catch{location.href=url;}
   }
 
   function customerMessage(customer,coupon,reminder=false){
@@ -413,30 +528,138 @@
     tryFill();timer=setInterval(()=>{if(!finished)tryFill();},750);observer=new MutationObserver(()=>{if(!finished&&attempts<40)tryFill();});observer.observe(document.documentElement,{childList:true,subtree:true});
   }
 
+  function visibleSendButton(){
+    return [...document.querySelectorAll('button,input[type="submit"],[role="button"]')].filter(visible).find(el=>{
+      const text=String(el.innerText||el.value||el.getAttribute?.('aria-label')||el.getAttribute?.('title')||'').trim().toLowerCase();
+      if(!/(^|\s)send(\s|$)|send message/.test(text))return false;
+      return !/search|friend|money|cash|trade|gift/.test(elementMeta(el));
+    })||null;
+  }
+
+  function composeStillVisible(expectedSubject=''){
+    const subject=findComposeSubjectInput();
+    if(!subject||!visible(subject))return false;
+    if(!expectedSubject)return true;
+    const value=String(subject.value||'').trim();
+    return !value||value===String(expectedSubject||'').trim();
+  }
+
+  function messageSentConfirmationVisible(){
+    return [...document.querySelectorAll('[role="alert"],[class*="success" i],[class*="message" i],[class*="notification" i],[class*="toast" i]')]
+      .filter(visible).slice(-80).some(el=>/message\s+(has\s+been\s+)?sent|sent\s+successfully|successfully\s+sent/.test(String(el.innerText||el.textContent||'').trim().toLowerCase()));
+  }
+
+  async function completeTrackedSend(pending){
+    const id=String(pending?.playerId||'').trim(),kind=String(pending?.kind||'');
+    if(!id||!kind)return false;
+    await updateCustomerState(draft=>{
+      const customer=draft.customers?.[id];
+      const at=new Date().toISOString();
+      if(kind==='welcome'&&customer){
+        customer.contacted=true;customer.firstMessageSent=true;customer.messageCount=n(customer.messageCount)+1;customer.lastContacted=at;
+        const coupon=logic.issueCoupon(draft,id,at);if(hasRealUsername(customer))coupon.playerName=customer.name;
+      }else if(kind==='reminder'&&customer){
+        customer.contacted=true;customer.messageCount=n(customer.messageCount)+1;customer.lastContacted=at;
+      }else if(kind==='restock'){
+        const sub=draft.subscribers?.[id];
+        if(sub?.pendingNotification){
+          const notice={...sub.pendingNotification,playerId:id,playerName:sub.name,sentAt:at};
+          sub.lastNotified=at;sub.pendingNotification=null;
+          draft.notificationHistory=Array.isArray(draft.notificationHistory)?draft.notificationHistory:[];
+          draft.notificationHistory.unshift(notice);draft.notificationHistory=draft.notificationHistory.slice(0,500);
+        }
+      }
+    });
+    GM_deleteValue(PENDING_SEND_KEY);
+    statusText=kind==='welcome'?'Welcome send detected; customer updated and coupon issued.':kind==='restock'?'Restock send detected; notification state updated.':'Message send detected; customer contact history updated.';
+    return true;
+  }
+
+  function installMessageSendDetector(){
+    if(!location.pathname.includes('messages.php'))return;
+    const pending=GM_getValue(PENDING_SEND_KEY,null),id=String(pending?.playerId||'').trim(),createdAt=Number(pending?.createdAt||0);
+    if(!id||!createdAt||Date.now()-createdAt>30*60*1000){if(pending)GM_deleteValue(PENDING_SEND_KEY);return;}
+    let armed=true,clickedAt=0,verifyTimer=null,scanTimer=null,observer=null;
+    const cleanup=()=>{armed=false;if(verifyTimer)clearInterval(verifyTimer);if(scanTimer)clearInterval(scanTimer);if(observer)observer.disconnect();document.removeEventListener('click',clickHandler,true);document.removeEventListener('submit',submitHandler,true);};
+    const verifyAfterSend=()=>{
+      if(!armed||!clickedAt)return;
+      const confirmed=messageSentConfirmationVisible()||!location.hash.includes('compose')||!composeStillVisible(pending.subject);
+      if(confirmed){
+        cleanup();completeTrackedSend(pending).catch(error=>console.warn('[MM Customers] Sent-message state update failed',error));return;
+      }
+      if(Date.now()-clickedAt>=6000){
+        clickedAt=0;if(verifyTimer){clearInterval(verifyTimer);verifyTimer=null;}
+        GM_setValue(PENDING_SEND_KEY,{...pending,state:'awaiting-send',lastFailedVerifyAt:Date.now()});
+      }
+    };
+    const arm=()=>{
+      if(!armed||clickedAt)return;
+      clickedAt=Date.now();GM_setValue(PENDING_SEND_KEY,{...pending,state:'send-clicked',sendClickedAt:clickedAt});
+      verifyTimer=setInterval(verifyAfterSend,250);
+      for(const delay of [350,1200,3000,5200])setTimeout(verifyAfterSend,delay);
+    };
+    const clickHandler=event=>{
+      const el=event.target?.closest?.('button,input[type="submit"],[role="button"]');
+      if(!el||!visible(el))return;
+      const text=String(el.innerText||el.value||el.getAttribute?.('aria-label')||el.getAttribute?.('title')||'').trim().toLowerCase();
+      if(/(^|\s)send(\s|$)|send message/.test(text)&&!/search|friend|money|cash|trade|gift/.test(elementMeta(el)))arm();
+    };
+    const submitHandler=event=>{const form=event.target;if(form instanceof HTMLFormElement){const send=visibleSendButton();if(send&&(form.contains(send)||composeStillVisible(pending.subject)))arm();}};
+    document.addEventListener('click',clickHandler,true);document.addEventListener('submit',submitHandler,true);
+    scanTimer=setInterval(()=>{if(!armed)return;if(Date.now()-createdAt>30*60*1000){cleanup();return;}if(clickedAt)verifyAfterSend();},500);
+    observer=new MutationObserver(()=>{if(armed&&clickedAt)verifyAfterSend();});
+    observer.observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','disabled']});
+  }
+
+  function runPageHelpers(){fillMessageComposer();installMessageSendDetector();}
+
+  function onRouteChanged(){
+    if(routeTimer)clearTimeout(routeTimer);
+    routeTimer=setTimeout(()=>{if(location.href===lastHref)return;lastHref=location.href;runPageHelpers();},120);
+  }
+
+  function installRouteHooks(){
+    window.addEventListener('hashchange',onRouteChanged);window.addEventListener('popstate',onRouteChanged);
+    for(const method of ['pushState','replaceState']){
+      const original=history[method];if(original?.__mmCustomersWrapped)continue;
+      const wrapped=function(...args){const result=original.apply(this,args);onRouteChanged();return result;};
+      wrapped.__mmCustomersWrapped=true;history[method]=wrapped;
+    }
+  }
+
   function refundProfileUrl(refund){
     const url=new URL('https://www.torn.com/profiles.php');
     url.searchParams.set('XID',String(refund.playerId||''));
     return url.toString();
   }
 
-    function customersHtml(){
-    const rows=logic.customerRfmRows(state||{}).filter(row=>!state?.removedCustomers?.[row.id]).slice(0,100);
-    if(!rows.length)return card('<b>Customers</b><div class="mm-cu-muted">No customer history yet. Refresh Sales after saving the API key.</div>');
+  function customerRowsHtml(rows,emptyText='No customer history yet.'){
+    if(!rows.length)return card('<b>Customers</b><div class="mm-cu-muted">'+esc(emptyText)+'</div>');
     return rows.map(row=>{
       const coupon=state?.coupons?.[row.id]||logic.ensureCoupon(state,row);
       const q=logic.couponQualification(state,coupon);
       const sub=state?.subscribers?.[row.id];
-      return '<details class="mm-cu-member"><summary><span><b>'+esc(row.name)+'</b> <span class="mm-cu-muted">['+esc(row.id)+'] · '+esc(row.segment)+'</span></span><span class="mm-cu-muted">'+money(row.monetary)+' · '+fmt(row.frequency)+' purchase(s)</span></summary>'+
+      const realName=hasRealUsername(row),displayName=realName?row.name:'Resolving name…';
+      const firstContact=!row.contacted&&!row.firstMessageSent&&!n(row.messageCount);
+      return '<details class="mm-cu-member"><summary><span><b>'+esc(displayName)+'</b> <span class="mm-cu-muted">['+esc(row.id)+'] · '+esc(row.segment)+'</span></span><span class="mm-cu-muted">'+money(row.monetary)+' · '+fmt(row.frequency)+' purchase(s)</span></summary>'+
         '<div class="mm-cu-detail"><div class="mm-cu-tiles">'+tile('SPENT',money(row.monetary))+tile('UNITS',fmt(row.units))+tile('LAST',when(row.lastPurchase))+tile('COUPON',coupon?.code||'—')+tile('USES LEFT',fmt(logic.couponRemaining(coupon)))+tile('CASHBACK',q.qualified?money(q.cashback):q.reason)+'</div>'+
         '<div class="mm-cu-actions" style="margin-top:5px;">'+
-          '<button data-welcome="'+esc(row.id)+'" style="'+button(true)+'">Prepare Welcome</button>'+
-          '<button data-mark-welcome="'+esc(row.id)+'" style="'+button()+'">Mark Sent + Issue</button>'+
+          '<button data-welcome="'+esc(row.id)+'" style="'+button(true)+'">'+(firstContact?'Prepare Welcome':'Prepare Message')+'</button>'+
           (coupon?.issuedAt?'<button data-reminder="'+esc(row.id)+'" style="'+button(q.qualified)+'">Coupon Reminder</button>':'')+
           '<button data-subscribe="'+esc(row.id)+'" style="'+button()+'">'+(sub?'Restock−':'Restock+')+'</button>'+
           (q.qualified?'<button data-refund-start="'+esc(row.id)+'" style="'+button(true)+'">Create Cashback</button>':'')+
           '<button data-profile="'+esc(row.id)+'" style="'+button()+'">Profile</button>'+
         '</div></div></details>';
     }).join('');
+  }
+
+  function customersHtml(){
+    const rows=logic.customerRfmRows(state||{}).filter(row=>!state?.removedCustomers?.[row.id]).slice(0,100);
+    return customerRowsHtml(rows,'No customer history yet. Sales sync runs automatically after the API key is saved.');
+  }
+
+  function newCustomersHtml(){
+    return customerRowsHtml(newCustomerRows(),'No new customers require first-contact follow-up.');
   }
 
   function couponsHtml(){
@@ -478,12 +701,15 @@
   function render(){
     const root=document.getElementById(ROOT_ID);
     if(!root)return;
-    const view=activeView==='customers'?customersHtml():activeView==='coupons'?couponsHtml():activeView==='restock'?restockHtml():activeView==='refunds'?refundsHtml():settingsHtml();
+    const newCount=newCustomerRows().length;
+    if(activeView==='new'&&!newCount)activeView='customers';
+    const view=activeView==='customers'?customersHtml():activeView==='new'?newCustomersHtml():activeView==='coupons'?couponsHtml():activeView==='restock'?restockHtml():activeView==='refunds'?refundsHtml():settingsHtml();
     root.innerHTML=
       '<div class="mm-cu-head"><div><b style="font-size:14px;">MM_Customers</b><div class="mm-cu-muted">v'+VERSION+' · CUSTOMER / COUPON / CASHBACK / RESTOCK</div></div><button id="mm-cu-close" style="'+button()+'">×</button></div>'+
       '<div class="mm-cu-body">'+
         '<div class="mm-cu-tabs">'+
           '<button data-view="customers" style="'+button(activeView==='customers')+'">Customers</button>'+
+          (newCount?'<button data-view="new" style="'+button(activeView==='new')+'">New Customers ('+fmt(newCount)+')</button>':'')+
           '<button data-view="coupons" style="'+button(activeView==='coupons')+'">Coupons</button>'+
           '<button data-view="restock" style="'+button(activeView==='restock')+'">Restock</button>'+
           '<button data-view="refunds" style="'+button(activeView==='refunds')+'">Refunds</button>'+
@@ -510,7 +736,8 @@
     };
     root.querySelector('#mm-cu-refresh-sales')?.addEventListener('click',()=>run('Refreshing Bazaar customer sales…',async()=>{
       const r=await refreshSales();
-      return 'Sales refreshed: '+r.imported+' new · '+r.checked+' checked'+(r.rejected?' · '+r.rejected+' rejected':'')+'.';
+      if(newCustomerRows().length)activeView='new';
+      return 'Sales refreshed: '+r.imported+' new · '+r.checked+' checked'+(r.newCustomers?' · '+r.newCustomers+' new customer'+(r.newCustomers===1?'':'s'):'')+(r.repairedNames?' · '+r.repairedNames+' name'+(r.repairedNames===1?'':'s')+' resolved':'')+(r.rejected?' · '+r.rejected+' rejected':'')+'.';
     }));
     root.querySelector('#mm-cu-save-api')?.addEventListener('click',()=>{
       const value=root.querySelector('#mm-cu-api')?.value||'';saveApiKey(value);
@@ -518,23 +745,23 @@
     });
     root.querySelector('#mm-cu-clear-api')?.addEventListener('click',()=>{saveApiKey('');statusText='Customers API key cleared.';render();});
 
-    root.querySelectorAll('[data-welcome]').forEach(b=>b.addEventListener('click',async()=>{
-      const id=b.dataset.welcome;const customer=state?.customers?.[id];const coupon=state?.coupons?.[id]||logic.ensureCoupon(state,customer);
-      if(!customer||!coupon)return;const msg=customerMessage(customer,coupon,false);composeMessage(id,msg.subject,msg.body,msg.bodyHtml);
-    }));
-    root.querySelectorAll('[data-mark-welcome]').forEach(b=>b.addEventListener('click',()=>run('Saving sent welcome…',async()=>{
-      const id=b.dataset.markWelcome;
-      await updateCustomerState(draft=>{
-        const customer=draft.customers[id];if(!customer)throw new Error('Customer not found.');
-        const coupon=logic.issueCoupon(draft,id);
-        customer.contacted=true;customer.firstMessageSent=true;customer.messageCount=n(customer.messageCount)+1;customer.lastContacted=new Date().toISOString();
-        coupon.issuedAt=coupon.issuedAt||customer.lastContacted;
-      });
-      return 'Welcome marked sent and coupon issued.';
+    root.querySelectorAll('[data-welcome]').forEach(b=>b.addEventListener('click',()=>run('Preparing customer message…',async()=>{
+      const id=b.dataset.welcome;
+      let customer=state?.customers?.[id];if(!customer)throw new Error('Customer not found.');
+      if(!hasRealUsername(customer)){
+        const name=await fetchTornUsername(id);
+        await updateCustomerState(draft=>applyUsername(draft,id,name));
+        customer=state?.customers?.[id];
+      }
+      const coupon=state?.coupons?.[id]||logic.ensureCoupon(state,customer);
+      const first=!customer.contacted&&!customer.firstMessageSent&&!n(customer.messageCount);
+      const msg=customerMessage(customer,coupon,false);
+      composeMessage(id,msg.subject,msg.body,msg.bodyHtml,{kind:first?'welcome':'reminder'});
+      return 'Opening Torn composer for '+customer.name+'. Send remains manual; CRM will update after Torn confirms Send.';
     })));
     root.querySelectorAll('[data-reminder]').forEach(b=>b.addEventListener('click',async()=>{
       const id=b.dataset.reminder;const customer=state?.customers?.[id];const coupon=state?.coupons?.[id];if(!customer||!coupon)return;
-      const msg=customerMessage(customer,coupon,true);composeMessage(id,msg.subject,msg.body,msg.bodyHtml);
+      const msg=customerMessage(customer,coupon,true);composeMessage(id,msg.subject,msg.body,msg.bodyHtml,{kind:'reminder'});
     }));
     root.querySelectorAll('[data-subscribe]').forEach(b=>b.addEventListener('click',()=>run('Updating restock subscription…',async()=>{
       const id=b.dataset.subscribe;
@@ -552,7 +779,7 @@
       const rows=logic.currentBazaarRows(state,sub);if(!rows.length){statusText='No matching current Bazaar inventory. Refresh MM Inventory Manager/ROI Tracker first.';render();return;}
       const msg=restockMessage(sub,rows);
       await updateCustomerState(draft=>{const s=draft.subscribers[id];if(s){s.lastPrepared=new Date().toISOString();s.pendingNotification={id:'notice-'+Date.now(),type:'bazaar-inventory',preparedAt:s.lastPrepared,itemCount:rows.length};}});
-      composeMessage(id,msg.subject,msg.body,msg.bodyHtml);
+      composeMessage(id,msg.subject,msg.body,msg.bodyHtml,{kind:'restock',noticeId:state?.subscribers?.[id]?.pendingNotification?.id||null});
     }));
     root.querySelectorAll('[data-restock-sent]').forEach(b=>b.addEventListener('click',()=>run('Marking restock alert sent…',async()=>{
       const id=b.dataset.restockSent;
@@ -594,7 +821,9 @@
     createPanel();
     const root=document.getElementById(ROOT_ID);root.style.display='block';
     core.setDockLauncherActive?.('customers',true);
-    reloadState().catch(error=>{statusText=error?.message||String(error);render();});
+    reloadState()
+      .then(()=>{render();return autoRefreshCustomers({force:false,switchToNew:true});})
+      .catch(error=>{statusText=error?.message||String(error);render();});
   }
   function close(){
     const root=document.getElementById(ROOT_ID);if(root)root.style.display='none';
@@ -628,10 +857,14 @@
     }catch{}
   }
 
-  if(document.body){
-    createLauncher();installChannel();fillMessageComposer();
-  }else{
-    window.addEventListener('DOMContentLoaded',()=>{createLauncher();installChannel();fillMessageComposer();},{once:true});
+  function initializeCustomers(){
+    createLauncher();installChannel();installRouteHooks();runPageHelpers();
+    if(apiKey()){
+      setTimeout(()=>autoRefreshCustomers({force:false,switchToNew:false}),1200);
+      setInterval(()=>{if(document.visibilityState==='visible')autoRefreshCustomers({force:false,switchToNew:false});},AUTO_SYNC_MS);
+    }
   }
-  window.addEventListener('hashchange',()=>{if(location.pathname.includes('messages.php'))fillMessageComposer();});
+
+  if(document.body)initializeCustomers();
+  else window.addEventListener('DOMContentLoaded',initializeCustomers,{once:true});
 })();
