@@ -1003,6 +1003,31 @@ Implementation checkpoints:
 
 **PENDING LIVE RETEST** — install alpha.10, leave the current Arpello plain draft unsent, reopen the cashback reminder, and confirm branded formatting persists.
 
+
+### MM_Customers alpha.10 live fail-safe / alpha.11 source-editor repair
+Live screenshot on Arpello [4325089] after alpha.10:
+- **PASS / SAFETY** — alpha.10 no longer silently downgraded the branded reminder. It displayed the visible red warning: `Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry branded formatting.`
+- **DEFECT REMAINS** — the current draft body was still unformatted because Torn's source-mode editor was not being detected.
+
+Root cause:
+- Torn's current source-mode editor can appear as a large **anonymous textarea** with no `source`, `code`, or `html` class/metadata.
+- alpha.9/alpha.10 deliberately narrowed source-editor candidates to code-labelled controls to avoid false matches, which excluded Torn's actual source textarea on this live layout.
+
+Repair built in **MM_Customers v8.0.0-alpha.11**:
+- visible textareas are again eligible source-editor candidates,
+- the normal Subject field is explicitly excluded,
+- a newly appeared large textarea after pressing Toggle Code Editor is treated as the source editor even when Torn gives it no identifying class,
+- code/source-labelled editors still outrank anonymous textarea candidates,
+- branded verification now checks the actual banner-containing table against markers extracted from the expected HTML template, avoiding false positives from unrelated page tables / prior conversation content,
+- alpha.10's no-auto-downgrade / visible do-not-send safety behavior remains intact.
+
+Implementation checkpoints:
+- Customers alpha.11: `ab6b5989af40208f1367e3b54126314eefdcf0ba`
+- regression assertions: `a23b68bde62580490d4ea08737b9759b55b7f05b`
+- suite manifest alpha.26: `657867535b13db4f99082cf8146494ca788b7641`
+
+**PENDING LIVE RETEST** — install alpha.11, reopen the Arpello cashback reminder, and verify branded HTML renders without the warning.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
