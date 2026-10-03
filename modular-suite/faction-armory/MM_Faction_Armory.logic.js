@@ -450,14 +450,37 @@
       const currentMarketValue=n(currentItem?.marketValue);
       const targetMarketValue=n(target?.marketValue);
       const premiumMarketValue=n(premium?.marketValue);
+      const targetPerformance=target?equipmentScore(target,profile.offensiveNeed):0;
       const premiumScore=premium?equipmentScore(premium,profile.offensiveNeed):0;
-      const premiumGainPct=target&&premium&&equipmentScore(target,profile.offensiveNeed)>0
-        ? Math.max(0,(premiumScore-equipmentScore(target,profile.offensiveNeed))/equipmentScore(target,profile.offensiveNeed)*100):0;
+      const premiumGainPct=targetPerformance>0&&premium
+        ? Math.max(0,(premiumScore-targetPerformance)/targetPerformance*100):0;
       const premiumCostMultiple=targetMarketValue>0&&premiumMarketValue>0?premiumMarketValue/targetMarketValue:0;
       const valueNote=ready
         ? 'KEEP: current gear already meets the performance floor; price is not a reason to replace owned gear.'
         : target
-          ? 'VALUE TARGET: '+String(target.name)+' at reference         ownedOptionName:String(ownedOption?.name||''),
+          ? 'VALUE TARGET: '+String(target.name)+' at reference $'+Math.round(targetMarketValue).toLocaleString()+
+            (premium&&premium.name!==target.name
+              ? ' · premium '+String(premium.name)+' is +'+premiumGainPct.toFixed(1)+'% performance at '+premiumCostMultiple.toFixed(1)+'× reference cost'
+              : '')
+          : '';
+
+      items.push({
+        slot,decision,route,ready,
+        readinessFloor:floor,
+        currentName:String(currentItem?.name||''),
+        currentScore,
+        currentMarketValue,
+        targetName:String(target?.name||''),
+        targetScore:floor,
+        targetMarketValue,
+        suggestedName:String(suggested?.name||''),
+        suggestedSource:String(suggested?.source||''),
+        suggestedMarketValue:n(suggested?.marketValue),
+        premiumMarketValue,
+        premiumGainPct,
+        premiumCostMultiple,
+        valueNote,
+        ownedOptionName:String(ownedOption?.name||''),
         ownedOptionQuantity:n(ownedOption?.quantity),
         factionOptionName:String(factionOption?.name||''),
         factionAvailableCount:n(factionOption?.availableCount),
