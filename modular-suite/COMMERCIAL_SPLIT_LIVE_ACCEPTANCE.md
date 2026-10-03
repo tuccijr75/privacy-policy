@@ -103,6 +103,17 @@ Confirmed on an authenticated Torn page while traveling:
 - **HIGH-RISK EFFECTIVENESS GAP** — rare collectible recommendations can show extreme market-proxy economics (for example, a $625M buy with a projected $36.48B exit / 5737% ROI and ~65% three-day sell-through). The ranking code derives this from market proxy/depth/history signals and does not require personal sale evidence; these should not be treated as equivalent-confidence “Best Buyable Deals” without stronger liquidity/confidence safeguards.
 - **UX FRICTION** — Sync Purchases is primarily a shared cost-ledger maintenance task for downstream ROI accounting, yet it is presented beside the core acquisition action. Consider moving it to maintenance/settings or folding it into a single smart refresh when stale.
 
+
+### MM_Acquisitions recommendation-model audit
+- **DEFECT** — `minSellerCount` is only enforced when Item Market data is *not* fresh. A seconds-old Item Market snapshot can therefore become a “Best Buyable Deal” even with inadequate seller/liquidity depth. Freshness should not bypass the liquidity floor.
+- **EFFECTIVENESS GAP** — the displayed “3d sell-through” MARKET PROXY is not a true demand model. Its `marketDepthSignal` increases when more quantity is listed near the lowest price, so greater supply depth can increase the displayed sell-through estimate. This can materially overstate conversion for rare/illiquid items.
+- **EFFECTIVENESS GAP** — expected 3-day profit inherits the market-proxy sell-through estimate and the highest modeled exit route, so extreme collectible opportunities can show very large projected profit with insufficient demand evidence.
+- **MISSING FEATURE** — buyable rows do not display the modeled exit route (`Bazaar`, `Trader`, or `Item Market Net`) or the computed confidence score even though both exist in the model. The user cannot see what the ROI assumption depends on.
+- **MISSING FEATURE** — no minimum confidence/liquidity gate separates speculative research from “Best Buyable Deals.”
+- **EFFECTIVENESS GAP** — explicit Refresh Opportunities currently enriches only 8 candidates and live-refreshes Item Market for only 6, leaving the procurement surface much shorter than the desired broad deal list.
+- **UX DEFECT** — some runtime error strings still refer to “Market Scout” instead of MM_Acquisitions, a migration carryover that will confuse troubleshooting.
+- **MISSING FEATURE** — no capital budget / total-spend constraint is part of ranking. The existing Max buy rule is only a per-unit ceiling and is not tied to currently usable funds or a user-defined procurement budget.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
