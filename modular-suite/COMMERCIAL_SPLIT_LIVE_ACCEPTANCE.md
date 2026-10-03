@@ -1265,3 +1265,36 @@ Implementation checkpoints on patch branch:
 ## Promotion boundary
 
 Do not retire the legacy monolith, MM Bazaar Manager, or MM Market Scout until the three replacement scripts pass live acceptance and the owner explicitly approves retirement/promotion.
+
+
+## MM_Customers alpha.16 — one-shot compose transport / resource reduction
+
+Live symptom after alpha.15 merge:
+- opening a prepared message could leave Torn Messages stuck on its loading surface while the userscript remained active
+- the user does not require automatic draft restoration after navigating Outbox → Compose; only the original prepared Compose page must work
+
+Repair in alpha.16:
+- compose hydration is one-shot and only applies when the live Compose XID exactly matches the customer that initiated the action
+- generic Compose and different-recipient routes immediately discard the pending compose bridge instead of restoring or hydrating it
+- PENDING_SEND delivery tracking no longer acts as a source for editor hydration
+- automatic route restoration was removed
+- compose fill no longer attaches a document-wide MutationObserver; it uses one bounded 500 ms timer with a 20 s timeout and at most three rich-format attempts
+- pre-send delivery tracking no longer attaches a document-wide attribute MutationObserver or 500 ms scan loop
+- delivery verification only starts after a trusted manual Send click; expiry uses one timeout
+- recipient, subject, branded-content verification, and confirmed-delivery state safety remain intact
+
+Static/V8 verification:
+- userscript parses
+- customer logic loads and core sales/coupon checks pass
+- route recovery symbols are absent
+- resource-heavy compose/send observers and pre-send scan timer are absent
+- manual-send trust gate and recipient safety remain present
+- suite manifest: 8.0.0-alpha.33
+- MM_Customers: 8.0.0-alpha.16
+
+Live acceptance still required:
+1. From MM_Customers, prepare a single customer message.
+2. The original Torn Compose page must load Name, Subject, and branded body without remaining on the loading spinner.
+3. Navigate away to Outbox, then open a fresh generic Compose page; MM_Customers must not repopulate or redirect it.
+4. Return to MM_Customers and separately verify Welcome, Coupon Reminder, Cashback Reminder, and Restock Alert.
+5. Confirm customer/contact/coupon/restock state still changes only after a real manual Send receives Torn confirmation.
