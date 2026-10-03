@@ -14,7 +14,7 @@ logic.subscribeCustomer(db,'123');assert.strictEqual(logic.currentBazaarRows(db,
 
 const userSrc=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 assert.doesNotThrow(()=>new Function(userSrc));
-assert(userSrc.includes("const VERSION='8.0.0-alpha.8';"));
+assert(userSrc.includes("const VERSION='8.0.0-alpha.9';"));
 assert(userSrc.includes("const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';"));
 assert(userSrc.includes('function brandedMessageHtml'));
 assert(userSrc.includes('function fillMessageComposer'));
@@ -34,10 +34,22 @@ assert(!userSrc.includes('copyAndOpenMessage'));
 console.log('MM_Customers logic + automation/composer regression tests: PASS');
 const userSourceRich=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 new Function(userSourceRich);
-assert(userSourceRich.includes("const VERSION='8.0.0-alpha.8';"));
+assert(userSourceRich.includes("const VERSION='8.0.0-alpha.9';"));
 assert(userSourceRich.includes('function richComposerHasBranding'));
 assert(userSourceRich.includes('richFailures<3'));
 assert(userSourceRich.includes('Waiting for Torn rich editor… branded message will retry automatically.'));
 assert(userSourceRich.includes('plain text fallback after rich-editor retries failed'));
 assert(userSourceRich.includes('can occasionally carry source'));
 console.log('MM Customers rich-composer resilience regression: PASS');
+
+const userSourceRefunds=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
+new Function(userSourceRefunds);
+assert(userSourceRefunds.includes("const VERSION='8.0.0-alpha.9';"));
+assert(userSourceRefunds.includes('function cashbackEligibleRows'));
+assert(userSourceRefunds.includes('function cashbackEligibilityReminderMessage'));
+assert(userSourceRefunds.includes('Send Cashback Reminder'));
+assert(userSourceRefunds.includes('QUALIFYING PURCHASE'));
+assert(userSourceRefunds.includes('Refund amount: '));
+assert(userSourceRefunds.includes("composeMessage(id,msg.subject,msg.body,msg.bodyHtml,{kind:'reminder'})"));
+assert(userSourceRefunds.includes('No customers are currently eligible for cashback.'));
+console.log('MM Customers refund eligibility reminder regression: PASS');
