@@ -560,15 +560,17 @@
   }
 
   function composePayloadForCurrentPage(){
+    if(!location.hash.includes('compose'))return null;
     const params=getComposeParams(),xid=getComposeXid(),now=Date.now(),pending=GM_getValue(PENDING_COMPOSE_KEY,null);
     if(pending&&typeof pending==='object'){
       const age=now-Number(pending.createdAt||0);
       const pendingId=String(pending.playerId||'').trim();
-      if(age>COMPOSE_BRIDGE_TTL_MS){
+      const composeId=String(pending.composeId||'').trim();
+      if(!composeId||age>COMPOSE_BRIDGE_TTL_MS){
         GM_deleteValue(PENDING_COMPOSE_KEY);
       }else if(xid&&pendingId&&xid===pendingId){
         return {
-          composeId:String(pending.composeId||''),
+          composeId,
           playerId:pendingId,
           recipientName:String(pending.recipientName||''),
           subject:String(pending.subject||''),
@@ -576,14 +578,15 @@
           bodyHtml:String(pending.bodyHtml||''),
           createdAt:Number(pending.createdAt||0)
         };
-      }else if(location.hash.includes('compose')){
-        // PENDING_COMPOSE_KEY is a one-shot bridge into the exact compose route.
-        // Never hydrate a later generic Compose page or a different recipient.
+      }else{
+        // Compose bridges are single-use and bound to the exact recipient route.
         GM_deleteValue(PENDING_COMPOSE_KEY);
       }
     }
     const urlSubject=params.get('subject'),urlBody=params.get('body');
-    return urlSubject!==null||urlBody!==null?{playerId:xid,recipientName:'',subject:urlSubject||'',body:urlBody||'',bodyHtml:'',createdAt:0}:null;
+    return urlSubject!==null||urlBody!==null
+      ? {composeId:'',playerId:xid,recipientName:'',subject:urlSubject||'',body:urlBody||'',bodyHtml:'',createdAt:0}
+      : null;
   }
 
   function elementMeta(element){
@@ -632,10 +635,16 @@
     return plain===expectedName;
   }
 
-  function findComposeBodyInput(subjectInput){
-    const textareas=[...document.querySelectorAll('textarea')].filter(visible),labelled=textareas.find(el=>el!==subjectInput&&/message|body|mail|content/.test(elementMeta(el)));if(labelled)return labelled;
-    const editables=[...document.querySelectorAll('[contenteditable="true"],[role="textbox"][contenteditable],[role="textbox"]')].filter(visible);
-    return editables.find(el=>el!==subjectInput&&/message|body|mail|content|write|compose/.test(elementMeta(el)))||editables.find(el=>el!==subjectInput)||textareas.find(el=>el!==subjectInput)||null;
+  function findComposeBodyInput(subjectInput=findComposeSubjectInput()){
+    const scope=subjectInput?.closest?.('form')||document;
+    const textareas=[...scope.querySelectorAll('textarea')].filter(visible);
+    const labelled=textareas.find(el=>el!==subjectInput&&/message|body|mail|content/.test(elementMeta(el)));
+    if(labelled)return labelled;
+    const editables=[...scope.querySelectorAll('[contenteditable="true"],[role="textbox"][contenteditable],[role="textbox"]')].filter(visible);
+    return editables.find(el=>el!==subjectInput&&/message|body|mail|content|write|compose/.test(elementMeta(el)))||
+      editables.find(el=>el!==subjectInput)||
+      textareas.find(el=>el!==subjectInput)||
+      null;
   }
 
   function findComposeRichEditorBody(){
@@ -646,21 +655,27 @@
         if(body.isContentEditable||body.getAttribute('contenteditable')==='true'||/editor|wysiwyg|message|compose|sceditor|mail/.test(meta))return body;
       }catch{}
     }
-    return null;
+    const body=findComposeBodyInput();
+    const tag=String(body?.tagName||'').toLowerCase();
+    return body&&tag!=='textarea'&&tag!=='input'?body:null;
   }
 
   function findTornCodeEditorToggle(){
     const selectors=['[aria-label="Toggle Code Editor"]','[title="Toggle Code Editor"]','button[aria-label*="Code Editor" i]','button[title*="Code Editor" i]','[role="button"][aria-label*="Code Editor" i]','[role="button"][title*="Code Editor" i]'];
     for(const selector of selectors){const el=[...document.querySelectorAll(selector)].find(visible);if(el)return el;}
-    return [...document.querySelectorAll('button,a,[role="button"]')].filter(visible).find(el=>{const meta=[el.title,el.getAttribute('aria-label'),el.getAttribute('data-tooltip'),el.textContent].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();return meta==='{}'||meta==='{ }'||/toggle code editor|code editor|source code|source editor|html source/.test(meta);})||null;
+    return [...document.querySelectorAll('button,a,[role="button"]')].filter(visible).find(el=>{
+      const meta=[el.title,el.getAttribute('aria-label'),el.getAttribute('data-tooltip'),el.textContent].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
+      return meta==='{}'||meta==='{ }'||/toggle code editor|code editor|source code|source editor|html source/.test(meta);
+    })||null;
   }
 
   function sourceEditorCandidates(){
     const set=new Set();
-    // Torn's current source-mode editor can be an otherwise anonymous textarea.
-    // Keep all visible textareas in the candidate set and disambiguate by size,
-    // source-mode timing, and metadata rather than requiring a source/code class.
-    for(const selector of ['textarea','.sceditor-source','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]'])for(const el of document.querySelectorAll(selector))if(visible(el))set.add(el);
+    // Torn source mode may expose an anonymous textarea, so candidates are
+    // narrowed by compose-area geometry and source characteristics below.
+    for(const selector of ['textarea','.sceditor-source','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]']){
+      for(const el of document.querySelectorAll(selector))if(visible(el))set.add(el);
+    }
     return [...set];
   }
 
@@ -702,11 +717,28 @@
     return fresh[0]||eligible.sort((a,b)=>score(b)-score(a))[0]||null;
   }
 
-  function editorText(element){if(!element)return '';const tag=String(element.tagName||'').toLowerCase();return tag==='textarea'||tag==='input'?String(element.value||''):String(element.innerText||element.textContent||'');}
-  function dispatchEditorEvents(element){const win=element?.ownerDocument?.defaultView||window;for(const type of ['input','change','keyup','blur'])try{element.dispatchEvent(new win.Event(type,{bubbles:true}));}catch{}}
+  function editorText(element){
+    if(!element)return '';
+    const tag=String(element.tagName||'').toLowerCase();
+    return tag==='textarea'||tag==='input'?String(element.value||''):String(element.innerText||element.textContent||'');
+  }
+
+  function dispatchEditorEvents(element){
+    const win=element?.ownerDocument?.defaultView||window;
+    for(const type of ['input','change','keyup','blur']){
+      try{element.dispatchEvent(new win.Event(type,{bubbles:true}));}catch{}
+    }
+  }
+
+  function brandedSourceIsComplete(html=''){
+    const source=String(html||'');
+    if(!source.includes('<table')||!source.includes(SHOP_BANNER_URL))return false;
+    const text=source.replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/gi,' ').replace(/\s+/g,' ').toUpperCase();
+    return !/\bCSHBACK\b/.test(text);
+  }
 
   function setSourceEditorHtml(element,html){
-    if(!element)return false;
+    if(!element||!brandedSourceIsComplete(html))return false;
     const value=String(html||'');
     const tag=String(element.tagName||'').toLowerCase();
     if(tag==='textarea'||tag==='input')setNativeValue(element,value);
@@ -719,82 +751,55 @@
   }
 
   function setPlainEditorText(element,text){
-    if(!element)return false;const tag=String(element.tagName||'').toLowerCase();
-    if(tag==='textarea'||tag==='input'){setNativeValue(element,text);return Boolean(editorText(element));}
-    try{element.focus();element.textContent=String(text||'');}catch{return false;}
+    if(!element)return false;
+    const value=String(text||''),tag=String(element.tagName||'').toLowerCase();
+    if(tag==='textarea'||tag==='input'){
+      setNativeValue(element,value);
+      return editorText(element)===value;
+    }
+    try{element.focus();element.textContent=value;}catch{return false;}
     dispatchEditorEvents(element);
-    return Boolean(String(element.innerText||element.textContent||'').trim());
+    return String(element.innerText||element.textContent||'')===value;
   }
 
   const sleepMs=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
-  function brandedMarkersFromHtml(html){
-    const text=String(html||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;|&#160;/gi,' ').replace(/\s+/g,' ').toUpperCase();
-    return ['CASHBACK REMINDER','QUALIFYING PURCHASE','YOUR CASHBACK','SEND YOUR COUPON','HOW IT WORKS','CASHBACK TIERS','RESTOCK ALERTS']
-      .filter(marker=>text.includes(marker));
+  function normalizeComposeText(value){
+    return String(value||'').replace(/\u00a0/g,' ').replace(/\s+/g,' ').trim().toUpperCase();
+  }
+
+  function brandedSourceSignature(expectedHtml=''){
+    try{
+      const doc=new DOMParser().parseFromString(String(expectedHtml||''),'text/html');
+      const markers=[...new Set([...doc.querySelectorAll('strong')]
+        .map(el=>normalizeComposeText(el.textContent||''))
+        .filter(text=>text.length>=3&&text.length<=160))]
+        .slice(0,12);
+      const requiresBanner=[...doc.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||'').includes(SHOP_BANNER_URL));
+      return {markers,requiresBanner};
+    }catch{
+      return {markers:[],requiresBanner:String(expectedHtml||'').includes(SHOP_BANNER_URL)};
+    }
   }
 
   function matchingBrandedTable(expectedHtml=''){
-    const markers=brandedMarkersFromHtml(expectedHtml);
-    const tables=[];
     const rich=findComposeRichEditorBody();
-    if(rich)tables.push(...rich.querySelectorAll?.('table')||[]);
-    for(const table of document.querySelectorAll('table'))if(!tables.includes(table)&&visible(table))tables.push(table);
+    if(!rich)return null;
+    const signature=brandedSourceSignature(expectedHtml);
+    const tables=rich.matches?.('table')?[rich]:[...(rich.querySelectorAll?.('table')||[])];
     return tables.find(table=>{
-      const text=String(table.innerText||table.textContent||'').replace(/\s+/g,' ').toUpperCase();
-      return markers.length?markers.every(marker=>text.includes(marker)):text.includes("MANIC'S MAD HOUSE");
+      const text=normalizeComposeText(table.innerText||table.textContent||'');
+      if(signature.markers.length&&!signature.markers.every(marker=>text.includes(marker)))return false;
+      if(signature.requiresBanner){
+        const hasBanner=[...table.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL));
+        if(!hasBanner)return false;
+      }
+      return signature.markers.length>0||signature.requiresBanner;
     })||null;
   }
 
-  function repairRenderedBrandedTable(expectedHtml=''){
-    const table=matchingBrandedTable(expectedHtml);
-    if(!table)return false;
-    let changed=false;
-    const doc=table.ownerDocument||document;
-
-    // Torn has intermittently dropped the "A" from the first rendered
-    // CASHBACK heading during source->visual conversion. Repair that exact
-    // visual-editor typo before the user sends.
-    try{
-      const walker=doc.createTreeWalker(table,NodeFilter.SHOW_TEXT);
-      const nodes=[];while(walker.nextNode())nodes.push(walker.currentNode);
-      for(const node of nodes){
-        const fixed=String(node.nodeValue||'').replace(/\bCSHBACK\b/g,'CASHBACK');
-        if(fixed!==node.nodeValue){node.nodeValue=fixed;changed=true;}
-      }
-    }catch{}
-
-    // Torn may also strip the external banner row while preserving the rest
-    // of the table. Restore the exact banner row from the expected branded
-    // payload when it is missing.
-    const wantsBanner=String(expectedHtml||'').includes(SHOP_BANNER_URL);
-    const hasBanner=[...table.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL));
-    if(wantsBanner&&!hasBanner){
-      try{
-        const holder=doc.createElement('div');holder.innerHTML=String(expectedHtml||'');
-        const sourceTable=holder.querySelector('table');
-        const bannerRow=[...(sourceTable?.querySelectorAll('tr')||[])].find(row=>[...row.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||'').includes(SHOP_BANNER_URL)));
-        if(bannerRow){
-          table.insertBefore(bannerRow.cloneNode(true),table.firstChild);
-          changed=true;
-        }
-      }catch{}
-    }
-
-    if(changed){
-      const rich=findComposeRichEditorBody()||table.closest?.('[contenteditable="true"]')||table.parentElement;
-      dispatchEditorEvents(rich||table);
-    }
-    return true;
-  }
-
   function richComposerHasBranding(expectedHtml=''){
-    const table=matchingBrandedTable(expectedHtml);
-    if(!table)return false;
-    // A complete matching branded table is authoritative. Banner repair is
-    // best-effort because Torn can sanitize external images after insertion.
-    repairRenderedBrandedTable(expectedHtml);
-    return true;
+    return Boolean(matchingBrandedTable(expectedHtml));
   }
 
   async function waitForSourceEditor(before=new Set(),timeoutMs=4000,allowFreshAnonymous=false,stillCurrent=null){
@@ -817,20 +822,12 @@
     return (!stillCurrent||stillCurrent())&&richComposerHasBranding(expectedHtml);
   }
 
-  function composeEditorSurfaceReady(){
-    const toggle=findTornCodeEditorToggle();if(!toggle)return false;
-    if(findComposeRichEditorBody())return true;
-    return Boolean(likelyTornSourceEditor(new Set(),true));
-  }
-
   async function injectHtmlThroughTornCodeEditor(htmlValue,stillCurrent=null){
-    const html=String(htmlValue||'').replace(/>\s+</g,'><').trim();if(!html)return false;
+    const html=String(htmlValue||'').replace(/>\s+</g,'><').trim();
+    if(!brandedSourceIsComplete(html))return false;
     if(stillCurrent&&!stillCurrent())return false;
     const toggle=findTornCodeEditorToggle();if(!toggle)return false;
 
-    // Treat the current editor mode as authoritative. Never toggle while Torn
-    // is still mounting the composer: that was the race that could make the
-    // first opened draft lose formatting while a later Outbox -> Compose worked.
     let source=likelyTornSourceEditor(new Set(),false);
     const rich=findComposeRichEditorBody();
     if(!source&&!rich)source=likelyTornSourceEditor(new Set(),true);
@@ -865,103 +862,115 @@
     box.textContent=String(text||'');
   }
 
-  function clearComposeFormattingNotice(){document.getElementById('mm-cu-compose-format-status')?.remove();}
+  function clearComposeFormattingNotice(){
+    document.getElementById('mm-cu-compose-format-status')?.remove();
+  }
 
   function clearMatchingPendingCompose(payload){
-    const current=GM_getValue(PENDING_COMPOSE_KEY,null);if(!current||typeof current!=='object')return;
-    const currentId=String(current.composeId||''),payloadId=String(payload?.composeId||'');
-    const sameId=currentId&&payloadId&&currentId===payloadId;
-    const legacyMatch=!currentId&&!payloadId&&String(current.playerId||'')===String(payload?.playerId||'')&&
-      Number(current.createdAt||0)===Number(payload?.createdAt||0)&&String(current.subject||'')===String(payload?.subject||'');
-    if(sameId||legacyMatch)GM_deleteValue(PENDING_COMPOSE_KEY);
+    const current=GM_getValue(PENDING_COMPOSE_KEY,null);
+    const currentId=String(current?.composeId||''),payloadId=String(payload?.composeId||'');
+    if(currentId&&payloadId&&currentId===payloadId)GM_deleteValue(PENDING_COMPOSE_KEY);
   }
 
   async function fillMessageComposer(){
-    if(composeFillCleanup){try{composeFillCleanup();}catch{}composeFillCleanup=null;}
     const generation=++composeFillGeneration;
-    if(!location.pathname.includes('messages.php'))return;
-    const payload=composePayloadForCurrentPage();if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
+    if(!location.pathname.includes('messages.php')||!location.hash.includes('compose'))return;
+    const payload=composePayloadForCurrentPage();
+    if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
 
-    let timer=null,inFlight=false,finished=false,readyKey='',readySince=0,fillAttempts=0;
-    const startedAt=Date.now(),requiresBranding=Boolean(payload.bodyHtml);
-    const cleanup=()=>{
-      if(timer)clearInterval(timer);timer=null;
-      if(composeFillGeneration===generation)composeFillCleanup=null;
-    };
-    composeFillCleanup=cleanup;
-    const stop=(success,rich=true,showError=true)=>{
-      if(finished)return;
-      finished=true;cleanup();
-      if(success){
-        clearMatchingPendingCompose(payload);clearComposeFormattingNotice();
-        statusText=rich?'Message prepared in Torn composer with recipient + branded formatting verified. Send remains manual.':'Message prepared in Torn composer with recipient verified. Send remains manual.';
+    const startedAt=Date.now();
+    const requiresBranding=Boolean(payload.bodyHtml);
+    const hasBody=requiresBranding||Boolean(payload.body);
+    let fillAttempts=0,readyKey='',readySince=0;
+
+    const stillCurrent=()=>generation===composeFillGeneration&&
+      location.pathname.includes('messages.php')&&location.hash.includes('compose')&&
+      (!payload.playerId||getComposeXid()===String(payload.playerId||''));
+
+    const fail=(showError=true)=>{
+      clearMatchingPendingCompose(payload);
+      if(showError&&requiresBranding){
+        statusText='Branded formatting is not ready. Draft was NOT downgraded to plain text.';
+        composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry.','error');
       }else{
-        clearMatchingPendingCompose(payload);
-        if(showError&&requiresBranding){
-          statusText='Branded formatting is not ready. Draft was NOT downgraded to plain text.';
-          composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry.','error');
-        }else clearComposeFormattingNotice();
+        clearComposeFormattingNotice();
       }
     };
-    const stillCurrent=()=>generation===composeFillGeneration&&location.pathname.includes('messages.php')&&location.hash.includes('compose')&&
-      (!payload.playerId||getComposeXid()===String(payload.playerId||''));
-    const tryFill=async()=>{
-      if(finished||inFlight)return false;
-      if(!stillCurrent()){stop(false,requiresBranding,false);return false;}
-      if(Date.now()-startedAt>=COMPOSE_FILL_TIMEOUT_MS){stop(false,requiresBranding,true);return false;}
-      inFlight=true;
-      try{
-        const xid=getComposeXid(),subject=findComposeSubjectInput(),recipient=findComposeRecipientInput(subject);
-        const recipientOK=(!payload.playerId)||(xid===String(payload.playerId||'')&&recipientMatchesPayload(payload,recipient));
-        const editorReady=composeEditorSurfaceReady();
-        if(!subject||!recipientOK||!editorReady){
-          readyKey='';readySince=0;
-          statusText=!subject?'Waiting for Torn compose form…':!recipientOK?'Waiting for Torn to resolve the intended recipient…':'Waiting for Torn message editor…';
-          composeFormattingNotice('Preparing message… waiting for Torn to finish loading the original compose form.');
-          return false;
-        }
 
-        const surfaceKey=[xid,String(recipient?.value||recipient?.textContent||''),Boolean(findComposeRichEditorBody()),Boolean(likelyTornSourceEditor(new Set(),true))].join('|');
-        if(surfaceKey!==readyKey){readyKey=surfaceKey;readySince=Date.now();return false;}
-        if(Date.now()-readySince<COMPOSE_SURFACE_STABLE_MS)return false;
+    while(stillCurrent()&&Date.now()-startedAt<COMPOSE_FILL_TIMEOUT_MS){
+      const xid=getComposeXid();
+      const subject=findComposeSubjectInput();
+      const recipient=findComposeRecipientInput(subject);
+      const recipientOK=(!payload.playerId)||(xid===String(payload.playerId||'')&&recipientMatchesPayload(payload,recipient));
+      const rich=findComposeRichEditorBody();
+      const source=likelyTornSourceEditor(new Set(),true);
+      const editorReady=!hasBody||
+        (requiresBranding?Boolean(findTornCodeEditorToggle()&&(rich||source)):Boolean(findComposeBodyInput(subject)||rich));
 
-        fillAttempts++;
-        if(!stillCurrent())return false;
-        setNativeValue(subject,payload.subject);await sleepMs(30);
-        if(!stillCurrent())return false;
-        let subjectOK=String(subject.value||'').trim()===String(payload.subject||'').trim();
-        let bodyOK=false,rich=requiresBranding;
+      if(!subject||!recipientOK||!editorReady){
+        readyKey='';readySince=0;
+        statusText=!subject?'Waiting for Torn compose form…':!recipientOK?'Waiting for Torn to resolve the intended recipient…':'Waiting for Torn message editor…';
+        composeFormattingNotice('Preparing message… waiting for Torn to finish loading the original compose form.');
+        await sleepMs(500);
+        continue;
+      }
 
-        if(requiresBranding){
-          bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent);
-          if(!bodyOK){
-            readyKey='';readySince=0;
-            if(fillAttempts>=COMPOSE_MAX_FORMAT_ATTEMPTS){stop(false,true,true);return false;}
-            statusText='Torn rich editor was not ready; retrying the original compose form.';
-            composeFormattingNotice('Preparing branded message… do not send until this notice disappears.');
-            return false;
-          }
-        }else{
-          const body=findComposeBodyInput(subject)||findComposeRichEditorBody();
-          if(body)bodyOK=setPlainEditorText(body,payload.body);
-        }
+      const surfaceKey=[xid,String(recipient?.value||recipient?.textContent||''),Boolean(rich),Boolean(source)].join('|');
+      if(surfaceKey!==readyKey){
+        readyKey=surfaceKey;readySince=Date.now();
+        await sleepMs(COMPOSE_SURFACE_STABLE_MS);
+        continue;
+      }
+      if(Date.now()-readySince<COMPOSE_SURFACE_STABLE_MS){
+        await sleepMs(Math.max(40,COMPOSE_SURFACE_STABLE_MS-(Date.now()-readySince)));
+        continue;
+      }
 
+      fillAttempts++;
+      if(payload.subject)setNativeValue(subject,payload.subject);
+      await sleepMs(30);
+      if(!stillCurrent())break;
+
+      const subjectOK=!payload.subject||String(subject.value||'').trim()===String(payload.subject||'').trim();
+      let bodyOK=!hasBody;
+
+      if(requiresBranding){
+        bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent);
+      }else if(hasBody){
+        const body=findComposeBodyInput(subject)||findComposeRichEditorBody();
+        bodyOK=Boolean(body)&&setPlainEditorText(body,payload.body);
+      }
+
+      if(bodyOK){
         await sleepMs(COMPOSE_POST_FILL_VERIFY_MS);
-        if(!stillCurrent()){stop(false,requiresBranding,false);return false;}
+        if(!stillCurrent())break;
         const verifySubject=findComposeSubjectInput();
         const verifyRecipient=findComposeRecipientInput(verifySubject);
         const verifyRecipientOK=(!payload.playerId)||(getComposeXid()===String(payload.playerId||'')&&recipientMatchesPayload(payload,verifyRecipient));
-        subjectOK=Boolean(verifySubject)&&String(verifySubject.value||'').trim()===String(payload.subject||'').trim();
-        bodyOK=requiresBranding?richComposerHasBranding(payload.bodyHtml):bodyOK;
-        if(verifyRecipientOK&&subjectOK&&bodyOK){stop(true,rich,true);return true;}
+        const verifySubjectOK=!payload.subject||(Boolean(verifySubject)&&String(verifySubject.value||'').trim()===String(payload.subject||'').trim());
+        const verifyBodyOK=requiresBranding?richComposerHasBranding(payload.bodyHtml):bodyOK;
+        if(verifyRecipientOK&&verifySubjectOK&&verifyBodyOK&&subjectOK){
+          clearMatchingPendingCompose(payload);
+          clearComposeFormattingNotice();
+          statusText=requiresBranding
+            ? 'Message prepared in Torn composer with recipient + branded formatting verified. Send remains manual.'
+            : 'Message prepared in Torn composer with recipient verified. Send remains manual.';
+          return;
+        }
+      }
 
-        readyKey='';readySince=0;
-        if(fillAttempts>=COMPOSE_MAX_FORMAT_ATTEMPTS){stop(false,requiresBranding,true);return false;}
-        return false;
-      }finally{inFlight=false;}
-    };
-    tryFill();
-    timer=setInterval(()=>{if(!finished)tryFill();},500);
+      if(fillAttempts>=COMPOSE_MAX_FORMAT_ATTEMPTS){
+        fail(true);
+        return;
+      }
+      readyKey='';readySince=0;
+      statusText=requiresBranding?'Torn rich editor was not ready; retrying the original compose form.':'Torn compose form changed while preparing the message; retrying.';
+      composeFormattingNotice(requiresBranding?'Preparing branded message… do not send until this notice disappears.':'Preparing message…');
+      await sleepMs(500);
+    }
+
+    if(stillCurrent())fail(true);
+    else clearComposeFormattingNotice();
   }
 
   function normalizedDeliveryText(value){
