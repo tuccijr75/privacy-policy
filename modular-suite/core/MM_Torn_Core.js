@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.4';
+  const CORE_VERSION = '8.0.0-alpha.5';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -265,6 +265,9 @@
   const DOCK_ORDER_KEY='mm_torn_module_dock_order_v1';
   const DOCK_FLOAT_KEY='mm_torn_module_float_positions_v1';
   const PANEL_POSITION_PREFIX='mm_torn_panel_position_v1:';
+  const LAUNCHER_EDGE_MARGIN=4;
+  const LAUNCHER_SNAP_GAP=4;
+  const LAUNCHER_SNAP_DISTANCE=18;
   const DOCK_META=Object.freeze({
     crm:{label:'CRM',accent:'#59636d',icon:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 5v14M4 10h16M12 10v9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>'},
     scout:{label:'Market Scout',accent:'#287f85',icon:'<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4 4M8 13l2-3 2 2 3-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'},
@@ -321,7 +324,7 @@
     const style=document.createElement('style');
     style.id=DOCK_STYLE_ID;
     style.textContent=`
-      #${DOCK_ID}{position:fixed;z-index:2147483645;display:flex;gap:2px;align-items:flex-end;padding:0;pointer-events:auto;user-select:none}
+      #${DOCK_ID}{position:fixed;z-index:2147483645;display:flex;gap:${LAUNCHER_SNAP_GAP}px;align-items:flex-end;padding:0;pointer-events:auto;user-select:none}
       #${DOCK_ID}:empty{display:none}
       #${DOCK_ID} .mm-torn-dock-btn,.mm-torn-floating-btn{width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,color-mix(in srgb,var(--mm-accent) 72%,#555) 0%,color-mix(in srgb,var(--mm-accent) 54%,#252525) 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:filter .12s ease,transform .12s ease,border-color .12s ease;user-select:none}
       #${DOCK_ID} .mm-torn-dock-btn:hover,.mm-torn-floating-btn:hover{filter:brightness(1.14);border-color:#666}
@@ -393,6 +396,99 @@
     return candidates.sort((a,b)=>b.score-a.score)[0]||null;
   }
 
+  function launcherRect(node,rect=null){
+    const r=rect||node?.getBoundingClientRect?.();
+    if(!r||r.width<=0||r.height<=0)return null;
+    return {node,left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height};
+  }
+
+  function launcherObstacleRects(button){
+    const out=[];const seen=new Set();
+    const push=(node,rect=null)=>{
+      if(!node||node===button||seen.has(node))return;
+      const r=launcherRect(node,rect);if(!r)return;
+      seen.add(node);out.push(r);
+    };
+
+    document.querySelectorAll('[data-mm-dock-id]').forEach(node=>push(node));
+    const native=visibleBottomToolbarCandidate();
+    for(const entry of native?.controls||[])push(entry.node,entry.r);
+    return out;
+  }
+
+  function launcherTooClose(left,top,width,height,obstacle,gap=LAUNCHER_SNAP_GAP){
+    return left<obstacle.right+gap&&left+width+gap>obstacle.left
+      &&top<obstacle.bottom+gap&&top+height+gap>obstacle.top;
+  }
+
+  function resolveLauncherPosition(button,left,top,{obstacles=null,snap=true}={}){
+    const width=button?.offsetWidth||42;
+    const height=button?.offsetHeight||42;
+    const maxLeft=Math.max(LAUNCHER_EDGE_MARGIN,window.innerWidth-width-LAUNCHER_EDGE_MARGIN);
+    const maxTop=Math.max(LAUNCHER_EDGE_MARGIN,window.innerHeight-height-LAUNCHER_EDGE_MARGIN);
+    const raw={
+      left:clamp(left,LAUNCHER_EDGE_MARGIN,maxLeft),
+      top:clamp(top,LAUNCHER_EDGE_MARGIN,maxTop)
+    };
+    const obs=Array.isArray(obstacles)?obstacles:launcherObstacleRects(button);
+    const free=point=>!obs.some(o=>launcherTooClose(point.left,point.top,width,height,o));
+    const colliding=obs.filter(o=>launcherTooClose(raw.left,raw.top,width,height,o));
+    const candidates=[];
+
+    const add=(leftValue,topValue,kind='icon')=>{
+      const point={
+        left:clamp(leftValue,LAUNCHER_EDGE_MARGIN,maxLeft),
+        top:clamp(topValue,LAUNCHER_EDGE_MARGIN,maxTop),
+        kind
+      };
+      point.distance=Math.hypot(point.left-raw.left,point.top-raw.top);
+      if(free(point))candidates.push(point);
+    };
+
+    if(snap&&Math.abs(raw.top-maxTop)<=LAUNCHER_SNAP_DISTANCE)add(raw.left,maxTop,'bottom');
+
+    for(const o of obs){
+      const centerTop=o.top+(o.height-height)/2;
+      const centerLeft=o.left+(o.width-width)/2;
+      const nearHorizontal=raw.top<o.bottom+LAUNCHER_SNAP_DISTANCE&&raw.top+height>o.top-LAUNCHER_SNAP_DISTANCE;
+      const nearVertical=raw.left<o.right+LAUNCHER_SNAP_DISTANCE&&raw.left+width>o.left-LAUNCHER_SNAP_DISTANCE;
+      const force=colliding.includes(o);
+
+      if(force||(snap&&nearHorizontal&&Math.abs((raw.left+width)-o.left)<=LAUNCHER_SNAP_DISTANCE))
+        add(o.left-width-LAUNCHER_SNAP_GAP,centerTop);
+      if(force||(snap&&nearHorizontal&&Math.abs(raw.left-o.right)<=LAUNCHER_SNAP_DISTANCE))
+        add(o.right+LAUNCHER_SNAP_GAP,centerTop);
+      if(force||(snap&&nearVertical&&Math.abs((raw.top+height)-o.top)<=LAUNCHER_SNAP_DISTANCE))
+        add(centerLeft,o.top-height-LAUNCHER_SNAP_GAP);
+      if(force||(snap&&nearVertical&&Math.abs(raw.top-o.bottom)<=LAUNCHER_SNAP_DISTANCE))
+        add(centerLeft,o.bottom+LAUNCHER_SNAP_GAP);
+    }
+
+    if(!colliding.length&&free(raw)){
+      const nearby=candidates.filter(point=>point.distance<=LAUNCHER_SNAP_DISTANCE);
+      if(!nearby.length)return raw;
+      nearby.sort((a,b)=>a.distance-b.distance||(a.kind==='bottom'?-1:1));
+      return {left:nearby[0].left,top:nearby[0].top};
+    }
+
+    if(candidates.length){
+      candidates.sort((a,b)=>a.distance-b.distance);
+      return {left:candidates[0].left,top:candidates[0].top};
+    }
+
+    const step=Math.max(width,height)+LAUNCHER_SNAP_GAP;
+    for(let ring=1;ring<=8;ring++){
+      for(const [dx,dy] of [[-ring*step,0],[ring*step,0],[0,-ring*step],[0,ring*step]]){
+        const point={
+          left:clamp(raw.left+dx,LAUNCHER_EDGE_MARGIN,maxLeft),
+          top:clamp(raw.top+dy,LAUNCHER_EDGE_MARGIN,maxTop)
+        };
+        if(free(point))return point;
+      }
+    }
+    return raw;
+  }
+
   function positionDock(){
     const dock=document.getElementById(DOCK_ID);
     if(!dock||!dock.children.length)return;
@@ -400,7 +496,7 @@
 
     if(native){
       const first=native.firstRect;
-      const gap=Math.round(native.nativeGap||3);
+      const gap=LAUNCHER_SNAP_GAP;
       const desiredLeft=first.left-dock.offsetWidth-gap;
       const desiredTop=first.top+(first.height-dock.offsetHeight)/2;
 
@@ -479,10 +575,9 @@
     button.classList.add('mm-torn-floating-btn');
     button.dataset.mmFloating='1';
     button.draggable=false;
-    const width=button.offsetWidth||42;
-    const height=button.offsetHeight||42;
-    const nextLeft=clamp(left??rect.left,4,window.innerWidth-width-4);
-    const nextTop=clamp(top??rect.top,4,window.innerHeight-height-4);
+    const resolved=resolveLauncherPosition(button,left??rect.left,top??rect.top,{snap:true});
+    const nextLeft=resolved.left;
+    const nextTop=resolved.top;
     button.style.position='fixed';
     button.style.left=Math.round(nextLeft)+'px';
     button.style.top=Math.round(nextTop)+'px';
@@ -506,7 +601,8 @@
         startY:event.clientY,
         left:rect.left,
         top:rect.top,
-        moved:false
+        moved:false,
+        obstacles:launcherObstacleRects(button)
       };
       button.__mmFloatPointer=state;
       try{button.setPointerCapture(event.pointerId);}catch{}
@@ -519,10 +615,9 @@
       if(!state.moved&&Math.hypot(dx,dy)<4)return;
       state.moved=true;
       button.classList.add('mm-torn-moving');
-      const width=button.offsetWidth||42;
-      const height=button.offsetHeight||42;
-      button.style.left=Math.round(clamp(state.left+dx,4,window.innerWidth-width-4))+'px';
-      button.style.top=Math.round(clamp(state.top+dy,4,window.innerHeight-height-4))+'px';
+      const resolved=resolveLauncherPosition(button,state.left+dx,state.top+dy,{obstacles:state.obstacles,snap:true});
+      button.style.left=Math.round(resolved.left)+'px';
+      button.style.top=Math.round(resolved.top)+'px';
       event.preventDefault();
     });
     const finish=event=>{
@@ -534,12 +629,15 @@
       if(!state.moved)return;
       button.__mmSuppressClick=true;
       const rect=button.getBoundingClientRect();
-      const cx=rect.left+rect.width/2;
-      const cy=rect.top+rect.height/2;
+      const resolved=resolveLauncherPosition(button,rect.left,rect.top,{snap:true});
+      button.style.left=Math.round(resolved.left)+'px';
+      button.style.top=Math.round(resolved.top)+'px';
+      const cx=resolved.left+rect.width/2;
+      const cy=resolved.top+rect.height/2;
       if(pointNearDock(cx,cy,26)){
         dockLauncher(button,key);
       }else{
-        saveLauncherFloat(key,{floating:true,left:rect.left,top:rect.top});
+        saveLauncherFloat(key,{floating:true,left:resolved.left,top:resolved.top});
       }
     };
     button.addEventListener('pointerup',finish);
@@ -578,11 +676,10 @@
         positionDock();
         document.querySelectorAll('.mm-torn-floating-btn[data-mm-dock-id]').forEach(button=>{
           const rect=button.getBoundingClientRect();
-          const left=clamp(rect.left,4,window.innerWidth-(button.offsetWidth||42)-4);
-          const top=clamp(rect.top,4,window.innerHeight-(button.offsetHeight||42)-4);
-          button.style.left=Math.round(left)+'px';
-          button.style.top=Math.round(top)+'px';
-          saveLauncherFloat(String(button.dataset.mmDockId||''),{floating:true,left,top});
+          const resolved=resolveLauncherPosition(button,rect.left,rect.top,{snap:true});
+          button.style.left=Math.round(resolved.left)+'px';
+          button.style.top=Math.round(resolved.top)+'px';
+          saveLauncherFloat(String(button.dataset.mmDockId||''),{floating:true,left:resolved.left,top:resolved.top});
         });
       },{passive:true});
     }
