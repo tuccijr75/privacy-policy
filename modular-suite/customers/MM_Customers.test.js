@@ -78,7 +78,8 @@ assert(userSrc.includes("value.includes('['+id+']')"));
 assert(userSrc.includes('function brandedSourceIsComplete'));
 assert(userSrc.includes('function brandedSourceSignature'));
 assert(userSrc.includes('function matchingBrandedTable'));
-assert(userSrc.includes('const hasBody=requiresBranding||Boolean(payload.body);'),'subject-only compose links must not require body injection');
+assert(!composePayload.includes('urlSubject')&&!composePayload.includes('urlBody'),'generic compose URLs must not be hydrated by MM_Customers');
+assert(userSrc.includes('const hasBody=requiresBranding||Boolean(payload.body);'),'plain-message support must remain available for MM_Customers drafts');
 assert(userSrc.includes('injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent)'));
 assert(userSrc.includes('recipient + branded formatting verified'));
 
