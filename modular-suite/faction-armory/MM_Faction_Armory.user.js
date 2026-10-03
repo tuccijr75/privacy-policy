@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.12
+// @version      8.0.0-alpha.13
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.12';
+  const VERSION='8.0.0-alpha.13';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -703,6 +703,13 @@
       .slice(0,Math.max(1,limit));
   }
 
+  function staleSavedMemberCount(){
+    const vault=getVault(),profiles=state?.factionInventory?.memberReadiness?.profiles||{};
+    const staleHours=Math.max(1,Number(state?.factionInventory?.memberReadiness?.settings?.staleHours||72));
+    const cutoff=Date.now()-staleHours*3600000;
+    return Object.keys(vault?.entries||{}).filter(id=>(Date.parse(profiles[id]?.verifiedAt||'')||0)<cutoff).length;
+  }
+
   async function autoRefreshArmory({forceFaction=false}={}){
     if(autoRefreshRunning||busy||document.visibilityState!=='visible')return;
     const root=document.getElementById(ROOT_ID);
@@ -711,10 +718,15 @@
     try{
       state=await core.readLegacyState();
       const messages=[];
-      if(factionKey()&&(forceFaction||factionRefreshDue(state?.factionInventory||{}))){
+      const factionDue=forceFaction||factionRefreshDue(state?.factionInventory||{});
+      if(factionKey()&&factionDue){
         await refreshFaction();
         messages.push('faction checked');
+      }else if(!factionKey()&&factionDue){
+        messages.push('faction data is stale; save a faction API key to enable automatic refresh');
       }
+      const staleMemberCount=staleSavedMemberCount();
+      if(staleMemberCount&&!vaultSession?.key)messages.push(staleMemberCount+' saved member profile'+(staleMemberCount===1?' is':'s are')+' stale; unlock the member-key vault during an Armory session to enable automatic refresh');
       const staleIds=staleSavedMemberIds();
       if(staleIds.length){
         let ok=0;
@@ -1027,7 +1039,7 @@
   function settingsHtml(){
     const keySaved=Boolean(factionKey());
     return card(
-      '<b>Faction API</b><div class="mm-fa-muted">Stored only in this Faction Armory userscript. Required for Refresh Faction.</div>'+
+      '<b>Faction API</b><div class="mm-fa-muted">Stored only in this Faction Armory userscript. '+(keySaved?'Saved — automatic faction refresh is enabled when Torn data is due.':'Not saved — cached faction data cannot refresh automatically.')+'</div>'+
       '<div class="mm-fa-grid" style="grid-template-columns:minmax(220px,1fr) auto auto;margin-top:7px;">'+
         '<input id="mm-fa-faction-key" class="mm-fa-input" type="password" autocomplete="off" placeholder="'+(keySaved?'Faction API key saved':'Faction-compatible Limited/custom API key')+'">'+
         '<button id="mm-fa-save-faction-key" style="'+button(true)+'">Save</button>'+
