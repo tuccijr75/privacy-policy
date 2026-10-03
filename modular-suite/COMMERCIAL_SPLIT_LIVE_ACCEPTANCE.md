@@ -667,6 +667,18 @@ After installing alpha.5 and opening MM_Customers:
 - **PASS** — no `Resolving name…` placeholder is currently visible in the active queue.
 - **PENDING LIVE** — test Prepare Welcome on one queued customer, verify immediate Torn Messages routing + branded prefill, then only if an actual intended message is sent verify automatic removal from New Customers and automatic contact/coupon state reconciliation.
 
+
+### MM_Customers alpha.5 Prepare Welcome live routing / compose check
+Live test using queued new customer birkodi [4488297]:
+- **PASS** — Prepare Welcome immediately routed the same Torn tab to Messages compose for XID 4488297.
+- **PASS** — Torn recipient field resolved correctly to `birkodi [4488297]`.
+- **PASS** — Subject auto-filled as `Welcome to MANIC'S MAD HOUSE!`.
+- **PASS** — branded rich body auto-filled: MANIC'S MAD HOUSE banner, named greeting for birkodi, coupon SAVE-4488297, two-redemption display, coupon-response CTA, cashback tiers, qualification rules, favorites CTA, and Restock section.
+- **PASS / SAFETY** — Torn SEND remains a manual human action.
+- **PASS** — prior “Opening Torn composer…” dead-end is repaired for this customer.
+- **CLARIFICATION** — the additional MANIC'S MAD HOUSE content visible lower on the page is Previous Conversation history, not a duplicate draft injection.
+- **PENDING LIVE** — send-state automation cannot be accepted until an actual intended Welcome is manually sent and the CRM is then checked for automatic contacted/message-count/coupon issuance and removal from New Customers.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
