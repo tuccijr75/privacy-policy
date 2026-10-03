@@ -478,6 +478,15 @@ Live retest of Restock -> RonyarBedwyr -> Prepare Alert after installing alpha.2
 - **PASS** — rich-message formatting is present in the Torn editor; alpha.2's generated HTML includes explicit dark backgrounds, colored headings, banner, borders, and table layout.
 - **PENDING** — Mark Sent / Dismiss Pending state controls still need a live UI/state check after returning to MM_Customers Restock; no message should be sent merely to test the composer.
 
+
+### MM_Customers alpha.2 Restock pending-state live check
+After preparing (but not sending) the RonyarBedwyr alert and returning to Restock:
+- **PASS** — MM_Customers reports v8.0.0-alpha.2.
+- **PASS** — RonyarBedwyr remains at `last notified 2d ago`; preparing a draft did not falsely mark the notification as sent.
+- **PASS** — the pending draft exposes both `Mark Sent` and `Dismiss Pending`.
+- **PASS / SAFETY** — notification completion is now an explicit owner action after manual Torn send rather than being inferred from draft preparation.
+- **PENDING LIVE CHECK** — because this test message was intentionally not sent, use `Dismiss Pending` and verify the pending controls disappear while `last notified` remains unchanged.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
