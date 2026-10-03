@@ -420,6 +420,22 @@ Findings:
 - **UX / SCALE GAP** — no search/filter by subscriber, interests, last notified age, or matching count.
 - **UX GAP** — Interests editing uses a raw prompt with comma-separated exact names/IDs instead of selectable current/recent items, making mistakes likely.
 
+
+### MM_Customers Restock subscriber detail — RonyarBedwyr
+Live expanded state:
+- RonyarBedwyr [4534960]
+- Interests: All items
+- 12 matching current Bazaar SKUs
+- last notified 2d ago
+- actions: Prepare Alert / Interests / Remove
+
+Findings:
+- **PASS** — preserved subscriber notification metadata is visible; migrated/legacy `lastNotified` can survive and render.
+- **REFINED DEFECT** — the current v8 Prepare Alert path does not advance `lastNotified`; the existing 2d value can therefore become stale after future alerts prepared/sent through this module.
+- **UX / EFFECTIVENESS GAP** — “All items” produces 12 matches and Prepare Alert would include up to 12 current listings, regardless of whether any are newly restocked since the subscriber's last notification.
+- **UX / SAFETY GAP** — Prepare Alert is enabled without any visible warning that the same inventory may already have been notified 2d ago, and without showing underlying Bazaar snapshot age.
+- **WORKFLOW GAP** — no subscriber-level Mark Sent / Dismiss Pending / Snooze controls are exposed beside the prepared-alert action.
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
