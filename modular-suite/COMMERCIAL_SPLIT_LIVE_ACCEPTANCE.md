@@ -1146,6 +1146,58 @@ Implementation checkpoints:
 3. inspect one known member Build for price/value output,
 4. use one Faction Acquire line → Find Best Source and verify the Acquisitions source-comparison/routing flow without completing a purchase.
 
+
+### MM_Customers alpha.14 — false-send delivery reconciliation repair
+
+Live defect reported by owner:
+- a newly prepared customer welcome was marked sent even though the Torn message had **not** been sent,
+- the customer was therefore removed from **New Customers** prematurely.
+
+Root cause:
+- MM_Customers alpha.13 treated either leaving Torn's `#compose` route or the compose Subject control disappearing as proof that a message had been delivered.
+- Torn Messages is SPA-driven, so route/editor transitions can happen without a successful send.
+- the submit detector could also arm on a non-Send form submission whenever the compose view was visible.
+
+Repair in **MM_Customers v8.0.0-alpha.14**:
+- only a trusted human interaction with the exact Torn **Send / Send message** control can arm delivery verification,
+- form-submit detection requires trusted `event.submitter` to be that exact Send control,
+- route changes, compose disappearance and Subject disappearance are **never** delivery confirmation,
+- successful delivery now requires fresh post-click evidence:
+  - a new Torn sent/success notification that was not present before the click, or
+  - the prepared message fingerprint appearing in non-editor conversation/transcript content after the click,
+- each tracked delivery has a unique delivery ID plus a local completion receipt so duplicate route hooks cannot increment message counts twice,
+- if no Torn confirmation appears within 12 seconds, the draft becomes **SEND CLICK UNCONFIRMED** and customer/contact/coupon state is left untouched,
+- the pending-delivery card supports Reopen Draft, Cancel Tracking, and manual **Confirm Sent** only after an explicit Outbox-verification confirmation,
+- the manual Restock **Mark Sent** bookkeeping button was removed; restock history is reconciled through the same confirmed-delivery path,
+- Refunds action wording is now **Prepare Cashback Reminder** to avoid implying that preparation itself sends a message,
+- a guarded **Recent first-contact recovery** section can restore a recent false-positive first contact to New Customers; it resets contacted/first-message/message-count state and unissues the unused coupon while preserving its code.
+
+Script-wide delivery audit:
+- the same unsafe route/editor-disappearance confirmation shortcut was found in legacy `Torn_Bazaar_Customer_CRM.user.js` message detectors and in `Torn_Bazaar_Customer_CRM.runtime.js`,
+- both legacy surfaces were hardened so route/editor disappearance no longer counts as delivery and their detectors require trusted Send interaction,
+- superseded MM Bazaar Manager still contains a clearly manual **Mark Sent + Issue** legacy control; it is not an automatic send detector and remains superseded/non-production pending explicit owner retirement approval.
+
+Static checks:
+- MM_Customers alpha.14 parses,
+- legacy CRM userscript/runtime parse,
+- old route-exit confirmation shortcut is absent from the repaired active/legacy delivery detectors,
+- alpha.14 regression assertions cover trusted Send interaction, unconfirmed-send safety, idempotent delivery receipts, transcript evidence and false-send recovery.
+
+Implementation checkpoints:
+- Customers alpha.14 delivery repair: `6a183fd90d43468867f012f8f0d2a7b679ae3f47`
+- Customers delivery regressions: `8967a9e43e9db9667b853cb5f428d5b89224d4bd`
+- legacy CRM userscript detector hardening: `cddd85eac1ea99a9543cb17049c50d58e4495063`
+- legacy CRM runtime detector hardening: `05005ecb357285b082964d260c6a162e886c8ae6`
+- suite manifest alpha.31: `72757aae1272c4149756ecb722266eec43736a20`
+
+**PENDING LIVE RETEST**:
+1. install MM_Customers alpha.14,
+2. open Customers/New Customers and use **Recent first-contact recovery → Restore to New Customers** for the customer that was falsely marked sent,
+3. verify that customer returns to the New Customers queue,
+4. prepare a welcome and leave the Torn composer open to verify recipient/subject/formatting without sending,
+5. for a genuinely intended message, verify the customer remains New until Torn provides actual post-Send confirmation.
+
+
 ## Acceptance invariants
 
 - A module failure does not disable the other two.
