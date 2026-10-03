@@ -42,6 +42,8 @@ PASS:
 
 ## Live order
 
+Before testing, disable the installed non-production **MM Bazaar Manager** and **MM Market Scout** userscripts in Tampermonkey. Keep their source files in the branch for rollback; disabling them prevents duplicate launchers, refresh controls and Weav3r watchers during replacement acceptance.
+
 Run in this order so ROI has cost data before evaluation:
 
 1. Install **MM_Acquisitions alpha.1**.
