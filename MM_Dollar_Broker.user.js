@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.6
+// @version      0.1.0-rc.7
 // @description  Manual foreground Bazaar inspection and cross-tab $1 observations. Never buys or scans unattended.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -24,7 +24,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.6';
+const VERSION = '0.1.0-rc.7';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
@@ -250,7 +250,11 @@ function semanticCards(root, win) {
       if(!identity) continue;
       const prices=currencyNodes(node,win);
       const quantity=stockQuantity(node,win);
-      if(prices.length!==1 || quantity===null) continue;
+      // Once an item card exposes either a price or stock signal, treat it as a
+      // candidate and let parseSemanticCard validate the complete contract.
+      // This prevents malformed visible cards from being silently skipped while
+      // other cards on the same Bazaar still produce alerts.
+      if(prices.length===0 && quantity===null) continue;
       if(!used.has(node)) {used.add(node);found.push(node);}
       break;
     }
