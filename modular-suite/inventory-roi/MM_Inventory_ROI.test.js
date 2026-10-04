@@ -15,6 +15,7 @@ assert(!/async\s+function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml 
 assert(/function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml declaration missing');
 new Function(userSource);
 assert(userSource.includes("const VERSION='8.0.0-alpha.7.1';"));
+assert(userSource.includes('MM_Torn_Core.js?v=8.0.0-alpha.9'));
 assert(userSource.includes('async function autoRefreshInventory'));
 assert(userSource.includes('SALES_BACKFILL_MS=31*24*60*60*1000'));
 assert(userSource.includes('Torn Inventory payload was unavailable or malformed.'));
