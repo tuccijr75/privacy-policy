@@ -1666,4 +1666,30 @@ Next live action:
 2. press `Refresh Ranked`;
 3. inspect resulting counts/filters and representative rows;
 4. run `Analyze AH` on at least one low-tier BB-floor weapon and one premium weapon.
+### alpha.12 ranked live-row fix — 2026-10-04
+
+Live desktop phase 2 exposed a root-cause defect:
+- ranked feed refresh succeeded and persisted 300 market + 224 auction rows;
+- UI then showed 0 Primary matches despite current feed data containing fresh Primary market rows and future Primary auctions;
+- cause: `evaluateListing()` normalized ranked rows through `normalizedHistoryRow()`, which discarded live-only metadata (`source`, `lastUpdated`, `endsAt`, seller/routing fields);
+- freshness filtering therefore treated every evaluated row as source-less/non-auction with no observation time and removed it.
+
+Fix:
+- preserve source, lastUpdated, endsAt, sellerId, sellerName, quantity and URL through ranked normalization/valuation;
+- bump ranked logic cache key to alpha.2;
+- bump userscript/manifest candidate to `8.0.0-alpha.12` / suite alpha.51;
+- no freshness rule was bypassed or weakened.
+
+Verification:
+- current TornW3B Primary feed: 100 sampled rows, 53 fresh inside the 24h live-age limit;
+- current TornW3B auction sample: future rows include Primary weapons;
+- alpha.12 evaluation fixture preserved a live Primary Bazaar row (`9mm Uzi`) with source + lastUpdated;
+- alpha.12 evaluation fixture preserved a future Primary auction row (`Benelli M1 Tactical`) with source + endsAt;
+- static candidate still compiles and uses the same existing Acquisitions launcher.
+
+Next live action:
+1. install alpha.12 candidate;
+2. refresh Torn;
+3. open Ranked and Refresh Ranked;
+4. verify Primary now returns live rows before continuing AH valuation acceptance.
 
