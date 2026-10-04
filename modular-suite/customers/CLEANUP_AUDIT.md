@@ -175,3 +175,21 @@ Interference conclusion:
 - no non-Customers script was changed during this repair.
 
 Alpha.19 therefore treats current Torn TinyMCE behavior as the source contract rather than carrying forward compatibility code for obsolete editor architectures.
+
+
+## Alpha.20 coupon redemption link contract
+
+A customer-facing coupon link from the welcome/reminder templates was still carrying `&subject=Coupon Code <code>` and claiming that Torn would prefill the coupon code into the new mail Subject.
+
+That behavior is not part of Torn's reliable native compose contract. Current community tooling that supports subject/body URL prefilling does so with an additional userscript. Ordinary customers cannot be assumed to have that helper.
+
+Alpha.20 corrects the source contract:
+
+- one `couponRedeemUrl()` helper owns coupon contact links,
+- the helper returns only Torn's native `messages.php#/p=compose&XID=<owner>` route,
+- branded and plain-text message templates share that helper,
+- the coupon code is visibly displayed before the contact link,
+- the customer is instructed to copy the code, open the owner-addressed Compose page, paste the code into Subject or Body, and manually Send,
+- the previous false promise of automatic Subject prefilling is removed.
+
+This keeps coupon redemption independent of customer-side userscripts and consistent with the shared Torn UI integration contract.

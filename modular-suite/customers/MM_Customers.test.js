@@ -34,7 +34,7 @@ assert.strictEqual(logic.currentBazaarRows(db,db.subscribers['123']).length,1);
 
 const userSrc=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 assert.doesNotThrow(()=>new Function(userSrc));
-assert(userSrc.includes("const VERSION='8.0.0-alpha.19';"));
+assert(userSrc.includes("const VERSION='8.0.0-alpha.20';"));
 assert(userSrc.includes("const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';"));
 assert(userSrc.includes("const PENDING_SEND_KEY='mm_customers_pending_send_v1';"));
 assert(userSrc.includes("const DELIVERY_RECEIPTS_KEY='mm_customers_delivery_receipts_v1';"));
@@ -46,6 +46,19 @@ function sourceSection(startMarker,endMarker){
   assert(end>start,'missing source end marker: '+endMarker);
   return userSrc.slice(start,end);
 }
+
+// Customer-facing coupon redemption must use Torn's native XID-only route.
+// Subject/body URL prefill is helper-script behavior, not a native Torn contract.
+const couponUrl=sourceSection('  function couponRedeemUrl(){','\n\n  function brandedMessageHtml(');
+assert(couponUrl.includes("messages.php#/p=compose&XID="));
+assert(!couponUrl.includes('&subject='));
+assert(!couponUrl.includes('&body='));
+assert(userSrc.includes('YOUR COUPON CODE: '));
+assert(userSrc.includes('OPEN MESSAGE TO '));
+assert(userSrc.includes('Copy the coupon code above, open the message, paste the code into the Subject or message body, then press Send.'));
+assert(!userSrc.includes('with your coupon code in the subject.'));
+assert(!userSrc.includes("&subject='+encodeURIComponent('Coupon Code "));
+assert.strictEqual((userSrc.match(/couponRedeemUrl\(\)/g)||[]).length,3,'coupon link must come from one native-XID helper in HTML and plain text');
 
 // Feature preservation.
 assert(userSrc.includes('function brandedMessageHtml'));
@@ -145,4 +158,4 @@ assert(userSrc.includes("if(event?.data?.type!=='state-updated'||!panelIsOpen())
 assert(!initialize.includes('BroadcastChannel'),'initialization must not open a cross-tab channel');
 assert(!userSrc.includes('core.adoptLegacyCrmLauncher?.();'),'Core owns legacy-launcher compatibility');
 
-console.log('MM_Customers alpha19 logic, feature preservation, TinyMCE compose, delivery and resource regressions: PASS');
+console.log('MM_Customers alpha20 logic, coupon redemption, TinyMCE compose, delivery and resource regressions: PASS');
