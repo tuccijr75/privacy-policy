@@ -65,6 +65,9 @@ if (!coreSource2.includes("'inventory-roi','acquisitions','customers','armory','
 if (!coreSource2.includes("dock.dataset.mmDockAnchor='left-of-torn-native-bottom-toolbar'")) throw new Error('Torn toolbar anchor diagnostic missing');
 if (!coreSource2.includes("dock.dataset.mmDefaultRightToLeft='trade-reminder,armory,customers,acquisitions,inventory-roi'")) throw new Error('requested right-to-left diagnostic missing');
 if (!coreSource2.includes('DOCK_ORDER_CUSTOM_KEY')) throw new Error('custom dock-order persistence guard missing');
+if (!coreSource2.includes("dock.dataset.mmAlpha9PersistenceBridge='1'")) throw new Error('mixed-version dock persistence bridge missing');
+if (!coreSource2.includes("dock.dataset.mmDockLeft=String(Math.round(r.left))")) throw new Error('live dock geometry diagnostics missing');
+if (!coreSource2.includes("dock.dataset.mmNativeFirstLeft=String(Math.round(native.firstRect.left))")) throw new Error('native toolbar geometry diagnostics missing');
 if (!coreSource2.includes("if(!dockHasCustomOrder())return DOCK_DEFAULT_ORDER.slice();")) throw new Error('default order must remain load-order independent');
 
 console.log('default footer docking migration PASS');
