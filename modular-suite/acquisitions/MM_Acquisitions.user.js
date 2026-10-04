@@ -10,7 +10,7 @@
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.13
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.logic.js?v=8.0.0-alpha.2
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.logic.js?v=8.0.0-alpha.3
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.live.js?v=8.0.0-alpha.4
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js?v=8.0.0-alpha.1
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js?v=8.0.0-alpha.1
@@ -676,8 +676,10 @@
     if(!state)return card('<b>No cached market state available.</b>');
     const rows=logic.rankCachedOpportunities(state);
     const buyable=rows.filter(r=>r.purchaseReady).slice(0,12);
-    const pricedIds=new Set(Object.keys(state?.procurement?.pricelist?.items||{}));
-    const pricelistDeals=rows.filter(r=>r.purchaseReady&&pricedIds.has(String(r.id))).slice(0,12);
+    const pricelistScan=logic.rankPricelistUniverse(state);
+    const pricelistDeals=pricelistScan.filter(r=>r.hasMarketEvidence).slice(0,20);
+    const pricelistProfitable=pricelistScan.filter(r=>r.profitable).length;
+    const pricelistQualified=pricelistScan.filter(r=>r.qualifies).length;
     const research=rows.filter(r=>!r.purchaseReady).slice(0,8);
 
     return armoryRequestHtml()+card(
@@ -686,17 +688,16 @@
         '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-reload" style="'+button()+'">Reload Cache</button><button id="mm-acq-sync-purchases" '+(busy?'disabled':'')+' style="'+button()+'">Sync Purchases</button><button id="mm-acq-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Opportunities</button></div>'+
       '</div>'
     )+
-    card('<b>Pricelist Universe · '+Number(state?.procurement?.pricelist?.pricedCount||0).toLocaleString()+' priced items</b>'+
-      '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Only items currently priced on the configured customer pricelist. Profit/ROI still use live acquisition evidence and market exit estimates — the pricelist buy rate is a buying benchmark, not a resale exit.</div>'+
-      (pricelistDeals.length?pricelistDeals.map((r,i)=>{
-        const target=Number(state?.procurement?.pricelist?.items?.[String(r.id)]?.buyPrice||0);
-        return '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
-          '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.purchaseSource)+
-          '<div>Live buy <b>'+money(r.buyPrice)+'</b> · Pricelist buy rate '+money(target)+' · Market exit '+money(r.bestExit)+' · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
-          '<div style="color:#888;">Profit/unit '+money(r.profit||0)+' · confidence '+Number(r.confidence||0).toFixed(0)+'% · 3d sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'%</div></div>'+
-          '<button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Verify & Buy</button>'+
-        '</div>';
-      }).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No currently rule-qualified deals are inside the priced-item universe. Refresh Opportunities after updating the pricelist.</div>')
+    card('<b>Pricelist Universe Scan · '+pricelistScan.length.toLocaleString()+' evaluated</b>'+
+      '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Every positively priced item on the configured TornW3B pricelist is screened from the global market feed before deeper API calls. '+pricelistProfitable.toLocaleString()+' currently show positive gross spread; '+pricelistQualified.toLocaleString()+' meet active ROI/profit rules. Pricelist buy rate is a benchmark, not a resale exit.</div>'+
+      (pricelistDeals.length?pricelistDeals.map((r,i)=>
+        '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
+          '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.freshness?.label||'UNKNOWN')+
+          '<div>Cheapest seen <b>'+money(r.buyPrice)+'</b> · Your buy rate '+money(r.targetBuy)+' · Market exit '+money(r.bestExit)+' · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
+          '<div style="color:#888;">Profit/unit '+(r.profit>=0?'+':'-')+money(Math.abs(r.profit||0))+' · liquidity '+Number(r.liquidity||0)+'/100 · confidence '+Number(r.confidence||0)+'% · sellers '+Number(r.sellerCount||0)+'</div></div>'+
+          '<button data-pricelist-verify="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(r.qualifies)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Verify</button>'+
+        '</div>'
+      ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">Pricelist rows are loaded, but current market evidence is unavailable. Refresh Opportunities.</div>')
     )+
     card('<b>Rule-Qualified Deals</b>'+
       '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Meets current ROI / profit / listing / confidence rules. Current cash balance is not checked; Verify & Buy re-verifies the source and keeps final purchase manual.</div>'+
@@ -1345,6 +1346,13 @@
       render();
     }));
     root.querySelectorAll('[data-acquire-item]').forEach(b=>b.addEventListener('click',()=>acquire(b.dataset.acquireItem)));
+    root.querySelectorAll('[data-pricelist-verify]').forEach(b=>b.addEventListener('click',()=>{
+      const item=catalogRows().find(row=>row.id===String(b.dataset.pricelistVerify||''));
+      if(!item)return;
+      itemQuery=item.name;
+      activeView='items';
+      findCatalogPriceByItem(item);
+    }));
     root.querySelector('#mm-acq-armory-refresh')?.addEventListener('click',refreshArmorySources);
     root.querySelector('#mm-acq-armory-travel-agency')?.addEventListener('click',()=>{location.href='https://www.torn.com/travelagency.php';});
     root.querySelector('#mm-acq-armory-clear')?.addEventListener('click',()=>{armoryRequest=null;armorySources=null;statusText='Faction Armory acquisition request cleared.';render();});
