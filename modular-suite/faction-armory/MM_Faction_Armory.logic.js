@@ -16,7 +16,6 @@
     'Flash Grenade','Smoke Grenade','Tear Gas','HEG','Grenade','Pepper Spray'
   ]);
 
-  const DEFAULT_WAR_PARTICIPANTS=20;
   const WAR_SUPPLY_PER_MEMBER=Object.freeze({
     'medical|First Aid Kit':10,
     'medical|Small First Aid Kit':10,
@@ -31,6 +30,26 @@
     'temporary|Pepper Spray':5,
     'drugs|Xanax':3
   });
+  const RANK_TRIGGER_COUNT=Object.freeze({
+    'absolute beginner':0,'beginner':1,'inexperienced':2,'rookie':3,'novice':4,
+    'below average':5,'average':6,'reasonable':7,'above average':8,'competent':9,
+    'highly competent':10,'veteran':11,'distinguished':12,'highly distinguished':13,
+    'professional':14,'star':15,'master':16,'outstanding':17,'celebrity':18,
+    'supreme':19,'idolized':20,'idolised':20,'champion':21,'heroic':22,
+    'legendary':23,'elite':24,'invincible':25
+  });
+  const LEVEL_RANK_TRIGGERS=Object.freeze([2,6,11,26,31,50,71,100]);
+  const CRIME_RANK_TRIGGERS=Object.freeze([100,5000,10000,20000,30000,50000]);
+  const NETWORTH_RANK_TRIGGERS=Object.freeze([5000000,50000000,500000000,5000000000,50000000000]);
+  const BATTLE_STAT_RANGES=Object.freeze([
+    {min:0,max:2500},
+    {min:2500,max:25000},
+    {min:25000,max:250000},
+    {min:250000,max:2500000},
+    {min:2500000,max:35000000},
+    {min:35000000,max:250000000},
+    {min:250000000,max:null}
+  ]);
 
   // Research-backed, non-live procurement reference. These are normal shop/abroad
   // items with high circulation; this module deliberately does not search Item Market/Bazaars.
@@ -139,6 +158,58 @@
     return {
       total,dominant,bias:offensiveNeed,shares,
       offensiveNeed,defensiveStyle,buildStyle
+    };
+  }
+
+  function triggerCount(value,thresholds=[]){
+    const amount=n(value);
+    return thresholds.reduce((count,threshold)=>count+(amount>=threshold?1:0),0);
+  }
+
+  function estimateBalancedBattleStats(member={},publicIntel={}){
+    const level=n(publicIntel?.level??member?.level);
+    const ageDays=n(publicIntel?.ageDays??member?.ageDays);
+    const rank=String(publicIntel?.rank||member?.rank||'').trim().toLowerCase();
+    const rankTriggers=RANK_TRIGGER_COUNT[rank];
+    if(rankTriggers==null)return null;
+
+    const levelTriggers=triggerCount(level,LEVEL_RANK_TRIGGERS);
+    const crimesKnown=Number.isFinite(Number(publicIntel?.crimesTotal));
+    const networthKnown=Number.isFinite(Number(publicIntel?.networth));
+    const crimeTriggers=crimesKnown?triggerCount(publicIntel.crimesTotal,CRIME_RANK_TRIGGERS):0;
+    const networthTriggers=networthKnown?triggerCount(publicIntel.networth,NETWORTH_RANK_TRIGGERS):0;
+    const inferred=Math.max(0,Math.min(6,rankTriggers-levelTriggers-crimeTriggers-networthTriggers));
+    const range=BATTLE_STAT_RANGES[inferred]||BATTLE_STAT_RANGES[0];
+
+    let total;
+    if(range.max==null){
+      total=range.min;
+    }else if(range.min<=0){
+      const ageWeight=Math.max(0,Math.min(1,ageDays/3650));
+      total=Math.round(Math.min(range.max-1,750+(level*20)+(ageWeight*900)));
+    }else{
+      const ageWeight=Math.max(0,Math.min(1,ageDays/5000));
+      const bandPosition=0.40+(ageWeight*0.20);
+      total=Math.round(Math.exp(Math.log(range.min)+(Math.log(range.max)-Math.log(range.min))*bandPosition));
+    }
+    total=Math.max(1,total);
+    const quarter=Math.max(1,Math.round(total/4));
+    return {
+      estimated:true,
+      total:quarter*4,
+      stats:{strength:quarter,defense:quarter,speed:quarter,dexterity:quarter},
+      rangeMin:range.min,
+      rangeMax:range.max,
+      battleStatTriggers:inferred,
+      rankTriggers,
+      levelTriggers,
+      crimeTriggers,
+      networthTriggers,
+      confidence:crimesKnown&&networthKnown?'MEDIUM':'LOW',
+      ageDays,
+      level,
+      rank:String(publicIntel?.rank||member?.rank||''),
+      method:'Public rank-trigger band with balanced, age-weighted planning midpoint. This is an estimate, not the member\'s actual battle stats.'
     };
   }
 
@@ -528,11 +599,11 @@
 
   function acquisitionPlan(factionInventory={},options={}){
     const mode=String(options?.mode||'war').toLowerCase()==='peace'?'peace':'war';
-    const participants=Math.max(1,Math.round(Number(options?.participants||DEFAULT_WAR_PARTICIPANTS)));
     const procurementMode=['budget','standard','ideal'].includes(String(options?.procurementMode||'').toLowerCase())?String(options.procurementMode).toLowerCase():'budget';
     const budgetCap=Math.max(0,Number(options?.budgetCap??15000000)||0);
     const rows=memberRows(factionInventory,[],{procurementMode});
-    const selected=rows.slice(0,participants);
+    const participants=rows.length;
+    const selected=rows;
     const pools=availableFactionCandidates(factionInventory);
     const poolState={};
     for(const [slot,items] of Object.entries(pools)){
@@ -572,6 +643,7 @@
     }
 
     for(const member of selected){
+      if(member?.readinessStatus==='WAR READY')continue;
       if(!member?.hasStats){
         for(const slot of STANDARD_SLOTS)unresolved.push({memberId:member.memberId,memberName:member.memberName,slot,current:'',reason:'Current battle stats are missing; acquisition deferred.'});
         continue;
@@ -580,7 +652,7 @@
       const build=member.buildAssessment||compareMemberBuild(member,factionInventory,rows,{procurementMode});
       for(const item of build.items){
         if(item.ready||item.route==='LOANED'||item.route==='OWNED')continue;
-        if(!item.currentName&&!inventoryKnown){
+        if(!item.currentName&&!inventoryKnown&&!member.statsEstimated){
           unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:'',reason:'Member inventory has not been refreshed; purchase deferred.'});
           continue;
         }
@@ -597,8 +669,8 @@
         if(factionPick){
           assignments.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,route:'ISSUE',item:factionPick.name});
         }else{
-          addRequirement(target,1,member.memberName+' '+item.slot,'equipment');
-          assignments.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,route:'ACQUIRE',item:target.name});
+          addRequirement(target,1,member.memberName+' '+item.slot+(member.statsEstimated?' (estimated balanced build)':''),'equipment');
+          assignments.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,route:'ACQUIRE',item:target.name,estimated:Boolean(member.statsEstimated)});
         }
       }
     }
@@ -716,27 +788,45 @@
     const baseRows=roster.map(member=>{
       const id=asId(member?.memberId);
       const profile=profiles[id]&&typeof profiles[id]==='object'?profiles[id]:{};
-      const stats=profile?.stats||{};
+      const actualStats=profile?.stats||{};
+      const actualBp=battleProfile(actualStats);
+      const estimate=actualBp.total?null:estimateBalancedBattleStats(member,profile?.publicIntel||{});
+      const stats=actualBp.total?clone(actualStats):clone(estimate?.stats||{});
       const bp=battleProfile(stats);
+      const loan=loans.get(id)||{amount:0,items:[]};
       const equipmentSummary=String(profile?.equipment?.summary||'').trim();
-      const hasEquipment=Boolean(equipmentSummary)||Array.isArray(profile?.equipment?.items)&&profile.equipment.items.length>0;
+      const profileHasEquipment=Boolean(equipmentSummary)||Array.isArray(profile?.equipment?.items)&&profile.equipment.items.length>0;
+      const hasEquipmentEvidence=profileHasEquipment||loan.items.length>0;
       const verifiedMs=Date.parse(profile?.verifiedAt||'')||0;
       const ageHours=verifiedMs?Math.max(0,(Date.now()-verifiedMs)/3600000):null;
-      const stale=ageHours!=null&&ageHours>staleHours;
+      const stale=actualBp.total>0&&ageHours!=null&&ageHours>staleHours;
+
       let dataStatus='READY FOR REVIEW';
-      if(!bp.total||!hasEquipment)dataStatus='MISSING DATA';
-      else if(stale)dataStatus='STALE DATA';
-      else if(String(profile?.medicalStatus||'').includes('NEEDS')||String(profile?.ipecacStatus||'').includes('NEEDS'))dataStatus='SUPPLY ACTION';
-      const loan=loans.get(id)||{amount:0,items:[]};
+      if(!actualBp.total){
+        dataStatus=estimate?.total?'ESTIMATED — NEEDS DATA':'MISSING DATA';
+      }else if(!hasEquipmentEvidence){
+        dataStatus='MISSING DATA';
+      }else if(stale){
+        dataStatus='STALE DATA';
+      }else if(String(profile?.medicalStatus||'').includes('NEEDS')||String(profile?.ipecacStatus||'').includes('NEEDS')){
+        dataStatus='SUPPLY ACTION';
+      }
+
       return {
         ...clone(member),
         memberId:id,
         profile:clone(profile),
-        stats:clone(stats),
+        publicIntel:clone(profile?.publicIntel||{}),
+        stats,
+        actualStats:clone(actualStats),
+        statEstimate:clone(estimate),
         statProfile:bp,
         equipmentSummary,
         hasStats:bp.total>0,
-        hasEquipment,
+        hasVerifiedStats:actualBp.total>0,
+        statsEstimated:Boolean(!actualBp.total&&estimate?.total),
+        hasEquipment:hasEquipmentEvidence,
+        profileHasEquipment,
         ageHours,
         stale,
         apiSaved:keys.has(id),
@@ -766,7 +856,7 @@
     });
 
     return rows.sort((a,b)=>{
-      const priority={'MISSING DATA':0,'STALE DATA':1,'SUPPLY ACTION':2,'ACTION NEEDED':3,'READY FOR REVIEW':4,'WAR READY':5};
+      const priority={'MISSING DATA':0,'STALE DATA':1,'ESTIMATED — NEEDS DATA':2,'SUPPLY ACTION':3,'ACTION NEEDED':4,'READY FOR REVIEW':5,'WAR READY':6};
       return (priority[a.readinessStatus]??9)-(priority[b.readinessStatus]??9)
         || n(b.level)-n(a.level)
         || String(a.memberName||'').localeCompare(String(b.memberName||''));
@@ -803,9 +893,7 @@
     const mode=String(options?.mode||'peace').toLowerCase()==='war'?'war':'peace';
     const rosterRows=memberRows(factionInventory,[],{procurementMode:options?.procurementMode||'budget'});
     const rosterCount=Object.keys(factionInventory?.memberReadiness?.roster||{}).length;
-    const participants=mode==='war'
-      ? Math.max(1,Math.round(Number(options?.participants||DEFAULT_WAR_PARTICIPANTS)))
-      : rosterCount;
+    const participants=rosterCount;
     const peacePoolMin=Math.max(2,Math.ceil(rosterCount*0.25)+2);
     const peacePoolMax=Math.ceil(peacePoolMin*1.5);
     const current=Object.values(factionInventory?.current||{});
@@ -847,7 +935,7 @@
         shortfall:Math.max(0,targetMin-available),
         dataRequired:false,
         rationale:mode==='war'
-          ? 'War mode: 20-member participation assumption; cover every member whose current '+slot+' is unverified/below standard, plus two spares.'
+          ? 'War mode: current faction roster ('+participants+' members); cover every member whose current '+slot+' is unverified/below standard, plus two spares.'
           : 'Peace mode: 25% of roster plus two spares; maximum band is 150% of minimum.'
       });
     }
@@ -921,7 +1009,7 @@
       actionable:proposals.filter(p=>!p.dataRequired&&n(p.shortfall)>0),
       dataRequired:proposals.filter(p=>p.dataRequired),
       assumptions:mode==='war'
-        ? 'WAR: assumes '+participants+' participants; equipment covers all unverified/below-standard members plus two spares; core medical/temp supplies use per-member war packages.'
+        ? 'WAR: derived from the current faction roster ('+participants+' members); equipment covers all unverified/below-standard members plus two spares; core medical/temp supplies use per-member war packages.'
         : 'PEACE: routine equipment pool is 25% of roster plus two spares; stackables use 14-day observed depletion with one-per-member reserve for critical items.'
     };
   }
@@ -1117,6 +1205,7 @@
     equipmentScore,
     equipmentValueMetrics,
     readinessFloorScore,
+    estimateBalancedBattleStats,
     generalCandidates,
     generalTargetForSlot,
     premiumOptionForSlot,
