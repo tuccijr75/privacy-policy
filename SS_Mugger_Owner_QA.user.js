@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.8.1
+// @version      1.1.9.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -22,7 +22,7 @@
 
   const RUNTIME_GUARD = '__SS_MUGGER_RUNTIME_ACTIVE__';
   if (window[RUNTIME_GUARD]) return;
-  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.8'};
+  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.9'};
 
   const BOOT_PROBE_ID = 'ss-mugger-boot-probe';
   function showBootProbe(label = 'SSQ', isError = false) {
@@ -627,7 +627,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.8.1';
+  const VERSION = '1.1.9.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
@@ -1891,6 +1891,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         const hot = hotByItem.get(String(candidate.itemId));
         return {
           ...candidate,
+          itemName: String(hot.itemName || candidate.itemName || `Item ${candidate.itemId}`),
           hotItemRank: hot.hotRank,
           hotItemConfidence: hot.confidence,
           hotItemTurnoverPerHour: hot.turnoverPerHour,
