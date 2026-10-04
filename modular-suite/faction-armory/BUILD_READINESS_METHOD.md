@@ -454,3 +454,32 @@ When **Peace** is selected, the leader message becomes the post-war / normal rep
 This is the intended time to refill routine faction minimums after the war requirement has been handled.
 
 The mode is visible in the leader-message button label and message subject so the operator can see the report scope before opening Torn Compose.
+
+
+## Alpha.22 War/Peace acquisition split
+
+The acquisition mode now has a strict operational split:
+
+### War mode
+
+War mode exists to get the current faction roster ready to fight.
+
+It includes only:
+
+- individual equipment purchases for members who are not WAR READY after member-owned gear, faction loans, and available faction stock are consumed; and
+- two ready-to-issue equipment spares per standard slot when existing faction stock cannot cover them.
+
+War mode does **not** add routine medical, temporary, drug, booster, consumable, or other minimum-stock replenishment to the acquisition plan. Those minimums remain visible in the Minimums analysis but are intentionally deferred for purchasing until Peace mode.
+
+### Peace mode
+
+Peace mode exists to restore faction inventory minimums after war.
+
+It includes only minimum-stock replenishment:
+
+- routine equipment-pool shortfalls from the Peace minimum policy, mapped to the active Budget/Standard/Ideal generally available target for that slot; and
+- stackable/provision minimum shortfalls from the Peace minimum policy.
+
+Peace mode does **not** create individual member build assignments, unresolved member equipment slots, or purchases to equip members. Member equipment readiness is acted on only in War mode.
+
+This mode split is shared by the Acquire screen and the faction-leader acquisition message, so the UI, report, quantities, and cost totals use the same plan.
