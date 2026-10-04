@@ -1638,4 +1638,32 @@ Live acceptance blockers:
 12. explicit owner approval is required before merge/stable/customer delivery.
 
 Do not advertise alpha.11 as customer-ready or provide a stable customer install path until these live gates pass.
+### alpha.11 live desktop acceptance — phase 1 — 2026-10-04
+
+Observed directly in the authenticated Torn desktop tab with the candidate installed and panel open:
+
+PASS:
+- `MM_Acquisitions v8.0.0-alpha.11 · PROFIT / RANKED / TRAVEL` is live on Torn;
+- the existing shared `MM_Acquisitions` dock launcher is present inside `MM Torn module dock`; no second ranked launcher exists;
+- the existing Acquisitions panel is open and draggable through the shared Core panel handler;
+- Torn API key state reports `SAVED`;
+- automatic market watcher is active: status reported `Weav3r published a new market generation; Acquisitions updated automatically.`;
+- live freshness strip showed Weav3r ~1m, Item Market seconds old, Purchases ~3m with 207 lots, Pricelist under 1m, and `Weav auto-check WHILE OPEN`;
+- complete Torn catalog loaded: 1,500 catalog items;
+- default Buyable filter returned 960 matches over 13 pages;
+- item category selector is populated with Torn categories including Weapon, Armor, Drug, Flower, Plushie, Supply Pack and others;
+- item name/ID search field, category/source/sort selectors, Apply Filters, Find Best Price and per-row Find Price controls are present and exposed as usable form/button controls;
+- customer pricelist values are visibly joined to catalog rows (examples observed: Advent Calendar, African Violet, Afro Comb, Ambergris Lump, multiple candy/other items);
+- live TornW3B pricelist API independently verified 1,313 total catalog rows, exactly 125 positively priced normal Torn items, and Bunker Bucks rate $6,119,978/BB.
+
+Expected / pending:
+- source strip correctly showed `Ranked not synced` before the first explicit ranked refresh;
+- Ranked tab controls and live ranked/AH behavior still require interactive desktop acceptance;
+- dock collision geometry, narrow-width/mobile and TornPDA remain pending.
+
+Next live action:
+1. open the `Ranked` tab;
+2. press `Refresh Ranked`;
+3. inspect resulting counts/filters and representative rows;
+4. run `Analyze AH` on at least one low-tier BB-floor weapon and one premium weapon.
 
