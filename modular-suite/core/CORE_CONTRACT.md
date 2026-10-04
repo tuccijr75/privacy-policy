@@ -132,7 +132,7 @@ Core exposes `makePanelDraggable(panel, handle, key, defaults)`.
 
 ### Ordered Torn-adjacent default
 
-Core alpha.11 defines one default launcher cluster beside Torn's native bottom toolbar. When read from **right to left**, the requested order is:
+Core alpha.12 defines one default launcher cluster beside Torn's native bottom toolbar. When read from **right to left**, the requested order is:
 
 1. **MM Trade Rotation** (`trade-reminder`)
 2. **MM Faction Armory** (`armory`)
@@ -143,6 +143,7 @@ Core alpha.11 defines one default launcher cluster beside Torn's native bottom t
 The dock remains a responsive **relative anchor**, not a hard-coded screen coordinate:
 
 - when Torn's native bottom button row is detectable, the MM dock is positioned immediately to its left and aligned to the same bottom edge;
+- when multiple bottom-edge button rows exist, rows within the same lowest 8 px band are peers; prefer the row nearest the viewport right edge, then the most square/Torn-sized controls, so Factions/Forums page actions cannot steal the dock anchor;
 - the native-row path may touch the viewport bottom when Torn does; the generic 4 px viewport safety margin must not lift the MM dock above Torn;
 - if the row cannot fit horizontally, the existing narrow-screen fallback places the MM dock above the native row;
 - if Torn's bottom controls cannot be identified, the existing lower-right fallback remains.
@@ -160,4 +161,4 @@ After that one-time repair:
 
 The default order is independent of userscript load order. A separate custom-order flag distinguishes the requested default from an intentional user reorder.
 
-For browser-console diagnostics, the shared `#mm-torn-module-dock` element exposes non-sensitive geometry/contract fields in its `dataset`, including the Core version, relative-dock mode, layout revision, dock anchor, requested right-to-left order, live dock edges, and detected Torn native-row anchor coordinates. This is diagnostic UI geometry only and avoids relying on page-context access to the Tampermonkey sandbox.
+For browser-console diagnostics, the shared `#mm-torn-module-dock` element exposes non-sensitive geometry/contract fields in its `dataset`, including the Core version, relative-dock mode, layout revision, dock anchor, requested right-to-left order, live dock edges, and detected Torn native-row anchor coordinates. Candidate count, selected native-control count, and selected row right-edge distance are also exposed for diagnosing dense pages. This is diagnostic UI geometry only and avoids relying on page-context access to the Tampermonkey sandbox.
