@@ -132,7 +132,7 @@ Core exposes `makePanelDraggable(panel, handle, key, defaults)`.
 
 ### Ordered Torn-adjacent default
 
-Core alpha.10 defines one default launcher cluster beside Torn's native bottom toolbar. When read from **right to left**, the requested order is:
+Core alpha.11 defines one default launcher cluster beside Torn's native bottom toolbar. When read from **right to left**, the requested order is:
 
 1. **MM Trade Rotation** (`trade-reminder`)
 2. **MM Faction Armory** (`armory`)
@@ -143,6 +143,7 @@ Core alpha.10 defines one default launcher cluster beside Torn's native bottom t
 The dock remains a responsive **relative anchor**, not a hard-coded screen coordinate:
 
 - when Torn's native bottom button row is detectable, the MM dock is positioned immediately to its left and aligned to the same bottom edge;
+- the native-row path may touch the viewport bottom when Torn does; the generic 4 px viewport safety margin must not lift the MM dock above Torn;
 - if the row cannot fit horizontally, the existing narrow-screen fallback places the MM dock above the native row;
 - if Torn's bottom controls cannot be identified, the existing lower-right fallback remains.
 
