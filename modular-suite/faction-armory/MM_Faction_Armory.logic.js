@@ -531,7 +531,7 @@
     const participants=Math.max(1,Math.round(Number(options?.participants||DEFAULT_WAR_PARTICIPANTS)));
     const procurementMode=['budget','standard','ideal'].includes(String(options?.procurementMode||'').toLowerCase())?String(options.procurementMode).toLowerCase():'budget';
     const budgetCap=Math.max(0,Number(options?.budgetCap??15000000)||0);
-    const rows=memberRows(factionInventory,[]);
+    const rows=memberRows(factionInventory,[],{procurementMode});
     const selected=rows.slice(0,participants);
     const pools=availableFactionCandidates(factionInventory);
     const poolState={};
@@ -694,15 +694,26 @@
     return map;
   }
 
-  function memberRows(factionInventory={},savedKeyIds=[]){
+  function readinessApprovalIsCurrent(profile={},procurementMode='budget'){
+    const approval=profile?.readinessApproval;
+    if(!approval||String(approval.status||'')!=='WAR READY')return false;
+    const verifiedAt=String(profile?.verifiedAt||'');
+    const approvedVerifiedAt=String(approval.verifiedAt||'');
+    const approvedMode=String(approval.procurementMode||'budget').toLowerCase();
+    return Boolean(verifiedAt&&approvedVerifiedAt===verifiedAt&&approvedMode===String(procurementMode||'budget').toLowerCase());
+  }
+
+  function memberRows(factionInventory={},savedKeyIds=[],options={}){
     const readiness=factionInventory?.memberReadiness||{};
     const roster=Object.values(readiness?.roster||{});
     const profiles=readiness?.profiles||{};
     const keys=new Set((savedKeyIds||[]).map(asId));
     const loans=loanMap(factionInventory);
     const staleHours=n(readiness?.settings?.staleHours)||72;
+    const procurementMode=['budget','standard','ideal'].includes(String(options?.procurementMode||'').toLowerCase())
+      ? String(options.procurementMode).toLowerCase():'budget';
 
-    return roster.map(member=>{
+    const baseRows=roster.map(member=>{
       const id=asId(member?.memberId);
       const profile=profiles[id]&&typeof profiles[id]==='object'?profiles[id]:{};
       const stats=profile?.stats||{};
@@ -712,10 +723,10 @@
       const verifiedMs=Date.parse(profile?.verifiedAt||'')||0;
       const ageHours=verifiedMs?Math.max(0,(Date.now()-verifiedMs)/3600000):null;
       const stale=ageHours!=null&&ageHours>staleHours;
-      let status='READY FOR REVIEW';
-      if(!bp.total||!hasEquipment)status='MISSING DATA';
-      else if(stale)status='STALE DATA';
-      else if(String(profile?.medicalStatus||'').includes('NEEDS')||String(profile?.ipecacStatus||'').includes('NEEDS'))status='SUPPLY ACTION';
+      let dataStatus='READY FOR REVIEW';
+      if(!bp.total||!hasEquipment)dataStatus='MISSING DATA';
+      else if(stale)dataStatus='STALE DATA';
+      else if(String(profile?.medicalStatus||'').includes('NEEDS')||String(profile?.ipecacStatus||'').includes('NEEDS'))dataStatus='SUPPLY ACTION';
       const loan=loans.get(id)||{amount:0,items:[]};
       return {
         ...clone(member),
@@ -731,10 +742,31 @@
         apiSaved:keys.has(id),
         loans:loan.amount,
         loanItems:loan.items,
-        readinessStatus:status
+        dataReadinessStatus:dataStatus,
+        readinessStatus:dataStatus
       };
-    }).sort((a,b)=>{
-      const priority={'MISSING DATA':0,'STALE DATA':1,'SUPPLY ACTION':2,'READY FOR REVIEW':3};
+    });
+
+    const rows=baseRows.map(row=>{
+      const build=compareMemberBuild(row,factionInventory,baseRows,{procurementMode});
+      let status=row.dataReadinessStatus;
+      if(status==='READY FOR REVIEW'){
+        if(!build.warReady)status='ACTION NEEDED';
+        else if(readinessApprovalIsCurrent(row.profile,procurementMode))status='WAR READY';
+        else status='READY FOR REVIEW';
+      }
+      return {
+        ...row,
+        readinessStatus:status,
+        buildWarReady:Boolean(build.warReady),
+        buildAssessment:build,
+        readinessApprovedAt:status==='WAR READY'?String(row.profile?.readinessApproval?.approvedAt||''):'',
+        readinessApprovalMode:status==='WAR READY'?String(row.profile?.readinessApproval?.procurementMode||procurementMode):''
+      };
+    });
+
+    return rows.sort((a,b)=>{
+      const priority={'MISSING DATA':0,'STALE DATA':1,'SUPPLY ACTION':2,'ACTION NEEDED':3,'READY FOR REVIEW':4,'WAR READY':5};
       return (priority[a.readinessStatus]??9)-(priority[b.readinessStatus]??9)
         || n(b.level)-n(a.level)
         || String(a.memberName||'').localeCompare(String(b.memberName||''));
@@ -769,7 +801,7 @@
 
   function minimumProposal(factionInventory={},options={}){
     const mode=String(options?.mode||'peace').toLowerCase()==='war'?'war':'peace';
-    const rosterRows=memberRows(factionInventory,[]);
+    const rosterRows=memberRows(factionInventory,[],{procurementMode:options?.procurementMode||'budget'});
     const rosterCount=Object.keys(factionInventory?.memberReadiness?.roster||{}).length;
     const participants=mode==='war'
       ? Math.max(1,Math.round(Number(options?.participants||DEFAULT_WAR_PARTICIPANTS)))
