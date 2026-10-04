@@ -26,6 +26,7 @@
   const PLAYER_ID = '4325346';
   const PLAYER_NAME = 'Manic-Mike';
   const SERVICE_THREAD = '/forums.php#/p=threads&f=67&t=16608018';
+  const FORUM_ROUTE_KEY = 'mmTradeChatAssistantForumRouteV1';
   const core = globalThis.MMTornCore;
 
   const MODES = Object.freeze({
@@ -258,6 +259,19 @@
     if (control) control.click();
   }
 
+  function openServiceThread() {
+    GM_setValue(FORUM_ROUTE_KEY, true);
+    location.assign(SERVICE_THREAD);
+  }
+
+  function restoreTradeAfterForumRoute() {
+    if (!GM_getValue(FORUM_ROUTE_KEY, false)) return;
+    GM_setValue(FORUM_ROUTE_KEY, false);
+    setTimeout(() => {
+      ensureTradeOpen().catch(() => {});
+    }, 250);
+  }
+
   function insertTradeMessage(textarea, message) {
     if (!(textarea instanceof HTMLTextAreaElement)) return false;
     textarea.focus({ preventScroll: true });
@@ -475,6 +489,7 @@
       '#' + APP_ID + ' .mmta-meta{color:#aaa}',
       '#' + APP_ID + ' .mmta-actions{display:grid;grid-template-columns:1fr 1fr;gap:5px}',
       '#' + APP_ID + ' .mmta-actions button:first-child{border-color:#9a7418}',
+      '#' + APP_ID + ' .mmta-actions [data-act="forum"]{grid-column:1/-1}',
       '#' + APP_ID + ' .mmta-note{margin-top:7px;color:#8fd59a}',
       '@media(max-width:620px){[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-timer{font-size:9px}#' + APP_ID + '{width:calc(100vw - 8px);max-height:calc(100vh - 62px)}#' + APP_ID + ' .mmta-body{max-height:calc(100vh - 106px)}}',
     ].join('\n');
@@ -538,6 +553,7 @@
       '<button type="button" data-act="sent">Mark Sent</button>',
       '<button type="button" data-act="skip">Next Copy</button>',
       '<button type="button" data-act="toggle"></button>',
+      '<button type="button" data-act="forum">Open Forum Thread</button>',
       '</div>',
       '<div class="mmta-note" data-role="note">One fill per opened session. Send remains manual.</div>',
       '</div>',
@@ -568,6 +584,10 @@
       }
       if (action === 'sent') {
         completeAssistedPost();
+        return;
+      }
+      if (action === 'forum') {
+        openServiceThread();
         return;
       }
       if (action === 'fill') {
@@ -668,6 +688,7 @@
 
     createLauncher();
     render();
+    restoreTradeAfterForumRoute();
 
     document.addEventListener('keydown', handleComposerKeydown, true);
     document.addEventListener('click', handleTradeClick, true);
