@@ -191,3 +191,76 @@ Unpriced provision lines remain requirements but do not consume the known-cost b
 Missing member stats, missing member inventory, and unknown-performance current gear are intentionally excluded from automatic buy quantity and shown as unresolved. This prevents a partially populated roster from generating a large speculative purchase list.
 
 Budget-mode examples currently include lower-cost common equipment such as AK-47 / Mag 7 / Benelli M4 Super, BT MP9, Macana, WWII Helmet, Bulletproof Vest, Kevlar Gloves, Safety Boots, and Combat Pants where no sensible mid-tier general alternative exists. Standard and Ideal modes may recommend stronger/more expensive references.
+
+
+## Canonical member readiness workflow
+
+Members, Builds, leadership export, and acquisition planning now derive from the same per-member build assessment.
+
+The canonical readiness states are:
+
+- **MISSING DATA** — battle stats or equipped gear are not sufficiently known.
+- **STALE DATA** — the saved readiness profile is older than the configured freshness window.
+- **SUPPLY ACTION** — required medical/Ipecac readiness data reports an action is still needed.
+- **ACTION NEEDED** — current data is usable, but one or more standard equipment slots do not yet meet the active build baseline or still require equip/issue/acquisition/review.
+- **READY FOR REVIEW** — all eight standard equipped slots meet the active build baseline and the member is ready for an Inventory Manager/leadership review.
+- **WAR READY** — the same passing build has been explicitly approved by the Inventory Manager/leadership.
+
+\`WAR READY\` is therefore an approval state, not merely the automatic result of the equipment scorer.
+
+The approval is bound to:
+
+- the member profile's current \`verifiedAt\` timestamp; and
+- the active procurement mode (\`budget\`, \`standard\`, or \`ideal\`).
+
+Refreshing a member profile invalidates the previous approval and returns a still-passing build to \`READY FOR REVIEW\`. Changing procurement mode also requires review under the newly selected baseline.
+
+The Members tab provides **Approve / War Ready** only when the automatic build baseline passes. An approved member can be returned to **READY FOR REVIEW** with **Reopen Review**.
+
+## Build suggestion pipeline
+
+For each member:
+
+1. Battle stats are normalized into Strength, Defense, Speed, and Dexterity.
+2. The script derives a build shape and an offensive need:
+   - Strength materially above Speed → prefer Accuracy support.
+   - Speed materially above Strength → prefer Damage support.
+   - otherwise → balanced.
+3. The active procurement mode selects a generally available target for each standard slot:
+   - **Budget** keeps candidates at least 80% of the best routine performance in the slot, then chooses the least expensive viable reference.
+   - **Standard** raises the retention threshold to 92% of best routine performance, still favoring value among viable references.
+   - **Ideal** includes premium references and selects the highest-performance option only when its gain is material (currently at least 12%) or its cost is not more than 2.25× the value target.
+4. The target's minimum normal stat roll becomes the readiness floor.
+5. The member's currently equipped item is compared against that floor. Known adequate equipped gear is always kept, even when it is more expensive than the reference target.
+6. If current gear does not resolve the slot, the route order is:
+   - adequate member-owned item → **OWNED — EQUIP / VERIFY**;
+   - adequate faction item already loaned to that member → **LOANED / VERIFY**;
+   - adequate unloaned faction stock → **ISSUE**;
+   - otherwise the generally available target → **ACQUIRE**;
+   - unknown-performance current gear → **REVIEW**, never automatic replacement.
+7. The member's Build tab and Members tab consume this same assessment object so automatic readiness cannot disagree between views.
+
+Weapon performance uses the documented Damage × Accuracy expected-output proxy with a modest adjustment for the member's offensive need. Armor uses armor rating. Premium allocation priority uses relative battle-stat rank but does not change the ordinary readiness floor.
+
+## Acquisition construction
+
+The acquisition list is shortfall-based rather than standardization-based.
+
+For the selected War/Peace mode and procurement mode:
+
+1. Member rows are generated using the same canonical build assessment shown in Members and Builds.
+2. Members with missing battle stats are deferred as unresolved instead of generating speculative purchases.
+3. For each unresolved standard slot, the planner first consumes:
+   - adequate equipped gear;
+   - adequate member-owned inventory;
+   - adequate assigned faction loans;
+   - adequate unloaned faction stock.
+4. When faction stock can cover a slot, the allocation prefers the **least-cost item that still meets the readiness floor**. This avoids wasting premium equipment where a cheaper adequate item exists.
+5. Only remaining equipment shortfalls become named acquisition requirements.
+6. War mode also preserves two ready-to-issue equipment spares per standard slot.
+7. Medical, temporary, drug, booster, and consumable shortfalls from the active minimum-stock policy are added to the same acquisition list.
+8. Requirements are prioritized by slot/category, then the configured acquisition budget is applied to known reference prices. Quantities outside the budget become deferred.
+9. Items with no reliable reference price remain required but do not consume known-cost budget until live procurement resolves a price.
+10. MM Faction Armory decides **what and how many** are needed. MM_Acquisitions performs live source verification and routing before any manual purchase.
+
+The planner deliberately does not purchase around unresolved unknown-performance gear or unknown member inventory. Those slots remain visible as unresolved until data is sufficient.
