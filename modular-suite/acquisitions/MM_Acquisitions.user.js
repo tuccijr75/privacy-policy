@@ -42,6 +42,8 @@
   const CATALOG_STALE_MS=24*60*60*1000;
   const ITEM_PAGE_SIZE=75;
   const RANKED_PAGE_SIZE=30;
+  const RANKED_LIVE_STALE_MS=300_000;
+  const PRICELIST_STALE_MS=3600_000;
   const DEFAULT_PRICELIST_USER_ID='4054377';
 
   let activeView='deals';
@@ -555,6 +557,7 @@
       const itemMarketAt=Date.parse(f.itemMarket||'')||0;
       if(apiKey()&&(force||!purchaseAt||now-purchaseAt>=PURCHASE_STALE_MS))await syncPurchases();
       if(force||!itemMarketAt||now-itemMarketAt>=OPPORTUNITY_STALE_MS)await refreshOpportunities();
+      if(activeView==='ranked')await ensureRankedFresh();
       else render();
     }catch(error){
       console.warn('[MM_Acquisitions] automatic refresh failed',error);
@@ -579,7 +582,10 @@
     return '<div style="display:flex;gap:5px;flex-wrap:wrap;font-size:10px;color:#aaa;margin-bottom:7px;">'+
       '<span>Weav3r '+esc(age(f.weav3rGeneratedAt))+'</span>'+
       '<span>· Item Market '+esc(age(f.itemMarket))+'</span>'+
-      '<span>· Travel '+esc(age(f.travel))+'</span>'+      '<span>· Purchases '+esc(age(state?.procurement?.lastAcquisitionSyncAt))+' ('+Number(state?.procurement?.acquisitions?.length||0)+')</span>'+
+      '<span>· Travel '+esc(age(f.travel))+'</span>'+
+      '<span>· Pricelist '+esc(age(state?.procurement?.pricelist?.lastSyncAt))+'</span>'+
+      '<span>· Ranked '+esc(age(state?.procurement?.ranked?.lastLiveAt))+'</span>'+
+      '<span>· Purchases '+esc(age(state?.procurement?.lastAcquisitionSyncAt))+' ('+Number(state?.procurement?.acquisitions?.length||0)+')</span>'+
       '<span>· Torn key '+(apiKey()?'<b style="color:#9fe3a8;">SAVED</b>':'<b style="color:#ffd18a;">NOT SAVED</b>')+'</span>'+
       '<span>· Weav auto-check <b style="color:#9fe3a8;">WHILE OPEN</b></span>'+
     '</div>';
@@ -769,6 +775,7 @@
       minConfidencePct:Math.max(0,Math.min(100,Number(saved.minConfidencePct||0))),
       pagesPerType:Math.max(1,Math.min(5,Number(saved.pagesPerType||2))),
       auctionPages:Math.max(1,Math.min(6,Number(saved.auctionPages||4))),
+      maxLiveAgeHours:Math.max(1,Math.min(168,Number(saved.maxLiveAgeHours||24))),
       lowTierBonuses:Array.isArray(saved.lowTierBonuses)?saved.lowTierBonuses:['Achilles','Conserve'],
       bbRate:Math.max(0,Number(pricelist.bunkerBuckRate||saved.bbRate||0))
     };
@@ -785,6 +792,7 @@
       minConfidencePct:Math.max(0,Math.min(100,Number(read('#mm-acq-rw-min-confidence','0'))||0)),
       pagesPerType:Math.max(1,Math.min(5,Math.round(Number(read('#mm-acq-rw-market-pages','2'))||2))),
       auctionPages:Math.max(1,Math.min(6,Math.round(Number(read('#mm-acq-rw-auction-pages','4'))||4))),
+      maxLiveAgeHours:Math.max(1,Math.min(168,Number(read('#mm-acq-rw-max-age','24'))||24)),
       lowTierBonuses:read('#mm-acq-rw-low-bonuses','Achilles,Conserve').split(',').map(x=>x.trim()).filter(Boolean)
     };
     if(!/^\d+$/.test(settings.pricelistUserId))throw new Error('Pricelist ID must be a Torn user ID.');
@@ -826,6 +834,15 @@
     finally{busy=false;render();}
   }
 
+  async function ensureRankedFresh(){
+    if(busy)return;
+    const now=Date.now();
+    const pricelistAt=Date.parse(state?.procurement?.pricelist?.lastSyncAt||'')||0;
+    const rankedAt=Date.parse(state?.procurement?.ranked?.lastLiveAt||'')||0;
+    if(!pricelistAt||now-pricelistAt>=PRICELIST_STALE_MS)await refreshPricelist();
+    if(!rankedAt||Date.now()-rankedAt>=RANKED_LIVE_STALE_MS)await refreshRankedLive();
+  }
+
   async function analyzeRankedHistory(itemId){
     if(busy)return;
     if(!apiKey()){
@@ -865,9 +882,13 @@
     const bonusQ=rankedBonus.trim().toLowerCase();
     const weaponQ=rankedWeapon.trim().toLowerCase();
     return rows.filter(row=>{
+      const source=String(row.source||'').toLowerCase();
+      if(source!=='auction'){
+        const observed=Date.parse(row.lastUpdated||'')||0;
+        if(!observed||Date.now()-observed>cfg.maxLiveAgeHours*3600000)return false;
+      }
       if(rankedType!=='all'&&String(row.weaponType||'').toLowerCase()!==rankedType)return false;
       if(rankedSource!=='all'){
-        const source=String(row.source||'').toLowerCase();
         if(rankedSource==='auction'&&source!=='auction')return false;
         if(rankedSource==='market'&&source==='auction')return false;
       }
@@ -1256,6 +1277,7 @@
         '<label style="font-size:10px;color:#aaa;">Ranked min confidence %<input id="mm-acq-rw-min-confidence" type="number" min="0" max="100" value="'+Number(rankedSettings().minConfidencePct)+'" style="'+inputCss()+'width:100%;"></label>'+
         '<label style="font-size:10px;color:#aaa;">Market pages/type<input id="mm-acq-rw-market-pages" type="number" min="1" max="5" value="'+Number(rankedSettings().pagesPerType)+'" style="'+inputCss()+'width:100%;"></label>'+
         '<label style="font-size:10px;color:#aaa;">Auction pages<input id="mm-acq-rw-auction-pages" type="number" min="1" max="6" value="'+Number(rankedSettings().auctionPages)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Max live age hours<input id="mm-acq-rw-max-age" type="number" min="1" max="168" value="'+Number(rankedSettings().maxLiveAgeHours)+'" style="'+inputCss()+'width:100%;"></label>'+
         '<label style="font-size:10px;color:#aaa;grid-column:1/-1;">Low-tier bonus labels<input id="mm-acq-rw-low-bonuses" value="'+esc(rankedSettings().lowTierBonuses.join(','))+'" style="'+inputCss()+'width:100%;"></label>'+
       '</div>'+
       '<button id="mm-acq-save-ranked" style="'+button(true)+'margin-top:7px;">Save Ranked Rules</button>'
@@ -1307,6 +1329,7 @@
       render();
       if(activeView==='travel'&&apiKey())refreshTravelContext({force:false,silent:true}).then(()=>render());
       if(activeView==='items'||activeView==='ranked')ensureItemCatalog();
+      if(activeView==='ranked')setTimeout(ensureRankedFresh,80);
     }));
     root.querySelectorAll('#mm-acq-reload').forEach(b=>b.addEventListener('click',reloadCachedState));
     root.querySelector('#mm-acq-live-refresh')?.addEventListener('click',refreshOpportunities);
