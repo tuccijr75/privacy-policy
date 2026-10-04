@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.13
+// @version      8.0.0-alpha.14
 // @description  Market acquisition, pricelist profit, ranked-weapon valuation, live market/auction scouting and travel procurement with manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -591,7 +591,7 @@
     if(!state)return '';
     const f=core.freshnessSnapshot(state);
     return '<div style="display:flex;gap:5px;flex-wrap:wrap;font-size:10px;color:#aaa;margin-bottom:7px;">'+
-      '<span>Weav3r '+esc(age(f.weav3rGeneratedAt))+'</span>'+
+      '<span>Bazaar '+esc(age(f.weav3rGeneratedAt))+' <span style="color:#777;">(Weav3r)</span></span>'+
       '<span>· Item Market '+esc(age(f.itemMarket))+'</span>'+
       '<span>· Travel '+esc(age(f.travel))+'</span>'+
       '<span>· Pricelist '+esc(age(state?.procurement?.pricelist?.lastSyncAt))+'</span>'+
@@ -700,12 +700,12 @@
       '</div>'
     )+
     card('<b>Pricelist Universe Scan · '+pricelistScan.length.toLocaleString()+' evaluated</b>'+
-      '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Every positively priced item on the configured TornW3B pricelist is screened from the global market feed before deeper API calls. '+pricelistProfitable.toLocaleString()+' currently show positive gross spread; '+pricelistQualified.toLocaleString()+' meet active ROI/profit rules. Pricelist buy rate is a benchmark, not a resale exit.</div>'+
+      '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Every positively priced item on the configured TornW3B pricelist is screened from the global Bazaar observation feed before deeper Bazaar + Item Market verification. '+pricelistProfitable.toLocaleString()+' currently show positive gross spread; '+pricelistQualified.toLocaleString()+' meet active ROI/profit rules. Pricelist buy rate is a benchmark, not a resale exit.</div>'+
       (pricelistDeals.length?pricelistDeals.map((r,i)=>
         '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
-          '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.freshness?.label||'UNKNOWN')+
-          '<div>Cheapest seen <b>'+money(r.buyPrice)+'</b> · Your buy rate '+money(r.targetBuy)+' · Market exit '+money(r.bestExit)+' · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
-          '<div style="color:#888;">Profit/unit '+(r.profit>=0?'+':'-')+money(Math.abs(r.profit||0))+' · liquidity '+Number(r.liquidity||0)+'/100 · confidence '+Number(r.confidence||0)+'% · sellers '+Number(r.sellerCount||0)+'</div></div>'+
+          '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.freshness?.label||'UNKNOWN')+' · <b>'+esc(r.buySource||'Bazaar observed')+'</b>'+
+          '<div>Bazaar low <b>'+money(r.buyPrice)+'</b> · Bazaar avg '+money(r.bazaarAverage||0)+' · Your buy rate '+money(r.targetBuy)+' · Best exit '+money(r.bestExit)+' ('+esc(r.bestExitRoute||'')+') · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
+          '<div style="color:#888;">Profit/unit '+(r.profit>=0?'+':'-')+money(Math.abs(r.profit||0))+' · liquidity '+Number(r.liquidity||0)+'/100 · confidence '+Number(r.confidence||0)+'% · bazaars '+Number(r.sellerCount||0)+'</div></div>'+
           '<button data-pricelist-verify="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(r.qualifies)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Verify</button>'+
         '</div>'
       ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">Pricelist rows are loaded, but current market evidence is unavailable. Refresh Opportunities.</div>')
@@ -725,7 +725,7 @@
       '<div style="font-size:10px;color:#888;margin:4px 0;">These require fresher seller or Item Market evidence before routing.</div>'+
       (research.length?research.map(r=>
         '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:6px 0;font-size:10px;">'+
-          '<div><b>'+esc(r.name)+'</b> · ROI '+Number(r.roiPct||0).toFixed(1)+'% · Sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% · score '+Number(r.score||0).toFixed(0)+'</div>'+
+          '<div><b>'+esc(r.name)+'</b> · '+esc(r.discoverySource||'Research')+' · ROI '+Number(r.roiPct||0).toFixed(1)+'% · Sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% · score '+Number(r.score||0).toFixed(0)+'</div>'+
           '<button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'padding:4px 7px;">Find & Buy</button>'+
         '</div>'
       ).join(''):'<div style="font-size:10px;color:#888;margin-top:6px;">No additional leads.</div>')+
@@ -768,11 +768,27 @@
       '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:10px;color:#888;">Recovery tools</summary><button id="mm-acq-travel-import" style="'+button()+'margin-top:5px;">Import Browser Capture</button></details>'
     )+
     card(rows.length?rows.map((r,i)=>
-      '<div style="border-top:1px solid #303030;padding:7px 0;font-size:11px;"><b>#'+(i+1)+' '+esc(r.itemName)+'</b> · '+esc(r.country)+
-      '<div>Stock '+Number(r.stock||0).toLocaleString()+' · Profit '+money(r.profit||0)+' · Source profit/hr '+money(r.sourceProfitPerHour||0)+'</div></div>'
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;"><div><b>#'+(i+1)+' '+esc(r.itemName)+'</b> · '+esc(r.country)+
+      '<div>Overseas stock '+Number(r.stock||0).toLocaleString()+' · Profit '+money(r.profit||0)+' · Source profit/hr '+money(r.sourceProfitPerHour||0)+'</div></div>'+
+      '<button data-travel-compare="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'white-space:nowrap;">Compare Bazaar / Market</button></div>'
     ).join(''):(stale
       ?'<div style="font-size:11px;color:#888;">No travel recommendations shown until data is refreshed.</div>'
       :'<div style="font-size:11px;color:#888;">No profitable current travel rows match this trip context.</div>'));
+  }
+
+  async function compareTravelItem(itemId,itemName){
+    if(busy)return;
+    const id=String(itemId||'');
+    const name=String(itemName||'').trim();
+    const item=catalogRows().find(row=>row.id===id)||(name?catalogRows().find(row=>row.name.toLowerCase()===name.toLowerCase()):null);
+    if(!item){
+      statusText='Could not resolve '+(name||('item '+id))+' in the Torn catalog.';
+      render();
+      return;
+    }
+    activeView='items';
+    itemQuery=item.name;
+    await findCatalogPriceByItem(item);
   }
 
   function rankedSettings(){
@@ -841,7 +857,10 @@
     try{
       const result=await service.refreshRankedLive({pagesPerType:cfg.pagesPerType,auctionPages:cfg.auctionPages,limit:100});
       state=result?.state||await core.readLegacyState();
-      statusText='Ranked live feed updated: '+Number(result?.market?.length||0).toLocaleString()+' market + '+Number(result?.auction?.length||0).toLocaleString()+' auction listings.';
+      const liveRows=Array.isArray(result?.market)?result.market:[];
+      const bazaarCount=liveRows.filter(row=>String(row?.source||'').toLowerCase()==='bazaar').length;
+      const itemMarketCount=liveRows.filter(row=>String(row?.source||'').toLowerCase()==='item market'||String(row?.source||'').toLowerCase()==='market').length;
+      statusText='Ranked live feed updated: '+bazaarCount.toLocaleString()+' Bazaar + '+itemMarketCount.toLocaleString()+' Item Market + '+Number(result?.auction?.length||0).toLocaleString()+' Auction.';
     }catch(error){statusText='Ranked live refresh failed: '+(error?.message||String(error));}
     finally{busy=false;render();}
   }
@@ -905,7 +924,8 @@
       if(rankedType!=='all'&&String(row.weaponType||'').toLowerCase()!==rankedType)return false;
       if(rankedSource!=='all'){
         if(rankedSource==='auction'&&source!=='auction')return false;
-        if(rankedSource==='market'&&source==='auction')return false;
+        if(rankedSource==='bazaar'&&source!=='bazaar')return false;
+        if(rankedSource==='item-market'&&source!=='item market'&&source!=='market')return false;
       }
       if(rankedRarity!=='all'&&String(row.rarity||'').toLowerCase()!==rankedRarity)return false;
       if(weaponQ&&!String(row.itemName||'').toLowerCase().includes(weaponQ))return false;
@@ -970,6 +990,9 @@
     const visible=all.slice(rankedPage*RANKED_PAGE_SIZE,(rankedPage+1)*RANKED_PAGE_SIZE);
     const historyCount=Object.keys(ranked.history||{}).length;
     const priceList=state?.procurement?.pricelist||{};
+    const liveMarketRows=Array.isArray(ranked.liveMarket)?ranked.liveMarket:[];
+    const bazaarCount=liveMarketRows.filter(row=>String(row?.source||'').toLowerCase()==='bazaar').length;
+    const itemMarketCount=liveMarketRows.filter(row=>['item market','market'].includes(String(row?.source||'').toLowerCase())).length;
     return card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
         '<div><b>Ranked Weapon Profit Scout</b><div style="font-size:10px;color:#888;">No bonuses excluded. BB scrap floor + completed Torn auctions + live market/auction opportunities. Auction prices are current bids, not guaranteed purchase prices.</div></div>'+
@@ -979,10 +1002,10 @@
           '<button id="mm-acq-rw-analyze-visible" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Analyze Visible</button>'+
         '</div>'+
       '</div>'+
-      '<div style="font-size:10px;color:#888;margin-top:5px;">BB '+money(cfg.bbRate)+'/buck · Pricelist '+Number(priceList.pricedCount||0).toLocaleString()+' priced · Live '+Number(ranked.liveMarket?.length||0).toLocaleString()+' market + '+Number(ranked.liveAuction?.length||0).toLocaleString()+' auction · AH history '+historyCount+' weapon types · updated '+esc(age(ranked.lastLiveAt))+'</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:5px;">BB '+money(cfg.bbRate)+'/buck · Pricelist '+Number(priceList.pricedCount||0).toLocaleString()+' priced · Live <b>'+bazaarCount.toLocaleString()+' Bazaar</b> + <b>'+itemMarketCount.toLocaleString()+' Item Market</b> + <b>'+Number(ranked.liveAuction?.length||0).toLocaleString()+' Auction</b> · AH history '+historyCount+' weapon types · updated '+esc(age(ranked.lastLiveAt))+'</div>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:5px;margin-top:8px;">'+
         '<select id="mm-acq-rw-type" style="'+inputCss()+'width:100%;"><option value="all">All types</option><option value="primary"'+(rankedType==='primary'?' selected':'')+'>Primary</option><option value="secondary"'+(rankedType==='secondary'?' selected':'')+'>Secondary</option><option value="melee"'+(rankedType==='melee'?' selected':'')+'>Melee</option></select>'+
-        '<select id="mm-acq-rw-source" style="'+inputCss()+'width:100%;"><option value="all">Market + Auction</option><option value="market"'+(rankedSource==='market'?' selected':'')+'>Market</option><option value="auction"'+(rankedSource==='auction'?' selected':'')+'>Auction</option></select>'+
+        '<select id="mm-acq-rw-source" style="'+inputCss()+'width:100%;"><option value="all">All sources</option><option value="bazaar"'+(rankedSource==='bazaar'?' selected':'')+'>Bazaar</option><option value="item-market"'+(rankedSource==='item-market'?' selected':'')+'>Item Market</option><option value="auction"'+(rankedSource==='auction'?' selected':'')+'>Auction</option></select>'+
         '<select id="mm-acq-rw-rarity" style="'+inputCss()+'width:100%;"><option value="all">All rarity</option><option value="yellow"'+(rankedRarity==='yellow'?' selected':'')+'>Yellow</option><option value="orange"'+(rankedRarity==='orange'?' selected':'')+'>Orange</option><option value="red"'+(rankedRarity==='red'?' selected':'')+'>Red</option></select>'+
         '<input id="mm-acq-rw-weapon" value="'+esc(rankedWeapon)+'" placeholder="Weapon name" style="'+inputCss()+'width:100%;">'+
         '<input id="mm-acq-rw-bonus" value="'+esc(rankedBonus)+'" placeholder="Bonus name" style="'+inputCss()+'width:100%;">'+
@@ -1033,10 +1056,16 @@
   function catalogRows(){
     const catalog=state?.procurement?.catalog||{};
     const pricelist=state?.procurement?.pricelist?.items||{};
+    const marketplace=state?.marketIntel?.marketplace||{};
+    const snapshots=state?.procurement?.marketSnapshots||{};
     return Object.entries(catalog).map(([id,row])=>({
       pricelistBuyPrice:Math.max(0,Number(pricelist?.[String(id)]?.buyPrice||0)),
       pricelistBulkBuyPrice:Math.max(0,Number(pricelist?.[String(id)]?.bulkBuyPrice||0)),
       pricelistBulkThreshold:Math.max(0,Number(pricelist?.[String(id)]?.bulkThreshold||0)),
+      bazaarPrice:Math.max(0,Number(marketplace?.[String(id)]?.lowestPrice||0)),
+      bazaarAverage:Math.max(0,Number(marketplace?.[String(id)]?.bazaarAverage||0)),
+      bazaarSellers:Math.max(0,Number(marketplace?.[String(id)]?.totalBazaars||0)),
+      itemMarketPrice:Math.max(0,Number(snapshots?.[String(id)]?.itemMarket?.lowest||0)),
       id:String(row?.id||id),
       name:String(row?.name||('Item '+id)),
       type:String(row?.type||'Other')||'Other',
@@ -1057,6 +1086,8 @@
       if(itemAvailability==='buyable'&&!row.buyable)return false;
       if(itemAvailability==='market'&&!(row.marketPrice>0))return false;
       if(itemAvailability==='shops'&&!row.shops.some(shop=>Number(shop?.price||0)>0))return false;
+      if(itemAvailability==='bazaar'&&!(row.bazaarPrice>0||row.bazaarSellers>0))return false;
+      if(itemAvailability==='itemmarket'&&!(row.itemMarketPrice>0))return false;
       if(itemAvailability==='pricelist'&&!(row.pricelistBuyPrice>0))return false;
       if(q&&!row.name.toLowerCase().includes(q)&&row.id!==q&&!row.type.toLowerCase().includes(q)&&!row.subType.toLowerCase().includes(q))return false;
       return true;
@@ -1235,6 +1266,8 @@
           '<option value="buyable"'+(itemAvailability==='buyable'?' selected':'')+'>Buyable</option>'+
           '<option value="market"'+(itemAvailability==='market'?' selected':'')+'>Market-valued</option>'+
           '<option value="shops"'+(itemAvailability==='shops'?' selected':'')+'>Torn shop source</option>'+
+          '<option value="bazaar"'+(itemAvailability==='bazaar'?' selected':'')+'>Bazaar observed</option>'+
+          '<option value="itemmarket"'+(itemAvailability==='itemmarket'?' selected':'')+'>Item Market checked</option>'+
           '<option value="pricelist"'+(itemAvailability==='pricelist'?' selected':'')+'>Customer pricelist</option>'+
           '<option value="all"'+(itemAvailability==='all'?' selected':'')+'>All catalog</option>'+
         '</select>'+
@@ -1260,7 +1293,7 @@
       (visible.length?visible.map(row=>
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
           '<div style="min-width:0;"><b>'+esc(row.name)+'</b> <span style="color:#777;">['+esc(row.id)+']</span>'+
-            '<div style="color:#888;">'+esc(row.type)+(row.subType?' · '+esc(row.subType):'')+' · Market '+money(row.marketPrice||0)+(row.pricelistBuyPrice>0?' · Pricelist '+money(row.pricelistBuyPrice):'')+' · Shops '+row.shops.filter(shop=>Number(shop?.price||0)>0).length+'</div>'+
+            '<div style="color:#888;">'+esc(row.type)+(row.subType?' · '+esc(row.subType):'')+' · Bazaar low '+money(row.bazaarPrice||0)+' · Bazaar avg '+money(row.bazaarAverage||0)+' · Bazaars '+Number(row.bazaarSellers||0)+(row.itemMarketPrice>0?' · Item Market '+money(row.itemMarketPrice):'')+(row.pricelistBuyPrice>0?' · Pricelist '+money(row.pricelistBuyPrice):'')+' · Shops '+row.shops.filter(shop=>Number(shop?.price||0)>0).length+'</div>'+
           '</div>'+
           '<button data-catalog-find="'+esc(row.id)+'" '+(busy?'disabled':'')+' style="'+button(itemSelection?.id===row.id)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Find Price</button>'+
         '</div>'
@@ -1329,7 +1362,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.13 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.14 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -1386,6 +1419,7 @@
     root.querySelector('#mm-acq-pricelist-refresh')?.addEventListener('click',refreshPricelist);
     root.querySelector('#mm-acq-rw-pricelist-refresh')?.addEventListener('click',refreshPricelist);
     root.querySelector('#mm-acq-rw-live-refresh')?.addEventListener('click',refreshRankedLive);
+    root.querySelectorAll('[data-travel-compare]').forEach(b=>b.addEventListener('click',()=>compareTravelItem(b.dataset.travelCompare,b.dataset.travelName)));
     root.querySelector('#mm-acq-rw-analyze-visible')?.addEventListener('click',analyzeVisibleRanked);
     root.querySelector('#mm-acq-rw-filter')?.addEventListener('click',()=>{
       rankedType=String(root.querySelector('#mm-acq-rw-type')?.value||'all');
