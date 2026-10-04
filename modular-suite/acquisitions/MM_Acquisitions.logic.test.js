@@ -89,6 +89,25 @@ function baseDb(){
 
 {
   const db=baseDb();
+  db.marketIntel.marketplace={};
+  db.procurement.catalog={};
+  db.procurement.pricelist={items:{}};
+  for(let i=1;i<=125;i++){
+    const id=String(i);
+    db.marketIntel.marketplace[id]=item(id,1000+i,2000+i,3+(i%5));
+    db.procurement.catalog[id]={name:'Item '+id,type:'Supply'};
+    db.procurement.pricelist.items[id]={itemId:id,name:'Item '+id,buyPrice:900+i};
+  }
+  const rows=logic.rankPricelistUniverse(db,now);
+  assert.strictEqual(rows.length,125,'every positively priced customer item must be evaluated');
+  assert(rows.every(row=>row.hasMarketEvidence),'fixture should have market evidence for all customer items');
+  assert(rows.filter(row=>row.profitable).length===125,'all fixture rows should show positive spread');
+  assert(rows[0].targetBuy>0,'customer buy-rate benchmark must be preserved');
+  assert(rows[0].bestExit>rows[0].buyPrice,'market exit must be distinct from customer buy rate');
+}
+
+{
+  const db=baseDb();
   db.travelIntel.rows=[
     {itemName:'A',country:'Japan',stock:10,profit:1000,sourceProfitPerHour:100},
     {itemName:'B',country:'Mexico',stock:10,profit:500,sourceProfitPerHour:200},
