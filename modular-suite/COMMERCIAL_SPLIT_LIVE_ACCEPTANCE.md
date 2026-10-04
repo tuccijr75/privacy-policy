@@ -1716,4 +1716,33 @@ Observed directly after immutable alpha.12 install:
 Manual boundary for next phase:
 - Opera connector can inspect but cannot press the page's userscript controls;
 - owner must open `Ranked` and press `Refresh Ranked` once, then leave the panel open for inspection.
+### alpha.13 live auction semantics correction — 2026-10-04
+
+Live alpha.12 Ranked acceptance:
+- PASS: ranked refresh populated 300 market + 226 auction rows;
+- PASS: freshness filtering retained 174 live matches instead of the prior false zero;
+- PASS: all type/source/rarity/name/bonus/ROI controls rendered and are usable;
+- PASS: BB floor values rendered from the live $6,119,978/BB rate;
+- PASS: current live auctions carried bid counts and future end timestamps;
+- defect found: TornW3B auction `price` is the current bid, but the UI labeled it `Ask` and displayed `fair value - current bid` as realized Profit, producing misleading extreme ROI on $1/$2 bids.
+
+alpha.13 fix:
+- auction rows now label the value `Current bid`, never `Ask`;
+- auction rows show break-even ceiling when target ROI is 0;
+- when a ranked ROI target is set, auction rows show `Max bid @ X% ROI`;
+- auction rows show bid headroom to that ceiling, bid count, time remaining and an `UNDER BB FLOOR` marker when applicable;
+- auction ROI is explicitly labeled `Provisional ROI at current bid` because the final winning price can change;
+- market/Bazaar rows retain normal Ask / Profit / ROI semantics;
+- Ranked header explicitly warns that auction prices are current bids and not guaranteed purchase prices.
+
+Verification:
+- 10 Acquisitions source/test files compile;
+- alpha.13 static assertions cover current-bid wording, bid ceilings, provisional ROI, BB-floor marker and end-time rendering;
+- live current auction sanity check confirms an overpriced SIG 552 bid produces negative headroom and negative provisional ROI rather than a false profit recommendation.
+
+Next live gate:
+1. install alpha.13;
+2. refresh Ranked;
+3. inspect at least one under-BB auction and one overpriced auction;
+4. then run Analyze AH on one low-tier/BB weapon and one premium weapon.
 
