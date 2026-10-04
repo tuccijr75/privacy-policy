@@ -1047,21 +1047,63 @@
     location.href='https://www.torn.com/messages.php#/p=compose&XID='+encodeURIComponent(id);
   }
 
+  function normalizeArmoryDeliveryText(value){
+    return String(value||'').replace(/\s+/g,' ').trim().toLowerCase();
+  }
+
+  function armoryDeliveryFingerprint(payload){
+    const lines=String(payload?.body||'').split(/\r?\n/)
+      .map(line=>normalizeArmoryDeliveryText(line))
+      .filter(line=>line.length>=12);
+    return String(lines[0]||normalizeArmoryDeliveryText(payload?.subject||'')).slice(0,90);
+  }
+
+  function armoryDeliveryFingerprintCount(fingerprint){
+    const needle=normalizeArmoryDeliveryText(fingerprint);
+    if(!needle||!document.body)return 0;
+    let count=0;
+    const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+    let node=walker.nextNode();
+    while(node){
+      const parent=node.parentElement;
+      if(parent&&!parent.closest('#'+ROOT_ID+',textarea,input,[contenteditable="true"],[role="textbox"],script,style,noscript')){
+        const text=normalizeArmoryDeliveryText(node.nodeValue||'');
+        if(text&&text.includes(needle))count++;
+      }
+      node=walker.nextNode();
+    }
+    return count;
+  }
+
+  function armorySentConfirmationTexts(){
+    const selector='[role="alert"],[aria-live="assertive"],[aria-live="polite"],[class*="success" i],[class*="notification" i],[class*="toast" i]';
+    return [...new Set([...document.querySelectorAll(selector)]
+      .filter(node=>node&&node.offsetParent!==null)
+      .map(el=>normalizeArmoryDeliveryText(el.innerText||el.textContent||''))
+      .filter(text=>/\bmessage(?:\s+has\s+been)?\s+sent\b|\bsent\s+successfully\b|\bsuccessfully\s+sent\b/.test(text)))];
+  }
+
   async function verifyArmorySend(payload){
     const started=Date.now();
+    const baselineConfirmations=new Set(Array.isArray(payload?.confirmationBaseline)?payload.confirmationBaseline:[]);
+    const fingerprint=String(payload?.deliveryFingerprint||armoryDeliveryFingerprint(payload));
+    const baselineCount=Math.max(0,Number(payload?.fingerprintBaselineCount||0));
+
     while(Date.now()-started<ARMORY_SEND_CONFIRM_MS){
       const current=GM_getValue(ARMORY_COMPOSE_KEY,null);
       if(!current||String(current.composeId||'')!==String(payload.composeId||''))return;
-      const text=String(document.body?.innerText||'').toLowerCase();
-      const leftCompose=!location.hash.includes('compose')||!armoryComposeSend();
-      const successText=/message\s+(?:has\s+been\s+)?sent|sent\s+successfully/.test(text);
-      if(leftCompose||successText){
+
+      const successText=armorySentConfirmationTexts().find(text=>!baselineConfirmations.has(text))||'';
+      const transcriptConfirmed=Boolean(fingerprint&&armoryDeliveryFingerprintCount(fingerprint)>baselineCount);
+
+      if(successText||transcriptConfirmed){
         if(payload.kind==='member-data-reminder')recordReminderSent(payload.memberId,payload.playerName);
         GM_deleteValue(ARMORY_COMPOSE_KEY);
         return;
       }
       await new Promise(resolve=>setTimeout(resolve,500));
     }
+
     const current=GM_getValue(ARMORY_COMPOSE_KEY,null);
     if(current&&String(current.composeId||'')===String(payload.composeId||'')){
       GM_setValue(ARMORY_COMPOSE_KEY,{...current,state:'send-unconfirmed',sendVerificationFailedAt:Date.now()});
@@ -1106,7 +1148,15 @@
       const send=armoryComposeSend();
       const target=event.target?.closest?.('button,input[type="submit"],[role="button"]');
       if(!send||!target||!(target===send||send.contains?.(target)||target.contains?.(send)))return;
-      const next={...payload,state:'send-clicked',sendClickedAt:Date.now()};
+      const fingerprint=armoryDeliveryFingerprint(payload);
+      const next={
+        ...payload,
+        state:'send-clicked',
+        sendClickedAt:Date.now(),
+        confirmationBaseline:armorySentConfirmationTexts(),
+        deliveryFingerprint:fingerprint,
+        fingerprintBaselineCount:armoryDeliveryFingerprintCount(fingerprint)
+      };
       GM_setValue(ARMORY_COMPOSE_KEY,next);
       verifyArmorySend(next).catch(()=>{});
     },true);
