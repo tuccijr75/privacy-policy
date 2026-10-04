@@ -7,11 +7,11 @@
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed/modular-suite/acquisitions/MM_Acquisitions.logic.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed/modular-suite/acquisitions/MM_Acquisitions.live.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@2272d4fad5684581d1e4602961b6d0639b5e89fe/modular-suite/core/MM_Torn_Core.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@2272d4fad5684581d1e4602961b6d0639b5e89fe/modular-suite/acquisitions/MM_Acquisitions.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@2272d4fad5684581d1e4602961b6d0639b5e89fe/modular-suite/acquisitions/MM_Acquisitions.live.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@2272d4fad5684581d1e4602961b6d0639b5e89fe/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@2272d4fad5684581d1e4602961b6d0639b5e89fe/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
