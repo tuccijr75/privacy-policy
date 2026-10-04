@@ -65,7 +65,8 @@ const factionInventory={
 const rows=logic.memberRows(factionInventory,['100']);
 assert.strictEqual(rows.length,1);
 assert.strictEqual(rows[0].apiSaved,true);
-assert.strictEqual(rows[0].readinessStatus,'READY FOR REVIEW');
+assert.strictEqual(rows[0].readinessStatus,'ACTION NEEDED');
+assert.strictEqual(rows[0].buildWarReady,false);
 
 const summaryOnly={
   stats:{strength:100,defense:100,speed:100,dexterity:100},
@@ -80,6 +81,49 @@ const primary=build.items.find(x=>x.slot==='primary');
 assert(primary);
 assert.strictEqual(primary.route,'KEEP','must never replace a stronger known current primary');
 assert.notStrictEqual(primary.targetName,'Weak Rifle','faction stock must not define the objective baseline');
+
+const readyVerifiedAt=new Date().toISOString();
+const readyFaction={
+  current:{},
+  memberReadiness:{
+    roster:{'150':{memberId:'150',memberName:'Ready Member',level:30}},
+    profiles:{'150':{
+      stats:{strength:1000,defense:1000,speed:1000,dexterity:1000},
+      equipment:{
+        summary:'PRIMARY: AK-47 | SECONDARY: BT MP9 | MELEE: Macana | HELMET: WWII Helmet | BODY: Bulletproof Vest | GLOVES: Kevlar Gloves | PANTS: Combat Pants | BOOTS: Safety Boots',
+        items:[
+          {name:'AK-47',type:'Primary'},
+          {name:'BT MP9',type:'Secondary'},
+          {name:'Macana',type:'Melee'},
+          {name:'WWII Helmet',subType:'Helmet'},
+          {name:'Bulletproof Vest',subType:'Body'},
+          {name:'Kevlar Gloves',subType:'Gloves'},
+          {name:'Combat Pants',subType:'Pants'},
+          {name:'Safety Boots',subType:'Boots'}
+        ]
+      },
+      verifiedAt:readyVerifiedAt
+    }},
+    settings:{staleHours:72}
+  }
+};
+let readyRows=logic.memberRows(readyFaction,[],{procurementMode:'budget'});
+assert.strictEqual(readyRows[0].buildWarReady,true,'all eight equipped slots at the budget floor should pass the build baseline');
+assert.strictEqual(readyRows[0].readinessStatus,'READY FOR REVIEW','automatic build pass must wait for explicit leadership approval');
+
+readyFaction.memberReadiness.profiles['150'].readinessApproval={
+  status:'WAR READY',
+  approvedAt:new Date().toISOString(),
+  verifiedAt:readyVerifiedAt,
+  procurementMode:'budget'
+};
+readyRows=logic.memberRows(readyFaction,[],{procurementMode:'budget'});
+assert.strictEqual(readyRows[0].readinessStatus,'WAR READY','current approval must promote the canonical member status');
+assert.strictEqual(readyRows[0].buildAssessment.warReady,true,'Members and Builds must share the same build assessment');
+
+readyFaction.memberReadiness.profiles['150'].verifiedAt=new Date(Date.now()+1000).toISOString();
+readyRows=logic.memberRows(readyFaction,[],{procurementMode:'budget'});
+assert.strictEqual(readyRows[0].readinessStatus,'READY FOR REVIEW','new member data must invalidate the prior approval until reviewed again');
 
 const missingMember={
   memberId:'101',
@@ -238,7 +282,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.17';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.18';"));
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -247,7 +291,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.17';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.18';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -255,7 +299,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.17';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.18';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -315,11 +359,17 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.17';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.18';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.2'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
 assert(userSourceValue.includes('Find Best Source'));
 assert(userSourceValue.includes('data-armory-acquire'));
 assert(userSourceValue.includes("type:'armory-acquisition-request'"));
+assert(userSourceValue.includes('function setMemberWarReady'));
+assert(userSourceValue.includes('Approve / War Ready'));
+assert(userSourceValue.includes('Reopen Review'));
+assert(userSourceValue.includes("row.buildAssessment||logic.compareMemberBuild"));
+assert(userSourceValue.includes("'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO'"));
+assert(userSourceValue.includes("'Baseline Pass':build.warReady?'YES':'NO'"));
 console.log('MM Faction Armory acquisition handoff regression: PASS');
