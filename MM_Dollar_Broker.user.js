@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.2
+// @version      0.1.0-rc.3
 // @description  Manual foreground Bazaar inspection and cross-tab $1 observations. Never buys or scans unattended.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -24,7 +24,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.2';
+const VERSION = '0.1.0-rc.3';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
@@ -283,8 +283,23 @@ function inspectBazaar(doc, win, context) {
   const root=roots[0];
   if (root.matches(SELECTOR.loading) || [...root.querySelectorAll(SELECTOR.loading)].some(e=>visible(e,win))) return fail('Bazaar is still rendering. Inspect again when ready.');
 
-  const ownerLinks=[...root.querySelectorAll(SELECTOR.owner)].filter(e=>!e.closest('[data-testid="item"], [class*="description"], [data-testid="description"]') && visible(e,win));
-  const owners=ownerLinks.map(e=>{try{return {id:new URL(e.href,win.location.href).searchParams.get('XID'),name:cleanText(e.textContent)};}catch{return null;}}).filter(Boolean);
+  const parseOwner=e=>{try{return {id:new URL(e.href,win.location.href).searchParams.get('XID'),name:cleanText(e.textContent)};}catch{return null;}};
+  let owners=[...root.querySelectorAll('a[href*="profiles.php?XID="]')]
+    .filter(e=>!e.closest('[data-testid="item"], [class*="description"], [data-testid="description"]') && visible(e,win))
+    .map(parseOwner).filter(Boolean);
+
+  if(owners.length) {
+    if(owners.some(o=>o.id!==context.targetId)) return fail('Bazaar owner proof is ambiguous. No alert issued.');
+  } else {
+    // Current Torn can render the seller heading just outside #bazaarRoot. In that case
+    // accept only a visible profile link for the exact URL target whose label has the
+    // possessive Bazaar-owner form ("Name's"). This excludes the viewer's sidebar link.
+    owners=[...doc.querySelectorAll('a[href*="profiles.php?XID="]')]
+      .filter(e=>visible(e,win))
+      .map(parseOwner)
+      .filter(o=>o && o.id===context.targetId && /['’]s$/i.test(o.name));
+  }
+
   if (!owners.length || owners.some(o=>o.id!==context.targetId)) return fail('Cannot prove the displayed Bazaar owner. No alert issued.');
   result.seller=(owners[0].name || context.targetId).replace(/['’]s$/,'').slice(0,180);
 
