@@ -998,3 +998,773 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
   async function fetchOwnMedals() {
     return apiV2('user/medals');
+  }
+  async function fetchTargetJob(userId) {
+    return apiV2(`user/${encodeURIComponent(userId)}/job`);
+  }
+
+  async function refreshOwnerMugProfile(force = false) {
+    const now = nowSec();
+    if (!apiKey) return ownerMugProfile;
+    if (!force && ownerMugProfile.status === 'ready' && ownerMugProfileNextAt > now) return ownerMugProfile;
+    try {
+      const meritsPayload = await fetchOwnMerits();
+      const merit = normalizeMugMerits(meritsPayload);
+      let detectedPlunderPercent = 0;
+      if (budgetAvailable()) {
+        try { detectedPlunderPercent = extractPlunderPercent(await fetchOwnEquipment()); }
+        catch (error) { console.warn(`[${APP}] plunder detection:`, String(error?.message || error)); }
+      }
+      let awards = {medals: merit.medals || 0, honors: merit.honors || 0, total:(merit.medals||0)+(merit.honors||0)};
+      if (budgetAvailable()) {
+        try {
+          const [honorsPayload, medalsPayload] = await Promise.all([fetchOwnHonors(), fetchOwnMedals()]);
+          awards = normalizeAwards(medalsPayload, honorsPayload);
+        } catch (error) { console.warn(`[${APP}] awards:`, String(error?.message || error)); }
+      }
+      const manual = Math.max(0, Math.min(100, Number(settings.manualPlunderPercent)||0));
+      ownerMugProfile = {
+        status:'ready', masterfulLevel:merit.masterfulLevel, masterfulBonusPercent:merit.masterfulBonusPercent,
+        detectedPlunderPercent, effectivePlunderPercent:manual > 0 ? manual : detectedPlunderPercent,
+        otherBonusPercent:Math.max(0, Number(settings.otherMugBonusPercent)||0), awards,
+        merits:{available:merit.available||0, used:merit.used||0}, refreshedAt:now
+      };
+      ownerMugProfileNextAt = now + Math.max(5, Number(settings.mugProfileRefreshMinutes)||30) * 60;
+      for (const candidate of candidates) applyMugEstimate(candidate);
+      candidates = rankCandidates(candidates);
+      saveCandidates();
+      return ownerMugProfile;
+    } catch (error) {
+      ownerMugProfile = {...ownerMugProfile, status:'unavailable', refreshedAt:now};
+      ownerMugProfileNextAt = now + 300;
+      console.warn(`[${APP}] mug profile:`, String(error?.message || error));
+      return ownerMugProfile;
+    }
+  }
+
+  async function refreshOwnerBattleStats(force = false) {
+    if (!settings.combatScoring || !apiKey) return null;
+    if (ownerBattleStatsAttempted && !force) return ownerBattleStats;
+    ownerBattleStatsAttempted = true;
+    try {
+      const payload = await fetchOwnBattleStats();
+      const normalized = normalizeBattleStats(payload);
+      if (!(normalized.total > 0)) throw new Error('Battle stats unavailable for this API key.');
+      ownerBattleStats = payload;
+      ownerBattleStatsStatus = 'ready';
+      return ownerBattleStats;
+    } catch (error) {
+      ownerBattleStats = null;
+      ownerBattleStatsStatus = 'unavailable';
+      console.warn(`[${APP}] combat model:`, String(error?.message || error));
+      return null;
+    }
+  }
+
+  async function ensureOwnerIdentity() {
+    if (!licensed()) {
+      const ok = await verifyLicense();
+      if (!ok) throw new Error(`This build is licensed exclusively to ${LICENSED_USER_NAME} [${LICENSED_USER_ID}].`);
+    }
+    if (String(discovery.owner?.id || '') === LICENSED_USER_ID) return discovery.owner;
+    const profile = await fetchOwnProfile();
+    const ownerId = String(profile?.id || '');
+    if (ownerId !== LICENSED_USER_ID) throw new Error(`This build is licensed exclusively to ${LICENSED_USER_NAME} [${LICENSED_USER_ID}].`);
+    discovery.owner = {id:ownerId, factionId:profile?.faction_id ?? null, name:String(profile?.name || '')};
+    saveDiscovery();
+    return discovery.owner;
+  }
+
+  function autoBazaarCount() {
+    return watches.filter((w) => w.active && w.source === 'bazaar' && w.discoverySource === 'api-directory').length;
+  }
+
+  function seedBazaarSellers(rows, sourceLabel) {
+    const existingAuto = watches.filter((w) => w.active && w.source === 'bazaar' && w.discoverySource === 'api-directory');
+    const cap = Math.max(4, Math.min(60, Number(settings.autoBazaarWatchCap) || 24));
+    const candidates = rows.filter((x) => x.isOpen !== false);
+    const bySeller = new Map(existingAuto.map((w) => [String(w.sellerId), w]));
+    for (const row of candidates) {
+      const sellerId = String(row.sellerId || '');
+      if (!sellerId) continue;
+      const existing = bySeller.get(sellerId) || watches.find((w) => w.source === 'bazaar' && String(w.sellerId) === sellerId);
+      if (existing) {
+        existing.sellerName = row.sellerName || existing.sellerName;
+        existing.discoveryScore = Math.max(Number(existing.discoveryScore)||0, Number(row.discoveryScore)||0);
+        existing.discoveryBuckets = [...new Set([...(existing.discoveryBuckets||[]), ...(row.buckets||[]), sourceLabel].filter(Boolean))];
+        existing.lastDiscoveredAt = nowSec();
+        continue;
+      }
+      if (autoBazaarCount() >= cap) break;
+      const entry = upsertWatch({source:'bazaar', sellerId, sellerName:row.sellerName || `Player ${sellerId}`, snapshot:null,
+        discoverySource:'api-directory', discoveryScore:Number(row.discoveryScore)||0,
+        discoveryBuckets:[...(row.buckets||[]), sourceLabel].filter(Boolean), lastDiscoveredAt:nowSec()});
+      bySeller.set(sellerId, entry);
+    }
+    const autos = watches.filter((w) => w.active && w.source === 'bazaar' && w.discoverySource === 'api-directory')
+      .sort((a,b)=>(Number(b.discoveryScore)||0)-(Number(a.discoveryScore)||0) || (Number(b.lastDiscoveredAt)||0)-(Number(a.lastDiscoveredAt)||0));
+    for (const w of autos.slice(cap)) w.active = false;
+    saveWatches();
+  }
+
+  async function discoverBazaarDirectory(force = false) {
+    if (!settings.autoBazaarDiscovery || !apiKey) return;
+    const now = nowSec();
+    if (!force && Number(discovery.nextBazaarAt||0) > now) return;
+    try {
+      const weekly = normalizeBazaarDirectory(await fetchBazaarDirectory());
+      seedBazaarSellers(weekly, 'weekly');
+      const category = BAZAAR_DISCOVERY_CATEGORIES[Number(discovery.categoryIndex||0) % BAZAAR_DISCOVERY_CATEGORIES.length];
+      discovery.categoryIndex = (Number(discovery.categoryIndex||0) + 1) % BAZAAR_DISCOVERY_CATEGORIES.length;
+      if (budgetAvailable()) {
+        const specialized = normalizeBazaarDirectory(await fetchBazaarDirectory(category));
+        seedBazaarSellers(specialized.map((x)=>({...x, discoveryScore:(Number(x.discoveryScore)||0)+8})), `cat:${category}`);
+      }
+      discovery.nextBazaarAt = now + Math.max(120, Number(settings.bazaarDiscoveryMinutes)||10) * 60;
+      saveDiscovery();
+      render();
+    } catch (error) {
+      discovery.nextBazaarAt = now + 120;
+      saveDiscovery();
+      logError('bazaar-directory', error);
+    }
+  }
+
+  async function scanAuctionHouse(force = false) {
+    if (!settings.auctionDiscovery || !apiKey) return;
+    const now = nowSec();
+    if (!force && Number(discovery.nextAuctionAt||0) > now) return;
+    try {
+      const auctions = normalizeAuctionHouse(await fetchAuctionHouse(), now);
+      const result = auctionSignalsSince(auctions, seenAuctions, now, settings.auctionLookbackSeconds);
+      const minGross = Number(settings.minGrossValue || 0);
+      const prioritized = result.signals.filter((s)=>s.grossValue >= minGross).sort((a,b)=>b.grossValue-a.grossValue);
+      cleanRecentCalls();
+      const reserve = discovery.owner?.id ? 2 : 3;
+      const budgetHeadroom = Math.max(0, Math.max(10, Math.min(90, Number(settings.requestBudgetPerMinute)||45)) - recentCalls.length - reserve);
+      const process = prioritized.slice(0, Math.min(12, budgetHeadroom));
+      const deferredIds = new Set(prioritized.slice(process.length).map((s)=>String(s.listingId)));
+      const processedOrDiscarded = result.newlySeen.filter((id)=>!deferredIds.has(String(id)));
+      seenAuctions.push(...processedOrDiscarded);
+      seenAuctions = [...new Set(seenAuctions)].slice(-1000);
+      saveSeenAuctions();
+      discovery.nextAuctionAt = now + Math.max(15, Math.min(300, Number(settings.auctionPollSeconds)||20));
+      saveDiscovery();
+      for (const signal of process) {
+        await handleSignal({source:'auctionhouse', sellerId:signal.sellerId, sellerName:signal.sellerName || `Player ${signal.sellerId}`}, signal);
+        if (!budgetAvailable()) break;
+      }
+    } catch (error) {
+      discovery.nextAuctionAt = now + 30;
+      saveDiscovery();
+      logError('auctionhouse', error);
+    }
+  }
+
+  function applyMugEstimate(candidate) {
+    if (!candidate) return candidate;
+    const protection = Math.max(0, Number(candidate.targetMugReductionPercent)||0);
+    candidate.mugEstimate = mugReturnEstimate(candidate.grossValue, {
+      meritBonusPercent: ownerMugProfile.masterfulBonusPercent || 0,
+      plunderPercent: ownerMugProfile.effectivePlunderPercent || 0,
+      otherBonusPercent: ownerMugProfile.otherBonusPercent || 0,
+      targetReductionPercent: protection,
+      planningBasePercent: settings.planningBaseMugPercent
+    });
+    return candidate;
+  }
+
+  async function applyTargetMugProtection(candidate, force = false) {
+    if (!candidate || !settings.detectTargetMugProtection || !apiKey) return applyMugEstimate(candidate);
+    const now = nowSec();
+    if (!force && Number(candidate.targetMugProtectionCheckedAt||0) > now - 900) return applyMugEstimate(candidate);
+    if (!budgetAvailable()) return applyMugEstimate(candidate);
+    try {
+      const protection = targetMugProtection(await fetchTargetJob(candidate.sellerId));
+      candidate.targetMugProtectionKnown = protection.known;
+      candidate.targetMugReductionPercent = protection.reductionPercent;
+      candidate.targetMugProtectionReason = protection.reason;
+      candidate.targetCompanyRating = protection.companyRating ?? null;
+      candidate.targetMugProtectionCheckedAt = now;
+    } catch (error) {
+      candidate.targetMugProtectionKnown = false;
+      candidate.targetMugProtectionReason = 'job_check_failed';
+      candidate.targetMugProtectionCheckedAt = now;
+    }
+    return applyMugEstimate(candidate);
+  }
+
+  function applyTargetProfile(candidate, profile, suitability = profileSuitability(profile)) {
+    candidate.level = suitability.level;
+    candidate.daysOld = suitability.daysOld;
+    candidate.ageBand = suitability.ageBand;
+    candidate.lifeCurrent = suitability.lifeCurrent;
+    candidate.lifeMaximum = suitability.lifeMaximum;
+    candidate.lifePercent = suitability.lifePercent;
+    candidate.lifeBand = suitability.lifeBand;
+    candidate.levelBand = suitability.levelBand;
+    const combat = combatEstimate(ownerBattleStats, profile);
+    candidate.winProbability = combat.winProbability;
+    candidate.defeatProbability = combat.defeatProbability;
+    candidate.combatConfidence = combat.confidence;
+    candidate.combatMethod = combat.method;
+    applyMugEstimate(candidate);
+    return candidate;
+  }
+
+  function rejectSignal(watch, signal, gate) {
+    rejections.push({
+      at: nowSec(), sellerId: watch.sellerId, sellerName: watch.sellerName, source: signal.source,
+      grossValue: signal.grossValue, itemName: signal.itemName, signalAt: signal.reportedAt,
+      reason: gate.reason, lastAction: gate.lastAction || 0
+    });
+    saveRejections();
+  }
+
+  async function handleSignal(watch, signal) {
+    try {
+      if (settings.combatScoring && !ownerBattleStatsAttempted && budgetAvailable()) await refreshOwnerBattleStats();
+      if ((ownerMugProfile.status !== 'ready' || ownerMugProfileNextAt <= nowSec()) && budgetAvailable()) await refreshOwnerMugProfile();
+      const profile = await fetchProfile(watch.sellerId);
+      const gate = candidateGate(signal, profile, settings.minGrossValue);
+      if (!gate.eligible) {
+        rejectSignal(watch, signal, gate);
+        return;
+      }
+      const owner = settings.excludeOwnFaction ? await ensureOwnerIdentity() : null;
+      if (owner?.id && String(owner.id) === String(watch.sellerId)) { rejectSignal(watch, signal, {...gate, reason:'self'}); return; }
+      if (settings.excludeOwnFaction && owner?.factionId && gate.factionId && Number(owner.factionId) === Number(gate.factionId)) {
+        rejectSignal(watch, signal, {...gate, reason:'same_faction'}); return;
+      }
+      const duplicate = candidates.some((c) => c.sellerId === watch.sellerId && c.signalAt === signal.reportedAt && c.itemId === signal.itemId && c.source === signal.source);
+      if (duplicate) return;
+      const profileStatus = profile?.status?.description || profile?.status?.state || profile?.status || '';
+      let candidate = candidates.find((c)=>!c.stale && String(c.sellerId) === String(watch.sellerId));
+      const canAggregate = candidate && gate.lastAction < Number(candidate.signalAt || 0);
+      if (candidate && !canAggregate) {
+        candidate.stale = true;
+        candidate.staleReason = 'activity_between_sale_signals';
+        candidate = null;
+      }
+      if (candidate) {
+        candidate.grossValue = Math.max(0, Number(candidate.grossValue)||0) + Math.max(0, Number(signal.grossValue)||0);
+        candidate.signalCount = Math.max(1, Number(candidate.signalCount)||1) + 1;
+        candidate.sources = [...new Set([...(candidate.sources||[candidate.source]), signal.source])];
+        candidate.source = candidate.sources.length > 1 ? 'multi-source' : candidate.sources[0];
+        candidate.itemName = candidate.signalCount > 1 ? `${candidate.signalCount} sale signals` : signal.itemName;
+        candidate.soldQty = Math.max(0, Number(candidate.soldQty)||0) + Math.max(0, Number(signal.soldQty)||0);
+        candidate.signalAt = Math.max(Number(candidate.signalAt)||0, Number(signal.reportedAt)||0);
+        candidate.previousReportedAt = Math.min(Number(candidate.previousReportedAt)||signal.previousReportedAt, Number(signal.previousReportedAt)||candidate.previousReportedAt);
+        candidate.lastAction = gate.lastAction;
+        candidate.inactivitySeconds = Math.max(0, candidate.signalAt - gate.lastAction);
+        candidate.confidence = candidate.confidence === 'high' && gate.confidence === 'high' ? 'high' : 'medium';
+        candidate.evidence = `${candidate.signalCount}_sale_signals_no_intervening_action`;
+        candidate.profileStatus = String(profileStatus || '').slice(0, 160);
+        candidate.statusState = gate.state; candidate.activityStatus = gate.activity; candidate.attackableNow = gate.attackableNow;
+        candidate.factionId = gate.factionId;
+        applyTargetProfile(candidate, profile, gate);
+        candidate.nextProfileCheckAt = nowSec() + Math.max(15, Number(settings.candidateRecheckSeconds)||30);
+      } else {
+        candidate = {
+          id: uid(), sellerId: watch.sellerId, sellerName: watch.sellerName || profile?.name || `Player ${watch.sellerId}`,
+          source: signal.source, sources:[signal.source], signalCount:1, itemId: signal.itemId, itemName: signal.itemName, soldQty: signal.soldQty,
+          grossValue: signal.grossValue, unitPrice: signal.unitPrice, signalAt: signal.reportedAt,
+          previousReportedAt: signal.previousReportedAt, lastAction: gate.lastAction, inactivitySeconds: gate.inactivitySeconds,
+          confidence: gate.confidence, evidence: signal.evidence, profileStatus: String(profileStatus || '').slice(0, 160),
+          statusState: gate.state, activityStatus: gate.activity, attackableNow: gate.attackableNow,
+          factionId: gate.factionId, nextProfileCheckAt: nowSec() + Math.max(15, Number(settings.candidateRecheckSeconds)||30), stale:false
+        };
+        applyTargetProfile(candidate, profile, gate);
+        candidates.push(candidate);
+      }
+      await applyTargetMugProtection(candidate);
+      candidates = rankCandidates(candidates);
+      saveCandidates();
+      if (settings.notifications && candidate.attackableNow) {
+        try { GM_notification({title:`${APP}: ${candidate.mugEstimate ? money(candidate.mugEstimate.planningAmount) + ' est. mug' : money(candidate.grossValue) + ' exposure'}`, text:`${candidate.sellerName} · ${money(candidate.grossValue)} probable exposure · ${candidate.signalCount || 1} signal${candidate.signalCount === 1 ? '' : 's'}`, timeout:9000}); } catch {}
+      }
+      render();
+    } catch (error) {
+      logError(`profile:${watch.sellerId}`, error);
+    }
+  }
+
+  async function pollMarketGroup(itemId, force = false) {
+    const group = watches.filter((w) => w.active && w.source === 'itemmarket' && w.itemId === itemId);
+    if (!group.length) return;
+    try {
+      const payload = await fetchMarket(itemId);
+      const snapshot = normalizeMarketSnapshot(payload);
+      const nextAt = nowSec() + Math.max(15, Number(settings.marketPollSeconds) || 30, Number(snapshot.cacheDelay) || 0);
+      for (const watch of group) {
+        watch.nextPollAt = nextAt;
+        watch.lastPollAt = nowSec();
+        const fp = {itemId: watch.itemId, itemName: watch.itemName, price: watch.price, amount: watch.amount, uid: watch.uid};
+        if (!watch.baseline?.ok) {
+          const baseline = establishMarketBaseline(snapshot, fp);
+          watch.baseline = baseline;
+          watch.status = baseline.ok ? `tracking:${baseline.reason}` : `waiting:${baseline.reason}`;
+          continue;
+        }
+        const result = diffMarketBaseline(watch.baseline, snapshot, fp);
+        watch.baseline = result.baseline;
+        watch.status = result.state || 'tracking';
+        if (result.signal) {
+          await handleSignal(watch, result.signal);
+          if (result.baseline.quantity === 0) watch.active = false;
+        }
+      }
+      saveWatches();
+      render();
+    } catch (error) {
+      const retryAt = nowSec() + (force ? 5 : 15);
+      for (const watch of group) { watch.nextPollAt = retryAt; watch.status = 'api-error'; }
+      saveWatches();
+      logError(`itemmarket:${itemId}`, error);
+    }
+  }
+
+  async function pollPointsMarket(force = false) {
+    const group = watches.filter((w)=>w.active && w.source === 'pointsmarket');
+    if (!group.length) return;
+    try {
+      const snapshot = normalizePointsMarket(await fetchPointsMarket(), nowSec());
+      const nextAt = nowSec() + Math.max(15, Number(settings.pointsPollSeconds)||20);
+      for (const watch of group) {
+        watch.nextPollAt = nextAt; watch.lastPollAt = nowSec();
+        if (!watch.baseline?.ok) {
+          watch.baseline = establishPointsBaseline(snapshot, {cost:watch.price});
+          watch.status = watch.baseline.ok ? `tracking:${watch.baseline.reason}` : `waiting:${watch.baseline.reason}`;
+          continue;
+        }
+        const result = diffPointsBaseline(watch.baseline, snapshot);
+        watch.baseline = result.baseline; watch.status = result.state || 'tracking';
+        if (result.signal) {
+          await handleSignal(watch, result.signal);
+          if (result.baseline.quantity === 0) watch.active = false;
+        }
+      }
+      saveWatches(); render();
+    } catch (error) {
+      const retryAt = nowSec() + (force ? 5 : 15);
+      for (const watch of group) { watch.nextPollAt = retryAt; watch.status = 'api-error'; }
+      saveWatches(); logError('pointsmarket', error);
+    }
+  }
+
+  async function pollBazaar(watch, force = false) {
+    try {
+      const payload = await fetchBazaar(watch.sellerId);
+      const snapshot = normalizeBazaarSnapshot(payload);
+      const pollSeconds = watch.discoverySource === 'api-directory' ? Math.max(45, Number(settings.autoBazaarPollSeconds)||90) : Math.max(30, Number(settings.bazaarPollSeconds)||45);
+      watch.nextPollAt = nowSec() + pollSeconds;
+      watch.lastPollAt = nowSec();
+      if (!watch.snapshot) {
+        watch.snapshot = snapshot;
+        watch.status = snapshot.isOpen ? 'tracking' : 'bazaar-closed';
+      } else if (snapshot.reportedAt > watch.snapshot.reportedAt) {
+        const signals = diffBazaarSnapshots(watch.snapshot, snapshot);
+        watch.snapshot = snapshot;
+        watch.status = snapshot.isOpen ? 'tracking' : 'bazaar-closed';
+        for (const signal of signals) await handleSignal(watch, signal);
+      }
+      saveWatches();
+      render();
+    } catch (error) {
+      watch.nextPollAt = nowSec() + (force ? 5 : 20);
+      watch.status = 'api-error';
+      saveWatches();
+      logError(`bazaar:${watch.sellerId}`, error);
+    }
+  }
+
+  function dueTasks() {
+    const now = nowSec();
+    const tasks = [];
+    const market = new Map();
+    let pointsDue = null;
+    for (const watch of watches) {
+      if (!watch.active) continue;
+      if (watch.source === 'itemmarket') {
+        const old = market.get(watch.itemId);
+        const due = Number(watch.nextPollAt || 0);
+        if (!old || due < old.due) market.set(watch.itemId, {type: 'itemmarket', itemId: watch.itemId, due});
+      } else if (watch.source === 'pointsmarket') {
+        const due = Number(watch.nextPollAt || 0);
+        pointsDue = pointsDue === null ? due : Math.min(pointsDue, due);
+      } else if (watch.source === 'bazaar') {
+        tasks.push({type: 'bazaar', watch, due: Number(watch.nextPollAt || 0)});
+      }
+    }
+    tasks.push(...market.values());
+    if (pointsDue !== null) tasks.push({type:'pointsmarket', due:pointsDue});
+    return tasks.filter((t) => t.due <= now).sort((a, b) => a.due - b.due);
+  }
+
+  async function refreshCandidate(candidate, openAttackAfter = false) {
+    try {
+      const profile = await fetchProfile(candidate.sellerId);
+      const lastAction = Number(profile?.last_action?.timestamp || 0);
+      const suitability = profileSuitability(profile);
+      candidate.lastCheckedAt = nowSec();
+      candidate.nextProfileCheckAt = nowSec() + Math.max(15, Number(settings.candidateRecheckSeconds)||30);
+      candidate.lastAction = lastAction || candidate.lastAction;
+      candidate.statusState = suitability.state;
+      candidate.activityStatus = suitability.activity;
+      candidate.attackableNow = suitability.attackableNow;
+      candidate.profileStatus = String(profile?.status?.description || suitability.state || '').slice(0,160);
+      applyTargetProfile(candidate, profile, suitability);
+      await applyTargetMugProtection(candidate, openAttackAfter);
+      if (!lastAction || lastAction >= candidate.signalAt) {
+        candidate.stale = true;
+        candidate.staleReason = 'acted_since_signal';
+      }
+      saveCandidates();
+      render();
+      if (openAttackAfter) {
+        if (candidate.stale) return alert(`${APP}: target acted after the sale signal; candidate marked stale.`);
+        if (!candidate.attackableNow) return alert(`${APP}: target status is ${candidate.statusState || 'not attackable'}. Candidate retained, attack page not opened.`);
+        window.open(attackUrl(candidate.sellerId), '_blank', 'noopener');
+      }
+    } catch (error) {
+      logError(`candidate-check:${candidate.sellerId}`, error);
+      if (openAttackAfter) alert(`${APP}: could not revalidate target before opening attack.`);
+    }
+  }
+
+  async function recheckCandidates() {
+    const now = nowSec();
+    const due = rankCandidates(candidates.filter((c)=>!c.stale && Number(c.nextProfileCheckAt||0) <= now)).slice(0,5);
+    discovery.nextCandidateAt = now + Math.max(15, Number(settings.candidateRecheckSeconds)||30);
+    saveDiscovery();
+    for (const candidate of due) {
+      if (!budgetAvailable()) break;
+      await refreshCandidate(candidate, false);
+    }
+    candidates = rankCandidates(candidates);
+    saveCandidates();
+  }
+
+  async function schedulerTick() {
+    trimState();
+    if (!apiKey) return;
+    if (!licensed() || nowSec() - Number(licenseState.checkedAt || 0) >= 1800) {
+      await verifyLicense(true);
+      if (!licensed()) { render(); return; }
+    }
+    captureActivePage();
+    if (paused || schedulerBusy || !budgetAvailable()) return;
+    schedulerBusy = true;
+    try {
+      const now = nowSec();
+      if (ownerMugProfileNextAt <= now && budgetAvailable()) { await refreshOwnerMugProfile(); return; }
+      if (settings.auctionDiscovery && Number(discovery.nextAuctionAt||0) <= now) { await scanAuctionHouse(); return; }
+      if (settings.autoBazaarDiscovery && Number(discovery.nextBazaarAt||0) <= now) { await discoverBazaarDirectory(); return; }
+      if (Number(discovery.nextCandidateAt||0) <= now) { await recheckCandidates(); return; }
+      const [task] = dueTasks();
+      if (!task) return;
+      if (task.type === 'itemmarket') await pollMarketGroup(task.itemId);
+      else if (task.type === 'pointsmarket') await pollPointsMarket();
+      else await pollBazaar(task.watch);
+    } finally {
+      schedulerBusy = false;
+      render();
+    }
+  }
+
+  function setAllDue() {
+    for (const watch of watches) if (watch.active) watch.nextPollAt = 0;
+    saveWatches();
+  }
+
+  function removeWatch(id) {
+    watches = watches.filter((w) => w.id !== id);
+    saveWatches();
+    render();
+  }
+
+  function clearInactive() {
+    watches = watches.filter((w) => w.active);
+    saveWatches();
+    render();
+  }
+
+  function attackUrl(id) { return `https://www.torn.com/loader.php?sid=attack&user2ID=${encodeURIComponent(id)}`; }
+  function profileUrl(id) { return `https://www.torn.com/profiles.php?XID=${encodeURIComponent(id)}`; }
+
+  const STYLE = `
+    #mm-mug-signal-launcher{width:38px;height:38px;border-radius:7px;border:1px solid #555;background:linear-gradient(#3b3f44,#24272a);color:#f1f1f1;font:700 13px Arial;cursor:pointer;box-shadow:0 2px 7px #0008;z-index:2147483000;position:relative}
+    #mm-mug-signal-launcher[data-fallback="1"]{position:fixed;right:8px;top:84px}
+    #mm-mug-signal-launcher.hot{box-shadow:0 0 0 2px #b33,0 0 14px #c33a;animation:mmms-pulse 1.5s ease-in-out infinite}@keyframes mmms-pulse{50%{transform:scale(1.04)}}
+    #mm-mug-signal-launcher .mm-badge{position:absolute;right:-5px;top:-6px;min-width:16px;height:16px;padding:0 3px;border-radius:9px;background:#b62828;color:#fff;font:700 10px/16px Arial;text-align:center}
+    #mm-mug-signals-panel{position:fixed;right:12px;top:130px;width:min(510px,calc(100vw - 24px));max-height:72vh;overflow:auto;background:#17191c;color:#ddd;border:1px solid #4c5056;border-radius:8px;box-shadow:0 8px 30px #000a;z-index:2147482999;font:12px/1.35 Arial,sans-serif}
+    #mm-mug-signals-panel[hidden]{display:none!important}.mmms-head{position:sticky;top:0;background:#22262a;border-bottom:1px solid #3c4045;padding:9px 10px;display:flex;gap:8px;align-items:center;z-index:2}.mmms-title{font-weight:700;font-size:14px;flex:1}.mmms-dot{width:8px;height:8px;border-radius:50%;background:#50a450}.mmms-dot.pause{background:#b28b3b}.mmms-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 10px}.mmms-stat{background:#202327;border:1px solid #34383d;border-radius:5px;padding:6px}.mmms-stat b{display:block;font-size:14px;color:#fff}.mmms-actions{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 9px}.mmms-btn{border:1px solid #555;background:#2c3035;color:#eee;border-radius:4px;padding:5px 8px;cursor:pointer;font:12px Arial}.mmms-btn:hover{background:#393e44}.mmms-btn.danger{border-color:#744}.mmms-section{border-top:1px solid #333;padding:9px 10px}.mmms-section h3{font-size:12px;margin:0 0 7px;color:#f3f3f3}.mmms-card{border:1px solid #3b4046;background:#202327;border-radius:5px;padding:7px;margin:0 0 6px}.mmms-card.high{border-left:3px solid #4da35a}.mmms-card.medium{border-left:3px solid #b68b39}.mmms-card.stale{opacity:.55;border-left-color:#666}.mmms-row{display:flex;gap:8px;align-items:center}.mmms-grow{flex:1;min-width:0}.mmms-name{font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmms-muted{color:#9da3a9;font-size:11px}.mmms-value{font-size:14px;font-weight:700;color:#f5f5f5}.mmms-tag{display:inline-block;border:1px solid #4a4e54;border-radius:10px;padding:1px 6px;margin-right:4px;color:#bbb;font-size:10px}.mmms-empty{color:#8f969d;padding:6px 0}.mmms-settings{display:grid;grid-template-columns:145px 1fr;gap:7px;align-items:center}.mmms-input{width:100%;box-sizing:border-box;background:#101214;color:#eee;border:1px solid #4a4e54;border-radius:4px;padding:5px}.mmms-small{font-size:10px;color:#8f969d}.mmms-watch{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;border-bottom:1px solid #2d3034;padding:5px 0}.mmms-watch:last-child{border-bottom:0}
+  `;
+
+  let launcher = null;
+  let panel = null;
+
+  function ensureStyle() {
+    if (document.getElementById('mm-mug-signals-style')) return;
+    const style = document.createElement('style');
+    style.id = 'mm-mug-signals-style';
+    style.textContent = STYLE;
+    document.head.appendChild(style);
+  }
+
+  function attachLauncher() {
+    if (!launcher) {
+      launcher = document.createElement('button');
+      launcher.id = 'mm-mug-signal-launcher';
+      launcher.type = 'button';
+      launcher.dataset.mmDockId = 'mug-signals';
+      launcher.title = APP;
+      launcher.innerHTML = '<span aria-hidden="true">MUG</span><span class="mm-badge" hidden>0</span>';
+      launcher.addEventListener('click', () => { panelOpen = !panelOpen; render(); });
+    }
+    const dock = document.querySelector('#mm-torn-module-dock');
+    if (dock) {
+      if (launcher.parentElement !== dock) dock.insertBefore(launcher, dock.firstChild || null);
+      delete launcher.dataset.fallback;
+    } else if (launcher.parentElement !== document.body) {
+      document.body.appendChild(launcher);
+      launcher.dataset.fallback = '1';
+    } else launcher.dataset.fallback = '1';
+  }
+
+  function ensurePanel() {
+    if (panel) return;
+    panel = document.createElement('section');
+    panel.id = 'mm-mug-signals-panel';
+    panel.hidden = true;
+    document.body.appendChild(panel);
+    panel.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-action]');
+      if (!button) return;
+      const action = button.dataset.action;
+      if (action === 'close') { panelOpen = false; render(); }
+      if (action === 'pause') { paused = !paused; render(); }
+      if (action === 'capture' && licensed()) { captureItemMarketVisible(); capturePointsMarketVisible(); captureBazaarOwner(); setAllDue(); render(); }
+      if (action === 'poll') { setAllDue(); discovery.nextAuctionAt=0; discovery.nextBazaarAt=0; discovery.nextCandidateAt=0; saveDiscovery(); await schedulerTick(); }
+      if (action === 'clear-candidates') { candidates = []; saveCandidates(); render(); }
+      if (action === 'clear-inactive') clearInactive();
+      if (action === 'remove-watch') removeWatch(button.dataset.id);
+      if (action === 'profile') window.open(profileUrl(button.dataset.id), '_blank', 'noopener');
+      if (action === 'attack') { const c = candidates.find((x)=>x.id === button.dataset.candidate); if (c) await refreshCandidate(c, true); }
+      if (action === 'save-settings') savePanelSettings();
+      if (action === 'apply-filters') {
+        settings.minDisplayPayout = Math.max(0, Number(document.getElementById('mmms-filter-payout')?.value) || 0);
+        settings.minDisplayWinProbability = Math.max(0, Math.min(100, Number(document.getElementById('mmms-filter-win')?.value) || 0));
+        settings.displayReadyOnly = Boolean(document.getElementById('mmms-filter-ready')?.checked);
+        saveSettings(); render();
+      }
+      if (action === 'test-key') await testApiKey();
+      if (action === 'add-bazaar') addBazaarFromInput();
+      if (action === 'export') exportDiagnostics();
+    });
+  }
+
+  function activeCount() { return watches.filter((w) => w.active).length; }
+  function displayCandidates() {
+    return rankCandidates(filterCandidates(candidates, {minPayout:settings.minDisplayPayout, minWinProbability:settings.minDisplayWinProbability, readyOnly:settings.displayReadyOnly}));
+  }
+  function readyCount() { return displayCandidates().filter((c) => !c.stale && c.attackableNow).length; }
+  function apiUsage() { cleanRecentCalls(); return `${recentCalls.length}/${settings.requestBudgetPerMinute}`; }
+
+  function candidateHtml(c) {
+    const inactivity = Math.max(0, c.signalAt - c.lastAction);
+    const readiness = c.stale ? 'STALE' : c.attackableNow ? 'READY' : (c.statusState || 'WAIT');
+    return `<div class="mmms-card ${esc(c.confidence)} ${c.stale ? 'stale' : ''}">
+      <div class="mmms-row"><div class="mmms-grow"><div class="mmms-name">${esc(c.sellerName)} [${esc(c.sellerId)}] · ${esc(readiness)}</div><div class="mmms-muted">${esc((c.sources||[c.source]).join('+'))} · ${esc(c.itemName)}${Number(c.signalCount||1) > 1 ? ` · ${esc(c.signalCount)} signals` : ` ×${esc(c.soldQty)}`} · signal ${new Date(c.signalAt * 1000).toLocaleTimeString()}</div></div><div class="mmms-value">${money(c.grossValue)}</div></div>
+      ${c.mugEstimate ? `<div style="margin-top:5px"><span class="mmms-tag"><b>EST MUG ${money(c.mugEstimate.planningAmount)}</b></span><span class="mmms-tag">range ${money(c.mugEstimate.minAmount)}–${money(c.mugEstimate.maxAmount)}</span><span class="mmms-tag">${Number(c.mugEstimate.planningPercent).toFixed(2)}% planning</span>${c.targetMugReductionPercent ? `<span class="mmms-tag">target protection −${esc(c.targetMugReductionPercent)}%</span>` : ''}</div>` : ''}
+      <div style="margin-top:5px"><span class="mmms-tag">${esc(c.confidence)} sale confidence</span><span class="mmms-tag">${esc(c.activityStatus || 'activity ?')}</span><span class="mmms-tag">inactive ${age(inactivity)} at signal</span>${c.profileStatus ? `<span class="mmms-tag">${esc(c.profileStatus)}</span>` : ''}</div>
+      <div style="margin-top:5px"><span class="mmms-tag">Lvl ${esc(c.level ?? '?')} · ${esc(c.levelBand || '?')}</span><span class="mmms-tag">${c.daysOld === null || c.daysOld === undefined ? '?' : esc(c.daysOld)} days · ${esc(c.ageBand || '?')}</span><span class="mmms-tag">Life ${c.lifeCurrent ?? '?'} / ${c.lifeMaximum ?? '?'}${Number.isFinite(Number(c.lifePercent)) ? ` (${esc(c.lifePercent)}%)` : ''}</span></div>
+      <div style="margin-top:5px">${Number.isFinite(Number(c.winProbability)) ? `<span class="mmms-tag"><b>WIN ${esc(c.winProbability)}%</b></span><span class="mmms-tag">DEFEAT ${esc(c.defeatProbability)}%</span><span class="mmms-tag">combat confidence ${esc(c.combatConfidence || 'low')}</span>` : '<span class="mmms-tag">combat estimate unavailable</span>'}</div>
+      <div class="mmms-muted" style="margin-top:4px">Evidence: ${esc(c.evidence)}. Win/defeat is a customer-specific estimate; profile-only estimates are low-confidence unless verified target stats are available. Probable exposure is not guaranteed cash-on-hand or mug proceeds.</div>
+      <div style="margin-top:6px"><button class="mmms-btn" data-action="profile" data-id="${esc(c.sellerId)}">Profile</button> <button class="mmms-btn" data-action="attack" data-candidate="${esc(c.id)}" ${c.stale ? 'disabled' : ''}>Verify + attack</button></div>
+    </div>`;
+  }
+
+  function watchHtml(w) {
+    const title = w.source === 'itemmarket'
+      ? `${w.sellerName || w.sellerId} · Item ${w.itemId} @ ${money(w.price)}`
+      : w.source === 'pointsmarket'
+        ? `${w.sellerName || w.sellerId} · Points @ ${money(w.price)}/pt`
+        : `${w.sellerName || w.sellerId} · Bazaar`;
+    const detail = w.source === 'itemmarket' || w.source === 'pointsmarket'
+      ? `${w.baseline?.ok ? 'API baseline locked' : (w.baseline?.reason || 'baseline pending')} · ${w.active ? 'active' : 'listing gone'}`
+      : `${w.status || 'new'} · ${w.discoverySource === 'api-directory' ? 'auto-discovered · ' : ''}${w.snapshot ? `snapshot ${new Date(w.snapshot.reportedAt * 1000).toLocaleTimeString()}` : 'snapshot pending'}`;
+    return `<div class="mmms-watch"><div><div>${esc(title)}</div><div class="mmms-muted">${esc(detail)}</div></div><button class="mmms-btn danger" data-action="remove-watch" data-id="${esc(w.id)}">×</button></div>`;
+  }
+
+  function render() {
+    if (!document.body) return;
+    ensureStyle(); attachLauncher(); ensurePanel(); trimState();
+    const badge = launcher.querySelector('.mm-badge');
+    const ready = readyCount();
+    badge.textContent = String(ready);
+    badge.hidden = ready === 0;
+    launcher.classList.toggle('hot', ready > 0);
+    panel.hidden = !panelOpen;
+    if (!panelOpen) return;
+    if (!licensed()) {
+      const ownerLabel = licenseState.ownerId ? `${esc(licenseState.ownerName || 'Player')} [${esc(licenseState.ownerId)}]` : 'unverified';
+      panel.innerHTML = `<div class="mmms-head"><span class="mmms-dot pause"></span><span class="mmms-title">${APP} <span class="mmms-muted">${VERSION}</span></span><button class="mmms-btn" data-action="close">Close</button></div>
+        <div class="mmms-section"><h3>Exclusive license</h3><div class="mmms-muted">Licensed only to ${LICENSED_USER_NAME} [${LICENSED_USER_ID}]. Current API owner: ${ownerLabel}. ${licenseState.status === 'denied' ? 'This installation is disabled.' : 'Enter the licensed user API key and press Test key.'}</div></div>
+        <div class="mmms-section"><h3>API</h3><div class="mmms-settings"><label>API key</label><input id="mmms-key" class="mmms-input" type="password" autocomplete="off" value="${esc(apiKey)}" placeholder="Torn API key"></div><div class="mmms-actions" style="padding-top:8px"><button class="mmms-btn" data-action="test-key">Test key</button></div></div>`;
+      return;
+    }
+    const visibleCandidates = displayCandidates();
+    panel.innerHTML = `<div class="mmms-head"><span class="mmms-dot ${paused ? 'pause' : ''}"></span><span class="mmms-title">${APP} <span class="mmms-muted">${VERSION}</span></span><button class="mmms-btn" data-action="close">Close</button></div>
+      <div class="mmms-grid">
+        <div class="mmms-stat"><b>${readyCount()}/${candidates.length}</b>ready/total</div>
+        <div class="mmms-stat"><b>${activeCount()}</b>active watches</div>
+        <div class="mmms-stat"><b>${apiUsage()}</b>API/min</div>
+        <div class="mmms-stat"><b>${paused ? 'PAUSED' : (apiKey ? 'LIVE' : 'NO KEY')}</b>engine</div>
+        <div class="mmms-stat"><b>${esc(ownerBattleStatsStatus)}</b>combat model</div>
+        <div class="mmms-stat"><b>${ownerMugProfile.status === 'ready' ? `ML ${ownerMugProfile.masterfulLevel}/10 · P ${ownerMugProfile.effectivePlunderPercent}%` : esc(ownerMugProfile.status)}</b>mug modifiers</div>
+        <div class="mmms-stat"><b>${ownerMugProfile.awards?.total || 0}</b>awards</div>
+      </div>
+      <div class="mmms-actions"><button class="mmms-btn" data-action="capture">Capture current page</button><button class="mmms-btn" data-action="poll">Poll now</button><button class="mmms-btn" data-action="pause">${paused ? 'Resume' : 'Pause'}</button><button class="mmms-btn" data-action="export">Export diagnostics</button></div>
+      <div class="mmms-section"><h3>Potential targets</h3>
+        <div class="mmms-settings" style="margin-bottom:8px">
+          <label>Min est. payout</label><input id="mmms-filter-payout" class="mmms-input" type="number" min="0" step="100000" value="${Number(settings.minDisplayPayout)||0}">
+          <label>Min win chance %</label><input id="mmms-filter-win" class="mmms-input" type="number" min="0" max="100" step="1" value="${Number(settings.minDisplayWinProbability)||0}">
+          <label>Ready only</label><input id="mmms-filter-ready" type="checkbox" ${settings.displayReadyOnly ? 'checked' : ''}>
+        </div><div class="mmms-actions" style="padding:0 0 8px"><button class="mmms-btn" data-action="apply-filters">Apply filters</button><span class="mmms-muted">Showing ${visibleCandidates.length} of ${candidates.length}</span></div>
+        ${visibleCandidates.length ? visibleCandidates.map(candidateHtml).join('') : '<div class="mmms-empty">No targets match the current payout / win filters.</div>'}<button class="mmms-btn" data-action="clear-candidates">Clear candidates</button></div>
+      <div class="mmms-section"><h3>Watchlist</h3>${watches.length ? watches.slice().sort((a,b)=>(b.active-a.active)||(b.lastSeenAt-a.lastSeenAt)).slice(0,120).map(watchHtml).join('') : '<div class="mmms-empty">Browse Item Market or a Bazaar while this tab is focused, or add a Bazaar player ID below.</div>'}<button class="mmms-btn" data-action="clear-inactive">Remove inactive listings</button></div>
+      <div class="mmms-section"><h3>Settings</h3><div class="mmms-settings">
+        <label>API key</label><input id="mmms-key" class="mmms-input" type="password" autocomplete="off" value="${esc(apiKey)}" placeholder="Torn API key">
+        <label>Min gross sale</label><input id="mmms-min" class="mmms-input" type="number" min="0" step="100000" value="${Number(settings.minGrossValue)||0}">
+        <label>Item Market poll</label><input id="mmms-market-poll" class="mmms-input" type="number" min="15" max="600" value="${Number(settings.marketPollSeconds)||30}">
+        <label>Points Market poll</label><input id="mmms-points-poll" class="mmms-input" type="number" min="15" max="600" value="${Number(settings.pointsPollSeconds)||20}">
+        <label>Bazaar poll</label><input id="mmms-bazaar-poll" class="mmms-input" type="number" min="30" max="600" value="${Number(settings.bazaarPollSeconds)||45}">
+        <label>Auto Bazaar poll</label><input id="mmms-auto-bazaar-poll" class="mmms-input" type="number" min="45" max="900" value="${Number(settings.autoBazaarPollSeconds)||90}">
+        <label>Auto Bazaar discovery</label><input id="mmms-discover-bazaar" type="checkbox" ${settings.autoBazaarDiscovery ? 'checked' : ''}>
+        <label>Auto Bazaar watch cap</label><input id="mmms-bazaar-cap" class="mmms-input" type="number" min="4" max="60" value="${Number(settings.autoBazaarWatchCap)||24}">
+        <label>Auction discovery</label><input id="mmms-discover-auction" type="checkbox" ${settings.auctionDiscovery ? 'checked' : ''}>
+        <label>Auction poll</label><input id="mmms-auction-poll" class="mmms-input" type="number" min="15" max="300" value="${Number(settings.auctionPollSeconds)||20}">
+        <label>Exclude own faction</label><input id="mmms-own-faction" type="checkbox" ${settings.excludeOwnFaction ? 'checked' : ''}>
+        <label>Notifications</label><input id="mmms-notify" type="checkbox" ${settings.notifications ? 'checked' : ''}>
+        <label>Customer combat scoring</label><input id="mmms-combat" type="checkbox" ${settings.combatScoring ? 'checked' : ''}>
+        <label>Manual Plunder %</label><input id="mmms-plunder" class="mmms-input" type="number" min="0" max="100" step="1" value="${Number(settings.manualPlunderPercent)||0}">
+        <label>Other mug bonus %</label><input id="mmms-other-mug" class="mmms-input" type="number" min="0" max="100" step="1" value="${Number(settings.otherMugBonusPercent)||0}">
+        <label>Planning base mug %</label><input id="mmms-plan-mug" class="mmms-input" type="number" min="5" max="10" step="0.1" value="${Number(settings.planningBaseMugPercent)||6}">
+        <label>Detect target protection</label><input id="mmms-target-protect" type="checkbox" ${settings.detectTargetMugProtection ? 'checked' : ''}>
+        <label>Auto-capture</label><input id="mmms-auto" type="checkbox" ${settings.autoCapture ? 'checked' : ''}>
+        <label>Bazaar player ID</label><div style="display:flex;gap:5px"><input id="mmms-bazaar-id" class="mmms-input" inputmode="numeric" placeholder="Player ID"><button class="mmms-btn" data-action="add-bazaar">Add</button></div>
+      </div><div class="mmms-actions" style="padding:8px 0 0"><button class="mmms-btn" data-action="save-settings">Save settings</button><button class="mmms-btn" data-action="test-key">Test key</button></div>
+      <div class="mmms-small">Mug model: Masterful Looting ${ownerMugProfile.masterfulLevel || 0}/10 (+${ownerMugProfile.masterfulBonusPercent || 0}%), detected Plunder ${ownerMugProfile.detectedPlunderPercent || 0}%, effective Plunder ${ownerMugProfile.effectivePlunderPercent || 0}%, other bonus ${ownerMugProfile.otherBonusPercent || 0}%. Merits: ${ownerMugProfile.merits?.used || 0} used / ${ownerMugProfile.merits?.available || 0} available. Awards: ${ownerMugProfile.awards?.medals || 0} medals + ${ownerMugProfile.awards?.honors || 0} honors. A manual Plunder value above 0 overrides detected equipment. Awards are displayed but are not treated as direct mug multipliers unless Torn documents a specific modifier.</div>
+      <div class="mmms-small">Item/Points Market seller identity is captured only from the focused, manually viewed page. Bazaar directory discovery and completed-auction signals are API-only. Background websocket/page scraping is not used. API polling is rate-limited locally to ${settings.requestBudgetPerMinute}/min.</div></div>
+      <div class="mmms-section"><h3>Recent rejects/errors</h3><div class="mmms-muted">Rejected signals: ${rejections.length}. Errors: ${errors.length}. The most common expected rejection is seller activity at/after the market-change timestamp.</div></div>`;
+  }
+
+  function savePanelSettings() {
+    const key = String(document.getElementById('mmms-key')?.value || '').trim();
+    if (key !== apiKey) {
+      ownerBattleStats = null; ownerBattleStatsStatus = 'not-loaded'; ownerBattleStatsAttempted = false;
+      ownerMugProfile = {...ownerMugProfile,status:'not-loaded',refreshedAt:0}; ownerMugProfileNextAt = 0;
+      licenseState = {status:key ? 'pending' : 'needs-key',checkedAt:0,ownerId:'',ownerName:''};
+      discovery.owner = null; saveDiscovery();
+    }
+    apiKey = key;
+    GM_setValue(STORE.key, apiKey);
+    settings.minGrossValue = Math.max(0, Number(document.getElementById('mmms-min')?.value) || 0);
+    settings.marketPollSeconds = Math.max(15, Math.min(600, Number(document.getElementById('mmms-market-poll')?.value) || 30));
+    settings.pointsPollSeconds = Math.max(15, Math.min(600, Number(document.getElementById('mmms-points-poll')?.value) || 20));
+    settings.bazaarPollSeconds = Math.max(30, Math.min(600, Number(document.getElementById('mmms-bazaar-poll')?.value) || 45));
+    settings.autoBazaarPollSeconds = Math.max(45, Math.min(900, Number(document.getElementById('mmms-auto-bazaar-poll')?.value) || 90));
+    settings.autoBazaarDiscovery = Boolean(document.getElementById('mmms-discover-bazaar')?.checked);
+    settings.autoBazaarWatchCap = Math.max(4, Math.min(60, Number(document.getElementById('mmms-bazaar-cap')?.value) || 24));
+    settings.auctionDiscovery = Boolean(document.getElementById('mmms-discover-auction')?.checked);
+    settings.auctionPollSeconds = Math.max(15, Math.min(300, Number(document.getElementById('mmms-auction-poll')?.value) || 20));
+    settings.excludeOwnFaction = Boolean(document.getElementById('mmms-own-faction')?.checked);
+    settings.notifications = Boolean(document.getElementById('mmms-notify')?.checked);
+    settings.combatScoring = Boolean(document.getElementById('mmms-combat')?.checked);
+    settings.manualPlunderPercent = Math.max(0, Math.min(100, Number(document.getElementById('mmms-plunder')?.value) || 0));
+    settings.otherMugBonusPercent = Math.max(0, Math.min(100, Number(document.getElementById('mmms-other-mug')?.value) || 0));
+    settings.planningBaseMugPercent = Math.max(5, Math.min(10, Number(document.getElementById('mmms-plan-mug')?.value) || 6));
+    settings.detectTargetMugProtection = Boolean(document.getElementById('mmms-target-protect')?.checked);
+    ownerMugProfileNextAt = 0;
+    settings.autoCapture = Boolean(document.getElementById('mmms-auto')?.checked);
+    saveSettings();
+    setAllDue();
+    discovery.nextAuctionAt = 0; discovery.nextBazaarAt = 0; discovery.nextCandidateAt = 0; saveDiscovery();
+    render();
+  }
+
+  async function testApiKey() {
+    const keyField = document.getElementById('mmms-key');
+    if (keyField) {
+      const key = String(keyField.value || '').trim();
+      if (key !== apiKey) {
+        apiKey = key; GM_setValue(STORE.key, apiKey);
+        ownerBattleStats = null; ownerBattleStatsStatus = 'not-loaded'; ownerBattleStatsAttempted = false;
+        ownerMugProfile = {...ownerMugProfile,status:'not-loaded',refreshedAt:0}; ownerMugProfileNextAt = 0;
+        licenseState = {status:apiKey ? 'pending':'needs-key',checkedAt:0,ownerId:'',ownerName:''};
+        discovery.owner = null; saveDiscovery();
+      }
+    }
+    try {
+      const data = await apiV1('key/?selections=info');
+      const owner = data?.info?.user?.name || data?.info?.user?.id || data?.info?.access_type || 'valid';
+      const licenseOk = await verifyLicense(true);
+      if (!licenseOk) throw new Error(`This build is licensed exclusively to ${LICENSED_USER_NAME} [${LICENSED_USER_ID}].`);
+      await refreshOwnerBattleStats(true);
+      await refreshOwnerMugProfile(true);
+      render();
+      alert(`${APP}: API key test passed (${owner}). Exclusive license verified for ${LICENSED_USER_NAME} [${LICENSED_USER_ID}]. Combat: ${ownerBattleStatsStatus}. Mug model: ML ${ownerMugProfile.masterfulLevel}/10, Plunder ${ownerMugProfile.effectivePlunderPercent}%, awards ${ownerMugProfile.awards?.total || 0}.`);
+    } catch (error) {
+      logError('key-test', error);
+      alert(`${APP}: API key test failed. ${String(error?.message || error)}`);
+    }
+  }
+
+  function addBazaarFromInput() {
+    const input = document.getElementById('mmms-bazaar-id');
+    const sellerId = String(input?.value || '').trim();
+    if (!/^\d+$/.test(sellerId)) return alert('Enter a numeric Torn player ID.');
+    upsertWatch({source:'bazaar', sellerId, sellerName:`Player ${sellerId}`, snapshot:null});
+    if (input) input.value = '';
+    render();
+  }
+
+  function exportDiagnostics() {
+    const payload = {
+      app: APP, version: VERSION, licensedUser:{id:LICENSED_USER_ID,name:LICENSED_USER_NAME}, licenseStatus:licenseState.status, exportedAt: new Date().toISOString(), url: location.href,
+      focused: focused(), route: {itemMarket: isItemMarket(), pointsMarket: isPointsMarket(), bazaar: isBazaar(), itemId: currentItemId()},
+      settings: {...settings}, apiKeyConfigured: Boolean(apiKey), apiUsageLastMinute: recentCalls.length, combatModelStatus: ownerBattleStatsStatus, mugModel: {status:ownerMugProfile.status, masterfulLevel:ownerMugProfile.masterfulLevel, masterfulBonusPercent:ownerMugProfile.masterfulBonusPercent, detectedPlunderPercent:ownerMugProfile.detectedPlunderPercent, effectivePlunderPercent:ownerMugProfile.effectivePlunderPercent, otherBonusPercent:ownerMugProfile.otherBonusPercent, awards:ownerMugProfile.awards, refreshedAt:ownerMugProfile.refreshedAt},
+      watches, candidates, discovery: {...discovery, owner: discovery.owner ? {...discovery.owner} : null}, seenAuctionCount: seenAuctions.length, rejections: rejections.slice(-50), errors: errors.slice(-50)
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `SS_Mugger-${Date.now()}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  try {
+    GM_registerMenuCommand('SS_Mugger: Open', () => { panelOpen = true; render(); });
+    GM_registerMenuCommand('SS_Mugger: Capture current page', () => { captureActivePage(); render(); });
+    GM_registerMenuCommand('SS_Mugger: Export diagnostics', exportDiagnostics);
+  } catch {}
+
+  setInterval(() => {
+    attachLauncher();
+    if (settings.autoCapture && focused()) {
+      const marker = `${location.href}|${document.body?.childElementCount || 0}`;
+      if (marker !== lastCaptureUrl || isItemMarket() || isPointsMarket()) {
+        lastCaptureUrl = marker;
+        captureActivePage();
+      }
+    }
+  }, 3000);
+  setInterval(schedulerTick, 1200);
+  document.addEventListener('visibilitychange', () => { if (licensed() && document.visibilityState === 'visible') captureActivePage(); });
+  window.addEventListener('focus', () => { if (licensed()) captureActivePage(); });
+  window.addEventListener('pagehide', () => { saveWatches(); saveCandidates(); });
+
+  render();
+})();
