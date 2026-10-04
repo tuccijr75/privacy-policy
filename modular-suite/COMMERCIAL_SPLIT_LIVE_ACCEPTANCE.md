@@ -1552,3 +1552,88 @@ Status:
 - alpha.10 is ready for branch merge into `crm-v8-modular-suite`;
 - production/customer-ready promotion still requires live desktop/mobile/TornPDA acceptance.
 
+## MM_Acquisitions alpha.11 — customer pricelist profit + ranked weapon scout — 2026-10-04
+
+**Status:** STATIC / EXECUTABLE FIXTURE PASS; LIVE CUSTOMER ACCEPTANCE PENDING  
+**Branch:** `crm-v8-acquisitions-ranked-profit`  
+**Base:** `crm-v8-modular-suite@9af1c84f189141be77ef0d2c86d86513db5978ed`
+
+Owner directive:
+- build the 500M multi-item profit + ranked-weapon system inside the maintained MM_Acquisitions module;
+- preserve the established Acquisitions dock launcher/icon, size, placement, collision rules and movable panel behavior;
+- do not add new third-party dependencies beyond sources already used by MM_Acquisitions.
+
+Architecture:
+- no new launcher or dock module was created;
+- existing `id:'acquisitions'` and shared Core docking/collision behavior remain authoritative;
+- top navigation now wraps for narrow/mobile layouts;
+- dependencies remain Torn/Torn API plus the already-used TornW3B/Weav3r source;
+- Clairvoyant and other new external pricing/tracking services are not used.
+
+Customer pricelist universe:
+- configurable TornW3B pricelist user ID, defaulting to the customer-supplied `4054377`;
+- public pricelist feed supplies the priced-item universe and dynamic Bunker Bucks rate;
+- special set/BB rows are separated from positively priced normal Torn items;
+- every positively priced customer item is screened from the global market feed before deeper per-item verification calls;
+- current synthetic regression proves 125 priced items are evaluated in one pass;
+- dedicated Items filter exposes the full customer pricelist universe;
+- customer pricelist buy rate is treated as a buying benchmark, never as a resale exit;
+- live acquisition cost, market exit, gross profit, ROI, liquidity/confidence and seller evidence are kept distinct;
+- selected candidates route into existing direct source comparison and manual purchase workflow.
+
+Ranked weapon workflow:
+- filters: Primary / Secondary / Melee, live market vs auction, Yellow / Orange / Red, weapon name, bonus name and minimum ROI;
+- no ranked bonus is excluded;
+- default low-tier labels Achilles and Conserve affect labeling only, not eligibility;
+- BB floor uses official Torn Bunker Buck exchange values by weapon subtype, rarity and one/two bonuses;
+- current $/BB comes from the configured TornW3B pricelist;
+- live ranked Bazaar / Item Market opportunities use the existing TornW3B ranked-weapons API;
+- live Auction House opportunities use the existing TornW3B auction listings API;
+- completed Auction House sale history comes from official Torn API `/market/{id}/auctionhouse`;
+- completed-sale cohorts step from comparable bonus-roll band -> same bonus set -> same rarity -> same base item;
+- outlier-resistant auction median, p25/p75, trend, sample size and confidence are calculated locally;
+- historyless items have auction confidence 0 rather than fabricated confidence;
+- traffic uses completed AH sales over 7 / 30 / 90 days;
+- ranked rows expose ask, BB floor, AH median, fair value, expected profit, ROI, liquidity, confidence and investment score;
+- expired cached auctions are suppressed immediately by `endsAt`;
+- non-auction live listings older than the configured maximum age are suppressed;
+- broad ranked live refresh is bounded and stale after 5 minutes;
+- pricelist refresh is stale after 1 hour;
+- completed Torn AH history remains explicit/on-demand to protect API usage;
+- auction Open routes to the existing TornW3B live-auction view filtered by weapon/rarity/bonus rather than guessing a Torn internal route;
+- final purchases/bids remain manual.
+
+Verification completed:
+- 10 Acquisitions source/test JavaScript files compile in connector-side V8;
+- 125-item full-universe screen fixture PASS;
+- BB exchange fixtures PASS for Pistol, Rifle, Machine Gun and Heavy Artillery examples;
+- empty completed-sale history confidence = 0 PASS;
+- outlier-resistant AH median fixture PASS;
+- 7/30/90 AH traffic fixture PASS;
+- ranked catalog subtype/category/base-stat normalization PASS;
+- pricelist normalization and dynamic $/BB extraction PASS;
+- ranked live market + live auction persistence fixture PASS;
+- completed Torn AH history persistence fixture PASS;
+- same existing `acquisitions` dock launcher asserted; no ranked-specific launcher exists;
+- no Clairvoyant reference or other new third-party dependency exists in candidate source.
+
+Candidate install safety:
+- alpha.11 candidate `@updateURL` / `@downloadURL` and changed `@require` files intentionally point at `crm-v8-acquisitions-ranked-profit` so live acceptance cannot silently load alpha.10 dependencies;
+- **before merge**, these candidate URLs must be switched back to `crm-v8-modular-suite` and revalidated.
+
+Live acceptance blockers:
+1. install alpha.11 candidate on desktop and confirm existing Acquisitions dock placement/collision behavior is unchanged;
+2. Update Pricelist and confirm the real customer feed resolves the expected current priced-item count and BB rate;
+3. Refresh Opportunities and confirm the full customer universe scan is populated, ranked and selectable;
+4. verify a selected normal item rechecks current sources and routes without auto-purchase;
+5. Refresh Ranked and validate Primary / Secondary / Melee, source, rarity, weapon, bonus and ROI filters against live data;
+6. Analyze AH on representative low-tier and premium ranked weapons and validate BB floor, completed-sale cohort, traffic windows and confidence;
+7. confirm expired/stale ranked rows disappear as designed;
+8. confirm live-auction Open lands on the filtered TornW3B auction view and market rows route correctly;
+9. verify narrow-width/mobile layout and TornPDA runtime, including tab wrapping and input usability;
+10. confirm no dock overlap with Torn chat/footer icons or other MM modules;
+11. switch candidate metadata/require URLs back to the canonical modular branch and repeat static verification;
+12. explicit owner approval is required before merge/stable/customer delivery.
+
+Do not advertise alpha.11 as customer-ready or provide a stable customer install path until these live gates pass.
+
