@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.11.1
+// @version      1.1.12.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -22,7 +22,7 @@
 
   const RUNTIME_GUARD = '__SS_MUGGER_RUNTIME_ACTIVE__';
   if (window[RUNTIME_GUARD]) return;
-  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.11'};
+  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.12'};
 
   const BOOT_PROBE_ID = 'ss-mugger-boot-probe';
   function showBootProbe(label = 'SSQ', isError = false) {
@@ -627,7 +627,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.11.1';
+  const VERSION = '1.1.12.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
@@ -868,7 +868,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       otherBonusPercent:Number(ownerMugProfile.otherBonusPercent)||0,
       planningBasePercent:Number(settings.planningBaseMugPercent)||6
     };
-    const result=[];
+    const qualified=[];
     for (const g of groups.values()) {
       const avgSignalConfidence = g.signals.reduce((sum,x)=>sum+itemConfidenceWeight(x.confidence),0) / Math.max(1,g.signals.length);
       const ageSeconds = Math.max(0, now-g.lastAt);
@@ -884,12 +884,22 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       const mugPerHour = Math.round(mugTotal/windowHours);
       const salesPerHour = g.signals.length/windowHours;
       if (g.signals.length < 3 || salesPerHour < 1) continue;
-      const moneyScore = Math.max(0, Math.min(100, (Math.log10(turnoverPerHour + 1) - 6) * 25));
-      const velocityScore = Math.max(0, Math.min(100, salesPerHour * 10));
-      const score = confidence * 0.25 + moneyScore * 0.40 + velocityScore * 0.35;
-      result.push({...g,confidence,turnoverPerHour,mugPerHour,salesPerHour,score,lastScanAt:Number(itemScans[g.itemId]||0)});
+      qualified.push({...g,confidence,turnoverPerHour,mugPerHour,salesPerHour,lastScanAt:Number(itemScans[g.itemId]||0)});
     }
-    return result.sort((a,b)=>b.score-a.score || b.turnoverPerHour-a.turnoverPerHour).slice(0,Math.max(4,Math.min(30,Number(settings.hotItemLimit)||12)));
+    const peakTurnover = qualified.reduce((max,item)=>Math.max(max,Number(item.turnoverPerHour)||0),0);
+    const moneyFloor = Math.max(5000000, Math.round(peakTurnover * 0.01));
+    const result = qualified
+      .filter((item)=>item.turnoverPerHour >= moneyFloor)
+      .map((item)=>{
+        const moneyScore = Math.max(0, Math.min(100, (Math.log10(item.turnoverPerHour + 1) - 6) * 25));
+        const velocityScore = Math.max(0, Math.min(100, item.salesPerHour * 10));
+        const balanceScore = moneyScore > 0 && velocityScore > 0
+          ? (2 * moneyScore * velocityScore) / (moneyScore + velocityScore)
+          : 0;
+        const score = balanceScore * 0.80 + item.confidence * 0.20;
+        return {...item,moneyFloor,moneyScore,velocityScore,balanceScore,score};
+      });
+    return result.sort((a,b)=>b.score-a.score || b.salesPerHour-a.salesPerHour || b.turnoverPerHour-a.turnoverPerHour).slice(0,Math.max(4,Math.min(30,Number(settings.hotItemLimit)||12)));
   }
   function itemPosUrl(itemId, itemName = '') {
     const name = String(itemName || '').trim();
@@ -2003,7 +2013,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         <div class="mmms-stat"><b>${paused ? 'PAUSED' : 'LIVE'}</b>engine</div>
       </div>
       <div class="mmms-actions"><button class="mmms-btn" data-action="refresh-hot">Refresh movers</button><button class="mmms-btn" data-action="pause">${paused ? 'Resume' : 'Pause'}</button><button class="mmms-btn" data-action="export">Diagnostics</button></div>
-      <div class="mmms-section"><h3>High-money movers</h3><div class="mmms-muted" style="margin-bottom:7px">Ranked by recent money flow, repeat sale activity, probable mug value, freshness and confidence. Low-confidence movers are excluded automatically.</div>
+      <div class="mmms-section"><h3>High-money movers</h3><div class="mmms-muted" style="margin-bottom:7px">Ranked for both money flow and real sale velocity. Items must show repeat movement and clear the adaptive high-money floor; low-confidence or one-dimensional movers are excluded automatically.</div>
         ${movers.length ? movers.map(moverHtml).join('') : '<div class="mmms-empty">Building movement history. Auction/Bazaar signals populate automatically; Item Market signals improve as POS pages are scanned.</div>'}
       </div>
       <div class="mmms-section"><h3>Best mug targets from Hot sales</h3><div class="mmms-muted" style="margin-bottom:7px">Only sellers tied to recent sales of items currently ranked in Hot are shown here. If an item loses Hot status, its targets leave this list automatically.</div>
