@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.17
+// @version      8.0.0-alpha.18
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.17';
+  const VERSION='8.0.0-alpha.18';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -37,10 +37,12 @@
   const AUTO_SYNC_STALE_MS=45_000;
   const USERNAME_RESOLVE_BATCH=12;
   const PENDING_DELIVERY_TTL_MS=30*60*1000;
-  const COMPOSE_BRIDGE_TTL_MS=90_000;
+  const COMPOSE_BRIDGE_TTL_MS=120_000;
+  const COMPOSE_FORM_POLL_MS=1000;
+  const COMPOSE_EDITOR_POLL_MS=250;
+  const COMPOSE_EDITOR_READY_TIMEOUT_MS=12_000;
   const COMPOSE_SURFACE_STABLE_MS=350;
   const COMPOSE_POST_FILL_VERIFY_MS=400;
-  const COMPOSE_FILL_TIMEOUT_MS=20_000;
   const COMPOSE_MAX_FORMAT_ATTEMPTS=3;
   const DELIVERY_CONFIRM_WINDOW_MS=12_000;
   const FALSE_SEND_RECOVERY_MS=2*60*60*1000;
@@ -554,10 +556,11 @@
   function getComposeXid(){const params=getComposeParams();return String(params.get('XID')||params.get('xid')||'').trim();}
   function canonicalComposeUrl(payload={}){
     const id=String(payload.playerId||'').trim();
-    const subject=String(payload.subject||'');
+    // Torn reliably resolves the recipient from XID. Subject/body are applied
+    // only after the live compose form mounts; putting subject in the hash can
+    // leave the Messages SPA on its loading shell.
     return 'https://www.torn.com/messages.php#/p=compose'+
-      (id?'&XID='+encodeURIComponent(id):'')+
-      (subject?'&subject='+encodeURIComponent(subject):'');
+      (id?'&XID='+encodeURIComponent(id):'');
   }
 
   function composePayloadForCurrentPage(){
@@ -633,62 +636,65 @@
     return plain===expectedName;
   }
 
+  function composeElementNearSubject(element,subjectInput=findComposeSubjectInput(),{above=80,below=760,minOverlap=0.30}={}){
+    if(!element||!visible(element)||!subjectInput||!visible(subjectInput))return false;
+    const er=element.getBoundingClientRect?.(),sr=subjectInput.getBoundingClientRect?.();
+    if(!er||!sr)return false;
+    const overlap=Math.max(0,Math.min(er.right,sr.right)-Math.max(er.left,sr.left));
+    const needed=Math.min(er.width,sr.width)*minOverlap;
+    return er.top>=sr.top-above&&er.top<=sr.bottom+below&&overlap>=needed;
+  }
+
   function findComposeBodyInput(subjectInput=findComposeSubjectInput()){
-    const scope=subjectInput?.closest?.('form')||document;
-    const textareas=[...scope.querySelectorAll('textarea')].filter(visible);
-    const labelled=textareas.find(el=>el!==subjectInput&&/message|body|mail|content/.test(elementMeta(el)));
-    if(labelled)return labelled;
-    const editables=[...scope.querySelectorAll('[contenteditable="true"],[role="textbox"][contenteditable],[role="textbox"]')].filter(visible);
-    return editables.find(el=>el!==subjectInput&&/message|body|mail|content|write|compose/.test(elementMeta(el)))||
-      editables.find(el=>el!==subjectInput)||
-      textareas.find(el=>el!==subjectInput)||
+    const textareas=[...document.querySelectorAll('textarea')]
+      .filter(el=>el!==subjectInput&&composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.35}));
+    const editables=[...document.querySelectorAll('[contenteditable="true"],[role="textbox"][contenteditable],[role="textbox"]')]
+      .filter(el=>el!==subjectInput&&composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.35}));
+    const candidates=[...textareas,...editables];
+    return candidates.find(el=>/message|body|mail|content|write|compose|editor/.test(elementMeta(el)))||
+      candidates.sort((a,b)=>(a.getBoundingClientRect?.().top||0)-(b.getBoundingClientRect?.().top||0))[0]||
       null;
   }
 
-  function findComposeRichEditorBody(){
-    for(const frame of [...document.querySelectorAll('iframe')].filter(visible)){
+  function findComposeRichEditorBody(subjectInput=findComposeSubjectInput()){
+    for(const frame of [...document.querySelectorAll('iframe')].filter(el=>composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.35}))){
       try{
         const doc=frame.contentDocument||frame.contentWindow?.document,body=doc?.body;if(!body)continue;
         const meta=[frame.id,frame.name,frame.className,frame.title,frame.getAttribute('aria-label'),body.className,body.getAttribute('contenteditable'),body.getAttribute('role')].filter(Boolean).join(' ').toLowerCase();
         if(body.isContentEditable||body.getAttribute('contenteditable')==='true'||/editor|wysiwyg|message|compose|sceditor|mail/.test(meta))return body;
       }catch{}
     }
-    const body=findComposeBodyInput();
+    const body=findComposeBodyInput(subjectInput);
     const tag=String(body?.tagName||'').toLowerCase();
     return body&&tag!=='textarea'&&tag!=='input'?body:null;
   }
 
-  function findTornCodeEditorToggle(){
+  function findTornCodeEditorToggle(subjectInput=findComposeSubjectInput()){
     const selectors=['[aria-label="Toggle Code Editor"]','[title="Toggle Code Editor"]','button[aria-label*="Code Editor" i]','button[title*="Code Editor" i]','[role="button"][aria-label*="Code Editor" i]','[role="button"][title*="Code Editor" i]'];
-    for(const selector of selectors){const el=[...document.querySelectorAll(selector)].find(visible);if(el)return el;}
-    return [...document.querySelectorAll('button,a,[role="button"]')].filter(visible).find(el=>{
-      const meta=[el.title,el.getAttribute('aria-label'),el.getAttribute('data-tooltip'),el.textContent].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
-      return meta==='{}'||meta==='{ }'||/toggle code editor|code editor|source code|source editor|html source/.test(meta);
-    })||null;
+    for(const selector of selectors){
+      const el=[...document.querySelectorAll(selector)].find(node=>composeElementNearSubject(node,subjectInput,{above:20,below:760,minOverlap:0.15}));
+      if(el)return el;
+    }
+    return [...document.querySelectorAll('button,a,[role="button"]')]
+      .filter(el=>composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.15}))
+      .find(el=>{
+        const meta=[el.title,el.getAttribute('aria-label'),el.getAttribute('data-tooltip'),el.textContent].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
+        return meta==='{}'||meta==='{ }'||/toggle code editor|code editor|source code|source editor|html source/.test(meta);
+      })||null;
   }
 
-  function sourceEditorCandidates(){
+  function sourceEditorCandidates(subjectInput=findComposeSubjectInput()){
     const set=new Set();
-    // Torn source mode may expose an anonymous textarea, so candidates are
-    // narrowed by compose-area geometry and source characteristics below.
     for(const selector of ['textarea','.sceditor-source','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]']){
-      for(const el of document.querySelectorAll(selector))if(visible(el))set.add(el);
+      for(const el of document.querySelectorAll(selector)){
+        if(composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.30}))set.add(el);
+      }
     }
     return [...set];
   }
 
   function composeAreaTextarea(el){
-    if(!el)return false;
-    const r=el.getBoundingClientRect?.();
-    if(!r||r.width<280||r.height<70)return false;
-    const subject=findComposeSubjectInput();
-    if(!subject)return true;
-    const sr=subject.getBoundingClientRect?.();
-    if(!sr)return true;
-    const overlap=Math.max(0,Math.min(r.right,sr.right)-Math.max(r.left,sr.left));
-    const horizontalEnough=overlap>=Math.min(r.width,sr.width)*0.45;
-    const verticalNear=r.top>=sr.bottom-30&&r.top<=sr.bottom+700;
-    return horizontalEnough&&verticalNear;
+    return composeElementNearSubject(el,findComposeSubjectInput(),{above:20,below:760,minOverlap:0.45});
   }
 
   function looksLikeHtmlSource(el){
@@ -696,18 +702,18 @@
     return /<\/?(?:p|div|table|tr|td|span|img|a|br|strong)\b/i.test(value);
   }
 
-  function likelyTornSourceEditor(before=new Set(),allowFreshAnonymous=false){
+  function likelyTornSourceEditor(before=new Set(),allowFreshAnonymous=false,subjectInput=findComposeSubjectInput()){
     const score=el=>{
       const meta=elementMeta(el)+' '+String(el.className||'').toLowerCase();
       const tag=String(el.tagName||'').toLowerCase();
       if(/sceditor-source/.test(meta))return 7;
       if(/code|source|html|cm-|codemirror|monaco/.test(meta))return 6;
       if(el.matches?.('[data-language="html"],[data-mode="html"]'))return 5;
-      if(tag==='textarea'&&composeAreaTextarea(el)&&looksLikeHtmlSource(el))return 4;
-      if(tag==='textarea'&&allowFreshAnonymous&&!before.has(el)&&composeAreaTextarea(el))return 3;
+      if(tag==='textarea'&&looksLikeHtmlSource(el))return 4;
+      if(tag==='textarea'&&allowFreshAnonymous&&!before.has(el))return 3;
       return 0;
     };
-    const eligible=sourceEditorCandidates().filter(el=>{
+    const eligible=sourceEditorCandidates(subjectInput).filter(el=>{
       const meta=elementMeta(el);
       return !/subject|title/.test(meta)&&score(el)>0;
     });
@@ -822,27 +828,26 @@
     const html=String(htmlValue||'').replace(/>\s+</g,'><').trim();
     if(!brandedSourceIsComplete(html))return false;
     if(stillCurrent&&!stillCurrent())return false;
-    const toggle=findTornCodeEditorToggle();if(!toggle)return false;
+
+    const toggle=findTornCodeEditorToggle();
+    if(!toggle)return false;
 
     let source=likelyTornSourceEditor(new Set(),false);
-    const rich=findComposeRichEditorBody();
-    if(!source&&!rich)source=likelyTornSourceEditor(new Set(),true);
-    if(!source&&!rich)return false;
-
     if(!source){
       const before=new Set(sourceEditorCandidates());
       if(stillCurrent&&!stillCurrent())return false;
       try{toggle.click();}catch{return false;}
-      source=await waitForSourceEditor(before,4000,true,stillCurrent);
+      source=await waitForSourceEditor(before,5000,true,stillCurrent);
     }
+
     if(!source||(stillCurrent&&!stillCurrent()))return false;
     if(!setSourceEditorHtml(source,html))return false;
 
-    await sleepMs(220);
+    await sleepMs(180);
     if(stillCurrent&&!stillCurrent())return false;
     const toggleBack=findTornCodeEditorToggle()||toggle;
     try{toggleBack.click();}catch{return false;}
-    return waitForRichBranding(html,2400,stillCurrent);
+    return waitForRichBranding(html,3000,stillCurrent);
   }
 
   function composeFormattingNotice(text,kind='waiting'){
@@ -874,44 +879,83 @@
     const payload=composePayloadForCurrentPage();
     if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
 
-    const startedAt=Date.now();
     const requiresBranding=Boolean(payload.bodyHtml);
     const hasBody=requiresBranding||Boolean(payload.body);
-    let fillAttempts=0,readyKey='',readySince=0;
+    const bridgeDeadline=Number(payload.createdAt||Date.now())+COMPOSE_BRIDGE_TTL_MS;
+    let fillAttempts=0;
 
     const stillCurrent=()=>generation===composeFillGeneration&&
       location.pathname.includes('messages.php')&&location.hash.includes('compose')&&
       (!payload.playerId||getComposeXid()===String(payload.playerId||''));
 
-    const fail=(showError=true)=>{
+    const fail=(message='Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry.')=>{
       clearMatchingPendingCompose(payload);
-      if(showError&&requiresBranding){
-        statusText='Branded formatting is not ready. Draft was NOT downgraded to plain text.';
-        composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry.','error');
-      }else{
-        clearComposeFormattingNotice();
-      }
+      statusText=requiresBranding?'Branded formatting is not ready. Draft was NOT downgraded to plain text.':'Message preparation failed.';
+      if(requiresBranding)composeFormattingNotice(message,'error');
+      else clearComposeFormattingNotice();
     };
 
-    while(stillCurrent()&&Date.now()-startedAt<COMPOSE_FILL_TIMEOUT_MS){
-      const xid=getComposeXid();
-      const subject=findComposeSubjectInput();
-      const recipient=findComposeRecipientInput(subject);
-      const recipientOK=(!payload.playerId)||(xid===String(payload.playerId||'')&&recipientMatchesPayload(payload,recipient));
-      const rich=findComposeRichEditorBody();
-      const source=likelyTornSourceEditor(new Set(),true);
-      const editorReady=!hasBody||
-        (requiresBranding?Boolean(findTornCodeEditorToggle()&&(rich||source)):Boolean(findComposeBodyInput(subject)||rich));
+    // Phase 1 is intentionally passive. Do not inspect/toggle the rich editor
+    // while Torn is still building the Messages SPA. This avoids competing with
+    // the page load that previously left only the XID-resolved username visible.
+    let subject=null,recipient=null;
+    while(stillCurrent()&&Date.now()<bridgeDeadline){
+      subject=findComposeSubjectInput();
+      if(subject){
+        recipient=findComposeRecipientInput(subject);
+        if((!payload.playerId)||recipientMatchesPayload(payload,recipient))break;
+      }
+      statusText=subject?'Waiting for Torn to resolve the intended recipient…':'Waiting for Torn compose form…';
+      composeFormattingNotice('Waiting for Torn to finish loading the compose form…');
+      await sleepMs(COMPOSE_FORM_POLL_MS);
+    }
 
-      if(!subject||!recipientOK||!editorReady){
+    if(!stillCurrent()){clearComposeFormattingNotice();return;}
+    if(!subject||((payload.playerId)&&!recipientMatchesPayload(payload,recipient))){
+      fail('Torn compose form did not finish loading in time. No message content was inserted.');
+      return;
+    }
+
+    // Subject is independent of the editor. Apply it as soon as Torn exposes
+    // the real Subject control so a slow editor can never leave username-only.
+    if(payload.subject){
+      setNativeValue(subject,payload.subject);
+      await sleepMs(40);
+      if(String(subject.value||'').trim()!==String(payload.subject||'').trim()){
+        fail('Torn rejected the prepared Subject. No message content was inserted.');
+        return;
+      }
+    }
+
+    if(!hasBody){
+      clearMatchingPendingCompose(payload);
+      clearComposeFormattingNotice();
+      statusText='Message subject prepared with recipient verified. Send remains manual.';
+      return;
+    }
+
+    // Phase 2 begins only after Name + Subject are live. At this point it is
+    // safe to inspect the editor toolbar/source mode without slowing page mount.
+    const editorDeadline=Date.now()+COMPOSE_EDITOR_READY_TIMEOUT_MS;
+    let readyKey='',readySince=0;
+    while(stillCurrent()&&Date.now()<editorDeadline&&fillAttempts<COMPOSE_MAX_FORMAT_ATTEMPTS){
+      const currentSubject=findComposeSubjectInput();
+      const currentRecipient=findComposeRecipientInput(currentSubject);
+      const recipientOK=(!payload.playerId)||recipientMatchesPayload(payload,currentRecipient);
+      const toggle=requiresBranding?findTornCodeEditorToggle():null;
+      const rich=findComposeRichEditorBody();
+      const plain=findComposeBodyInput(currentSubject);
+      const editorReady=requiresBranding?Boolean(toggle):Boolean(plain||rich);
+
+      if(!currentSubject||!recipientOK||!editorReady){
         readyKey='';readySince=0;
-        statusText=!subject?'Waiting for Torn compose form…':!recipientOK?'Waiting for Torn to resolve the intended recipient…':'Waiting for Torn message editor…';
-        composeFormattingNotice('Preparing message… waiting for Torn to finish loading the original compose form.');
-        await sleepMs(500);
+        statusText=!currentSubject?'Waiting for Torn compose form…':!recipientOK?'Waiting for Torn recipient…':'Waiting for Torn message editor…';
+        composeFormattingNotice('Subject is ready. Waiting for Torn message editor…');
+        await sleepMs(COMPOSE_EDITOR_POLL_MS);
         continue;
       }
 
-      const surfaceKey=[xid,String(recipient?.value||recipient?.textContent||''),Boolean(rich),Boolean(source)].join('|');
+      const surfaceKey=[getComposeXid(),String(currentRecipient?.value||currentRecipient?.textContent||''),Boolean(toggle),Boolean(rich||plain)].join('|');
       if(surfaceKey!==readyKey){
         readyKey=surfaceKey;readySince=Date.now();
         await sleepMs(COMPOSE_SURFACE_STABLE_MS);
@@ -923,49 +967,41 @@
       }
 
       fillAttempts++;
-      if(payload.subject)setNativeValue(subject,payload.subject);
-      await sleepMs(30);
-      if(!stillCurrent())break;
-
-      const subjectOK=!payload.subject||String(subject.value||'').trim()===String(payload.subject||'').trim();
-      let bodyOK=!hasBody;
-
+      let bodyOK=false;
       if(requiresBranding){
         bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent);
-      }else if(hasBody){
-        const body=findComposeBodyInput(subject)||findComposeRichEditorBody();
+      }else{
+        const body=findComposeBodyInput(currentSubject)||findComposeRichEditorBody();
         bodyOK=Boolean(body)&&setPlainEditorText(body,payload.body);
       }
 
       if(bodyOK){
         await sleepMs(COMPOSE_POST_FILL_VERIFY_MS);
-        if(!stillCurrent())break;
+        if(!stillCurrent()){clearComposeFormattingNotice();return;}
         const verifySubject=findComposeSubjectInput();
         const verifyRecipient=findComposeRecipientInput(verifySubject);
-        const verifyRecipientOK=(!payload.playerId)||(getComposeXid()===String(payload.playerId||'')&&recipientMatchesPayload(payload,verifyRecipient));
+        const verifyRecipientOK=(!payload.playerId)||recipientMatchesPayload(payload,verifyRecipient);
         const verifySubjectOK=!payload.subject||(Boolean(verifySubject)&&String(verifySubject.value||'').trim()===String(payload.subject||'').trim());
         const verifyBodyOK=requiresBranding?richComposerHasBranding(payload.bodyHtml):bodyOK;
-        if(verifyRecipientOK&&verifySubjectOK&&verifyBodyOK&&subjectOK){
+        if(verifyRecipientOK&&verifySubjectOK&&verifyBodyOK){
           clearMatchingPendingCompose(payload);
           clearComposeFormattingNotice();
           statusText=requiresBranding
-            ? 'Message prepared in Torn composer with recipient + branded formatting verified. Send remains manual.'
-            : 'Message prepared in Torn composer with recipient verified. Send remains manual.';
+            ? 'Message prepared in Torn composer with recipient + subject + branded body verified. Send remains manual.'
+            : 'Message prepared in Torn composer with recipient + subject verified. Send remains manual.';
           return;
         }
       }
 
-      if(fillAttempts>=COMPOSE_MAX_FORMAT_ATTEMPTS){
-        fail(true);
-        return;
-      }
       readyKey='';readySince=0;
-      statusText=requiresBranding?'Torn rich editor was not ready; retrying the original compose form.':'Torn compose form changed while preparing the message; retrying.';
-      composeFormattingNotice(requiresBranding?'Preparing branded message… do not send until this notice disappears.':'Preparing message…');
-      await sleepMs(500);
+      if(fillAttempts<COMPOSE_MAX_FORMAT_ATTEMPTS){
+        statusText=requiresBranding?'Torn editor was not ready; retrying formatting.':'Torn editor changed while preparing the message; retrying.';
+        composeFormattingNotice(requiresBranding?'Subject is ready. Retrying branded message formatting…':'Retrying message body…');
+        await sleepMs(500);
+      }
     }
 
-    if(stillCurrent())fail(true);
+    if(stillCurrent())fail();
     else clearComposeFormattingNotice();
   }
 

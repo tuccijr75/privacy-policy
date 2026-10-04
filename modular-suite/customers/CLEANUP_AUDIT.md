@@ -119,3 +119,24 @@ Do not merge until the alpha.17 branch is accepted for merge. After merge/instal
 4. Confirm customer/contact/coupon/restock state changes only after a real manual Send is confirmed by Torn.
 
 Outbox/recovery navigation is explicitly out of scope for alpha.17 acceptance.
+
+
+## Alpha.18 compose-readiness addendum
+
+Alpha.17 exposed one remaining source-level flaw during live acceptance: its compose-preparation timeout began at navigation, before Torn's Messages SPA had mounted the compose form. On a slow load, the bridge expired before Subject/editor controls existed, leaving only Torn's native XID-resolved username.
+
+Live inspection also showed that the current direct compose route does not reliably populate Subject from the hash and that unrelated Torn chat inputs coexist on the page.
+
+Alpha.18 therefore changes the source contract rather than adding a recovery patch:
+
+- navigate with **XID only**;
+- keep the short-lived MM_Customers payload in script storage;
+- wait passively for Torn's real Name + Subject controls without scanning/toggling the editor;
+- write and verify Subject immediately when those controls exist;
+- only then begin a bounded editor-formatting phase;
+- constrain body/editor/source/toggle discovery to the compose region around Subject, preventing chat controls from being treated as the message body;
+- preserve source-mode branded HTML insertion and manual-send confirmation safeguards.
+
+No document observer, history monkey patch, Outbox recovery, generic Compose hydration, direct rich-editor fallback, page-load sync, or pre-send polling was reintroduced.
+
+Proposed versions: MM_Customers `8.0.0-alpha.18`, suite `8.0.0-alpha.35`.

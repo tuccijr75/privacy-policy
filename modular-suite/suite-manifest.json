@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "8.0.0-alpha.34",
+  "suiteVersion": "8.0.0-alpha.35",
   "status": "non-production",
   "baseVersion": "7.5.3",
   "branch": "crm-v8-modular-suite",
@@ -22,7 +22,7 @@
       "id": "customers",
       "name": "MM_Customers",
       "role": "customer-crm-coupons-cashback-restock",
-      "version": "8.0.0-alpha.17",
+      "version": "8.0.0-alpha.18",
       "status": "implemented-non-production"
     },
     {
