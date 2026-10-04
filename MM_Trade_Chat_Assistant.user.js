@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.2.0-alpha.1
+// @version      0.2.0-alpha.2
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -129,8 +129,39 @@
     ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
   }
 
+  function elementSignature(el) {
+    if (!(el instanceof HTMLElement)) return '';
+    const className = typeof el.className === 'string' ? el.className : '';
+    return [
+      el.id,
+      className,
+      el.getAttribute('data-channel'),
+      el.getAttribute('data-chat'),
+      el.getAttribute('data-room'),
+      el.getAttribute('aria-label'),
+    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  function isTradeChatRoot(root) {
+    if (!(root instanceof HTMLElement)) return false;
+
+    const signature = elementSignature(root);
+    if (/(^|[\s_-])trade(?:[\s_-]|$)/.test(signature)) return true;
+
+    const chatLike = /chat[-_]?box|chatbox/.test(signature) || /^public_/i.test(root.id || '');
+    if (!chatLike) return false;
+
+    const title = root.querySelector(
+      '[class*="chat-box-title"],[class*="chatBoxTitle"],[class*="title"],[class*="header"]'
+    );
+    const label = buttonText(title);
+    return label === 'trade' || /^trade\b/.test(label);
+  }
+
   function findTradeOpenControl() {
-    const controls = Array.from(document.querySelectorAll('button,[role="button"]')).filter(isVisible);
+    const chatRoot = document.getElementById('chatRoot');
+    const scope = chatRoot || document;
+    const controls = Array.from(scope.querySelectorAll('button,[role="button"]')).filter(isVisible);
     return controls.find((el) => {
       if (el.closest && el.closest('#' + APP_ID)) return false;
       const label = buttonText(el);
@@ -142,19 +173,34 @@
     const exact = document.getElementById('public_trade');
     if (exact instanceof HTMLElement && isVisible(exact)) return exact;
 
-    const roots = Array.from(document.querySelectorAll('[id^="public_"], [class*="chatBox"], [class*="chat-box"]'));
-    return roots.find((root) => {
-      if (!(root instanceof HTMLElement) || !isVisible(root)) return false;
-      const title = root.querySelector('[class*="title"],[class*="header"]');
-      return String(title && title.textContent || '').trim().toLowerCase() === 'trade';
-    }) || null;
+    const chatRoot = document.getElementById('chatRoot');
+    const scope = chatRoot || document;
+    const roots = Array.from(scope.querySelectorAll(
+      '[id^="public_"],[data-channel],[data-chat],[data-room],[class*="chatBox"],[class*="chat-box"],[class*="chat_box"]'
+    ));
+
+    return roots.find((root) => isVisible(root) && isTradeChatRoot(root)) || null;
   }
 
   function findTradeComposer() {
     const root = findTradeRoot();
-    if (!root) return null;
-    const textarea = root.querySelector('textarea');
-    return textarea instanceof HTMLTextAreaElement && isVisible(textarea) ? textarea : null;
+    if (root) {
+      const textarea = Array.from(root.querySelectorAll('textarea')).find(isVisible);
+      if (textarea instanceof HTMLTextAreaElement) return textarea;
+    }
+
+    const chatRoot = document.getElementById('chatRoot');
+    if (!chatRoot) return null;
+
+    const textareas = Array.from(chatRoot.querySelectorAll('textarea')).filter(isVisible);
+    return textareas.find((textarea) => {
+      let node = textarea.parentElement;
+      while (node && node !== chatRoot) {
+        if (isTradeChatRoot(node)) return true;
+        node = node.parentElement;
+      }
+      return false;
+    }) || null;
   }
 
   function waitForTradeComposer(timeoutMs) {
@@ -185,7 +231,7 @@
     if (!control) return null;
 
     control.click();
-    return waitForTradeComposer(2200);
+    return waitForTradeComposer(5000);
   }
 
   function findTradeMinimizeControl() {
