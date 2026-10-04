@@ -353,3 +353,77 @@ The report includes:
 - any requirements that remain unpriced.
 
 The report is planning output. MM_Acquisitions remains responsible for live price/availability verification before manual purchasing.
+
+
+## Alpha.20 equipment stats and cost-ranked alternatives
+
+The canonical readiness floor remains deliberately stable. Broadening the option catalog does **not** silently make members less ready and current market price does not redefine the required performance floor.
+
+### Has versus needs
+
+Every standard member equipment slot now exposes three separate concepts:
+
+- **HAS** — the stats of the member's current item when item-specific stats are available from imported equipment data. These are labeled exact/item data.
+- **CATALOG AVG** — the average normal stats for a named weapon/armor piece when only the item model is known. This is explicitly identified as an average, not the unique item's exact roll.
+- **NEED / TARGET AVG** — the selected readiness target's minimum normal stats plus its average/range, so the operator can compare the member's current item against the actual requirement without relying on item names alone.
+
+Weapon displays use Damage and Accuracy. Armor displays Armor Rating. The existing score remains a compact comparison aid, but the raw stat values are displayed beside it.
+
+### Broader qualifying alternatives
+
+The stable baseline catalog remains 18 items and continues to choose the readiness floor. A separate alternatives catalog adds 94 additional normal weapon/armor choices, for 112 total recognized options across:
+
+- Primary;
+- Secondary;
+- Melee;
+- Helmet;
+- Body;
+- Gloves;
+- Pants; and
+- Boots.
+
+For each member and slot, the alternatives list is filtered against that member's active readiness floor. An option is shown only when its normal-stat score meets or exceeds the floor. The option list therefore answers **what else can satisfy this member's need**, rather than treating one named target as the only acceptable item.
+
+The Build view groups qualifying alternatives by acquisition cost:
+
+- **LOW COST**
+- **MID COST**
+- **HIGH COST**
+- **PRICE UNKNOWN**
+
+Within those groups, the operator sees the option's average/minimum/range stats, performance score, and current planning-cost source. A **Find Best Source** action can hand any individual alternative to MM_Acquisitions for live source verification and manual purchasing.
+
+### Price hierarchy
+
+Faction Refresh makes one broad Torn `/torn/items` request and retains current `market_price` references for recognized equipment. This avoids issuing a separate market request for every possible weapon and armor item.
+
+Displayed planning cost uses the best available source in this order:
+
+1. already-cached Item Market / Bazaar / overseas source information;
+2. current Torn `/torn/items` market-price reference;
+3. the stable static reference where one already exists;
+4. **PRICE UNKNOWN** when none are available.
+
+A Torn market-price reference is a planning value, not proof that a live listing is currently purchasable. MM_Acquisitions remains responsible for live availability and source verification.
+
+### Stat sources and limitations
+
+The expanded normal-stat ranges are based on current Torn weapon and armor reference tables. Recommended values represent normal/base item ranges and averages.
+
+They intentionally do **not** fold the following into the generic alternative comparison:
+
+- Ranked War bonuses;
+- weapon mods;
+- ammunition effects;
+- weapon experience;
+- advanced armor-set bonuses;
+- opponent-specific combat interactions.
+
+When exact item-specific stats are available for a member's equipped item, those exact values take precedence over catalog averages. Unknown or special equipment is still not automatically downgraded solely because a generic alternative exists.
+
+Current reference sources:
+- Torn Weapon: https://wiki.torn.com/wiki/Weapon
+- Torn Weapon Stats: https://wiki.torn.com/wiki/Weapon_Stats
+- Torn Armor: https://wiki.torn.com/wiki/Armor
+- Torn API v2 Swagger: https://www.torn.com/swagger.php
+- Torn API documentation: https://www.torn.com/api.html
