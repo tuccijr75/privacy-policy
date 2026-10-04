@@ -1745,4 +1745,49 @@ Next live gate:
 2. refresh Ranked;
 3. inspect at least one under-BB auction and one overpriced auction;
 4. then run Analyze AH on one low-tier/BB weapon and one premium weapon.
+### alpha.14 module-wide Bazaar source model — 2026-10-04
+
+Owner live-testing observation:
+- Bazaar data existed in the backend but was not consistently visible or filterable as a first-class source across the Acquisitions module.
+
+Root cause audit:
+- Deals already had Bazaar purchase candidates and live Bazaar verification, but broad discovery/pricelist rows displayed generic `Cheapest seen` rather than identifying Bazaar;
+- selected Items already compared Bazaar and Item Market after deep refresh, but item browsing had no Bazaar-specific availability filter or Bazaar summary fields;
+- Ranked live feed contained distinct Bazaar and Item Market rows, but UI collapsed both under one `Market` filter;
+- Travel recommendations did not expose a direct cross-source comparison action even though procurement routing supported Bazaar;
+- Faction Armory already had explicit Bazaar / Item Market / Overseas source comparison and required no architectural replacement.
+
+alpha.14 changes:
+- TornW3B global marketplace `lowest_price` is explicitly modeled as Bazaar observation evidence and carries `lowestSource: Bazaar` plus source provenance;
+- 125-item customer universe labels buy-side discovery `Bazaar observed`, shows Bazaar low / Bazaar average / bazaar count, and deep Verify still compares Bazaar + Item Market;
+- Deals research rows expose `Bazaar aggregate` when that is the discovery source;
+- source freshness strip now reports Bazaar freshness separately from Item Market freshness;
+- Items browser adds `Bazaar observed` and `Item Market checked` filters and displays Bazaar low / average / bazaar count on each catalog row;
+- Ranked source normalization canonicalizes TornW3B `bazaar` -> `Bazaar`, `market` -> `Item Market`, and `auction` -> `Auction`;
+- Ranked source selector now has All sources / Bazaar / Item Market / Auction instead of collapsing Bazaar + Item Market into `Market`;
+- Ranked header/status reports separate Bazaar, Item Market and Auction counts;
+- Travel rows now provide `Compare Bazaar / Market`, opening the existing selected-item source comparison workflow;
+- no new feed or third-party dependency was added; the change exposes and correctly labels data already available through Torn/TornW3B.
+
+Live source evidence used during audit:
+- current sampled ranked feed: 126 Bazaar + 174 Item Market rows across Primary/Secondary/Melee;
+- TornW3B `/marketplace/206` returned named Bazaar sellers for Xanax, confirming per-item Bazaar observations;
+- global marketplace row for Xanax matched Bazaar-specific fields (`bazaar_average`, `total_bazaars`, `lowest_price`).
+
+Verification:
+- 10 Acquisitions JS/source-test files compile;
+- canonical ranked source fixture PASS: Bazaar / Item Market / Auction;
+- global marketplace Bazaar source fixture PASS;
+- customer pricelist scan reports `Bazaar observed` PASS;
+- Deals fallback discovery reports `Bazaar aggregate` PASS;
+- alpha.14 immutable candidate remains one Acquisitions launcher with auto-update disabled for live acceptance.
+
+Next live gate:
+1. install alpha.14;
+2. refresh Torn and confirm Bazaar freshness appears in source strip;
+3. Deals: confirm 125-item rows explicitly show Bazaar low/avg/count;
+4. Items: test Bazaar observed filter and selected-item Bazaar-vs-Item-Market comparison;
+5. Ranked: refresh and confirm separate Bazaar / Item Market / Auction counts and filters;
+6. Travel: test Compare Bazaar / Market on one overseas item;
+7. continue alpha.13 auction-bid semantics and AH history acceptance after source-model pass.
 
