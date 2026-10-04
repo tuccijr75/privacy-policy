@@ -427,3 +427,30 @@ Current reference sources:
 - Torn Armor: https://wiki.torn.com/wiki/Armor
 - Torn API v2 Swagger: https://www.torn.com/swagger.php
 - Torn API documentation: https://www.torn.com/api.html
+
+
+## Alpha.21 leader acquisition report scope
+
+The **War / Peace** stock-mode selector now controls the faction-leader acquisition message directly.
+
+### War mode
+
+When **War** is selected, the leader message contains only acquisition that is required for the active war-readiness objective:
+
+- equipment purchases for members who are not yet WAR READY; and
+- the two ready-to-issue war equipment spares per standard slot when faction stock cannot already cover them.
+
+The War leader message intentionally excludes minimum-stock replenishment. Provision/minimum rows that come from the War minimum policy are not included in the letter or its low/high total.
+
+This keeps the request focused on equipment that must be acquired for war now.
+
+### Peace mode
+
+When **Peace** is selected, the leader message becomes the post-war / normal replenishment report. It includes:
+
+- normal outstanding member acquisition; and
+- minimum-stock shortfalls from the Peace minimum policy.
+
+This is the intended time to refill routine faction minimums after the war requirement has been handled.
+
+The mode is visible in the leader-message button label and message subject so the operator can see the report scope before opening Torn Compose.
