@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "8.0.0-alpha.52",
+  "suiteVersion": "8.0.0-alpha.53",
   "status": "non-production",
   "baseVersion": "7.5.3",
   "branch": "crm-v8-modular-suite",
@@ -15,7 +15,7 @@
       "name": "MM Torn Core",
       "role": "credential-api-storage-contracts",
       "visible": false,
-      "version": "8.0.0-alpha.13",
+      "version": "8.0.0-alpha.14",
       "status": "implemented-non-production"
     },
     {
