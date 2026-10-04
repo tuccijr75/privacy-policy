@@ -438,17 +438,19 @@
       .filter(item=>item.slot===slot)
       .map(item=>{
         const score=equipmentScore(item,need);
-        const floorDeltaPct=threshold>0?((score-threshold)/threshold)*100:0;
+        const minimumScore=readinessFloorScore(item,need);
+        const floorDeltaPct=threshold>0?((minimumScore-threshold)/threshold)*100:0;
         return {
           ...clone(item),
           score,
-          meetsFloor:threshold<=0||score>=threshold,
+          minimumScore,
+          meetsFloor:threshold<=0||minimumScore>=threshold,
           floorDeltaPct,
           stats:equipmentStatProfile(item)
         };
       })
-      .filter(item=>item.score>0&&item.meetsFloor)
-      .sort((a,b)=>b.score-a.score||String(a.name).localeCompare(String(b.name)));
+      .filter(item=>item.score>0&&item.minimumScore>0&&item.meetsFloor)
+      .sort((a,b)=>b.score-a.score||b.minimumScore-a.minimumScore||String(a.name).localeCompare(String(b.name)));
   }
 
 
