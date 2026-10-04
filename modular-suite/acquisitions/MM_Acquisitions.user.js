@@ -670,6 +670,8 @@
     if(!state)return card('<b>No cached market state available.</b>');
     const rows=logic.rankCachedOpportunities(state);
     const buyable=rows.filter(r=>r.purchaseReady).slice(0,12);
+    const pricedIds=new Set(Object.keys(state?.procurement?.pricelist?.items||{}));
+    const pricelistDeals=rows.filter(r=>r.purchaseReady&&pricedIds.has(String(r.id))).slice(0,12);
     const research=rows.filter(r=>!r.purchaseReady).slice(0,8);
 
     return armoryRequestHtml()+card(
@@ -677,6 +679,18 @@
         '<div><b>Profit Opportunities</b><div style="font-size:10px;color:#888;">ROI + sell-through + profit velocity. Purchase routing always re-verifies first.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-reload" style="'+button()+'">Reload Cache</button><button id="mm-acq-sync-purchases" '+(busy?'disabled':'')+' style="'+button()+'">Sync Purchases</button><button id="mm-acq-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Opportunities</button></div>'+
       '</div>'
+    )+
+    card('<b>Pricelist Universe · '+Number(state?.procurement?.pricelist?.pricedCount||0).toLocaleString()+' priced items</b>'+
+      '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Only items currently priced on the configured customer pricelist. Profit/ROI still use live acquisition evidence and market exit estimates — the pricelist buy rate is a buying benchmark, not a resale exit.</div>'+
+      (pricelistDeals.length?pricelistDeals.map((r,i)=>{
+        const target=Number(state?.procurement?.pricelist?.items?.[String(r.id)]?.buyPrice||0);
+        return '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
+          '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.purchaseSource)+
+          '<div>Live buy <b>'+money(r.buyPrice)+'</b> · Pricelist buy rate '+money(target)+' · Market exit '+money(r.bestExit)+' · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
+          '<div style="color:#888;">Profit/unit '+money(r.profit||0)+' · confidence '+Number(r.confidence||0).toFixed(0)+'% · 3d sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'%</div></div>'+
+          '<button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Verify & Buy</button>'+
+        '</div>';
+      }).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No currently rule-qualified deals are inside the priced-item universe. Refresh Opportunities after updating the pricelist.</div>')
     )+
     card('<b>Rule-Qualified Deals</b>'+
       '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Meets current ROI / profit / listing / confidence rules. Current cash balance is not checked; Verify & Buy re-verifies the source and keeps final purchase manual.</div>'+
@@ -1122,12 +1136,17 @@
         source.sellerName?String(source.sellerName):'',
         Number(source.quantity||0)>0?'qty/stock '+Number(source.quantity).toLocaleString():''
       ].filter(Boolean).join(' · ');
-      const exit=Math.max(0,Number(itemSelection?.pricelistBuyPrice||0));
+      const targetBuy=Math.max(0,Number(itemSelection?.pricelistBuyPrice||0));
+      const id=String(itemSelection?.id||'');
+      const snap=state?.procurement?.marketSnapshots?.[id]||{};
+      const intel=state?.marketIntel?.marketplace?.[id]||{};
+      const exit=Math.max(0,Number(snap.realisticExit||0),Number(intel.bazaarAverage||0),Number(intel.marketPrice||0),Number(itemSelection?.marketPrice||0));
       const profit=exit>0?exit-Number(source.price||0):0;
       const roi=exit>0&&Number(source.price||0)>0?profit/Number(source.price||0)*100:0;
-      const target=exit>0?' · Pricelist exit '+money(exit)+' · Profit '+(profit>=0?'+':'-')+money(Math.abs(profit))+' · ROI '+roi.toFixed(1)+'%':'';
+      const target=targetBuy>0?' · Your buy rate '+money(targetBuy):'';
+      const economics=exit>0?' · Market exit '+money(exit)+' · Profit '+(profit>=0?'+':'-')+money(Math.abs(profit))+' · ROI '+roi.toFixed(1)+'%':'';
       return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
-        '<div><b>'+(index===0?'BEST · ':'')+esc(source.source)+'</b> · <b>'+money(source.price)+'</b>'+(detail?' · '+esc(detail):'')+target+'</div>'+
+        '<div><b>'+(index===0?'BEST · ':'')+esc(source.source)+'</b> · <b>'+money(source.price)+'</b>'+(detail?' · '+esc(detail):'')+target+economics+'</div>'+
         '<button data-item-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(index===0)+(busy?'opacity:.5;':'')+'">Use</button>'+
       '</div>';
     }).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">No current source comparison loaded.</div>';
@@ -1261,7 +1280,7 @@
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
-        '<div style="display:flex;gap:5px;margin-bottom:7px;">'+
+        '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px;">'+
           '<button data-acq-view="deals" style="'+button(activeView==='deals')+'">Deals</button>'+
           '<button data-acq-view="items" style="'+button(activeView==='items')+'">Items</button>'+
           '<button data-acq-view="ranked" style="'+button(activeView==='ranked')+'">Ranked</button>'+
