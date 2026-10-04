@@ -34,7 +34,7 @@ assert.strictEqual(logic.currentBazaarRows(db,db.subscribers['123']).length,1);
 
 const userSrc=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 assert.doesNotThrow(()=>new Function(userSrc));
-assert(userSrc.includes("const VERSION='8.0.0-alpha.18';"));
+assert(userSrc.includes("const VERSION='8.0.0-alpha.19';"));
 assert(userSrc.includes("const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';"));
 assert(userSrc.includes("const PENDING_SEND_KEY='mm_customers_pending_send_v1';"));
 assert(userSrc.includes("const DELIVERY_RECEIPTS_KEY='mm_customers_delivery_receipts_v1';"));
@@ -47,7 +47,7 @@ function sourceSection(startMarker,endMarker){
   return userSrc.slice(start,end);
 }
 
-// Message feature preservation.
+// Feature preservation.
 assert(userSrc.includes('function brandedMessageHtml'));
 assert(userSrc.includes('function plainMessageText'));
 assert(userSrc.includes('function customerMessage'));
@@ -64,45 +64,60 @@ assert(userSrc.includes('Restore to New Customers'));
 assert(!userSrc.includes('data-restock-sent'));
 assert(userSrc.includes('data-restock-dismiss'));
 
-// Composer source is one-shot and verified from the canonical source payload.
+// Compose payload remains one-shot and isolated from delivery tracking.
 const composePayload=sourceSection('  function composePayloadForCurrentPage(){','\n  function elementMeta(element){');
 assert(composePayload.includes('COMPOSE_BRIDGE_TTL_MS'));
 assert(composePayload.includes('Compose bridges are single-use and bound to the exact recipient route.'));
 assert(!composePayload.includes('PENDING_SEND_KEY'),'delivery tracking must never hydrate the editor');
-assert(!userSrc.includes('COMPOSE_ROUTE_RECOVERY_MS'));
-assert(!userSrc.includes('routeRecovery'));
-assert(!userSrc.includes('restoreComposeTargetRoute'));
-assert(userSrc.includes('function findComposeRecipientInput'));
-assert(userSrc.includes('function recipientMatchesPayload'));
-assert(userSrc.includes("value.includes('['+id+']')"));
-assert(userSrc.includes('function brandedSourceIsComplete'));
-assert(userSrc.includes('function brandedSourceSignature'));
-assert(userSrc.includes('function composeElementNearSubject'));
-assert(userSrc.includes('COMPOSE_FORM_POLL_MS=1000'));
-assert(userSrc.includes('COMPOSE_EDITOR_READY_TIMEOUT_MS=12_000'));
-assert(userSrc.includes("Subject is independent of the editor. Apply it as soon as Torn exposes"));
-assert(userSrc.includes("return 'https://www.torn.com/messages.php#/p=compose'+"));
-assert(!userSrc.includes("&subject='+encodeURIComponent(subject)"),'subject must not be placed in Torn compose hash');
-assert(userSrc.includes("composeElementNearSubject(el,subjectInput"),'editor candidates must be scoped to the compose region');
-assert(userSrc.includes('function matchingBrandedTable'));
 assert(!composePayload.includes('urlSubject')&&!composePayload.includes('urlBody'),'generic compose URLs must not be hydrated by MM_Customers');
-assert(userSrc.includes('const hasBody=requiresBranding||Boolean(payload.body);'),'plain-message support must remain available for MM_Customers drafts');
-assert(userSrc.includes('injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent)'));
-assert(userSrc.includes('recipient + subject + branded body verified'));
+assert(userSrc.includes("return 'https://www.torn.com/messages.php#/p=compose'+"));
+assert(!userSrc.includes("&subject='+encodeURIComponent(subject)"),'subject must not be put in Torn compose URL');
 
-// Old runtime repair layers must stay gone.
-assert(!userSrc.includes('function repairRenderedBrandedTable'));
-assert(!userSrc.includes('brandedMarkersFromHtml'));
-assert(!userSrc.includes("replace(/\\bCSHBACK\\b/g,'CASHBACK')"));
-assert(!userSrc.includes('table.insertBefore(bannerRow.cloneNode(true),table.firstChild)'));
-assert(!userSrc.includes('setEditorContent('));
-assert(!userSrc.includes('navigator.clipboard'));
-assert(!userSrc.includes('copyAndOpenMessage'));
-assert(!userSrc.includes('MutationObserver'));
-assert(!userSrc.includes('history[method]'));
-assert(!userSrc.includes('scanTimer'));
-assert(!userSrc.includes('verifyTimer'));
-assert.strictEqual((userSrc.match(/\.innerHTML\s*=/g)||[]).length,1,'only the MM_Customers panel renderer may assign innerHTML');
+// Current Torn mail adapter: TinyMCE contenteditable, not source/code mode.
+const editorFinder=sourceSection('  function findComposeEditor(){','\n  function findComposeSendButton(){');
+assert(editorFinder.includes('#mce_0'));
+assert(editorFinder.includes('.mce-content-body[contenteditable="true"]'));
+assert(editorFinder.includes('editor-content.mce-content-body'));
+assert(!editorFinder.includes("querySelectorAll('[contenteditable"),'editor finder must not scan arbitrary contenteditable elements');
+assert(!editorFinder.includes('textarea'),'editor finder must not use TinyMCE source textarea');
+
+const subjectFinder=sourceSection('  function findComposeSubjectInput(){','\n  function findComposeRecipientInput(){');
+assert(subjectFinder.includes('input.message-title'));
+assert(subjectFinder.includes('input[name="subject" i]'));
+assert(subjectFinder.includes('input[placeholder="Subject" i]'));
+
+const recipientFinder=sourceSection('  function findComposeRecipientInput(){','\n  function recipientMatchesPayload(');
+assert(recipientFinder.includes('input[name="sendto"]'));
+assert(recipientFinder.includes('#ac-search-0'));
+assert(userSrc.includes("value.includes('['+id+']')"));
+
+const richSetter=sourceSection('  function setComposeRichHtml(','\n  const sleepMs=');
+assert(richSetter.includes('editor.innerHTML=value'));
+assert(richSetter.includes('dispatchComposeEditorInput(editor)'));
+assert(userSrc.includes('function dispatchComposeEditorInput'));
+assert(userSrc.includes('function richComposerHasBranding'));
+assert(userSrc.includes('COMPOSE_READY_POLL_MS=250'));
+assert(userSrc.includes('COMPOSE_READY_TIMEOUT_MS=30_000'));
+assert(userSrc.includes('COMPOSE_EDITOR_SETTLE_MS=600'));
+assert(userSrc.includes('COMPOSE_MAX_FILL_ATTEMPTS=3'));
+assert(userSrc.includes('Message prepared in Torn TinyMCE with recipient + subject + branded body verified.'));
+
+// Removed source-mode/code-editor architecture must stay gone.
+for(const forbidden of [
+  'findTornCodeEditorToggle','sourceEditorCandidates','composeAreaTextarea','looksLikeHtmlSource',
+  'likelyTornSourceEditor','setSourceEditorHtml','waitForSourceEditor','waitForRichBranding',
+  'injectHtmlThroughTornCodeEditor','Toggle Code Editor','sceditor-source','CodeMirror',
+  'monaco-editor','sourceArea','COMPOSE_FORM_POLL_MS','COMPOSE_EDITOR_POLL_MS',
+  'COMPOSE_EDITOR_READY_TIMEOUT_MS','COMPOSE_ROUTE_RECOVERY_MS','routeRecovery',
+  'restoreComposeTargetRoute','function repairRenderedBrandedTable','brandedMarkersFromHtml',
+  "replace(/\\bCSHBACK\\b/g,'CASHBACK')",'table.insertBefore(bannerRow.cloneNode(true),table.firstChild)',
+  'setEditorContent(','navigator.clipboard','copyAndOpenMessage','MutationObserver','history[method]',
+  'scanTimer','verifyTimer'
+]) assert(!userSrc.includes(forbidden),'obsolete compose/runtime layer remains: '+forbidden);
+
+// Direct HTML write is canonical only for TinyMCE plus the application panel renderer.
+assert.strictEqual((userSrc.match(/\.innerHTML\s*=/g)||[]).length,2,'innerHTML assignments must be limited to TinyMCE compose + panel render');
+assert(richSetter.includes('editor.innerHTML=value'));
 
 // Delivery tracking remains manual-send gated and bounded.
 assert(userSrc.includes('function installMessageSendDetector'));
@@ -116,7 +131,7 @@ assert(userSrc.includes("state:'awaiting-send',sendClickedAt:null"));
 assert(userSrc.includes('PENDING_DELIVERY_TTL_MS=30*60*1000'));
 assert(userSrc.includes("if(id&&(!xid||!recipientMatchesPayload(pending,findComposeRecipientInput())))return false;"));
 
-// Resource doctrine: no page-load customer sync; the only interval is panel-scoped.
+// Resource doctrine: no page-load customer network work; only panel auto-sync interval.
 assert.strictEqual((userSrc.match(/setInterval\(/g)||[]).length,1);
 assert(userSrc.includes('function startCustomerAutoSync'));
 assert(userSrc.includes('function stopCustomerAutoSync'));
@@ -124,10 +139,10 @@ assert(userSrc.includes('if(!apiKey()||!panelIsOpen())return;'));
 const initialize=sourceSection('  function initializeCustomers(){','\n\n  if(document.body)');
 assert(!initialize.includes('autoRefreshCustomers'),'initialization must not perform customer network work');
 assert(!initialize.includes('setInterval'),'initialization must not start polling');
-assert(userSrc.includes('function startCustomerStateChannel'),'cross-tab channel must have an explicit open-panel lifecycle');
-assert(userSrc.includes('function stopCustomerStateChannel'),'cross-tab channel must be closable');
-assert(userSrc.includes("if(event?.data?.type!=='state-updated'||!panelIsOpen())return;"),'cross-tab reload must stay dormant while the panel is closed');
+assert(userSrc.includes('function startCustomerStateChannel'));
+assert(userSrc.includes('function stopCustomerStateChannel'));
+assert(userSrc.includes("if(event?.data?.type!=='state-updated'||!panelIsOpen())return;"));
 assert(!initialize.includes('BroadcastChannel'),'initialization must not open a cross-tab channel');
-assert(!userSrc.includes('core.adoptLegacyCrmLauncher?.();'),'Core owns the legacy-launcher bridge');
+assert(!userSrc.includes('core.adoptLegacyCrmLauncher?.();'),'Core owns legacy-launcher compatibility');
 
-console.log('MM_Customers logic, feature-preservation, compose, delivery, cleanup and resource regressions: PASS');
+console.log('MM_Customers alpha19 logic, feature preservation, TinyMCE compose, delivery and resource regressions: PASS');
