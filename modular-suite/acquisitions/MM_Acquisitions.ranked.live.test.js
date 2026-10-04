@@ -27,6 +27,13 @@ const ranked=live.normalizeRankedListing({
 assert.strictEqual(ranked.itemId,'26');
 assert.strictEqual(ranked.rarity,'yellow');
 assert.strictEqual(ranked.bonuses[0].title,'Conserve');
+assert.strictEqual(ranked.source,'Bazaar');
+assert.strictEqual(live.canonicalRankedSource('market'),'Item Market');
+assert.strictEqual(live.canonicalRankedSource('auction'),'Auction');
+
+const marketRow=live.normalizeMarketplaceItem({item_id:206,item_name:'Xanax',market_price:878734,bazaar_average:864771,lowest_price:863000,total_bazaars:428});
+assert.strictEqual(marketRow.lowestSource,'Bazaar');
+assert.strictEqual(marketRow.bazaarSource,'TornW3B Bazaar observations');
 
 (async()=>{
   let db={procurement:{catalog:{'26':{name:'AK-47',subType:'Rifle',weaponCategory:'Primary'}}},marketIntel:{},travelIntel:{}};
@@ -66,7 +73,7 @@ assert.strictEqual(ranked.bonuses[0].title,'Conserve');
   const r=await service.refreshRankedLive({pagesPerType:1,auctionPages:1,limit:100});
   assert.strictEqual(r.market.length,1);
   assert.strictEqual(r.auction.length,1);
-  assert.strictEqual(db.procurement.ranked.liveSource,'TornW3B public ranked-weapons + auction APIs');
+  assert.strictEqual(db.procurement.ranked.liveSource,'TornW3B Bazaar + Item Market + Auction APIs');
 
   const h=await service.refreshRankedHistory('26',{days:90,maxPages:2});
   assert.strictEqual(h.rows.length,1);
