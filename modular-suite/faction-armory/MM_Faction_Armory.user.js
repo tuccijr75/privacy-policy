@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.19
+// @version      8.0.0-alpha.20
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.8
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/faction-armory/MM_Faction_Armory.logic.js?v=8.0.0-alpha.2
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/faction-armory/MM_Faction_Armory.logic.js?v=8.0.0-alpha.3
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.19';
+  const VERSION='8.0.0-alpha.20';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -55,6 +55,7 @@
   let channel=null;
   let autoRefreshRunning=false;
   let autoRefreshTimer=null;
+  let equipmentOptionPriceMemo=new Map();
 
   const asId=value=>String(value??'').trim();
   const esc=value=>String(value??'')
@@ -421,16 +422,38 @@
     };
   }
 
+  function tornItemsRows(data){
+    let rows=data?.items??data?.data?.items??data?.data??[];
+    if(rows&&typeof rows==='object'&&!Array.isArray(rows))rows=Object.entries(rows).map(([id,row])=>({id,...(row||{})}));
+    return Array.isArray(rows)?rows:[];
+  }
+
+  function equipmentMarketCatalogFromResponse(data,fetchedAt=Date.now()){
+    const wanted=new Set((logic?.equipmentOptionCatalog||[]).map(item=>String(item?.name||'').trim().toLowerCase()).filter(Boolean));
+    const byName={},byId={};
+    for(const raw of tornItemsRows(data)){
+      const name=String(raw?.name??raw?.item_name??raw?.item?.name??'').trim();
+      if(!name||!wanted.has(name.toLowerCase()))continue;
+      const itemId=asId(raw?.id??raw?.item_id??raw?.item?.id);
+      const marketPrice=num(raw?.market_price??raw?.marketPrice??raw?.market_value??raw?.marketValue??raw?.value?.market_price??raw?.value?.market_value);
+      const row={itemId,name,type:String(raw?.type??raw?.category??raw?.item?.type??''),marketPrice,fetchedAt:new Date(fetchedAt).toISOString(),source:'Torn items market_price'};
+      byName[name.toLowerCase()]=row;
+      if(itemId)byId[itemId]=row;
+    }
+    return {byName,byId,fetchedAt:new Date(fetchedAt).toISOString()};
+  }
+
   async function refreshFaction(){
     if(busy)return;
     const key=factionKey();
     if(!key){activeView='settings';statusText='Save a faction-compatible API key first.';render();return;}
     busy=true;statusText='Refreshing all 9 armory categories + roster…';render();
     try{
-      const [categoryResults,membersData,basicData]=await Promise.all([
+      const [categoryResults,membersData,basicData,tornItemsData]=await Promise.all([
         mapLimit(logic.categories,3,fetchFactionCategory),
         apiRequest('/faction/members',key),
-        apiRequest('/faction/basic',key)
+        apiRequest('/faction/basic',key),
+        apiRequest('/torn/items?cat=All&sort=ASC',key).catch(()=>null)
       ]);
       const failures=categoryResults.map((x,i)=>({x,cat:logic.categories[i]})).filter(r=>r.x.status==='rejected');
       if(failures.length)throw new Error(failures.map(r=>r.cat+': '+(r.x.reason?.message||String(r.x.reason))).join(' | '));
@@ -443,6 +466,7 @@
       const rosterRows=factionMembersFromResponse(membersData);
       if(!rosterRows.length)throw new Error('Faction roster response contained no members.');
       const leadership=factionLeadershipFromResponse(basicData,rosterRows);
+      const equipmentMarketCatalog=tornItemsData?equipmentMarketCatalogFromResponse(tornItemsData,fetchedAt):null;
 
       await core.updateDomainState('faction',draft=>{
         const fi=draft.factionInventory&&typeof draft.factionInventory==='object'?draft.factionInventory:{};
@@ -461,6 +485,7 @@
         next.memberReadiness.roster=Object.fromEntries(rosterRows.map(row=>[row.memberId,row]));
         next.memberReadiness.lastRosterSyncAt=new Date(fetchedAt).toISOString();
         next.leadership=leadership;
+        if(equipmentMarketCatalog&&Object.keys(equipmentMarketCatalog.byName||{}).length)next.equipmentMarketCatalog=equipmentMarketCatalog;
         draft.factionInventory=next;
         return draft;
       });
@@ -468,7 +493,9 @@
       try{publicIntel=await refreshMissingPublicIntel(rosterRows,key);}
       catch(error){console.warn('[MM Faction Armory] public member intel refresh failed',error);}
       state=await core.readLegacyState();
+      const pricedOptions=Object.keys(state?.factionInventory?.equipmentMarketCatalog?.byName||{}).length;
       statusText='Faction refreshed: '+Object.keys(current).length+' item rows · '+rosterRows.length+' current members'+
+        (pricedOptions?' · '+pricedOptions+' equipment market references':'')+
         (publicIntel.attempted?' · public estimates '+publicIntel.updated+'/'+publicIntel.attempted+(publicIntel.failed?' ('+publicIntel.failed+' failed)':''):'')+'.';
     }catch(error){
       statusText='Faction refresh failed: '+(error?.message||String(error));
@@ -1210,6 +1237,85 @@
     return {memberId:id,memberName:row.memberName,approved};
   }
 
+  function equipmentStatsText(stats,{mode='current'}={}){
+    if(!stats||!stats.kind)return 'Stats unavailable';
+    if(stats.kind==='armor'){
+      if(mode==='need')return 'MIN ARM '+fmt(stats.minArmor)+' · AVG '+fmt(stats.averageArmor)+(stats.maxArmor?' · RANGE '+fmt(stats.minArmor)+'–'+fmt(stats.maxArmor):'');
+      const value=stats.currentArmor||stats.averageArmor;
+      return 'ARM '+fmt(value)+(stats.source==='ITEM'?' · exact':' · '+String(stats.source||'avg').toLowerCase());
+    }
+    if(mode==='need')return 'MIN DMG '+fmt(stats.minDamage)+' / ACC '+fmt(stats.minAccuracy)+' · AVG '+fmt(stats.averageDamage)+' / '+fmt(stats.averageAccuracy)+(stats.maxDamage&&stats.maxAccuracy?' · RANGE DMG '+fmt(stats.minDamage)+'–'+fmt(stats.maxDamage)+' / ACC '+fmt(stats.minAccuracy)+'–'+fmt(stats.maxAccuracy):'');
+    return 'DMG '+fmt(stats.currentDamage||stats.averageDamage)+' · ACC '+fmt(stats.currentAccuracy||stats.averageAccuracy)+(stats.source==='ITEM'?' · exact':' · '+String(stats.source||'avg').toLowerCase());
+  }
+
+  function memberEquipmentStatsHtml(row){
+    const build=row?.buildAssessment;
+    if(!build?.items?.length)return '';
+    const lines=build.items.filter(item=>item.currentName).map(item=>
+      '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(item.slot.toUpperCase())+' · '+esc(item.currentName)+'</b>'+
+      '<div class="mm-fa-muted">'+esc(equipmentStatsText(item.currentStats))+'</div></div>'+
+      '<div class="mm-fa-tiles">'+tile('SCORE',fmt(item.currentScore))+tile('NEED',fmt(item.readinessFloor))+'</div></div>'
+    ).join('');
+    return lines?'<details class="mm-fa-details"><summary>Current equipment + stats</summary><div style="margin-top:4px;">'+lines+'</div></details>':'';
+  }
+
+  function optionPricing(option){
+    const key=String(option?.name||'').trim().toLowerCase();
+    if(key&&equipmentOptionPriceMemo.has(key))return equipmentOptionPriceMemo.get(key);
+    const live=acquisitionSourceSnapshot({item:option?.name,marketValue:num(option?.marketValue)});
+    const planning=live.bestPlanning||null;
+    const fallback=num(option?.marketValue);
+    const cost=num(planning?.price)||fallback;
+    const resolved={...live,cost,costSource:String(planning?.source||(fallback?'Static reference':'Price not cached')),hasCurrentPrice:Boolean(planning?.price)};
+    if(key)equipmentOptionPriceMemo.set(key,resolved);
+    return resolved;
+  }
+
+  function categorizedEquipmentOptions(item){
+    const raw=(item?.recommendationOptions||[]).map(option=>({...option,pricing:optionPricing(option)}));
+    const priced=raw.filter(option=>num(option.pricing?.cost)>0).slice().sort((a,b)=>num(a.pricing.cost)-num(b.pricing.cost)||b.score-a.score);
+    const index=new Map(priced.map((option,i)=>[String(option.name),i]));
+    const maxScore=Math.max(0,...raw.map(option=>num(option.score)));
+    return raw.map(option=>{
+      const cost=num(option.pricing?.cost);
+      let costBand='PRICE UNKNOWN';
+      if(cost&&priced.length){
+        const rank=index.get(String(option.name))||0;
+        const percentile=priced.length===1?0:rank/(priced.length-1);
+        costBand=percentile<=0.33?'LOW COST':percentile<=0.66?'MID COST':'HIGH COST';
+      }
+      const statBand=maxScore>0&&num(option.score)>=maxScore*0.95?'HIGH STATS':'MEETS NEED';
+      return {...option,costBand,statBand};
+    }).sort((a,b)=>{
+      const order={'LOW COST':0,'MID COST':1,'HIGH COST':2,'PRICE UNKNOWN':3};
+      return (order[a.costBand]??4)-(order[b.costBand]??4)||num(a.pricing?.cost)-num(b.pricing?.cost)||b.score-a.score;
+    });
+  }
+
+  function equipmentOptionsHtml(row,item){
+    const options=categorizedEquipmentOptions(item);
+    if(!options.length)return '';
+    const groups=['LOW COST','MID COST','HIGH COST','PRICE UNKNOWN'];
+    const html=groups.map(group=>{
+      const rows=options.filter(option=>option.costBand===group);
+      if(!rows.length)return '';
+      return '<details class="mm-fa-details"><summary>'+esc(group)+' · '+rows.length+' option'+(rows.length===1?'':'s')+'</summary><div style="margin-top:4px;">'+
+        rows.map(option=>{
+          const cost=num(option.pricing?.cost);
+          const delta=num(option.floorDeltaPct);
+          const costText=cost?String.fromCharCode(36)+fmt(cost):'NOT CACHED';
+          return '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(option.name)+'</b> <span class="mm-fa-pill">'+esc(option.statBand)+'</span>'+
+            '<div class="mm-fa-muted">'+esc(equipmentStatsText(option.stats,{mode:'need'}))+'</div>'+
+            '<div class="mm-fa-mini">'+esc(option.source||'')+(delta?' · +'+delta.toFixed(1)+'% vs readiness floor':'')+'</div>'+
+            '<div class="mm-fa-actions" style="margin-top:3px;"><button data-build-option-member="'+esc(row.memberId)+'" data-build-option-slot="'+esc(item.slot)+'" data-build-option-name="'+esc(option.name)+'" style="'+button()+'">Find Best Source</button></div></div>'+
+            '<div class="mm-fa-tiles">'+tile('COST',costText)+tile('COST SOURCE',option.pricing?.costSource||'—',{wide:true})+tile('SCORE',fmt(option.score))+'</div></div>';
+        }).join('')+'</div></details>';
+    }).join('');
+    return '<details class="mm-fa-details"><summary><b>Qualifying alternatives</b> · '+options.length+' choices that meet this slot floor</summary>'+
+      '<div class="mm-fa-muted" style="margin:3px 0;">Prices use current cached Item Market / Bazaar / overseas data when available, then Torn market_price, then static reference. Recommended stats are average/base ranges; unique RW bonuses, mods, ammo, weapon experience and armor-set bonuses are not included.</div>'+
+      html+'</details>';
+  }
+
   function membersHtml(){
     const rows=memberRows();
     const missing=rows.filter(r=>['MISSING DATA','STALE DATA','ESTIMATED — NEEDS DATA'].includes(r.readinessStatus)).length;
@@ -1270,6 +1376,7 @@
             (source?tile('SOURCE',source+' · '+when(row.profile?.verifiedAt),{wide:true}):tile('SOURCE','No current profile',{wide:true}))+
           '</div>'+
           (entry?.lastError?'<div class="mm-fa-bad mm-fa-mini" style="margin-top:3px;">API error: '+esc(entry.lastError)+'</div>':'')+
+          memberEquipmentStatsHtml(row)+
           '<div class="mm-fa-tiles" style="margin-top:4px;">'+
             tile('EQUIPPED',gear||'—',{wide:true})+
             tile('FACTION LOANS',row.loanItems.length?row.loanItems.map(i=>i.name+' x'+num(i.amount)).join(' | '):'—',{wide:true})+
@@ -1287,7 +1394,7 @@
   function buildsHtml(){
     const rows=memberRows();
     if(!rows.length)return card('No member roster is loaded.');
-    return '<div class="mm-fa-card mm-fa-compact"><b>War-ready build baseline</b> <span class="mm-fa-muted">Performance determines readiness; reference price determines what we buy or issue next. Adequate gear already owned/equipped is kept.</span></div>'+
+    return '<div class="mm-fa-card mm-fa-compact"><b>War-ready build baseline</b> <span class="mm-fa-muted">Each slot shows HAS stats versus the required floor/target average, plus multiple qualifying alternatives grouped by current acquisition cost. Adequate owned/equipped gear is still kept.</span></div>'+
     rows.map(row=>{
       const build=row.buildAssessment||logic.compareMemberBuild(row,state?.factionInventory||{},rows,{procurementMode});
       const statusClass=readinessStatusClass(row.readinessStatus);
@@ -1324,11 +1431,16 @@
               '<div><b>'+esc(item.slot.toUpperCase())+'</b> <span class="'+cls+'">'+esc(item.decision)+'</span></div>'+
               '<div class="mm-fa-tiles">'+
                 tile('CURRENT',item.currentName||'—',{wide:true})+
-                (item.currentMarketValue?tile('CURRENT REF','$'+fmt(item.currentMarketValue)):'')+
+                tile('HAS STATS',item.currentName?equipmentStatsText(item.currentStats):'—',{wide:true})+
+                tile('HAS SCORE',item.currentScore?fmt(item.currentScore):'—')+
+                tile('NEED SCORE',item.readinessFloor?fmt(item.readinessFloor):'—')+
+                (item.currentMarketValue?tile('CURRENT REF',String.fromCharCode(36)+fmt(item.currentMarketValue)):'')+
                 tile('BASELINE',item.targetName||'—',{wide:true})+
-                (item.targetMarketValue?tile('TARGET REF','$'+fmt(item.targetMarketValue)):'')+
+                tile('NEED / TARGET AVG',item.targetName?equipmentStatsText(item.targetStats,{mode:'need'}):'—',{wide:true})+
+                (item.targetMarketValue?tile('TARGET REF',String.fromCharCode(36)+fmt(item.targetMarketValue)):'')+
                 tile('ROUTE',item.route||'—')+
                 tile('SUGGEST',item.suggestedName||'—',{wide:true})+
+                (item.suggestedName?tile('SUGGEST STATS',equipmentStatsText(item.suggestedStats,{mode:'need'}),{wide:true}):'')+
                 (item.ownedOptionName?tile('OWNED',item.ownedOptionName+(item.ownedOptionQuantity?' x'+item.ownedOptionQuantity:''),{wide:true}):'')+
                 (item.assignedLoanName?tile('LOAN',item.assignedLoanName,{wide:true}):'')+
                 (item.factionOptionName?tile('FACTION',item.factionOptionName+' x'+item.factionAvailableCount,{wide:true}):'')+
@@ -1338,6 +1450,7 @@
                   : '')+
               '</div>'+
               (item.valueNote?'<div class="mm-fa-muted" style="margin-top:3px;">'+esc(item.valueNote)+'</div>':'')+
+              (!item.ready&&!['OWNED','LOANED'].includes(item.route)?equipmentOptionsHtml(row,item):'')+
             '</div>';
           }).join('')+'</div>'+
         '</div>'+
@@ -1404,20 +1517,17 @@
   function sharedItemRecordByName(name){
     const wanted=String(name||'').trim().toLowerCase();
     if(!wanted)return null;
+    const torn=state?.factionInventory?.equipmentMarketCatalog?.byName?.[wanted]||null;
     for(const [id,row] of Object.entries(state?.procurement?.catalog||{})){
-      if(String(row?.name||'').trim().toLowerCase()===wanted)return {itemId:String(id),...(row||{})};
+      if(String(row?.name||'').trim().toLowerCase()===wanted)return {itemId:String(id),...(torn||{}),...(row||{}),name:String(row?.name||torn?.name||name)};
     }
     for(const row of Object.values(state?.marketIntel?.marketplace||{})){
-      if(String(row?.itemName||'').trim().toLowerCase()===wanted){
-        return {itemId:String(row.itemId||''),name:String(row.itemName||name),type:String(row.type||'')};
-      }
+      if(String(row?.itemName||'').trim().toLowerCase()===wanted)return {...(torn||{}),itemId:String(row.itemId||torn?.itemId||''),name:String(row.itemName||torn?.name||name),type:String(row.type||torn?.type||'')};
     }
     for(const row of state?.travelIntel?.rows||[]){
-      if(String(row?.itemName||'').trim().toLowerCase()===wanted&&row?.itemId){
-        return {itemId:String(row.itemId),name:String(row.itemName||name)};
-      }
+      if(String(row?.itemName||'').trim().toLowerCase()===wanted&&row?.itemId)return {...(torn||{}),itemId:String(row.itemId),name:String(row.itemName||torn?.name||name),type:String(torn?.type||'')};
     }
-    return null;
+    return torn?{...torn}:null;
   }
 
   function acquisitionSourceSnapshot(row){
@@ -1438,11 +1548,13 @@
     const itemMarketPrice=num(snap?.itemMarket?.lowest);
     const bazaarPrice=num(bazaar?.price)||num(snap?.bazaar?.lowest);
     const travelPrice=num(travel?.shopCost);
+    const tornMarketPrice=num(record?.marketPrice??record?.market_price??record?.marketValue??record?.market_value);
     const candidates=[
       itemMarketPrice?{source:'Item Market',price:itemMarketPrice}:null,
       bazaarPrice?{source:'Bazaar',price:bazaarPrice}:null,
       travelPrice?{source:'Overseas',price:travelPrice,country:String(travel?.country||'')}:null
     ].filter(Boolean).sort((a,b)=>a.price-b.price);
+    const planningCandidates=[...candidates,tornMarketPrice?{source:'Torn Market Reference',price:tornMarketPrice}:null].filter(Boolean).sort((a,b)=>a.price-b.price);
     return {
       itemId,
       itemMarketPrice,
@@ -1451,7 +1563,10 @@
       travelPrice,
       travelCountry:String(travel?.country||''),
       travelStock:num(travel?.stock),
-      best:candidates[0]||null
+      tornMarketPrice,
+      tornMarketFetchedAt:String(record?.fetchedAt||''),
+      best:candidates[0]||null,
+      bestPlanning:planningCandidates[0]||null
     };
   }
 
@@ -1480,6 +1595,7 @@
     const live=acquisitionSourceSnapshot(row);
     const prices=[
       num(row?.marketValue),
+      num(live.tornMarketPrice),
       num(live.itemMarketPrice),
       num(live.bazaarPrice),
       num(live.travelPrice)
@@ -1711,7 +1827,7 @@
 
   function sourceStrip(){
     const fi=state?.factionInventory||{};
-    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
+    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · equipment prices '+when(fi.equipmentMarketCatalog?.fetchedAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
   }
 
   function createPanel(){
@@ -1725,6 +1841,7 @@
   function render(){
     const root=document.getElementById(ROOT_ID);
     if(!root||root.style.display==='none')return;
+    equipmentOptionPriceMemo=new Map();
     const viewHtml=activeView==='members'?membersHtml()
       :activeView==='builds'?buildsHtml()
       :activeView==='inventory'?inventoryHtml()
@@ -1781,6 +1898,16 @@
       try{messageFactionLeader();}
       catch(error){statusText='Leader report could not be prepared: '+(error?.message||String(error));render();}
     });
+    root.querySelectorAll('[data-build-option-member]').forEach(b=>b.addEventListener('click',()=>{
+      const member=memberRows().find(row=>row.memberId===asId(b.dataset.buildOptionMember));
+      const slot=String(b.dataset.buildOptionSlot||'');
+      const name=String(b.dataset.buildOptionName||'');
+      const item=member?.buildAssessment?.items?.find(entry=>entry.slot===slot);
+      const option=item?.recommendationOptions?.find(entry=>String(entry.name||'')===name);
+      if(!member||!item||!option)return;
+      const pricing=optionPricing(option);
+      handoffAcquisition({item:option.name,qty:1,fundedQty:1,marketValue:num(pricing.cost)||num(option.marketValue),reasons:member.memberName+' '+slot+' qualifying alternative · '+equipmentStatsText(option.stats,{mode:'need'})},'Best');
+    }));
     root.querySelectorAll('[data-armory-acquire]').forEach(b=>b.addEventListener('click',()=>{
       const plan=logic.acquisitionPlan(state?.factionInventory||{},{
         mode:stockMode,

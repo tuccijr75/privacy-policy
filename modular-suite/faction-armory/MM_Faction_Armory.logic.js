@@ -51,8 +51,9 @@
     {min:250000000,max:null}
   ]);
 
-  // Research-backed, non-live procurement reference. These are normal shop/abroad
-  // items with high circulation; this module deliberately does not search Item Market/Bazaars.
+  // Stable baseline catalog used to decide whether a member meets the current
+  // readiness floor. Prices here are references only; live/cached acquisition
+  // pricing is layered in by the userscript and does not change the readiness floor.
   const GENERAL_EQUIPMENT_CATALOG=Object.freeze([
     {name:'Benelli M4 Super',slot:'primary',damage:61.5,accuracy:57.5,baselineDamage:59,baselineAccuracy:55,marketValue:20739,source:'Big Al\'s Gun Shop',availability:'COMMON',class:'routine'},
     {name:'Mag 7',slot:'primary',damage:58.5,accuracy:64.5,baselineDamage:56,baselineAccuracy:62,marketValue:52460,source:'South Africa',availability:'COMMON',class:'routine'},
@@ -75,8 +76,129 @@
     {name:'Combat Gloves',slot:'gloves',armorRating:40.5,baselineArmor:38,marketValue:2151411,source:'South Africa',availability:'VERY COMMON',class:'routine'},
     {name:'Combat Pants',slot:'pants',armorRating:40.5,baselineArmor:38,marketValue:3157386,source:'South Africa',availability:'VERY COMMON',class:'routine'},
     {name:'Combat Boots',slot:'boots',armorRating:40.5,baselineArmor:38,marketValue:2594040,source:'South Africa',availability:'VERY COMMON',class:'routine'}
+  ].map(item=>Object.freeze({...item,statSource:'CATALOG AVG'})));
+
+  // Additional valid equipment choices used only for per-member option browsing.
+  // These do not redefine the readiness baseline. Weapon/armor ranges are from the
+  // current Torn Wiki tables; acquisition cost is resolved separately from Torn/shared market data.
+  const ALTERNATIVE_EQUIPMENT_CATALOG=Object.freeze([
+    // Primary
+    {name:'9mm Uzi',slot:'primary',damage:67.5,accuracy:45.5,baselineDamage:65,baselineAccuracy:43,maxDamage:70,maxAccuracy:48,source:'Mexico',class:'alternative'},
+    {name:'Enfield SA-80',slot:'primary',damage:65.5,accuracy:57.5,baselineDamage:63,baselineAccuracy:55,maxDamage:68,maxAccuracy:60,source:'United Kingdom',class:'alternative'},
+    {name:'Heckler & Koch SL8',slot:'primary',damage:62.5,accuracy:48.5,baselineDamage:60,baselineAccuracy:46,maxDamage:65,maxAccuracy:51,source:'Mexico',class:'alternative'},
+    {name:'Ithaca 37',slot:'primary',damage:51.5,accuracy:64.5,baselineDamage:49,baselineAccuracy:62,maxDamage:54,maxAccuracy:67,source:'Canada',class:'alternative'},
+    {name:'M16 A2 Rifle',slot:'primary',damage:63.5,accuracy:49.5,baselineDamage:61,baselineAccuracy:47,maxDamage:66,maxAccuracy:52,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'M249 SAW',slot:'primary',damage:69.5,accuracy:43.5,baselineDamage:67,baselineAccuracy:41,maxDamage:72,maxAccuracy:46,source:'Mexico',class:'alternative'},
+    {name:'M4A1 Colt Carbine',slot:'primary',damage:57.5,accuracy:49.5,baselineDamage:55,baselineAccuracy:47,maxDamage:60,maxAccuracy:52,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'MP5 Navy',slot:'primary',damage:47.5,accuracy:53.5,baselineDamage:45,baselineAccuracy:51,maxDamage:50,maxAccuracy:56,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'P90',slot:'primary',damage:50.5,accuracy:53.5,baselineDamage:48,baselineAccuracy:51,maxDamage:53,maxAccuracy:56,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Sawed-Off Shotgun',slot:'primary',damage:43.5,accuracy:65.5,baselineDamage:41,baselineAccuracy:63,maxDamage:46,maxAccuracy:68,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'SIG 550',slot:'primary',damage:64.5,accuracy:52.5,baselineDamage:62,baselineAccuracy:50,maxDamage:67,maxAccuracy:55,source:'Mexico',class:'alternative'},
+    {name:'SIG 552',slot:'primary',damage:71.5,accuracy:52.5,baselineDamage:69,baselineAccuracy:50,maxDamage:74,maxAccuracy:55,source:'Switzerland',class:'alternative'},
+    {name:'Steyr AUG',slot:'primary',damage:66.5,accuracy:47.5,baselineDamage:64,baselineAccuracy:45,maxDamage:69,maxAccuracy:50,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Tavor TAR-21',slot:'primary',damage:67.5,accuracy:54.5,baselineDamage:65,baselineAccuracy:52,maxDamage:70,maxAccuracy:57,source:'Cayman Islands',class:'alternative'},
+
+    // Secondary
+    {name:'Beretta 92FS',slot:'secondary',damage:50.5,accuracy:53.5,baselineDamage:48,baselineAccuracy:51,maxDamage:53,maxAccuracy:56,source:'Small Arms Cache',class:'alternative'},
+    {name:'Beretta M9',slot:'secondary',damage:38.5,accuracy:56.5,baselineDamage:36,baselineAccuracy:54,maxDamage:41,maxAccuracy:59,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Beretta Pico',slot:'secondary',damage:56.5,accuracy:55.5,baselineDamage:54,baselineAccuracy:53,maxDamage:59,maxAccuracy:58,source:'Loot',class:'alternative'},
+    {name:'Cobra Derringer',slot:'secondary',damage:63.5,accuracy:55.5,baselineDamage:61,baselineAccuracy:53,maxDamage:66,maxAccuracy:58,source:'Mexico',class:'alternative'},
+    {name:'Crossbow',slot:'secondary',damage:37.5,accuracy:65.5,baselineDamage:35,baselineAccuracy:63,maxDamage:40,maxAccuracy:68,source:'United Kingdom',class:'alternative'},
+    {name:'MP5k',slot:'secondary',damage:44.5,accuracy:54.5,baselineDamage:42,baselineAccuracy:52,maxDamage:47,maxAccuracy:57,source:'City Find',class:'alternative'},
+    {name:'Pink Mac-10',slot:'secondary',damage:76.5,accuracy:47.5,baselineDamage:74,baselineAccuracy:45,maxDamage:79,maxAccuracy:50,source:'United Arab Emirates',class:'alternative'},
+    {name:'Ruger 57',slot:'secondary',damage:34.5,accuracy:58.5,baselineDamage:32,baselineAccuracy:56,maxDamage:37,maxAccuracy:61,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'S&W M29',slot:'secondary',damage:49.5,accuracy:54.5,baselineDamage:47,baselineAccuracy:52,maxDamage:52,maxAccuracy:57,source:'Mission Shop',class:'alternative'},
+    {name:'S&W Revolver',slot:'secondary',damage:44.5,accuracy:56.5,baselineDamage:42,baselineAccuracy:54,maxDamage:47,maxAccuracy:59,source:'City Find',class:'alternative'},
+    {name:'Skorpion',slot:'secondary',damage:42.5,accuracy:56.5,baselineDamage:40,baselineAccuracy:54,maxDamage:45,maxAccuracy:59,source:'City Find',class:'alternative'},
+    {name:'Springfield 1911',slot:'secondary',damage:35.5,accuracy:59.5,baselineDamage:33,baselineAccuracy:57,maxDamage:38,maxAccuracy:62,source:'Mexico',class:'alternative'},
+    {name:'Taurus',slot:'secondary',damage:32.5,accuracy:59.5,baselineDamage:30,baselineAccuracy:57,maxDamage:35,maxAccuracy:62,source:'Hawaii',class:'alternative'},
+    {name:'TMP',slot:'secondary',damage:40.5,accuracy:47.5,baselineDamage:38,baselineAccuracy:45,maxDamage:43,maxAccuracy:50,source:'City Find',class:'alternative'},
+    {name:'USP',slot:'secondary',damage:46.5,accuracy:60.5,baselineDamage:44,baselineAccuracy:58,maxDamage:49,maxAccuracy:63,source:'Big Al\'s Gun Shop',class:'alternative'},
+
+    // Melee
+    {name:'Axe',slot:'melee',damage:36.5,accuracy:54.5,baselineDamage:34,baselineAccuracy:52,maxDamage:39,maxAccuracy:57,source:'Mexico',class:'alternative'},
+    {name:'Bone Saw',slot:'melee',damage:56,accuracy:54,baselineDamage:54,baselineAccuracy:52,maxDamage:58,maxAccuracy:56,source:'Crime result',class:'alternative'},
+    {name:'Chainsaw',slot:'melee',damage:63.5,accuracy:25.5,baselineDamage:61,baselineAccuracy:23,maxDamage:66,maxAccuracy:28,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Claymore Sword',slot:'melee',damage:59.5,accuracy:51.5,baselineDamage:57,baselineAccuracy:49,maxDamage:62,maxAccuracy:54,source:'United Kingdom',class:'alternative'},
+    {name:'Cleaver',slot:'melee',damage:53.5,accuracy:58.5,baselineDamage:51,baselineAccuracy:56,maxDamage:56,maxAccuracy:61,source:'City Find',class:'alternative'},
+    {name:'Dagger',slot:'melee',damage:30.5,accuracy:62.5,baselineDamage:28,baselineAccuracy:60,maxDamage:33,maxAccuracy:65,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Metal Nunchakus',slot:'melee',damage:63.5,accuracy:62.5,baselineDamage:61,baselineAccuracy:60,maxDamage:66,maxAccuracy:65,source:'Japan',class:'alternative'},
+    {name:'Naval Cutlass',slot:'melee',damage:66.5,accuracy:54.5,baselineDamage:64,baselineAccuracy:52,maxDamage:69,maxAccuracy:57,source:'Cayman Islands',class:'alternative'},
+    {name:'Samurai Sword',slot:'melee',damage:60.5,accuracy:54.5,baselineDamage:58,baselineAccuracy:52,maxDamage:63,maxAccuracy:57,source:'Mexico',class:'alternative'},
+    {name:'Scimitar',slot:'melee',damage:42.5,accuracy:60.5,baselineDamage:40,baselineAccuracy:58,maxDamage:45,maxAccuracy:63,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Sledgehammer',slot:'melee',damage:60.5,accuracy:52.5,baselineDamage:58,baselineAccuracy:50,maxDamage:63,maxAccuracy:55,source:'Loot',class:'alternative'},
+
+    // Helmets
+    {name:'Construction Helmet',slot:'helmet',armorRating:32.5,baselineArmor:30,maxArmor:35,source:'China',class:'alternative'},
+    {name:'Motorcycle Helmet',slot:'helmet',armorRating:32.5,baselineArmor:30,maxArmor:35,source:'City Find',class:'alternative'},
+    {name:'Welding Helmet',slot:'helmet',armorRating:36.5,baselineArmor:34,maxArmor:39,source:'City Find',class:'alternative'},
+    {name:'Riot Helmet',slot:'helmet',armorRating:37.5,baselineArmor:35,maxArmor:40,source:'Cache',class:'alternative'},
+    {name:'Marauder Face Mask',slot:'helmet',armorRating:42.5,baselineArmor:40,maxArmor:45,source:'Cache',class:'alternative'},
+    {name:'Dune Helmet',slot:'helmet',armorRating:46.5,baselineArmor:44,maxArmor:49,source:'Cache',class:'alternative'},
+    {name:'Assault Helmet',slot:'helmet',armorRating:48.5,baselineArmor:46,maxArmor:51,source:'Cache',class:'alternative'},
+    {name:'Vanguard Respirator',slot:'helmet',armorRating:50.5,baselineArmor:48,maxArmor:53,source:'Cache',class:'alternative'},
+    {name:'Delta Gas Mask',slot:'helmet',armorRating:51.5,baselineArmor:49,maxArmor:54,source:'Cache',class:'alternative'},
+    {name:'Sentinel Helmet',slot:'helmet',armorRating:55.5,baselineArmor:53,maxArmor:58,source:'Cache',class:'alternative'},
+    {name:'EOD Helmet',slot:'helmet',armorRating:57.5,baselineArmor:55,maxArmor:60,source:'Cache',class:'alternative'},
+
+    // Body
+    {name:'Chain Mail',slot:'body',armorRating:25.5,baselineArmor:23,maxArmor:28,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Flak Jacket',slot:'body',armorRating:32.5,baselineArmor:30,maxArmor:35,source:'Mexico',class:'alternative'},
+    {name:'Full Body Armor',slot:'body',armorRating:33.5,baselineArmor:31,maxArmor:36,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Police Vest',slot:'body',armorRating:34.5,baselineArmor:32,maxArmor:37,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Outer Tactical Vest',slot:'body',armorRating:38.5,baselineArmor:36,maxArmor:41,source:'Mexico',class:'alternative'},
+    {name:'Liquid Body Armor',slot:'body',armorRating:42.5,baselineArmor:40,maxArmor:45,source:'Argentina',class:'alternative'},
+    {name:'Flexible Body Armor',slot:'body',armorRating:44.5,baselineArmor:42,maxArmor:47,source:'Japan',class:'alternative'},
+    {name:'Dune Vest',slot:'body',armorRating:46.5,baselineArmor:44,maxArmor:49,source:'Cache',class:'alternative'},
+    {name:'Riot Body',slot:'body',armorRating:47.5,baselineArmor:45,maxArmor:50,source:'Cache',class:'alternative'},
+    {name:'Assault Body',slot:'body',armorRating:48.5,baselineArmor:46,maxArmor:51,source:'Cache',class:'alternative'},
+    {name:'Vanguard Body',slot:'body',armorRating:50.5,baselineArmor:48,maxArmor:53,source:'Cache',class:'alternative'},
+    {name:'Delta Body',slot:'body',armorRating:51.5,baselineArmor:49,maxArmor:54,source:'Cache',class:'alternative'},
+    {name:'Marauder Body',slot:'body',armorRating:54.5,baselineArmor:52,maxArmor:57,source:'Cache',class:'alternative'},
+    {name:'Sentinel Apron',slot:'body',armorRating:55.5,baselineArmor:53,maxArmor:58,source:'Cache',class:'alternative'},
+    {name:'EOD Apron',slot:'body',armorRating:57.5,baselineArmor:55,maxArmor:60,source:'Cache',class:'alternative'},
+
+    // Gloves
+    {name:'Leather Gloves',slot:'gloves',armorRating:22.5,baselineArmor:20,maxArmor:25,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Dune Gloves',slot:'gloves',armorRating:46.5,baselineArmor:44,maxArmor:49,source:'Cache',class:'alternative'},
+    {name:'Riot Gloves',slot:'gloves',armorRating:47.5,baselineArmor:45,maxArmor:50,source:'Cache',class:'alternative'},
+    {name:'Assault Gloves',slot:'gloves',armorRating:48.5,baselineArmor:46,maxArmor:51,source:'Cache',class:'alternative'},
+    {name:'Vanguard Gloves',slot:'gloves',armorRating:50.5,baselineArmor:48,maxArmor:53,source:'Cache',class:'alternative'},
+    {name:'Delta Gloves',slot:'gloves',armorRating:51.5,baselineArmor:49,maxArmor:54,source:'Cache',class:'alternative'},
+    {name:'Marauder Gloves',slot:'gloves',armorRating:54.5,baselineArmor:52,maxArmor:57,source:'Cache',class:'alternative'},
+    {name:'Sentinel Gloves',slot:'gloves',armorRating:55.5,baselineArmor:53,maxArmor:58,source:'Cache',class:'alternative'},
+    {name:'EOD Gloves',slot:'gloves',armorRating:57.5,baselineArmor:55,maxArmor:60,source:'Cache',class:'alternative'},
+
+    // Pants
+    {name:'Leather Pants',slot:'pants',armorRating:22.5,baselineArmor:20,maxArmor:25,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Dune Pants',slot:'pants',armorRating:46.5,baselineArmor:44,maxArmor:49,source:'Cache',class:'alternative'},
+    {name:'Riot Pants',slot:'pants',armorRating:47.5,baselineArmor:45,maxArmor:50,source:'Cache',class:'alternative'},
+    {name:'Assault Pants',slot:'pants',armorRating:48.5,baselineArmor:46,maxArmor:51,source:'Cache',class:'alternative'},
+    {name:'Vanguard Pants',slot:'pants',armorRating:50.5,baselineArmor:48,maxArmor:53,source:'Cache',class:'alternative'},
+    {name:'Delta Pants',slot:'pants',armorRating:51.5,baselineArmor:49,maxArmor:54,source:'Cache',class:'alternative'},
+    {name:'Marauder Pants',slot:'pants',armorRating:54.5,baselineArmor:52,maxArmor:57,source:'Cache',class:'alternative'},
+    {name:'Sentinel Pants',slot:'pants',armorRating:55.5,baselineArmor:53,maxArmor:58,source:'Cache',class:'alternative'},
+    {name:'EOD Pants',slot:'pants',armorRating:57.5,baselineArmor:55,maxArmor:60,source:'Cache',class:'alternative'},
+
+    // Boots
+    {name:'Leather Boots',slot:'boots',armorRating:22.5,baselineArmor:20,maxArmor:25,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Hiking Boots',slot:'boots',armorRating:26.5,baselineArmor:24,maxArmor:29,source:'Big Al\'s Gun Shop',class:'alternative'},
+    {name:'Dune Boots',slot:'boots',armorRating:46.5,baselineArmor:44,maxArmor:49,source:'Cache',class:'alternative'},
+    {name:'Riot Boots',slot:'boots',armorRating:47.5,baselineArmor:45,maxArmor:50,source:'Cache',class:'alternative'},
+    {name:'Assault Boots',slot:'boots',armorRating:48.5,baselineArmor:46,maxArmor:51,source:'Cache',class:'alternative'},
+    {name:'Vanguard Boots',slot:'boots',armorRating:50.5,baselineArmor:48,maxArmor:53,source:'Cache',class:'alternative'},
+    {name:'Delta Boots',slot:'boots',armorRating:51.5,baselineArmor:49,maxArmor:54,source:'Cache',class:'alternative'},
+    {name:'Marauder Boots',slot:'boots',armorRating:54.5,baselineArmor:52,maxArmor:57,source:'Cache',class:'alternative'},
+    {name:'Sentinel Boots',slot:'boots',armorRating:55.5,baselineArmor:53,maxArmor:58,source:'Cache',class:'alternative'},
+    {name:'EOD Boots',slot:'boots',armorRating:57.5,baselineArmor:55,maxArmor:60,source:'Cache',class:'alternative'}
+  ].map(item=>Object.freeze({...item,statSource:'CATALOG AVG'})));
+
+  const EQUIPMENT_OPTION_CATALOG=Object.freeze([
+    ...GENERAL_EQUIPMENT_CATALOG,
+    ...ALTERNATIVE_EQUIPMENT_CATALOG
   ]);
-  const CATALOG_BY_NAME=new Map(GENERAL_EQUIPMENT_CATALOG.map(item=>[String(item.name).toLowerCase(),item]));
+  const CATALOG_BY_NAME=new Map(EQUIPMENT_OPTION_CATALOG.map(item=>[String(item.name).toLowerCase(),item]));
+
 
   const asId=value=>String(value??'').trim();
   const n=value=>Math.max(0,Number(value)||0);
@@ -216,12 +338,60 @@
   function enrichCatalogItem(item){
     if(!item)return null;
     const ref=catalogItemByName(item?.name);
-    return ref?{...clone(ref),...clone(item),slot:ref.slot,
-      damage:n(item?.damage)||n(ref.damage),
-      accuracy:n(item?.accuracy)||n(ref.accuracy),
-      armorRating:n(item?.armorRating??item?.armor)||n(ref.armorRating)
-    }:clone(item);
+    const rawDamage=n(item?.damage??item?.stats?.damage);
+    const rawAccuracy=n(item?.accuracy??item?.stats?.accuracy);
+    const rawArmor=n(item?.armorRating??item?.armor??item?.stats?.armor??item?.stats?.protection);
+    let statSource=String(item?.statSource||'').trim();
+    if(!statSource){
+      if(rawArmor>0)statSource='ITEM';
+      else if(rawDamage>0&&rawAccuracy>0)statSource='ITEM';
+      else if(ref&&(rawDamage>0||rawAccuracy>0))statSource='ITEM + CATALOG AVG';
+      else if(ref)statSource='CATALOG AVG';
+      else statSource='UNKNOWN';
+    }
+    return ref?{
+      ...clone(ref),...clone(item),slot:ref.slot,statSource,
+      damage:rawDamage||n(ref.damage),
+      accuracy:rawAccuracy||n(ref.accuracy),
+      armorRating:rawArmor||n(ref.armorRating)
+    }:{...clone(item),statSource};
   }
+
+  function equipmentStatProfile(item){
+    const enriched=enrichCatalogItem(item)||{};
+    const ref=catalogItemByName(enriched?.name)||null;
+    const slot=equipmentSlot(enriched);
+    const source=String(enriched?.statSource||'UNKNOWN');
+    if(['helmet','body','gloves','pants','boots'].includes(slot)){
+      const currentArmor=n(enriched?.armorRating??enriched?.armor??enriched?.stats?.armor??enriched?.stats?.protection);
+      const averageArmor=n(ref?.armorRating)||currentArmor;
+      const minArmor=n(ref?.baselineArmor)||(source==='ITEM'?currentArmor:0);
+      const maxArmor=n(ref?.maxArmor)||(minArmor&&averageArmor?Math.max(minArmor,averageArmor*2-minArmor):currentArmor);
+      return {
+        kind:'armor',slot,source,
+        currentArmor,
+        averageArmor,
+        minArmor,
+        maxArmor
+      };
+    }
+    const currentDamage=n(enriched?.damage??enriched?.stats?.damage);
+    const currentAccuracy=n(enriched?.accuracy??enriched?.stats?.accuracy);
+    const averageDamage=n(ref?.damage)||currentDamage;
+    const averageAccuracy=n(ref?.accuracy)||currentAccuracy;
+    const minDamage=n(ref?.baselineDamage)||(source==='ITEM'?currentDamage:0);
+    const minAccuracy=n(ref?.baselineAccuracy)||(source==='ITEM'?currentAccuracy:0);
+    const maxDamage=n(ref?.maxDamage)||(minDamage&&averageDamage?Math.max(minDamage,averageDamage*2-minDamage):currentDamage);
+    const maxAccuracy=n(ref?.maxAccuracy)||(minAccuracy&&averageAccuracy?Math.max(minAccuracy,averageAccuracy*2-minAccuracy):currentAccuracy);
+    return {
+      kind:'weapon',slot,source,
+      currentDamage,currentAccuracy,
+      averageDamage,averageAccuracy,
+      minDamage,minAccuracy,
+      maxDamage,maxAccuracy
+    };
+  }
+
 
   function equipmentScore(item,bias='balanced'){
     const enriched=enrichCatalogItem(item)||{};
@@ -260,6 +430,29 @@
       .filter(item=>item.slot===slot&&(includePremium||item.class!=='premium'))
       .map(clone);
   }
+
+  function equipmentOptionsForSlot(slot,profile={},floor=0){
+    const need=profile?.offensiveNeed||profile?.bias||'balanced';
+    const threshold=n(floor);
+    return EQUIPMENT_OPTION_CATALOG
+      .filter(item=>item.slot===slot)
+      .map(item=>{
+        const score=equipmentScore(item,need);
+        const minimumScore=readinessFloorScore(item,need);
+        const floorDeltaPct=threshold>0?((minimumScore-threshold)/threshold)*100:0;
+        return {
+          ...clone(item),
+          score,
+          minimumScore,
+          meetsFloor:threshold<=0||minimumScore>=threshold,
+          floorDeltaPct,
+          stats:equipmentStatProfile(item)
+        };
+      })
+      .filter(item=>item.score>0&&item.minimumScore>0&&item.meetsFloor)
+      .sort((a,b)=>b.score-a.score||b.minimumScore-a.minimumScore||String(a.name).localeCompare(String(b.name)));
+  }
+
 
   function namedCatalog(name){
     return clone(catalogItemByName(name));
@@ -475,6 +668,7 @@
       const premium=standard.premium[slot]||null;
       const floor=target?readinessFloorScore(target,profile.offensiveNeed):0;
       const currentScore=currentItem?equipmentScore(currentItem,profile.offensiveNeed):0;
+      const recommendationOptions=equipmentOptionsForSlot(slot,profile,floor);
       const ownedOptions=(owned[slot]||[]).map(item=>({
         ...item,score:equipmentScore(item,profile.offensiveNeed)
       })).filter(item=>item.score>=floor&&item.score>0).sort((a,b)=>b.score-a.score);
@@ -567,6 +761,10 @@
         factionAvailableCount:n(factionOption?.availableCount),
         assignedLoanName:String(assignedLoan?.name||''),
         premiumOptionName:String(premium?.name||''),
+        currentStats:equipmentStatProfile(currentItem),
+        targetStats:equipmentStatProfile(target),
+        suggestedStats:equipmentStatProfile(suggested),
+        recommendationOptions,
         currentItem:clone(currentItem),
         targetItem:clone(target),
         suggestedItem:clone(suggested)
@@ -1194,6 +1392,8 @@
   const api=Object.freeze({
     categories:CATEGORIES,
     generalEquipmentCatalog:GENERAL_EQUIPMENT_CATALOG,
+    alternativeEquipmentCatalog:ALTERNATIVE_EQUIPMENT_CATALOG,
+    equipmentOptionCatalog:EQUIPMENT_OPTION_CATALOG,
     loanCategories:LOAN_CATEGORIES,
     standardSlots:STANDARD_SLOTS,
     armorSlot,
@@ -1202,11 +1402,13 @@
     battleProfile,
     catalogItemByName,
     enrichCatalogItem,
+    equipmentStatProfile,
     equipmentScore,
     equipmentValueMetrics,
     readinessFloorScore,
     estimateBalancedBattleStats,
     generalCandidates,
+    equipmentOptionsForSlot,
     generalTargetForSlot,
     premiumOptionForSlot,
     summaryEquipmentSlots,

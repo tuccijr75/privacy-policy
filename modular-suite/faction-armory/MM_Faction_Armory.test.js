@@ -329,7 +329,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.19';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.20';"));
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -338,7 +338,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.19';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.20';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -346,7 +346,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.19';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.20';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -355,6 +355,45 @@ console.log('MM Faction Armory explicit vault-unlock automation regression: PASS
 
 
 const balancedProfile=logic.battleProfile({strength:100,defense:100,speed:100,dexterity:100});
+
+// Alpha.20 equipment-stat and alternatives contract.
+assert(logic.equipmentOptionCatalog.length>100,'equipment option catalog should expose broad weapon/armor choice');
+assert(logic.alternativeEquipmentCatalog.length>80,'alternative option catalog should contain many non-baseline choices');
+
+const budgetPrimary=logic.generalTargetForSlot('primary',balancedProfile,'budget');
+assert.strictEqual(budgetPrimary.name,'AK-47','alternative catalog must not silently change the canonical budget readiness baseline');
+const budgetPrimaryFloor=logic.readinessFloorScore(budgetPrimary,balancedProfile.offensiveNeed);
+const primaryAlternatives=logic.equipmentOptionsForSlot('primary',balancedProfile,budgetPrimaryFloor);
+assert(primaryAlternatives.length>=8,'a normal primary requirement should expose many qualifying choices');
+assert(primaryAlternatives.some(x=>x.name==='Enfield SA-80'),'qualifying primary alternatives should include Enfield SA-80');
+assert(primaryAlternatives.some(x=>x.name==='Tavor TAR-21'),'qualifying primary alternatives should include Tavor TAR-21');
+assert(primaryAlternatives.every(x=>x.meetsFloor&&x.minimumScore>=budgetPrimaryFloor),'every displayed alternative must meet the member slot floor at its minimum normal roll');
+
+const akAverage=logic.equipmentStatProfile({name:'AK-47'});
+assert.strictEqual(akAverage.source,'CATALOG AVG');
+assert.strictEqual(akAverage.averageDamage,58.5);
+assert.strictEqual(akAverage.averageAccuracy,54.5);
+assert.strictEqual(akAverage.minDamage,56);
+assert.strictEqual(akAverage.minAccuracy,52);
+assert.strictEqual(akAverage.maxDamage,61);
+assert.strictEqual(akAverage.maxAccuracy,57);
+
+const akExact=logic.equipmentStatProfile({name:'AK-47',damage:60,accuracy:56});
+assert.strictEqual(akExact.source,'ITEM','current item stats from member/equipment data must be identified as exact item data');
+assert.strictEqual(akExact.currentDamage,60);
+assert.strictEqual(akExact.currentAccuracy,56);
+
+const eodHelmet=logic.equipmentStatProfile({name:'EOD Helmet'});
+assert.strictEqual(eodHelmet.kind,'armor');
+assert.strictEqual(eodHelmet.averageArmor,57.5);
+assert.strictEqual(eodHelmet.minArmor,55);
+assert.strictEqual(eodHelmet.maxArmor,60);
+
+const statRichRows=logic.memberRows(readyFaction,[],{procurementMode:'budget'});
+const statRichPrimary=statRichRows[0].buildAssessment.items.find(x=>x.slot==='primary');
+assert(statRichPrimary.currentStats&&statRichPrimary.targetStats,'member build item must expose HAS and target stat profiles');
+assert(Array.isArray(statRichPrimary.recommendationOptions)&&statRichPrimary.recommendationOptions.length>=8,'member build item must carry many qualifying alternatives');
+
 const idealPrimary=logic.generalTargetForSlot('primary',balancedProfile,'ideal');
 assert.strictEqual(idealPrimary.name,'Jackhammer','ideal procurement should reject a much more expensive premium primary when the performance gain is single-digit');
 assert(idealPrimary.marketValue<logic.catalogItemByName('ArmaLite M-15A4').marketValue,'value target must cost less than ArmaLite reference');
@@ -406,8 +445,8 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.19';"));
-assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.2'));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.20';"));
+assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.3'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
 assert(userSourceValue.includes('Find Best Source'));
@@ -437,4 +476,20 @@ assert(userSourceValue.includes('function leaderAcquisitionReport'),'leader acqu
 assert(userSourceValue.includes('ESTIMATED TOTAL ACQUISITION COST'),'leader report must contain total low/high acquisition cost');
 assert(userSourceValue.includes('PRICE RANGE'),'Acquire rows must expose low/high price estimates');
 assert(userSourceValue.includes('#mce_0'),'Armory messaging must use the shared current Torn TinyMCE compose contract');
+assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.3'),'alpha20 must load the expanded logic contract');
+assert(userSourceValue.includes("/torn/items?cat=All&sort=ASC"),'explicit faction refresh must collect broad Torn market-price references');
+assert(userSourceValue.includes('equipmentMarketCatalog'),'current Torn equipment-price references must be cached in faction state');
+assert(userSourceValue.includes('function equipmentStatsText'),'equipment stat display helper must exist');
+assert(userSourceValue.includes('Current equipment + stats'),'Members must display stats with current equipment');
+assert(userSourceValue.includes('HAS STATS'),'Build slot must expose member current-equipment stats');
+assert(userSourceValue.includes('NEED / TARGET AVG'),'Build slot must expose target minimum/average stats');
+assert(userSourceValue.includes('Qualifying alternatives'),'Build slot must expose multiple qualifying alternatives');
+assert(userSourceValue.includes("'LOW COST','MID COST','HIGH COST','PRICE UNKNOWN'"),'alternatives must be grouped by current acquisition-cost band');
+assert(userSourceValue.includes('data-build-option-member'),'each alternative must route independently to acquisition');
+assert(userSourceValue.includes('Torn Market Reference'),'current Torn market reference must participate in planning-price display');
+assert(userSourceValue.includes('bestPlanning'),'option pricing must distinguish planning price from verified live source');
+assert(userSourceValue.includes('equipmentOptionPriceMemo'),'alternative pricing must be memoized within a render');
+assert(userSourceValue.includes("!item.ready&&!['OWNED','LOANED'].includes(item.route)?equipmentOptionsHtml"),'full alternative lists should be limited to actionable equipment slots');
+assert.strictEqual((userSourceValue.match(/MutationObserver/g)||[]).length,0,'equipment alternatives must not add document-wide mutation observers');
+assert.strictEqual((userSourceValue.match(/setInterval\(/g)||[]).length,1,'equipment alternatives must not add new background polling intervals');
 console.log('MM Faction Armory acquisition handoff regression: PASS');
