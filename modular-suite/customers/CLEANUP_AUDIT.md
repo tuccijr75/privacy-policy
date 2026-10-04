@@ -140,3 +140,38 @@ Alpha.18 therefore changes the source contract rather than adding a recovery pat
 No document observer, history monkey patch, Outbox recovery, generic Compose hydration, direct rich-editor fallback, page-load sync, or pre-send polling was reintroduced.
 
 Proposed versions: MM_Customers `8.0.0-alpha.18`, suite `8.0.0-alpha.35`.
+
+
+## Alpha.19 final compose-adapter replacement
+
+The alpha.18 readiness fix proved that load sequencing alone was not the root cause. Current Torn mail uses TinyMCE, and recent live-verified Torn userscript source documents that the hidden TinyMCE source textarea is not the authoritative submitted message body.
+
+The alpha.19 cleanup therefore removes the remaining source-mode abstraction from MM_Customers entirely.
+
+Removed:
+- Toggle Code Editor discovery/clicking,
+- source-editor candidate discovery,
+- anonymous source-textarea geometry heuristics,
+- SCEditor, CodeMirror, and Monaco compatibility selectors,
+- source-textarea HTML writes,
+- wait-for-source / toggle-back rendering flow,
+- generic contenteditable body discovery.
+
+Canonical compose source now consists of:
+- exact XID one-shot payload binding,
+- Torn native recipient control verification,
+- Torn subject input assignment,
+- exact TinyMCE mail contenteditable discovery,
+- direct rich HTML assignment to that TinyMCE surface,
+- input/change/keyup synchronization events,
+- canonical-payload render verification,
+- bounded replacement retries if Torn remounts the editor,
+- manual-send-gated delivery confirmation.
+
+Interference conclusion:
+- other modular suite products do not own the Torn mail editor,
+- the active same-browser script set was present during a successful manual XID-only Compose control,
+- legacy CRM code has potentially conflicting old mail logic but was not active in the observed live dock/workflow,
+- no non-Customers script was changed during this repair.
+
+Alpha.19 therefore treats current Torn TinyMCE behavior as the source contract rather than carrying forward compatibility code for obsolete editor architectures.
