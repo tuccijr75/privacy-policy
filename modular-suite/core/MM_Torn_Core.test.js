@@ -47,7 +47,7 @@ if (fresh.unified !== 'u' || fresh.itemMarket !== 'm' || fresh.faction !== 'f') 
 console.log('MERGE PASS');
 
 const coreSource = require('fs').readFileSync(__dirname+'/MM_Torn_Core.js','utf8');
-if (!coreSource.includes("const CORE_VERSION = '8.0.0-alpha.10';")) throw new Error('core alpha.10 version missing');
+if (!coreSource.includes("const CORE_VERSION = '8.0.0-alpha.11';")) throw new Error('core alpha.11 version missing');
 if (!coreSource.includes('const rawEntries=')) throw new Error('native footer geometry de-duplication missing');
 if (!coreSource.includes('bottomDistance:Math.abs(window.innerHeight-rowBottom)')) throw new Error('bottom-distance footer priority missing');
 if (!coreSource.includes('a.bottomDistance-b.bottomDistance')) throw new Error('lowest footer row comparator missing');
@@ -55,7 +55,7 @@ if (!coreSource.includes('const gap=clamp(Number(native.nativeGap)||LAUNCHER_SNA
 console.log('alpha.7 footer-row regression PASS');
 
 const coreSource2 = require('fs').readFileSync(__dirname+'/MM_Torn_Core.js','utf8');
-if (!coreSource2.includes("const CORE_VERSION = '8.0.0-alpha.10';")) throw new Error('core alpha.10 version missing');
+if (!coreSource2.includes("const CORE_VERSION = '8.0.0-alpha.11';")) throw new Error('core alpha.11 version missing');
 if (!coreSource2.includes("DOCK_DEFAULT_LAYOUT_REV='footer-adjacent-v4-relative-redock'")) throw new Error('default dock layout revision missing');
 if (!coreSource2.includes('function applyDefaultDockLayoutOnce()')) throw new Error('default dock migration missing');
 if (!coreSource2.includes('localStorage.removeItem(DOCK_FLOAT_KEY)')) throw new Error('legacy floating layout reset missing');
@@ -74,4 +74,7 @@ if (!coreSource2.includes('function redockCanonicalLaunchersForMigration(dock)')
 if (!coreSource2.includes('if(migrated)redockCanonicalLaunchersForMigration(dock);')) throw new Error('canonical redock migration not invoked');
 if (!coreSource2.includes("dock.dataset.mmCoreVersion=CORE_VERSION")) throw new Error('DOM-visible core version diagnostic missing');
 if (!coreSource2.includes("dock.dataset.mmDockMode='relative-native-row'")) throw new Error('relative dock mode diagnostic missing');
+if (!coreSource2.includes("clamp(desiredTop,4,window.innerHeight-dock.offsetHeight)")) throw new Error('native-row bottom-edge alignment clamp missing');
+if (coreSource2.includes("clamp(desiredTop,4,window.innerHeight-dock.offsetHeight-4)")) throw new Error('legacy 4px dock lift must be removed');
+if (!coreSource2.includes("delete dock.dataset.mmAlpha9PersistenceBridge")) throw new Error('stale alpha9 diagnostic cleanup missing');
 console.log('default footer docking migration PASS');
