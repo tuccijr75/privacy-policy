@@ -3,17 +3,15 @@
 // @namespace    manic-mike.torn.acquisitions
 // @version      8.0.0-alpha.12
 // @description  Market acquisition, pricelist profit, ranked-weapon valuation, live market/auction scouting and travel procurement with manual final purchase.
-// @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@crm-v8-acquisitions-ranked-profit/modular-suite/acquisitions/MM_Acquisitions.user.js
-// @downloadURL  https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@crm-v8-acquisitions-ranked-profit/modular-suite/acquisitions/MM_Acquisitions.user.js
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.13
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@crm-v8-acquisitions-ranked-profit/modular-suite/acquisitions/MM_Acquisitions.logic.js?v=8.0.0-alpha.3
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@crm-v8-acquisitions-ranked-profit/modular-suite/acquisitions/MM_Acquisitions.live.js?v=8.0.0-alpha.4
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@crm-v8-acquisitions-ranked-profit/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js?v=8.0.0-alpha.2
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js?v=8.0.0-alpha.1
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed/modular-suite/core/MM_Torn_Core.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed/modular-suite/acquisitions/MM_Acquisitions.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed/modular-suite/acquisitions/MM_Acquisitions.live.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
