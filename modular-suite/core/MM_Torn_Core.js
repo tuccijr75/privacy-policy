@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.12';
+  const CORE_VERSION = '8.0.0-alpha.13';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -281,6 +281,7 @@
   const PANEL_POSITION_PREFIX='mm_torn_panel_position_v1:';
   const LAUNCHER_EDGE_MARGIN=4;
   const LAUNCHER_SNAP_GAP=4;
+  const NATIVE_DOCK_CLEARANCE=6;
   const LAUNCHER_SNAP_DISTANCE=18;
   const DOCK_META=Object.freeze({
     crm:{label:'CRM',accent:'#59636d',icon:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 5v14M4 10h16M12 10v9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>'},
@@ -602,7 +603,8 @@
 
     if(native){
       const first=native.firstRect;
-      const gap=clamp(Number(native.nativeGap)||LAUNCHER_SNAP_GAP,2,8);
+      const nativeGap=clamp(Number(native.nativeGap)||LAUNCHER_SNAP_GAP,2,8);
+      const gap=Math.max(NATIVE_DOCK_CLEARANCE,nativeGap);
       const desiredLeft=first.left-dock.offsetWidth-gap;
       const desiredTop=(native.rowBottom??first.bottom)-dock.offsetHeight;
 
@@ -630,6 +632,7 @@
     requestAnimationFrame(()=>{
       const r=dock.getBoundingClientRect();
       dock.dataset.mmDockLeft=String(Math.round(r.left));
+      dock.dataset.mmDockNativeClearance=String(native?Math.max(NATIVE_DOCK_CLEARANCE,clamp(Number(native.nativeGap)||LAUNCHER_SNAP_GAP,2,8)):0);
       dock.dataset.mmDockTop=String(Math.round(r.top));
       dock.dataset.mmDockRight=String(Math.round(r.right));
       dock.dataset.mmDockBottom=String(Math.round(r.bottom));
