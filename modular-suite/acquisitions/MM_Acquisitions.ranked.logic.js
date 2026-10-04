@@ -104,7 +104,14 @@
       damage:num(stats?.damage??row?.damage),
       accuracy:num(stats?.accuracy??row?.accuracy),
       quality:num(stats?.quality??row?.quality),
-      bonuses:normalizeBonuses(details?.bonuses??row?.bonuses)
+      bonuses:normalizeBonuses(details?.bonuses??row?.bonuses),
+      source:text(row?.source),
+      lastUpdated:text(row?.lastUpdated??row?.last_updated??row?.lastUpdatedUnix),
+      endsAt:num(row?.endsAt??row?.endsAtUnix??row?.ends_at),
+      sellerId:text(row?.sellerId??row?.playerId??row?.player_id),
+      sellerName:text(row?.sellerName??row?.playerName??row?.player_name),
+      quantity:Math.max(1,num(row?.quantity)||1),
+      url:text(row?.url??row?.listingUrl)
     };
   }
 
