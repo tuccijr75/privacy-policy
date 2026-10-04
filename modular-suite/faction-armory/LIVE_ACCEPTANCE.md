@@ -1,6 +1,6 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.19**
+Status: **NON-PRODUCTION / alpha.20**
 
 ## Historical acceptance notes
 
@@ -415,3 +415,52 @@ Current behavior supersedes every earlier fixed-participant War assumption.
 - [ ] Manually send only after reviewing the report; no automatic message sending occurs.
 
 Production remains unchanged until these live checks pass and owner explicitly approves promotion.
+
+
+## Alpha.20 — equipment stats, needs-versus-has, and cost-ranked alternatives
+
+Alpha.20 expands per-member equipment evaluation without changing the canonical readiness floor introduced in alpha.19.
+
+### Static/source contract
+
+- [x] Userscript parses from one clean source body.
+- [x] Logic parses/loads.
+- [x] Test source parses.
+- [x] Faction Armory version = alpha.20; suite = alpha.40.
+- [x] Baseline readiness catalog remains 18 items.
+- [x] Separate alternatives catalog adds 94 items; 112 total recognized equipment options.
+- [x] Budget balanced Primary baseline remains AK-47; alternative expansion does not silently change readiness.
+- [x] A normal budget Primary fixture exposes at least eight qualifying alternatives.
+- [x] Current exact item stats are distinguished from catalog-average stats.
+- [x] Recommended weapon output carries min / average / max Damage and Accuracy.
+- [x] Recommended armor output carries min / average / max Armor Rating.
+- [x] Per-member build slots carry currentStats, targetStats, suggestedStats, and recommendationOptions.
+- [x] Build UI contains HAS STATS, HAS SCORE, NEED SCORE, NEED / TARGET AVG, and SUGGEST STATS.
+- [x] Qualifying alternatives are grouped LOW COST / MID COST / HIGH COST / PRICE UNKNOWN.
+- [x] Every displayed alternative has an independent Find Best Source action.
+- [x] Faction Refresh requests broad Torn item metadata once and caches recognized equipment market-price references.
+- [x] Torn market_price is planning data only; the verified live-source handoff remains in MM_Acquisitions.
+- [x] No document-wide MutationObserver added.
+- [x] No additional background polling interval added.
+- [x] Source still has one IIFE, one Members renderer, one Builds renderer, and one acquisition-source adapter.
+
+### Live acceptance
+
+- [ ] Install/update Faction Armory alpha.20 from the test branch and reload Torn.
+- [ ] Refresh Faction; confirm the source strip reports an equipment-price refresh age.
+- [ ] Open a member with API-provided exact equipment stats and confirm each equipped item displays its corresponding exact Damage/Accuracy or Armor value.
+- [ ] Open a member whose stored equipment is name-only and confirm the display clearly identifies catalog-average stats rather than presenting them as exact.
+- [ ] In Builds, confirm each slot visually compares CURRENT / HAS STATS / HAS SCORE against NEED SCORE and NEED / TARGET AVG.
+- [ ] Confirm the target recommendation displays normal minimum, average, and range values.
+- [ ] Expand Qualifying alternatives for Primary, Secondary, Melee, and multiple armor slots; confirm many valid alternatives appear when they meet the member's floor.
+- [ ] Confirm no option below the member's current readiness floor is displayed.
+- [ ] Confirm options are separated into LOW COST / MID COST / HIGH COST / PRICE UNKNOWN based on currently available planning prices.
+- [ ] Confirm an option with fresh cached Item Market/Bazaar/overseas data uses that data ahead of the generic Torn market-price reference.
+- [ ] Confirm an option without cached live-source data can still show Torn market_price as a planning reference.
+- [ ] Confirm PRICE UNKNOWN is shown instead of fabricating a cost when no source exists.
+- [ ] Click Find Best Source on a non-default alternative and verify MM_Acquisitions receives that exact equipment name and a quantity of one for live routing.
+- [ ] Confirm a member already equipped with gear above the floor is still KEEP / WAR-ready eligible and is not downgraded because a cheaper alternative exists.
+- [ ] Confirm special/RW gear without safely comparable stats remains review-required rather than automatically replaced.
+- [ ] Confirm Alpha.19 dynamic roster, reminder, faction-loan, WAR READY suppression, and leader-report workflows continue to function.
+
+Production remains unchanged until this checklist passes and the owner explicitly approves promotion.
