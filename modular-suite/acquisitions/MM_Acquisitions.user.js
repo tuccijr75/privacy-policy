@@ -835,7 +835,7 @@
   }
 
   async function ensureRankedFresh(){
-    if(busy)return;
+    if(busy){setTimeout(ensureRankedFresh,1200);return;}
     const now=Date.now();
     const pricelistAt=Date.parse(state?.procurement?.pricelist?.lastSyncAt||'')||0;
     const rankedAt=Date.parse(state?.procurement?.ranked?.lastLiveAt||'')||0;
@@ -930,7 +930,12 @@
     if(!row)return;
     const source=String(row.source||'').toLowerCase();
     if(source==='auction'){
-      navigate('https://www.torn.com/page.php?sid=ItemMarket#/market/view=auctionHouse');
+      const url=new URL('https://weav3r.dev/ranked-weapons');
+      url.searchParams.set('listing','auction');
+      if(row.itemName)url.searchParams.set('weaponName',String(row.itemName));
+      if(row.rarity)url.searchParams.set('rarity',String(row.rarity).toLowerCase());
+      if(row.bonuses?.[0]?.title)url.searchParams.set('bonus1',String(row.bonuses[0].title));
+      location.href=url.toString();
       return;
     }
     if(source.includes('bazaar')&&row.sellerId){
