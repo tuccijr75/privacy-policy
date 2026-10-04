@@ -247,6 +247,83 @@
     );
   }
 
+  function rankPricelistUniverse(db, nowMs = Date.now()) {
+    const intel=db?.marketIntel||{};
+    const settings=intel.settings||{};
+    const rules=businessRules(db);
+    const freshness=freshnessInfo(intel.marketplaceGeneratedAt,Math.max(300,rules.maxListingAgeSec),nowMs);
+    const pricelist=db?.procurement?.pricelist?.items||{};
+    const personal=salesItemMetrics(db,nowMs);
+    const market=new Map();
+    for(const row of Object.values(intel.marketplace||{})){
+      const id=asId(row?.itemId);
+      if(id)market.set(id,row);
+    }
+    const rows=[];
+    for(const [rawId,targetRow] of Object.entries(pricelist)){
+      const id=asId(rawId);
+      const targetBuy=Math.max(0,Number(targetRow?.buyPrice||0));
+      if(!/^\d+$/.test(id)||!(targetBuy>0))continue;
+      const base=market.get(id)||{};
+      const catalog=db?.procurement?.catalog?.[id]||{};
+      const buyPrice=Math.max(0,Number(base?.lowestPrice||0));
+      const bazaarAverage=Math.max(0,Number(base?.bazaarAverage||0));
+      const marketPrice=Math.max(0,Number(base?.marketPrice||catalog?.marketPrice||0));
+      const sellerCount=Math.max(0,Number(base?.totalBazaars||0));
+      const bazaarExit=bazaarAverage>0?Math.floor(bazaarAverage*(1-Number(settings.bazaarExitHaircutPct||0)/100)):0;
+      const itemMarketNet=marketPrice>0?Math.floor(marketPrice*(1-ITEM_MARKET_FEE_RATE)):0;
+      const exitOptions=[
+        {route:'Bazaar',value:bazaarExit},
+        {route:'Item Market Net',value:itemMarketNet}
+      ].filter(x=>x.value>0).sort((a,b)=>b.value-a.value);
+      const exit=exitOptions[0]||{route:'Unknown',value:0};
+      const profit=buyPrice>0&&exit.value>0?exit.value-buyPrice:0;
+      const roiPct=buyPrice>0?profit/buyPrice*100:0;
+      const targetDiscountPct=targetBuy>0&&buyPrice>0?(targetBuy-buyPrice)/targetBuy*100:0;
+      const history=intelHistoryStats(intel,id);
+      const p=personal[id]||{};
+      const sales30=Math.max(0,Number(p.sold30d||0));
+      const sales7=Math.max(0,Number(p.sold7d||0));
+      const personalVelocity=sales30>0?Math.min(100,(sales7/7)*35+(sales30/30)*25):0;
+      const marketDepth=Math.min(100,Math.log10(1+sellerCount)*45);
+      const stability=Math.max(0,100-Math.min(100,Number(history.volatilityPct||0)*3));
+      const confidence=Math.round(Math.max(0,Math.min(100,
+        freshness.score*.45+marketDepth*.25+Math.min(100,Number(history.samples||0)*8)*.15+stability*.15
+      )));
+      const liquidity=Math.round(Math.max(0,Math.min(100,
+        marketDepth*.55+personalVelocity*.30+Math.min(100,Number(history.samples||0)*7)*.15
+      )));
+      const profitScore=profit>0?Math.min(100,Math.log10(1+profit)*13):0;
+      const roiScore=roiPct>0?Math.min(100,roiPct*2.5):0;
+      const score=Math.round(Math.max(0,Math.min(100,
+        roiScore*.35+profitScore*.25+liquidity*.25+confidence*.15
+      )));
+      rows.push({
+        id,
+        name:String(targetRow?.name||base?.itemName||catalog?.name||('Item '+id)),
+        itemType:String(catalog?.type||''),
+        targetBuy,buyPrice,bazaarAverage,marketPrice,sellerCount,
+        bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,targetDiscountPct,
+        confidence,liquidity,score,history,
+        personalSold7d:sales7,personalSold30d:sales30,
+        freshness,
+        hasMarketEvidence:Boolean(buyPrice>0&&exit.value>0),
+        profitable:Boolean(profit>0),
+        qualifies:Boolean(
+          buyPrice>0&&exit.value>0&&profit>=rules.minAbsoluteProfit&&roiPct>=rules.minRoiPct&&
+          buyPrice>=rules.minPrice&&buyPrice<=rules.maxPrice
+        )
+      });
+    }
+    return rows.sort((a,b)=>
+      Number(b.qualifies)-Number(a.qualifies)||
+      Number(b.profitable)-Number(a.profitable)||
+      b.score-a.score||
+      b.profit-a.profit||
+      b.roiPct-a.roiPct
+    );
+  }
+
   function rankCachedTravel(db) {
     return (Array.isArray(db?.travelIntel?.rows) ? db.travelIntel.rows : [])
       .filter(r => Number(r?.stock||0) > 0 && (Number(r?.sourceProfitPerHour||0) > 0 || Number(r?.profit||0) > 0))
@@ -263,6 +340,7 @@
     freshnessInfo,
     salesItemMetrics,
     rankCachedOpportunities,
+    rankPricelistUniverse,
     rankCachedTravel
   });
 
