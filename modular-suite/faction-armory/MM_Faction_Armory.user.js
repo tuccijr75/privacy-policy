@@ -55,6 +55,7 @@
   let channel=null;
   let autoRefreshRunning=false;
   let autoRefreshTimer=null;
+  let equipmentOptionPriceMemo=new Map();
 
   const asId=value=>String(value??'').trim();
   const esc=value=>String(value??'')
@@ -1259,11 +1260,15 @@
   }
 
   function optionPricing(option){
+    const key=String(option?.name||'').trim().toLowerCase();
+    if(key&&equipmentOptionPriceMemo.has(key))return equipmentOptionPriceMemo.get(key);
     const live=acquisitionSourceSnapshot({item:option?.name,marketValue:num(option?.marketValue)});
     const planning=live.bestPlanning||null;
     const fallback=num(option?.marketValue);
     const cost=num(planning?.price)||fallback;
-    return {...live,cost,costSource:String(planning?.source||(fallback?'Static reference':'Price not cached')),hasCurrentPrice:Boolean(planning?.price)};
+    const resolved={...live,cost,costSource:String(planning?.source||(fallback?'Static reference':'Price not cached')),hasCurrentPrice:Boolean(planning?.price)};
+    if(key)equipmentOptionPriceMemo.set(key,resolved);
+    return resolved;
   }
 
   function categorizedEquipmentOptions(item){
@@ -1445,7 +1450,7 @@
                   : '')+
               '</div>'+
               (item.valueNote?'<div class="mm-fa-muted" style="margin-top:3px;">'+esc(item.valueNote)+'</div>':'')+
-              equipmentOptionsHtml(row,item)+
+              (!item.ready&&!['OWNED','LOANED'].includes(item.route)?equipmentOptionsHtml(row,item):'')+
             '</div>';
           }).join('')+'</div>'+
         '</div>'+
@@ -1836,6 +1841,7 @@
   function render(){
     const root=document.getElementById(ROOT_ID);
     if(!root||root.style.display==='none')return;
+    equipmentOptionPriceMemo=new Map();
     const viewHtml=activeView==='members'?membersHtml()
       :activeView==='builds'?buildsHtml()
       :activeView==='inventory'?inventoryHtml()
