@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.11';
+  const CORE_VERSION = '8.0.0-alpha.12';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -441,7 +441,10 @@
         const heights=controls.map(entry=>entry.r.height).sort((a,b)=>a-b);
         const rowBottom=bottoms[Math.floor(bottoms.length/2)];
         const rowTop=tops[Math.floor(tops.length/2)];
+        const widths=controls.map(entry=>entry.r.width).sort((a,b)=>a-b);
         const nativeHeight=heights[Math.floor(heights.length/2)]||first.r.height;
+        const nativeWidth=widths[Math.floor(widths.length/2)]||first.r.width;
+        const squareError=Math.abs(nativeWidth-nativeHeight);
         const gaps=[];
         for(let i=1;i<controls.length;i++){
           const gap=controls[i].r.left-controls[i-1].r.right;
@@ -456,6 +459,8 @@
           rowTop,
           rowBottom,
           bottomDistance:Math.abs(window.innerHeight-rowBottom),
+          rightEdgeDistance:Math.abs(window.innerWidth-last.r.right),
+          squareError,
           nativeGap:clamp(nativeGap,2,8),
           nativeHeight
         });
@@ -471,12 +476,26 @@
       flush();
     }
 
-    return candidates.sort((a,b)=>
-      a.bottomDistance-b.bottomDistance||
-      b.controls.length-a.controls.length||
+    if(!candidates.length)return null;
+
+    // Torn's native footer is the bottom-right icon row. On Factions/Forums,
+    // page-level action controls can occupy the same bottom band, so treating
+    // "most controls" as the next tie-breaker can anchor the MM dock to page
+    // content and overlap Torn chat. Consider rows within 8px of the lowest
+    // candidate equivalent, then prefer the row nearest the viewport's right
+    // edge and with square, Torn-sized controls.
+    const minBottomDistance=Math.min(...candidates.map(candidate=>candidate.bottomDistance));
+    const bottomPeers=candidates.filter(candidate=>candidate.bottomDistance<=minBottomDistance+8);
+    bottomPeers.sort((a,b)=>
+      a.rightEdgeDistance-b.rightEdgeDistance||
+      a.squareError-b.squareError||
       Math.abs(a.nativeHeight-42)-Math.abs(b.nativeHeight-42)||
-      b.r.right-a.r.right
-    )[0]||null;
+      a.bottomDistance-b.bottomDistance||
+      b.controls.length-a.controls.length
+    );
+    const selected=bottomPeers[0]||null;
+    if(selected)selected.candidateCount=candidates.length;
+    return selected;
   }
 
   function launcherRect(node,rect=null){
@@ -617,9 +636,15 @@
       if(native?.firstRect){
         dock.dataset.mmNativeFirstLeft=String(Math.round(native.firstRect.left));
         dock.dataset.mmNativeRowBottom=String(Math.round(native.rowBottom??native.firstRect.bottom));
+        dock.dataset.mmNativeRightEdgeDistance=String(Math.round(native.rightEdgeDistance??0));
+        dock.dataset.mmNativeCandidateCount=String(Number(native.candidateCount||1));
+        dock.dataset.mmNativeControlCount=String(native.controls?.length||0);
       }else{
         delete dock.dataset.mmNativeFirstLeft;
         delete dock.dataset.mmNativeRowBottom;
+        delete dock.dataset.mmNativeRightEdgeDistance;
+        delete dock.dataset.mmNativeCandidateCount;
+        delete dock.dataset.mmNativeControlCount;
       }
     });
   }
