@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.3
+// @version      0.1.0-rc.4
 // @description  Manual foreground Bazaar inspection and cross-tab $1 observations. Never buys or scans unattended.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -24,7 +24,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.3';
+const VERSION = '0.1.0-rc.4';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
@@ -303,8 +303,11 @@ function inspectBazaar(doc, win, context) {
   if (!owners.length || owners.some(o=>o.id!==context.targetId)) return fail('Cannot prove the displayed Bazaar owner. No alert issued.');
   result.seller=(owners[0].name || context.targetId).replace(/['’]s$/,'').slice(0,180);
 
-  const legacy=[...root.querySelectorAll(SELECTOR.legacyCard)].filter(card=>visible(card,win,true));
-  const cards=legacy.length?legacy:semanticCards(root,win);
+  const semantic=semanticCards(root,win);
+  const legacy=semantic.length
+    ? []
+    : [...root.querySelectorAll(SELECTOR.legacyCard)].filter(card=>visible(card,win,true));
+  const cards=semantic.length?semantic:legacy;
   if(!cards.length) {
     const body=cleanText(root.textContent);
     if(/does not have a bazaar|no items/i.test(body)) return {...result,ok:true,inspected:0};
@@ -314,7 +317,7 @@ function inspectBazaar(doc, win, context) {
   let inspected=0,unsupported=0;
   for(const card of cards) {
     if(!visible(card,win,true)) continue;
-    const item=legacy.length?parseLegacyCard(card,win):parseSemanticCard(card,win);
+    const item=semantic.length?parseSemanticCard(card,win):parseLegacyCard(card,win);
     if(!item) {unsupported++;continue;}
     inspected++;
     if(item.price===1 && item.available===true) result.items.push(item);
