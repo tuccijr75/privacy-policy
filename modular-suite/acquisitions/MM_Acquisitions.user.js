@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.10
-// @description  Dedicated acquisition workflow for Bazaar, Item Market and Travel with live verification, ROI filters and purchase-ledger sync.
+// @version      8.0.0-alpha.11
+// @description  Market acquisition, pricelist profit, ranked-weapon valuation, live market/auction scouting and travel procurement with manual final purchase.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js
 // @match        https://www.torn.com/*
@@ -11,7 +11,8 @@
 // @run-at       document-idle
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.13
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.logic.js?v=8.0.0-alpha.2
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.live.js?v=8.0.0-alpha.3
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.live.js?v=8.0.0-alpha.4
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js?v=8.0.0-alpha.1
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js?v=8.0.0-alpha.1
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -40,6 +41,8 @@
   const TRAVEL_CONTEXT_REFRESH_MS=60_000;
   const CATALOG_STALE_MS=24*60*60*1000;
   const ITEM_PAGE_SIZE=75;
+  const RANKED_PAGE_SIZE=30;
+  const DEFAULT_PRICELIST_USER_ID='4054377';
 
   let activeView='deals';
   let state=null;
@@ -62,10 +65,18 @@
   let itemPage=0;
   let itemSelection=null;
   let itemSources=null;
+  let rankedType='all';
+  let rankedSource='all';
+  let rankedRarity='all';
+  let rankedBonus='';
+  let rankedWeapon='';
+  let rankedMinRoi=0;
+  let rankedPage=0;
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornAcquisitionsLogic;
   const live=globalThis.MMTornAcquisitionsLive;
+  const rankedLogic=globalThis.MMTornRankedProfitLogic;
   const ledger=globalThis.MMTornAcquisitionLedger;
 
   const esc=value=>String(value??'')
@@ -352,7 +363,7 @@
 
   async function reloadCachedState(){
     loadError='';
-    if(!core||!logic||!live||!ledger||!service){
+    if(!core||!logic||!live||!rankedLogic||!ledger||!service){
       loadError='MM Acquisitions dependencies did not load.';
       state=null;
       render();
@@ -732,9 +743,234 @@
       :'<div style="font-size:11px;color:#888;">No profitable current travel rows match this trip context.</div>'));
   }
 
+  function rankedSettings(){
+    const saved=state?.procurement?.ranked?.settings||{};
+    const pricelist=state?.procurement?.pricelist||{};
+    return {
+      pricelistUserId:String(saved.pricelistUserId||pricelist.userId||DEFAULT_PRICELIST_USER_ID),
+      historyDays:Math.max(7,Number(saved.historyDays||90)),
+      bonusBand:Math.max(1,Number(saved.bonusBand||5)),
+      minComparableSales:Math.max(1,Number(saved.minComparableSales||3)),
+      minRoiPct:Math.max(0,Number(saved.minRoiPct||0)),
+      minConfidencePct:Math.max(0,Math.min(100,Number(saved.minConfidencePct||0))),
+      pagesPerType:Math.max(1,Math.min(5,Number(saved.pagesPerType||2))),
+      auctionPages:Math.max(1,Math.min(6,Number(saved.auctionPages||4))),
+      lowTierBonuses:Array.isArray(saved.lowTierBonuses)?saved.lowTierBonuses:['Achilles','Conserve'],
+      bbRate:Math.max(0,Number(pricelist.bunkerBuckRate||saved.bbRate||0))
+    };
+  }
+
+  async function saveRankedSettings(root){
+    const read=(selector,fallback='')=>String(root.querySelector(selector)?.value??fallback).trim();
+    const settings={
+      pricelistUserId:read('#mm-acq-rw-pricelist',DEFAULT_PRICELIST_USER_ID),
+      historyDays:Math.max(7,Number(read('#mm-acq-rw-history','90'))||90),
+      bonusBand:Math.max(1,Number(read('#mm-acq-rw-band','5'))||5),
+      minComparableSales:Math.max(1,Math.round(Number(read('#mm-acq-rw-min-sales','3'))||3)),
+      minRoiPct:Math.max(0,Number(read('#mm-acq-rw-min-roi','0'))||0),
+      minConfidencePct:Math.max(0,Math.min(100,Number(read('#mm-acq-rw-min-confidence','0'))||0)),
+      pagesPerType:Math.max(1,Math.min(5,Math.round(Number(read('#mm-acq-rw-market-pages','2'))||2))),
+      auctionPages:Math.max(1,Math.min(6,Math.round(Number(read('#mm-acq-rw-auction-pages','4'))||4))),
+      lowTierBonuses:read('#mm-acq-rw-low-bonuses','Achilles,Conserve').split(',').map(x=>x.trim()).filter(Boolean)
+    };
+    if(!/^\d+$/.test(settings.pricelistUserId))throw new Error('Pricelist ID must be a Torn user ID.');
+    await core.updateDomainState('market',draft=>{
+      const proc=draft.procurement || (draft.procurement={});
+      const ranked=proc.ranked&&typeof proc.ranked==='object'?proc.ranked:(proc.ranked={});
+      ranked.settings=settings;
+      return draft;
+    });
+    state=await core.readLegacyState();
+    statusText='Ranked profit settings saved.';
+    render();
+  }
+
+  async function refreshPricelist(){
+    if(busy)return;
+    busy=true;
+    statusText='Refreshing customer pricelist and Bunker Buck rate from TornW3B…';
+    render();
+    try{
+      const result=await service.refreshPricelist(rankedSettings().pricelistUserId);
+      state=result?.state||await core.readLegacyState();
+      statusText='Pricelist updated: '+Number(result?.priced||0).toLocaleString()+' priced items · '+money(result?.bbRate||0)+'/BB.';
+    }catch(error){statusText='Pricelist refresh failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  async function refreshRankedLive(){
+    if(busy)return;
+    busy=true;
+    const cfg=rankedSettings();
+    statusText='Refreshing live ranked Bazaar / Item Market / Auction opportunities…';
+    render();
+    try{
+      const result=await service.refreshRankedLive({pagesPerType:cfg.pagesPerType,auctionPages:cfg.auctionPages,limit:100});
+      state=result?.state||await core.readLegacyState();
+      statusText='Ranked live feed updated: '+Number(result?.market?.length||0).toLocaleString()+' market + '+Number(result?.auction?.length||0).toLocaleString()+' auction listings.';
+    }catch(error){statusText='Ranked live refresh failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  async function analyzeRankedHistory(itemId){
+    if(busy)return;
+    if(!apiKey()){
+      statusText='Save a Torn API key in Settings before loading completed Auction House history.';
+      activeView='settings';render();return;
+    }
+    const id=String(itemId||'');
+    const catalog=state?.procurement?.catalog?.[id]||{};
+    busy=true;
+    statusText='Loading official Torn completed-auction history for '+String(catalog.name||('Item '+id))+'…';
+    render();
+    try{
+      const result=await service.refreshRankedHistory(id,{days:rankedSettings().historyDays,maxPages:8});
+      state=result?.state||await core.readLegacyState();
+      statusText='Auction history updated for '+String(catalog.name||('Item '+id))+': '+Number(result?.rows?.length||0).toLocaleString()+' completed sales.';
+    }catch(error){statusText='Auction history failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function rankedEvaluatedRows(){
+    const ranked=state?.procurement?.ranked||{};
+    const catalog=state?.procurement?.catalog||{};
+    const cfg=rankedSettings();
+    const history=ranked.history||{};
+    const market=Array.isArray(ranked.liveMarket)?ranked.liveMarket:[];
+    const auction=Array.isArray(ranked.liveAuction)?ranked.liveAuction:[];
+    const rows=[...market,...auction].map(row=>{
+      const cat=catalog?.[String(row.itemId)]||{};
+      const candidate={
+        ...row,
+        subType:String(row.subType||cat.subType||''),
+        weaponType:String(row.weaponType||cat.weaponCategory||'')
+      };
+      const hist=Array.isArray(history?.[String(row.itemId)]?.rows)?history[String(row.itemId)].rows:[];
+      return rankedLogic.evaluateListing(candidate,hist,{...cfg,bbRate:cfg.bbRate});
+    });
+    const bonusQ=rankedBonus.trim().toLowerCase();
+    const weaponQ=rankedWeapon.trim().toLowerCase();
+    return rows.filter(row=>{
+      if(rankedType!=='all'&&String(row.weaponType||'').toLowerCase()!==rankedType)return false;
+      if(rankedSource!=='all'){
+        const source=String(row.source||'').toLowerCase();
+        if(rankedSource==='auction'&&source!=='auction')return false;
+        if(rankedSource==='market'&&source==='auction')return false;
+      }
+      if(rankedRarity!=='all'&&String(row.rarity||'').toLowerCase()!==rankedRarity)return false;
+      if(weaponQ&&!String(row.itemName||'').toLowerCase().includes(weaponQ))return false;
+      if(bonusQ&&!row.bonuses.some(b=>String(b.title||'').toLowerCase().includes(bonusQ)))return false;
+      if(Number(row.roiPct||0)<Math.max(rankedMinRoi,cfg.minRoiPct))return false;
+      return true;
+    }).sort((a,b)=>b.investmentScore-a.investmentScore||b.roiPct-a.roiPct||b.profit-a.profit);
+  }
+
+  async function analyzeVisibleRanked(){
+    if(busy)return;
+    if(!apiKey()){
+      statusText='Save a Torn API key before analyzing Auction House history.';
+      activeView='settings';render();return;
+    }
+    const ids=[...new Set(rankedEvaluatedRows().slice(0,30).map(row=>String(row.itemId||'')).filter(Boolean))].slice(0,6);
+    if(!ids.length){statusText='No visible ranked weapons to analyze.';render();return;}
+    busy=true;
+    render();
+    try{
+      const cfg=rankedSettings();
+      for(let i=0;i<ids.length;i++){
+        const name=state?.procurement?.catalog?.[ids[i]]?.name||('Item '+ids[i]);
+        statusText='Auction history '+(i+1)+'/'+ids.length+': '+name+'…';
+        render();
+        const result=await service.refreshRankedHistory(ids[i],{days:cfg.historyDays,maxPages:8});
+        state=result?.state||await core.readLegacyState();
+      }
+      statusText='Official Auction House history updated for '+ids.length+' visible weapon types.';
+    }catch(error){statusText='Ranked history batch stopped: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function routeRankedListing(index){
+    const rows=rankedEvaluatedRows();
+    const row=rows[Number(index)];
+    if(!row)return;
+    const source=String(row.source||'').toLowerCase();
+    if(source==='auction'){
+      navigate('https://www.torn.com/page.php?sid=ItemMarket#/market/view=auctionHouse');
+      return;
+    }
+    if(source.includes('bazaar')&&row.sellerId){
+      navigate('https://www.torn.com/bazaar.php?userId='+encodeURIComponent(String(row.sellerId)));
+      return;
+    }
+    const cat=state?.procurement?.catalog?.[String(row.itemId)]||{};
+    navigate(live.itemMarketPurchaseUrl(row.itemId,row.itemName,cat.type||'Weapon'));
+  }
+
+  function rankedHtml(){
+    const ranked=state?.procurement?.ranked||{};
+    const cfg=rankedSettings();
+    const all=rankedEvaluatedRows();
+    const pages=Math.max(1,Math.ceil(all.length/RANKED_PAGE_SIZE));
+    rankedPage=Math.max(0,Math.min(rankedPage,pages-1));
+    const visible=all.slice(rankedPage*RANKED_PAGE_SIZE,(rankedPage+1)*RANKED_PAGE_SIZE);
+    const historyCount=Object.keys(ranked.history||{}).length;
+    const priceList=state?.procurement?.pricelist||{};
+    return card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
+        '<div><b>Ranked Weapon Profit Scout</b><div style="font-size:10px;color:#888;">No bonuses excluded. BB scrap floor + completed Torn auctions + live market/auction opportunities.</div></div>'+
+        '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
+          '<button id="mm-acq-rw-pricelist-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Update Pricelist</button>'+
+          '<button id="mm-acq-rw-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Ranked</button>'+
+          '<button id="mm-acq-rw-analyze-visible" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Analyze Visible</button>'+
+        '</div>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:5px;">BB '+money(cfg.bbRate)+'/buck · Pricelist '+Number(priceList.pricedCount||0).toLocaleString()+' priced · Live '+Number(ranked.liveMarket?.length||0).toLocaleString()+' market + '+Number(ranked.liveAuction?.length||0).toLocaleString()+' auction · AH history '+historyCount+' weapon types · updated '+esc(age(ranked.lastLiveAt))+'</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:5px;margin-top:8px;">'+
+        '<select id="mm-acq-rw-type" style="'+inputCss()+'width:100%;"><option value="all">All types</option><option value="primary"'+(rankedType==='primary'?' selected':'')+'>Primary</option><option value="secondary"'+(rankedType==='secondary'?' selected':'')+'>Secondary</option><option value="melee"'+(rankedType==='melee'?' selected':'')+'>Melee</option></select>'+
+        '<select id="mm-acq-rw-source" style="'+inputCss()+'width:100%;"><option value="all">Market + Auction</option><option value="market"'+(rankedSource==='market'?' selected':'')+'>Market</option><option value="auction"'+(rankedSource==='auction'?' selected':'')+'>Auction</option></select>'+
+        '<select id="mm-acq-rw-rarity" style="'+inputCss()+'width:100%;"><option value="all">All rarity</option><option value="yellow"'+(rankedRarity==='yellow'?' selected':'')+'>Yellow</option><option value="orange"'+(rankedRarity==='orange'?' selected':'')+'>Orange</option><option value="red"'+(rankedRarity==='red'?' selected':'')+'>Red</option></select>'+
+        '<input id="mm-acq-rw-weapon" value="'+esc(rankedWeapon)+'" placeholder="Weapon name" style="'+inputCss()+'width:100%;">'+
+        '<input id="mm-acq-rw-bonus" value="'+esc(rankedBonus)+'" placeholder="Bonus name" style="'+inputCss()+'width:100%;">'+
+        '<input id="mm-acq-rw-roi" type="number" min="0" step="1" value="'+Number(rankedMinRoi||0)+'" placeholder="Min ROI %" style="'+inputCss()+'width:100%;">'+
+      '</div>'+
+      '<button id="mm-acq-rw-filter" style="'+button()+'margin-top:6px;">Apply Filters</button>'
+    )+
+    card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#888;align-items:center;">'+
+        '<span>'+all.length.toLocaleString()+' matches · page '+(rankedPage+1)+'/'+pages+'</span>'+
+        '<span><button id="mm-acq-rw-prev" '+(rankedPage<=0?'disabled':'')+' style="'+button()+(rankedPage<=0?'opacity:.4;':'')+'padding:4px 7px;">Prev</button> '+
+        '<button id="mm-acq-rw-next" '+(rankedPage>=pages-1?'disabled':'')+' style="'+button()+(rankedPage>=pages-1?'opacity:.4;':'')+'padding:4px 7px;">Next</button></span>'+
+      '</div>'+
+      (visible.length?visible.map((row,localIndex)=>{
+        const globalIndex=rankedPage*RANKED_PAGE_SIZE+localIndex;
+        const bonus=row.bonuses.map(b=>b.title+' '+Number(b.value||0).toFixed(0)+'%').join(' + ')||'No bonus data';
+        const historyLoaded=Number(row.history?.samples||0)>0;
+        const profitable=row.profit>0;
+        return '<div style="border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
+          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">'+
+            '<div style="min-width:0;"><b>'+esc(row.itemName)+'</b> · '+esc(row.weaponType)+' · '+esc(row.rarity.toUpperCase())+' · '+esc(row.source)+
+              '<div>'+esc(bonus)+'</div>'+
+              '<div>Ask <b>'+money(row.price)+'</b> · Fair <b>'+money(row.fairValue)+'</b> · Profit <b style="color:'+(profitable?'#9fe3a8':'#ffaaaa')+';">'+(row.profit>=0?'+':'-')+money(Math.abs(row.profit))+'</b> · ROI <b>'+Number(row.roiPct||0).toFixed(1)+'%</b></div>'+
+              '<div style="color:#888;">'+esc(row.valuationSource)+' · BB '+Number(row.bbUnits||0)+' ('+money(row.bbFloor)+') · AH median '+money(row.auctionValue)+' · '+esc(row.history?.cohort||'BASE')+' n='+Number(row.history?.samples||0)+' · confidence '+Number(row.history?.confidence||0)+'%</div>'+
+              '<div style="color:#888;">Traffic 7/30/90d '+Number(row.volume7||0)+'/'+Number(row.volume30||0)+'/'+Number(row.volume90||0)+' · liquidity '+Number(row.liquidityScore||0)+'/100 · investment '+Number(row.investmentScore||0)+'/100</div>'+
+            '</div>'+
+            '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
+              '<button data-rw-history="'+esc(row.itemId)+'" '+(busy?'disabled':'')+' style="'+button(!historyLoaded)+(busy?'opacity:.5;':'')+'padding:5px 7px;">'+(historyLoaded?'Refresh AH':'Analyze AH')+'</button>'+
+              '<button data-rw-open="'+globalIndex+'" style="'+button(true)+'padding:5px 7px;">Open</button>'+
+            '</div>'+
+          '</div>'+
+        '</div>';
+      }).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No ranked listings match these filters. Refresh Ranked or loosen the filters.</div>')
+    );
+  }
+
   function catalogRows(){
     const catalog=state?.procurement?.catalog||{};
+    const pricelist=state?.procurement?.pricelist?.items||{};
     return Object.entries(catalog).map(([id,row])=>({
+      pricelistBuyPrice:Math.max(0,Number(pricelist?.[String(id)]?.buyPrice||0)),
+      pricelistBulkBuyPrice:Math.max(0,Number(pricelist?.[String(id)]?.bulkBuyPrice||0)),
+      pricelistBulkThreshold:Math.max(0,Number(pricelist?.[String(id)]?.bulkThreshold||0)),
       id:String(row?.id||id),
       name:String(row?.name||('Item '+id)),
       type:String(row?.type||'Other')||'Other',
@@ -755,6 +991,7 @@
       if(itemAvailability==='buyable'&&!row.buyable)return false;
       if(itemAvailability==='market'&&!(row.marketPrice>0))return false;
       if(itemAvailability==='shops'&&!row.shops.some(shop=>Number(shop?.price||0)>0))return false;
+      if(itemAvailability==='pricelist'&&!(row.pricelistBuyPrice>0))return false;
       if(q&&!row.name.toLowerCase().includes(q)&&row.id!==q&&!row.type.toLowerCase().includes(q)&&!row.subType.toLowerCase().includes(q))return false;
       return true;
     });
@@ -885,8 +1122,12 @@
         source.sellerName?String(source.sellerName):'',
         Number(source.quantity||0)>0?'qty/stock '+Number(source.quantity).toLocaleString():''
       ].filter(Boolean).join(' · ');
+      const exit=Math.max(0,Number(itemSelection?.pricelistBuyPrice||0));
+      const profit=exit>0?exit-Number(source.price||0):0;
+      const roi=exit>0&&Number(source.price||0)>0?profit/Number(source.price||0)*100:0;
+      const target=exit>0?' · Pricelist exit '+money(exit)+' · Profit '+(profit>=0?'+':'-')+money(Math.abs(profit))+' · ROI '+roi.toFixed(1)+'%':'';
       return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
-        '<div><b>'+(index===0?'BEST · ':'')+esc(source.source)+'</b> · <b>'+money(source.price)+'</b>'+(detail?' · '+esc(detail):'')+'</div>'+
+        '<div><b>'+(index===0?'BEST · ':'')+esc(source.source)+'</b> · <b>'+money(source.price)+'</b>'+(detail?' · '+esc(detail):'')+target+'</div>'+
         '<button data-item-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(index===0)+(busy?'opacity:.5;':'')+'">Use</button>'+
       '</div>';
     }).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">No current source comparison loaded.</div>';
@@ -913,7 +1154,7 @@
     return card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
         '<div><b>All Torn Items</b><div style="font-size:10px;color:#888;">Complete Torn catalog, categorized and searchable. Price checks are live/on-demand.</div></div>'+
-        '<button id="mm-acq-catalog-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Refresh Catalog</button>'+
+        '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-pricelist-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Refresh Pricelist</button><button id="mm-acq-catalog-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Refresh Catalog</button></div>'+
       '</div>'+
       '<div style="font-size:10px;color:#888;margin-top:4px;">Catalog '+all.length.toLocaleString()+' items · updated '+esc(age(lastSync))+'</div>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:5px;margin-top:8px;">'+
@@ -923,6 +1164,7 @@
           '<option value="buyable"'+(itemAvailability==='buyable'?' selected':'')+'>Buyable</option>'+
           '<option value="market"'+(itemAvailability==='market'?' selected':'')+'>Market-valued</option>'+
           '<option value="shops"'+(itemAvailability==='shops'?' selected':'')+'>Torn shop source</option>'+
+          '<option value="pricelist"'+(itemAvailability==='pricelist'?' selected':'')+'>Customer pricelist</option>'+
           '<option value="all"'+(itemAvailability==='all'?' selected':'')+'>All catalog</option>'+
         '</select>'+
         '<select id="mm-acq-item-sort" style="'+inputCss()+'width:100%;">'+
@@ -947,7 +1189,7 @@
       (visible.length?visible.map(row=>
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
           '<div style="min-width:0;"><b>'+esc(row.name)+'</b> <span style="color:#777;">['+esc(row.id)+']</span>'+
-            '<div style="color:#888;">'+esc(row.type)+(row.subType?' · '+esc(row.subType):'')+' · Market '+money(row.marketPrice||0)+' · Shops '+row.shops.filter(shop=>Number(shop?.price||0)>0).length+'</div>'+
+            '<div style="color:#888;">'+esc(row.type)+(row.subType?' · '+esc(row.subType):'')+' · Market '+money(row.marketPrice||0)+(row.pricelistBuyPrice>0?' · Pricelist '+money(row.pricelistBuyPrice):'')+' · Shops '+row.shops.filter(shop=>Number(shop?.price||0)>0).length+'</div>'+
           '</div>'+
           '<button data-catalog-find="'+esc(row.id)+'" '+(busy?'disabled':'')+' style="'+button(itemSelection?.id===row.id)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Find Price</button>'+
         '</div>'
@@ -982,6 +1224,22 @@
         '<label style="font-size:10px;color:#aaa;">Listing freshness sec<input id="mm-acq-rule-max-age" type="number" min="30" value="'+Number(r.maxListingAgeSec||180)+'" style="'+inputCss()+'width:100%;"></label>'+
       '</div>'+
       '<button id="mm-acq-save-rules" style="'+button(true)+'margin-top:7px;">Save Shared Rules</button>'
+    )+
+    card(
+      '<b>Ranked Profit Rules</b>'+
+      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">BB floor uses Torn exchange values and the Bunker Bucks price from the configured TornW3B pricelist. Completed auction history comes from Torn API. Live ranked market/auction listings use the existing TornW3B dependency.</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:5px;">'+
+        '<label style="font-size:10px;color:#aaa;">Pricelist Torn ID<input id="mm-acq-rw-pricelist" value="'+esc(rankedSettings().pricelistUserId)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">AH history days<input id="mm-acq-rw-history" type="number" min="7" max="365" value="'+Number(rankedSettings().historyDays)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Bonus roll band %<input id="mm-acq-rw-band" type="number" min="1" max="25" value="'+Number(rankedSettings().bonusBand)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Min comparable sales<input id="mm-acq-rw-min-sales" type="number" min="1" max="20" value="'+Number(rankedSettings().minComparableSales)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Ranked min ROI %<input id="mm-acq-rw-min-roi" type="number" min="0" value="'+Number(rankedSettings().minRoiPct)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Ranked min confidence %<input id="mm-acq-rw-min-confidence" type="number" min="0" max="100" value="'+Number(rankedSettings().minConfidencePct)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Market pages/type<input id="mm-acq-rw-market-pages" type="number" min="1" max="5" value="'+Number(rankedSettings().pagesPerType)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Auction pages<input id="mm-acq-rw-auction-pages" type="number" min="1" max="6" value="'+Number(rankedSettings().auctionPages)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;grid-column:1/-1;">Low-tier bonus labels<input id="mm-acq-rw-low-bonuses" value="'+esc(rankedSettings().lowTierBonuses.join(','))+'" style="'+inputCss()+'width:100%;"></label>'+
+      '</div>'+
+      '<button id="mm-acq-save-ranked" style="'+button(true)+'margin-top:7px;">Save Ranked Rules</button>'
     );
   }
 
@@ -999,13 +1257,14 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.10 · MARKET SCOUT / ITEM FINDER / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.11 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
         '<div style="display:flex;gap:5px;margin-bottom:7px;">'+
           '<button data-acq-view="deals" style="'+button(activeView==='deals')+'">Deals</button>'+
           '<button data-acq-view="items" style="'+button(activeView==='items')+'">Items</button>'+
+          '<button data-acq-view="ranked" style="'+button(activeView==='ranked')+'">Ranked</button>'+
           '<button data-acq-view="travel" style="'+button(activeView==='travel')+'">Travel</button>'+
           '<button data-acq-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
         '</div>'+
@@ -1013,7 +1272,7 @@
         sourceStrip()+
         (loadError?card('<b style="color:#ffaaaa;">Cannot read shared CRM state</b><div style="font-size:11px;margin-top:4px;">'+esc(loadError)+'</div>'):'')+
         '<div style="max-height:calc(100vh - 240px);overflow:auto;padding-right:2px;">'+
-          (activeView==='settings'?settingsHtml():activeView==='travel'?travelHtml():activeView==='items'?itemsHtml():dealsHtml())+
+          (activeView==='settings'?settingsHtml():activeView==='travel'?travelHtml():activeView==='ranked'?rankedHtml():activeView==='items'?itemsHtml():dealsHtml())+
         '</div>'+
       '</div>';
 
@@ -1028,7 +1287,7 @@
       activeView=b.dataset.acqView||'deals';
       render();
       if(activeView==='travel'&&apiKey())refreshTravelContext({force:false,silent:true}).then(()=>render());
-      if(activeView==='items')ensureItemCatalog();
+      if(activeView==='items'||activeView==='ranked')ensureItemCatalog();
     }));
     root.querySelectorAll('#mm-acq-reload').forEach(b=>b.addEventListener('click',reloadCachedState));
     root.querySelector('#mm-acq-live-refresh')?.addEventListener('click',refreshOpportunities);
@@ -1044,6 +1303,23 @@
     root.querySelector('#mm-acq-armory-clear')?.addEventListener('click',()=>{armoryRequest=null;armorySources=null;statusText='Faction Armory acquisition request cleared.';render();});
     root.querySelectorAll('[data-armory-route]').forEach(b=>b.addEventListener('click',()=>routeArmoryRequest(b.dataset.armoryRoute||'Best')));
     root.querySelector('#mm-acq-catalog-refresh')?.addEventListener('click',()=>refreshItemCatalog({silent:false}));
+    root.querySelector('#mm-acq-pricelist-refresh')?.addEventListener('click',refreshPricelist);
+    root.querySelector('#mm-acq-rw-pricelist-refresh')?.addEventListener('click',refreshPricelist);
+    root.querySelector('#mm-acq-rw-live-refresh')?.addEventListener('click',refreshRankedLive);
+    root.querySelector('#mm-acq-rw-analyze-visible')?.addEventListener('click',analyzeVisibleRanked);
+    root.querySelector('#mm-acq-rw-filter')?.addEventListener('click',()=>{
+      rankedType=String(root.querySelector('#mm-acq-rw-type')?.value||'all');
+      rankedSource=String(root.querySelector('#mm-acq-rw-source')?.value||'all');
+      rankedRarity=String(root.querySelector('#mm-acq-rw-rarity')?.value||'all');
+      rankedWeapon=String(root.querySelector('#mm-acq-rw-weapon')?.value||'').trim();
+      rankedBonus=String(root.querySelector('#mm-acq-rw-bonus')?.value||'').trim();
+      rankedMinRoi=Math.max(0,Number(root.querySelector('#mm-acq-rw-roi')?.value||0));
+      rankedPage=0;render();
+    });
+    root.querySelector('#mm-acq-rw-prev')?.addEventListener('click',()=>{rankedPage=Math.max(0,rankedPage-1);render();});
+    root.querySelector('#mm-acq-rw-next')?.addEventListener('click',()=>{rankedPage++;render();});
+    root.querySelectorAll('[data-rw-history]').forEach(b=>b.addEventListener('click',()=>analyzeRankedHistory(b.dataset.rwHistory)));
+    root.querySelectorAll('[data-rw-open]').forEach(b=>b.addEventListener('click',()=>routeRankedListing(b.dataset.rwOpen)));
     root.querySelector('#mm-acq-item-filter')?.addEventListener('click',()=>{
       itemQuery=String(root.querySelector('#mm-acq-item-query')?.value||'').trim();
       itemCategory=String(root.querySelector('#mm-acq-item-category')?.value||'All');
@@ -1074,6 +1350,10 @@
       statusText='MM Acquisitions API key cleared.';
       render();
     });
+    root.querySelector('#mm-acq-save-ranked')?.addEventListener('click',()=>saveRankedSettings(root).catch(error=>{
+      statusText='Could not save ranked rules: '+(error?.message||String(error));
+      render();
+    }));
     root.querySelector('#mm-acq-save-rules')?.addEventListener('click',()=>saveBusinessRules(root).catch(error=>{
       statusText='Could not save rules: '+(error?.message||String(error));
       render();
