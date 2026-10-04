@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.4
+// @version      0.1.0-rc.5
 // @description  Manual foreground Bazaar inspection and cross-tab $1 observations. Never buys or scans unattended.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -24,7 +24,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.4';
+const VERSION = '0.1.0-rc.5';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
@@ -203,7 +203,10 @@ function stockNodes(scope, win) {
 }
 
 function itemIdentity(scope, win) {
-  const images=[...scope.querySelectorAll('img[src*="/images/items/"]')].filter(img=>visible(img,win,true));
+  // The listing's price/stock/card must be foreground-visible. Item artwork itself may
+  // be partially covered by Torn's own lock/stat overlays, so do not reject a card
+  // merely because an overlay wins an elementFromPoint corner check.
+  const images=[...scope.querySelectorAll('img[src*="/images/items/"]')].filter(img=>visible(img,win,false));
   const byId=new Map();
   for(const img of images) {
     const match=String(img.currentSrc||img.src||'').match(/\/images\/items\/(\d+)\//);
