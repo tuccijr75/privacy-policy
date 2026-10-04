@@ -1692,4 +1692,12 @@ Next live action:
 2. refresh Torn;
 3. open Ranked and Refresh Ranked;
 4. verify Primary now returns live rows before continuing AH valuation acceptance.
+### alpha.12 immutable install correction — 2026-10-04
+
+- owner reported the branch-based jsDelivr install URL still served alpha.11 due mutable-branch CDN caching;
+- candidate userscript metadata was changed to remove @updateURL/@downloadURL during live acceptance;
+- every @require dependency is pinned to immutable commit e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed, which contains alpha.12 + ranked metadata fix;
+- live install URL is now commit-pinned to current branch head dd90732a5e98c46b13ed9d2e4152057c0741e835;
+- independent fetch verified that immutable URL contains alpha.12 and does not contain alpha.11 version metadata;
+- restore canonical modular-branch update/download URLs only after live acceptance and before merge.
 
