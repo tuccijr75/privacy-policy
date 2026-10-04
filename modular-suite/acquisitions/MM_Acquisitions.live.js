@@ -25,7 +25,9 @@
       marketPrice:Number(row?.market_price || 0),
       bazaarAverage:Number(row?.bazaar_average || 0),
       lowestPrice:Number(row?.lowest_price || 0),
-      totalBazaars:Number(row?.total_bazaars || 0)
+      totalBazaars:Number(row?.total_bazaars || 0),
+      lowestSource:Number(row?.lowest_price || 0)>0?'Bazaar':'Unknown',
+      bazaarSource:'TornW3B Bazaar observations'
     };
   }
 
@@ -143,6 +145,14 @@
     })).filter(row=>row.title);
   }
 
+  function canonicalRankedSource(value) {
+    const raw=String(value||'').trim().toLowerCase();
+    if(raw==='bazaar')return 'Bazaar';
+    if(raw==='market'||raw==='item market'||raw==='item-market'||raw==='item_market')return 'Item Market';
+    if(raw==='auction'||raw==='auction house'||raw==='auction-house')return 'Auction';
+    return String(value||'Market').trim()||'Market';
+  }
+
   function normalizeRankedListing(row,{source='',itemId='',itemName='',subType='',weaponCategory=''}={}) {
     const item=row?.item&&typeof row.item==='object'?row.item:{};
     const details=row?.item_details&&typeof row.item_details==='object'?row.item_details:
@@ -165,7 +175,7 @@
       quantity:Math.max(1,Number(row?.quantity??row?.amount??1)||1),
       sellerId:asId(row?.playerId??row?.player_id??seller?.id??seller?.user_id),
       sellerName:String(row?.playerName??row?.player_name??seller?.name??''),
-      source:String(row?.source??source??'').trim(),
+      source:canonicalRankedSource(row?.source??source??''),
       lastUpdated:String(row?.lastUpdated??row?.lastUpdatedUnix??row?.last_updated??''),
       endsAt:Number(row?.endsAtUnix??row?.ends_at??0)||0,
       bids:Math.max(0,Number(row?.bids??0)||0),
@@ -430,7 +440,7 @@
           tab:'weapons',source:'auction',sortField:'endsAt',sortOrder:'asc',page,limit:Math.min(100,Math.max(1,Number(limit)||100))
         });
         const rows=Array.isArray(data?.items)?data.items:[];
-        auction.push(...rows.map(row=>normalizeRankedListing(row,{source:'auction'})));
+        auction.push(...rows.map(row=>normalizeRankedListing(row,{source:'Auction'})));
         if(!data?.hasMore||rows.length<limit)break;
       }
       const dedupe=rows=>[...new Map(rows.filter(row=>row.uid&&row.price>0).map(row=>[row.source+'|'+row.uid,row])).values()];
@@ -441,7 +451,7 @@
         ranked.liveMarket=liveMarket;
         ranked.liveAuction=liveAuction;
         ranked.lastLiveAt=at;
-        ranked.liveSource='TornW3B public ranked-weapons + auction APIs';
+        ranked.liveSource='TornW3B Bazaar + Item Market + Auction APIs';
         return draft;
       });
       return {state:await core.readLegacyState(),market:liveMarket,auction:liveAuction,at};
@@ -871,7 +881,7 @@
     value:Object.freeze({
       createService,normalizeMarketplaceItem,normalizeListing,normalizeTrader,
       genericMarketListings,normalizeCatalogShop,normalizeTornCatalog,normalizePricelistRows,
-      normalizeRankedBonuses,normalizeRankedListing,normalizeAuctionHistoryRows,apiNextUrl,
+      normalizeRankedBonuses,canonicalRankedSource,normalizeRankedListing,normalizeAuctionHistoryRows,apiNextUrl,
       marketMetrics,bazaarSnapshotFreshness,itemMarketPurchaseUrl,
       parseTravelNumber,parseTravelStockHtml,recordTravelSnapshots
     }),
