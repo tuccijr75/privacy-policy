@@ -12,8 +12,10 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.8.3'));
+assert(userSource.includes('// @version      8.0.0-alpha.8.4'));
 assert(userSource.includes('MM_Torn_Core.js?v=8.0.0-alpha.11'));
+assert(userSource.includes('// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js'));
+assert(userSource.includes('// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js'));
 assert(userSource.includes('async function autoRefreshAcquisitions'));
 assert(userSource.includes('AUTO_REFRESH_MS=60_000'));
 assert(userSource.includes('PURCHASE_STALE_MS=120_000'));
@@ -33,7 +35,7 @@ assert(liveSource.includes("reason:'overseas-recommended'"));
 
 const userSourceArmory=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceArmory);
-assert(userSourceArmory.includes('// @version      8.0.0-alpha.8.3'));
+assert(userSourceArmory.includes('// @version      8.0.0-alpha.8.4'));
 assert(userSourceArmory.includes('MM_Acquisitions.live.js?v=8.0.0-alpha.2'));
 assert(userSourceArmory.includes("type!=='armory-acquisition-request'"));
 assert(userSourceArmory.includes('Faction Armory request: '));
