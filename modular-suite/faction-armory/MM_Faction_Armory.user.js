@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.21
+// @version      8.0.0-alpha.22
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.8
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/faction-armory/MM_Faction_Armory.logic.js?v=8.0.0-alpha.3
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.9
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/faction-armory/MM_Faction_Armory.logic.js?v=8.0.0-alpha.4
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.21';
+  const VERSION='8.0.0-alpha.22';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -1622,59 +1622,49 @@
     const nonReady=new Map(
       members.filter(row=>row.readinessStatus!=='WAR READY').map(row=>[row.memberId,row])
     );
-    const memberNeeds=plan.assignments.filter(row=>row.route==='ACQUIRE'&&nonReady.has(row.memberId));
+    const memberNeeds=isWar
+      ? plan.assignments.filter(row=>row.route==='ACQUIRE'&&nonReady.has(row.memberId))
+      : [];
     const minNeeds=isWar?[]:(minimums?.actionable||[]).filter(row=>num(row.shortfall)>0);
-
-    // WAR leader mail is intentionally restricted to equipment that is needed now:
-    // non-WAR-READY member build gaps plus the two ready-to-issue war spares.
-    // Inventory-minimum provisions are deferred until Peace mode.
-    const reportList=isWar
-      ? plan.list.filter(row=>row.category==='equipment')
-      : plan.list;
-
-    const priceRows=reportList.map(row=>({row,band:acquisitionPriceBand(row)}));
+    const priceRows=plan.list.map(row=>({row,band:acquisitionPriceBand(row)}));
     const priced=priceRows.filter(item=>item.band.priced);
     const lowTotal=priced.reduce((sum,item)=>sum+item.band.lowTotal,0);
     const highTotal=priced.reduce((sum,item)=>sum+item.band.highTotal,0);
     const unpriced=priceRows.filter(item=>!item.band.priced);
 
     const lines=[
-      isWar?'FACTION ARMORY WAR ACQUISITION REPORT':'FACTION ARMORY PEACE / POST-WAR ACQUISITION REPORT',
+      isWar?'FACTION ARMORY WAR ACQUISITION REPORT':'FACTION ARMORY PEACE MINIMUMS REPORT',
       'Mode: '+stockMode.toUpperCase()+' / '+procurementMode.toUpperCase(),
-      'Current roster: '+members.length+' members',
-      'Approved War Ready: '+members.filter(row=>row.readinessStatus==='WAR READY').length,
-      'Not War Ready: '+nonReady.size
+      'Current roster: '+members.length+' members'
     ];
 
     if(isWar){
       lines.push(
-        'Scope: WAR NEEDS ONLY — non-WAR-READY member equipment plus war equipment spares.',
-        'Minimum-stock replenishment is deferred until Peace mode.',
+        'Approved War Ready: '+members.filter(row=>row.readinessStatus==='WAR READY').length,
+        'Not War Ready: '+nonReady.size,
+        'Scope: WAR ONLY — non-WAR-READY member equipment plus war equipment spares.',
+        'Routine minimum-stock replenishment is deferred until Peace mode.',
         '',
         'INDIVIDUAL MEMBER WAR BUILD NEEDS'
       );
-    }else{
-      lines.push(
-        'Scope: PEACE / POST-WAR — normal member acquisition plus minimum-stock replenishment.',
-        '',
-        'INDIVIDUAL MEMBER BUILD NEEDS'
-      );
-    }
 
-    if(memberNeeds.length){
-      for(const need of memberNeeds){
-        const row=nonReady.get(need.memberId);
-        lines.push(
-          '- '+need.memberName+' ['+need.memberId+'] · '+String(need.slot||'').toUpperCase()+
-          ' → '+need.item+(row?.statsEstimated?' (balanced public estimate)':'')
-        );
+      if(memberNeeds.length){
+        for(const need of memberNeeds){
+          const row=nonReady.get(need.memberId);
+          lines.push(
+            '- '+need.memberName+' ['+need.memberId+'] · '+String(need.slot||'').toUpperCase()+
+            ' → '+need.item+(row?.statsEstimated?' (balanced public estimate)':'')
+          );
+        }
+      }else{
+        lines.push('- No member build equipment currently requires purchase.');
       }
     }else{
-      lines.push('- None currently require purchased build equipment.');
-    }
-
-    if(!isWar){
-      lines.push('','MINIMUM STOCK SHORTFALLS');
+      lines.push(
+        'Scope: PEACE ONLY — replenish faction minimum stock. Member build/equipment gaps are deferred until War mode.',
+        '',
+        'MINIMUM STOCK SHORTFALLS'
+      );
       if(minNeeds.length){
         for(const need of minNeeds){
           lines.push(
@@ -1683,11 +1673,11 @@
           );
         }
       }else{
-        lines.push('- No current minimum-stock shortfalls.');
+        lines.push('- No current Peace minimum-stock shortfalls.');
       }
     }
 
-    lines.push('',isWar?'WAR ACQUISITION LIST / PRICE RANGE':'COMBINED ACQUISITION LIST / PRICE RANGE');
+    lines.push('',isWar?'WAR ACQUISITION LIST / PRICE RANGE':'PEACE MINIMUM REPLENISHMENT / PRICE RANGE');
     if(priceRows.length){
       for(const item of priceRows){
         const row=item.row;
@@ -1701,10 +1691,10 @@
         );
       }
     }else{
-      lines.push(isWar?'- No War acquisition is currently required.':'- Nothing currently requires acquisition.');
+      lines.push(isWar?'- No War acquisition is currently required.':'- No Peace minimum replenishment is currently required.');
     }
 
-    lines.push('',isWar?'ESTIMATED WAR ACQUISITION COST':'ESTIMATED TOTAL ACQUISITION COST');
+    lines.push('',isWar?'ESTIMATED WAR ACQUISITION COST':'ESTIMATED PEACE MINIMUM REPLENISHMENT COST');
     lines.push(priced.length?'$'+fmt(lowTotal)+' – $'+fmt(highTotal):'$0 known');
     if(unpriced.length){
       lines.push(
@@ -1818,8 +1808,8 @@
       '</div>'+
       '<div class="mm-fa-muted" style="margin-top:4px;">'+
         (stockMode==='war'
-          ? 'Leader message scope: WAR NEEDS ONLY. It includes non-War-Ready member equipment requirements and war equipment spares; minimum-stock replenishment is deferred until Peace mode. '
-          : 'Leader message scope: PEACE / POST-WAR. It includes normal acquisition needs plus minimum-stock replenishment. ')+
+          ? 'War mode: acquire only non-War-Ready member equipment plus war equipment spares. Routine minimum-stock replenishment waits for Peace mode. '
+          : 'Peace mode: replenish faction minimum stock only. Individual member equipment needs are deferred until War mode. ')+
         'Approved War Ready members generate no individual equipment acquisition. Members without private stats use a clearly labeled balanced public estimate; faction loans are counted before purchases. '+
         'Cached Item Market, Bazaar, overseas, and reference prices provide low/high planning estimates; MM_Acquisitions performs live source verification before purchase.'+
       '</div>'+
