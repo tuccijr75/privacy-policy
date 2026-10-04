@@ -27,7 +27,7 @@
   const PLAYER_NAME = 'Manic-Mike';
   const CONTACT_LABEL = PLAYER_NAME + ' [' + PLAYER_ID + ']';
   const FORUM_THREAD_ID = '16608018';
-  const SERVICE_THREAD = 'https://www.torn.com/forums.php?p=threads&f=67&t=' + FORUM_THREAD_ID + '&b=0&a=0';
+  const SERVICE_THREAD = 'https://www.torn.com/forums.php?p=threads&t=' + FORUM_THREAD_ID;
   const FORUM_INDEX = 'https://www.torn.com/forums.php?p=forums&f=67&b=0&a=0';
   const FORUM_ROUTE_KEY = 'mmTradeChatAssistantForumRouteV1';
   const FORUM_BUMP_PREP_KEY = 'mmTradeChatAssistantForumBumpPrepV1';
@@ -551,6 +551,14 @@
     }, 150);
   }
 
+  function handleForumPostClick(event) {
+    if (!isServiceThreadPage()) return;
+    const button = event.target && event.target.closest && event.target.closest('button,[role="button"]');
+    if (!button || (button.closest && button.closest('#chatRoot'))) return;
+    if (buttonText(button) !== 'post') return;
+    setTimeout(() => checkForumBumpStatus(true), 3500);
+  }
+
   function formatCountdown() {
     if (!state.enabled) return 'PAUSE';
     if (isPostingDue()) return '0:00';
@@ -877,10 +885,11 @@
     render();
     restoreTradeAfterForumRoute();
     prepareForumBumpAfterRoute();
-    setTimeout(() => checkForumBumpStatus(true), 1200);
+    setTimeout(() => checkForumBumpStatus(false), 1200);
 
     document.addEventListener('keydown', handleComposerKeydown, true);
     document.addEventListener('click', handleTradeClick, true);
+    document.addEventListener('click', handleForumPostClick, true);
     document.addEventListener('input', handleComposerInput, true);
     window.addEventListener('resize', () => requestAnimationFrame(positionPanelDefault), { passive: true });
 
