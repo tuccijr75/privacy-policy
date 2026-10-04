@@ -72,6 +72,46 @@
     }).filter(row=>row.price>0).sort((a,b)=>a.price-b.price);
   }
 
+  function normalizeCatalogShop(row) {
+    if (typeof row === 'string') return {name:row,price:0,country:'',quantity:0};
+    const r=row&&typeof row==='object'?row:{};
+    return {
+      name:String(r.name ?? r.shop_name ?? r.shop ?? r.location ?? r.city ?? r.country ?? 'Shop'),
+      price:Math.max(0,Number(r.price ?? r.cost ?? r.buy_price ?? r.unit_price ?? 0)||0),
+      country:String(r.country ?? r.location_country ?? ''),
+      quantity:Math.max(0,Number(r.quantity ?? r.stock ?? r.in_stock ?? 0)||0)
+    };
+  }
+
+  function normalizeTornCatalog(data) {
+    let rows=data?.items ?? data?.torn?.items ?? [];
+    if(!Array.isArray(rows)&&rows&&typeof rows==='object'){
+      rows=Object.entries(rows).map(([id,row])=>({id:row?.id??id,...(row&&typeof row==='object'?row:{})}));
+    }
+    if(!Array.isArray(rows))return [];
+    return rows.map(row=>{
+      const value=row?.value&&typeof row.value==='object'?row.value:{};
+      let shopRows=value.shops ?? row?.shops ?? [];
+      if(!Array.isArray(shopRows)&&shopRows&&typeof shopRows==='object')shopRows=Object.values(shopRows);
+      const shops=(Array.isArray(shopRows)?shopRows:[]).map(normalizeCatalogShop);
+      const marketPrice=Math.max(0,Number(value.market_price ?? row?.market_price ?? 0)||0);
+      const buyPrice=Math.max(0,Number(value.buy_price ?? row?.buy_price ?? 0)||0);
+      const sellPrice=Math.max(0,Number(value.sell_price ?? row?.sell_price ?? 0)||0);
+      const id=asId(row?.id ?? row?.item_id);
+      const name=String(row?.name ?? row?.item_name ?? '').trim();
+      return {
+        id,name,
+        type:String(row?.type ?? row?.category ?? 'Other').trim()||'Other',
+        subType:String(row?.sub_type ?? row?.subtype ?? '').trim(),
+        image:String(row?.image ?? ''),
+        marketPrice,buyPrice,sellPrice,
+        circulation:Math.max(0,Number(row?.circulation ?? 0)||0),
+        shops,
+        buyable:Boolean(marketPrice>0||buyPrice>0||shops.some(shop=>Number(shop.price||0)>0))
+      };
+    }).filter(row=>/^\d+$/.test(row.id)&&row.name);
+  }
+
   function marketMetrics(rows) {
     if (!rows.length) return {lowest:0,third:0,median:0,totalQty:0,listings:0,depth1Pct:0,depth3Pct:0,depth5Pct:0};
     const prices = rows.map(r=>r.price);
@@ -253,6 +293,26 @@
     if (typeof deps.bazaarRequest !== 'function') throw new Error('bazaarRequest dependency is required.');
     const hasTornKey=typeof deps.hasTornKey === 'function' ? deps.hasTornKey : ()=>true;
     const navigate=typeof deps.navigate === 'function' ? deps.navigate : url=>{ location.href=url; };
+
+    async function refreshItemCatalog() {
+      if (!hasTornKey()) throw new Error('Save a Torn API key in MM Acquisitions first.');
+      const data=await deps.tornRequest('/torn/items?cat=All&sort=ASC');
+      const rows=normalizeTornCatalog(data);
+      if(!rows.length)throw new Error('Torn item catalog returned no readable items.');
+      const syncedAt=nowIso();
+      await core.updateDomainState('market',draft=>{
+        const proc=draft.procurement || (draft.procurement={});
+        proc.catalog=proc.catalog&&typeof proc.catalog==='object'?proc.catalog:{};
+        for(const row of rows){
+          proc.catalog[row.id]={...(proc.catalog[row.id]||{}),...row,catalogUpdatedAt:syncedAt};
+        }
+        proc.catalogLastSyncAt=syncedAt;
+        proc.catalogItemCount=rows.length;
+        proc.catalogBuyableCount=rows.filter(row=>row.buyable).length;
+        return draft;
+      });
+      return {state:await core.readLegacyState(),rows,syncedAt};
+    }
 
     async function refreshGlobal() {
       const data=await deps.weavRequest('/marketplace');
@@ -499,6 +559,12 @@
       const bestTravel=travelRows[0]||null;
 
       const sources=[];
+      for(const shop of Array.isArray(catalog?.shops)?catalog.shops:[]){
+        if(Number(shop?.price||0)>0) sources.push({
+          source:'Torn Shop',price:Number(shop.price||0),quantity:Number(shop.quantity||0),
+          shopName:String(shop.name||'Shop'),country:String(shop.country||''),catalogSource:true
+        });
+      }
       if(bestBazaar) sources.push({
         source:'Bazaar',price:Number(bestBazaar.price||0),quantity:Number(bestBazaar.quantity||0),
         sellerId:asId(bestBazaar.sellerId),sellerName:String(bestBazaar.sellerName||'')
@@ -544,6 +610,14 @@
           return {
             routed:false,reason:'overseas-recommended',recommendedSource:'Overseas',
             country:String(candidate.country||''),price:Number(candidate.price||0),stock:Number(candidate.quantity||0),
+            ...result
+          };
+        }
+        if(candidate.source==='Torn Shop') {
+          return {
+            routed:false,reason:'shop-recommended',recommendedSource:'Torn Shop',
+            shopName:String(candidate.shopName||'Torn shop'),country:String(candidate.country||''),
+            price:Number(candidate.price||0),stock:Number(candidate.quantity||0),
             ...result
           };
         }
@@ -598,7 +672,7 @@
     }
 
     return Object.freeze({
-      refreshGlobal,enrichItem,refreshItemMarket,refreshOpportunities,
+      refreshItemCatalog,refreshGlobal,enrichItem,refreshItemMarket,refreshOpportunities,
       verifyBazaar,acquire,procurementSourceOptions,routeProcurementRequest,itemMarketPurchaseUrl,importTravelRows
     });
   }
@@ -606,7 +680,7 @@
   Object.defineProperty(globalThis,'MMTornAcquisitionsLive',{
     value:Object.freeze({
       createService,normalizeMarketplaceItem,normalizeListing,normalizeTrader,
-      genericMarketListings,marketMetrics,bazaarSnapshotFreshness,itemMarketPurchaseUrl,
+      genericMarketListings,normalizeCatalogShop,normalizeTornCatalog,marketMetrics,bazaarSnapshotFreshness,itemMarketPurchaseUrl,
       parseTravelNumber,parseTravelStockHtml,recordTravelSnapshots
     }),
     configurable:true,enumerable:false,writable:false
