@@ -18,6 +18,24 @@ const history=[sale(2,65000000,24),sale(8,62000000,26),sale(20,64000000,25),sale
 const candidate={itemId:26,itemName:'AK-47',subType:'Rifle',rarity:'yellow',price:45000000,bonuses:{0:{bonus:'Conserve',value:25}}};
 
 const value=logic.evaluateListing(candidate,history,{now,bbRate:6000000,bonusBand:5,minComparableSales:3});
+const liveMeta=logic.evaluateListing({
+  ...candidate,
+  uid:'live-1',
+  source:'auction',
+  lastUpdated:'2026-10-04T22:20:00Z',
+  endsAt:Math.floor(now/1000)+3600,
+  sellerId:'123',
+  sellerName:'Seller',
+  quantity:2,
+  url:'https://example.invalid/listing'
+},history,{now,bbRate:6000000,bonusBand:5,minComparableSales:3});
+assert.strictEqual(liveMeta.source,'auction');
+assert.strictEqual(liveMeta.lastUpdated,'2026-10-04T22:20:00Z');
+assert.strictEqual(liveMeta.endsAt,Math.floor(now/1000)+3600);
+assert.strictEqual(liveMeta.sellerId,'123');
+assert.strictEqual(liveMeta.sellerName,'Seller');
+assert.strictEqual(liveMeta.quantity,2);
+assert.strictEqual(liveMeta.url,'https://example.invalid/listing');
 assert.strictEqual(value.bbUnits,10);
 assert.strictEqual(value.bbFloor,60000000);
 assert(value.auctionValue>=58000000&&value.auctionValue<100000000,'outlier should not dominate auction median');
