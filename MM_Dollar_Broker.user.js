@@ -158,7 +158,7 @@ const SELECTOR = Object.freeze({
 });
 
 const cleanText=value=>String(value??'').replace(/\s+/g,' ').trim();
-const stockMatch=value=>/^\(?\s*([1-9]\d{0,8}|0)(?:,\d{3})*\s+in stock\s*\)?$/i.exec(cleanText(value));
+const stockMatch=value=>/^\(?\s*((?:[1-9]\d{0,8}|0)(?:,\d{3})*)\s+in stock\s*\)?$/i.exec(cleanText(value));
 
 function visible(element, win, viewportOnly=false) {
   if (!element?.isConnected) return false;
