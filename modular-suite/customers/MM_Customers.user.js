@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.17
+// @version      8.0.0-alpha.18
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.17';
+  const VERSION='8.0.0-alpha.18';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -37,10 +37,12 @@
   const AUTO_SYNC_STALE_MS=45_000;
   const USERNAME_RESOLVE_BATCH=12;
   const PENDING_DELIVERY_TTL_MS=30*60*1000;
-  const COMPOSE_BRIDGE_TTL_MS=90_000;
+  const COMPOSE_BRIDGE_TTL_MS=120_000;
+  const COMPOSE_FORM_POLL_MS=1000;
+  const COMPOSE_EDITOR_POLL_MS=250;
+  const COMPOSE_EDITOR_READY_TIMEOUT_MS=12_000;
   const COMPOSE_SURFACE_STABLE_MS=350;
   const COMPOSE_POST_FILL_VERIFY_MS=400;
-  const COMPOSE_FILL_TIMEOUT_MS=20_000;
   const COMPOSE_MAX_FORMAT_ATTEMPTS=3;
   const DELIVERY_CONFIRM_WINDOW_MS=12_000;
   const FALSE_SEND_RECOVERY_MS=2*60*60*1000;
@@ -554,10 +556,11 @@
   function getComposeXid(){const params=getComposeParams();return String(params.get('XID')||params.get('xid')||'').trim();}
   function canonicalComposeUrl(payload={}){
     const id=String(payload.playerId||'').trim();
-    const subject=String(payload.subject||'');
+    // Torn reliably resolves the recipient from XID. Subject/body are applied
+    // only after the live compose form mounts; putting subject in the hash can
+    // leave the Messages SPA on its loading shell.
     return 'https://www.torn.com/messages.php#/p=compose'+
-      (id?'&XID='+encodeURIComponent(id):'')+
-      (subject?'&subject='+encodeURIComponent(subject):'');
+      (id?'&XID='+encodeURIComponent(id):'');
   }
 
   function composePayloadForCurrentPage(){
@@ -822,27 +825,26 @@
     const html=String(htmlValue||'').replace(/>\s+</g,'><').trim();
     if(!brandedSourceIsComplete(html))return false;
     if(stillCurrent&&!stillCurrent())return false;
-    const toggle=findTornCodeEditorToggle();if(!toggle)return false;
+
+    const toggle=findTornCodeEditorToggle();
+    if(!toggle)return false;
 
     let source=likelyTornSourceEditor(new Set(),false);
-    const rich=findComposeRichEditorBody();
-    if(!source&&!rich)source=likelyTornSourceEditor(new Set(),true);
-    if(!source&&!rich)return false;
-
     if(!source){
       const before=new Set(sourceEditorCandidates());
       if(stillCurrent&&!stillCurrent())return false;
       try{toggle.click();}catch{return false;}
-      source=await waitForSourceEditor(before,4000,true,stillCurrent);
+      source=await waitForSourceEditor(before,5000,true,stillCurrent);
     }
+
     if(!source||(stillCurrent&&!stillCurrent()))return false;
     if(!setSourceEditorHtml(source,html))return false;
 
-    await sleepMs(220);
+    await sleepMs(180);
     if(stillCurrent&&!stillCurrent())return false;
     const toggleBack=findTornCodeEditorToggle()||toggle;
     try{toggleBack.click();}catch{return false;}
-    return waitForRichBranding(html,2400,stillCurrent);
+    return waitForRichBranding(html,3000,stillCurrent);
   }
 
   function composeFormattingNotice(text,kind='waiting'){
@@ -874,44 +876,83 @@
     const payload=composePayloadForCurrentPage();
     if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
 
-    const startedAt=Date.now();
     const requiresBranding=Boolean(payload.bodyHtml);
     const hasBody=requiresBranding||Boolean(payload.body);
-    let fillAttempts=0,readyKey='',readySince=0;
+    const bridgeDeadline=Number(payload.createdAt||Date.now())+COMPOSE_BRIDGE_TTL_MS;
+    let fillAttempts=0;
 
     const stillCurrent=()=>generation===composeFillGeneration&&
       location.pathname.includes('messages.php')&&location.hash.includes('compose')&&
       (!payload.playerId||getComposeXid()===String(payload.playerId||''));
 
-    const fail=(showError=true)=>{
+    const fail=(message='Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry.')=>{
       clearMatchingPendingCompose(payload);
-      if(showError&&requiresBranding){
-        statusText='Branded formatting is not ready. Draft was NOT downgraded to plain text.';
-        composeFormattingNotice('Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry.','error');
-      }else{
-        clearComposeFormattingNotice();
-      }
+      statusText=requiresBranding?'Branded formatting is not ready. Draft was NOT downgraded to plain text.':'Message preparation failed.';
+      if(requiresBranding)composeFormattingNotice(message,'error');
+      else clearComposeFormattingNotice();
     };
 
-    while(stillCurrent()&&Date.now()-startedAt<COMPOSE_FILL_TIMEOUT_MS){
-      const xid=getComposeXid();
-      const subject=findComposeSubjectInput();
-      const recipient=findComposeRecipientInput(subject);
-      const recipientOK=(!payload.playerId)||(xid===String(payload.playerId||'')&&recipientMatchesPayload(payload,recipient));
-      const rich=findComposeRichEditorBody();
-      const source=likelyTornSourceEditor(new Set(),true);
-      const editorReady=!hasBody||
-        (requiresBranding?Boolean(findTornCodeEditorToggle()&&(rich||source)):Boolean(findComposeBodyInput(subject)||rich));
+    // Phase 1 is intentionally passive. Do not inspect/toggle the rich editor
+    // while Torn is still building the Messages SPA. This avoids competing with
+    // the page load that previously left only the XID-resolved username visible.
+    let subject=null,recipient=null;
+    while(stillCurrent()&&Date.now()<bridgeDeadline){
+      subject=findComposeSubjectInput();
+      if(subject){
+        recipient=findComposeRecipientInput(subject);
+        if((!payload.playerId)||recipientMatchesPayload(payload,recipient))break;
+      }
+      statusText=subject?'Waiting for Torn to resolve the intended recipient…':'Waiting for Torn compose form…';
+      composeFormattingNotice('Waiting for Torn to finish loading the compose form…');
+      await sleepMs(COMPOSE_FORM_POLL_MS);
+    }
 
-      if(!subject||!recipientOK||!editorReady){
+    if(!stillCurrent()){clearComposeFormattingNotice();return;}
+    if(!subject||((payload.playerId)&&!recipientMatchesPayload(payload,recipient))){
+      fail('Torn compose form did not finish loading in time. No message content was inserted.');
+      return;
+    }
+
+    // Subject is independent of the editor. Apply it as soon as Torn exposes
+    // the real Subject control so a slow editor can never leave username-only.
+    if(payload.subject){
+      setNativeValue(subject,payload.subject);
+      await sleepMs(40);
+      if(String(subject.value||'').trim()!==String(payload.subject||'').trim()){
+        fail('Torn rejected the prepared Subject. No message content was inserted.');
+        return;
+      }
+    }
+
+    if(!hasBody){
+      clearMatchingPendingCompose(payload);
+      clearComposeFormattingNotice();
+      statusText='Message subject prepared with recipient verified. Send remains manual.';
+      return;
+    }
+
+    // Phase 2 begins only after Name + Subject are live. At this point it is
+    // safe to inspect the editor toolbar/source mode without slowing page mount.
+    const editorDeadline=Date.now()+COMPOSE_EDITOR_READY_TIMEOUT_MS;
+    let readyKey='',readySince=0;
+    while(stillCurrent()&&Date.now()<editorDeadline&&fillAttempts<COMPOSE_MAX_FORMAT_ATTEMPTS){
+      const currentSubject=findComposeSubjectInput();
+      const currentRecipient=findComposeRecipientInput(currentSubject);
+      const recipientOK=(!payload.playerId)||recipientMatchesPayload(payload,currentRecipient);
+      const toggle=requiresBranding?findTornCodeEditorToggle():null;
+      const rich=findComposeRichEditorBody();
+      const plain=findComposeBodyInput(currentSubject);
+      const editorReady=requiresBranding?Boolean(toggle):Boolean(plain||rich);
+
+      if(!currentSubject||!recipientOK||!editorReady){
         readyKey='';readySince=0;
-        statusText=!subject?'Waiting for Torn compose form…':!recipientOK?'Waiting for Torn to resolve the intended recipient…':'Waiting for Torn message editor…';
-        composeFormattingNotice('Preparing message… waiting for Torn to finish loading the original compose form.');
-        await sleepMs(500);
+        statusText=!currentSubject?'Waiting for Torn compose form…':!recipientOK?'Waiting for Torn recipient…':'Waiting for Torn message editor…';
+        composeFormattingNotice('Subject is ready. Waiting for Torn message editor…');
+        await sleepMs(COMPOSE_EDITOR_POLL_MS);
         continue;
       }
 
-      const surfaceKey=[xid,String(recipient?.value||recipient?.textContent||''),Boolean(rich),Boolean(source)].join('|');
+      const surfaceKey=[getComposeXid(),String(currentRecipient?.value||currentRecipient?.textContent||''),Boolean(toggle),Boolean(rich||plain)].join('|');
       if(surfaceKey!==readyKey){
         readyKey=surfaceKey;readySince=Date.now();
         await sleepMs(COMPOSE_SURFACE_STABLE_MS);
@@ -923,49 +964,41 @@
       }
 
       fillAttempts++;
-      if(payload.subject)setNativeValue(subject,payload.subject);
-      await sleepMs(30);
-      if(!stillCurrent())break;
-
-      const subjectOK=!payload.subject||String(subject.value||'').trim()===String(payload.subject||'').trim();
-      let bodyOK=!hasBody;
-
+      let bodyOK=false;
       if(requiresBranding){
         bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent);
-      }else if(hasBody){
-        const body=findComposeBodyInput(subject)||findComposeRichEditorBody();
+      }else{
+        const body=findComposeBodyInput(currentSubject)||findComposeRichEditorBody();
         bodyOK=Boolean(body)&&setPlainEditorText(body,payload.body);
       }
 
       if(bodyOK){
         await sleepMs(COMPOSE_POST_FILL_VERIFY_MS);
-        if(!stillCurrent())break;
+        if(!stillCurrent()){clearComposeFormattingNotice();return;}
         const verifySubject=findComposeSubjectInput();
         const verifyRecipient=findComposeRecipientInput(verifySubject);
-        const verifyRecipientOK=(!payload.playerId)||(getComposeXid()===String(payload.playerId||'')&&recipientMatchesPayload(payload,verifyRecipient));
+        const verifyRecipientOK=(!payload.playerId)||recipientMatchesPayload(payload,verifyRecipient);
         const verifySubjectOK=!payload.subject||(Boolean(verifySubject)&&String(verifySubject.value||'').trim()===String(payload.subject||'').trim());
         const verifyBodyOK=requiresBranding?richComposerHasBranding(payload.bodyHtml):bodyOK;
-        if(verifyRecipientOK&&verifySubjectOK&&verifyBodyOK&&subjectOK){
+        if(verifyRecipientOK&&verifySubjectOK&&verifyBodyOK){
           clearMatchingPendingCompose(payload);
           clearComposeFormattingNotice();
           statusText=requiresBranding
-            ? 'Message prepared in Torn composer with recipient + branded formatting verified. Send remains manual.'
-            : 'Message prepared in Torn composer with recipient verified. Send remains manual.';
+            ? 'Message prepared in Torn composer with recipient + subject + branded body verified. Send remains manual.'
+            : 'Message prepared in Torn composer with recipient + subject verified. Send remains manual.';
           return;
         }
       }
 
-      if(fillAttempts>=COMPOSE_MAX_FORMAT_ATTEMPTS){
-        fail(true);
-        return;
-      }
       readyKey='';readySince=0;
-      statusText=requiresBranding?'Torn rich editor was not ready; retrying the original compose form.':'Torn compose form changed while preparing the message; retrying.';
-      composeFormattingNotice(requiresBranding?'Preparing branded message… do not send until this notice disappears.':'Preparing message…');
-      await sleepMs(500);
+      if(fillAttempts<COMPOSE_MAX_FORMAT_ATTEMPTS){
+        statusText=requiresBranding?'Torn editor was not ready; retrying formatting.':'Torn editor changed while preparing the message; retrying.';
+        composeFormattingNotice(requiresBranding?'Subject is ready. Retrying branded message formatting…':'Retrying message body…');
+        await sleepMs(500);
+      }
     }
 
-    if(stillCurrent())fail(true);
+    if(stillCurrent())fail();
     else clearComposeFormattingNotice();
   }
 
