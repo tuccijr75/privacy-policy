@@ -122,7 +122,7 @@ The Acquire screen aggregates all member requirements into a single list:
 - non-live reference value when known
 - reason / members driving the quantity
 
-War mode assumes 20 participants and also preserves two ready-to-issue equipment spares per standard slot.
+War mode derives participant count directly from the current faction roster and adjusts automatically as members join or leave. It also preserves two ready-to-issue equipment spares per standard slot.
 
 Provision shortfalls from the active War/Peace minimum policy are added to the same acquisition list.
 
@@ -188,7 +188,7 @@ The default known-cost acquisition cap is **$15,000,000**. The cap is editable l
 
 Unpriced provision lines remain requirements but do not consume the known-cost budget calculation until a reference price exists.
 
-Missing member stats, missing member inventory, and unknown-performance current gear are intentionally excluded from automatic buy quantity and shown as unresolved. This prevents a partially populated roster from generating a large speculative purchase list.
+Members with verified battle stats continue to use those exact stats. Members without private stats may receive a clearly labeled balanced planning estimate from public Torn rank/profile data; those estimated builds can create provisional requirements but can never be approved WAR READY. Unknown-performance current gear remains unresolved rather than being replaced speculatively. Faction loans assigned to a member are treated as known equipment evidence before acquisition.
 
 Budget-mode examples currently include lower-cost common equipment such as AK-47 / Mag 7 / Benelli M4 Super, BT MP9, Macana, WWII Helmet, Bulletproof Vest, Kevlar Gloves, Safety Boots, and Combat Pants where no sensible mid-tier general alternative exists. Standard and Ideal modes may recommend stronger/more expensive references.
 
@@ -264,3 +264,92 @@ For the selected War/Peace mode and procurement mode:
 10. MM Faction Armory decides **what and how many** are needed. MM_Acquisitions performs live source verification and routing before any manual purchase.
 
 The planner deliberately does not purchase around unresolved unknown-performance gear or unknown member inventory. Those slots remain visible as unresolved until data is sufficient.
+
+
+## Alpha.19 dynamic roster, public estimates, reminders, and leadership acquisition output
+
+### Dynamic roster sizing
+
+War planning no longer accepts a fixed participant assumption. The active roster from Torn faction membership is the participant set for:
+
+- member build coverage;
+- per-member war supply packages;
+- routine equipment pool requirements;
+- two-spare equipment reserves;
+- acquisition planning; and
+- leadership reporting.
+
+If the faction roster grows or shrinks, the next faction refresh changes the planning population automatically.
+
+### Missing private battle stats
+
+Verified member API/screenshot data always takes precedence.
+
+When verified battle stats are unavailable, the module may create a **balanced planning estimate** from public information obtainable through the faction/public Torn API surface. Current inputs are:
+
+- level;
+- Torn rank;
+- Torn age in days;
+- public crime-total information when available;
+- public networth information when available;
+- faction tenure/position as retained context.
+
+Torn Rank is driven by rank triggers from Level, Crimes, Networth, and Battle Stats. The estimator subtracts the known non-battle triggers from the visible Rank trigger count to infer a broad hidden-battle-stat band. It then creates an equal STR/DEF/SPD/DEX planning profile inside that band, using account age only as a modest position within the range.
+
+This estimate is deliberately labeled **ESTIMATED — NEEDS DATA**. It is not treated as the member's actual battle stats, and it cannot be approved **WAR READY**. Rank estimation has known uncertainty from ghost ranks and heavily unbalanced stat distributions.
+
+Current reference:
+- Torn Rank trigger model: https://wiki.torn.com/wiki/Rank
+- Torn API v2 endpoints/schemas: https://www.torn.com/swagger.php and https://www.torn.com/swagger/openapi.json
+
+### Equipment evidence when private API data is missing
+
+Faction-armory loans are associated with the borrowing member by Torn member ID. Those assigned loans are used as equipment evidence before creating a purchase.
+
+For every member, including an estimated-stat member, the equipment route remains:
+
+1. verified adequate equipped gear;
+2. adequate member-owned gear;
+3. adequate faction item already loaned to that member;
+4. adequate unloaned faction stock;
+5. acquire the active reference target.
+
+An adequate assigned loan therefore suppresses a duplicate acquisition for that slot.
+
+### Missing-data reminders
+
+Members lacking verified private battle stats or complete private equipment data show **Send Data Reminder**.
+
+The reminder asks for either:
+
+- a Limited Access Torn API key; or
+- screenshots covering STR/DEF/SPD/DEX, equipped weapons/armor, and medical/war supplies.
+
+The button is per-member and is not shown for members whose required private data is already present. Sending remains manual. The reminder is marked sent only after the operator clicks Torn's real Send control and the workflow sees post-send confirmation; only then does that member's reminder button disappear.
+
+### WAR READY and acquisition
+
+The Acquire planner is regenerated from the current canonical member rows every time the view renders or state changes.
+
+A member whose canonical status is **WAR READY** is excluded from individual build-equipment acquisition because their approved build requirement is fulfilled. They can still affect faction-wide minimum-stock policy through the current roster count.
+
+Members who are not WAR READY remain eligible to contribute unresolved/issue/acquisition needs. Estimated members are clearly identified in acquisition reasons.
+
+### Leadership acquisition report
+
+The Acquire view can prepare a manual Torn message to the faction leader resolved from Torn faction basic data.
+
+The report includes:
+
+- current faction member count;
+- approved WAR READY count;
+- members not yet WAR READY;
+- named individual build acquisition needs for non-WAR-READY members;
+- minimum-stock shortfalls;
+- combined acquisition quantities;
+- lowest/highest cached unit-price estimates from available reference, Item Market, Bazaar, and overseas sources;
+- low/high line totals;
+- low/high total acquisition estimate; and
+- any requirements that remain unpriced.
+
+The report is planning output. MM_Acquisitions remains responsible for live price/availability verification before manual purchasing.
