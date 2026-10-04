@@ -18,6 +18,8 @@ if (!coreSource.includes('const alignedTop=clamp(o.bottom-height')) throw new Er
 if (!coreSource.includes("DOCK_DEFAULT_LAYOUT_REV='footer-adjacent-v3-ordered'")) throw new Error('ordered dock layout revision missing');
 if (!coreSource.includes("'inventory-roi','acquisitions','customers','armory','trade-reminder'")) throw new Error('requested default dock cluster missing');
 if (!coreSource.includes('DOCK_ORDER_CUSTOM_KEY')) throw new Error('user-reorder persistence flag missing');
+if (!coreSource.includes("dock.dataset.mmAlpha9PersistenceBridge='1'")) throw new Error('mixed-version dock bridge missing');
+if (!coreSource.includes('mmDockLeft')) throw new Error('dock geometry diagnostics missing');
 
 
 const fixture = {
