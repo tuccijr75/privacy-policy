@@ -174,8 +174,8 @@
     if(rankTriggers==null)return null;
 
     const levelTriggers=triggerCount(level,LEVEL_RANK_TRIGGERS);
-    const crimesKnown=Number.isFinite(Number(publicIntel?.crimesTotal));
-    const networthKnown=Number.isFinite(Number(publicIntel?.networth));
+    const crimesKnown=publicIntel?.crimesTotal!=null&&Number.isFinite(Number(publicIntel.crimesTotal));
+    const networthKnown=publicIntel?.networth!=null&&Number.isFinite(Number(publicIntel.networth));
     const crimeTriggers=crimesKnown?triggerCount(publicIntel.crimesTotal,CRIME_RANK_TRIGGERS):0;
     const networthTriggers=networthKnown?triggerCount(publicIntel.networth,NETWORTH_RANK_TRIGGERS):0;
     const inferred=Math.max(0,Math.min(6,rankTriggers-levelTriggers-crimeTriggers-networthTriggers));
