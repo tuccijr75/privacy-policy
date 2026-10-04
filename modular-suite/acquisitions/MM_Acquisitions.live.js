@@ -91,6 +91,8 @@
     if(!Array.isArray(rows))return [];
     return rows.map(row=>{
       const value=row?.value&&typeof row.value==='object'?row.value:{};
+      const details=row?.details&&typeof row.details==='object'?row.details:{};
+      const baseStats=details?.stats&&typeof details.stats==='object'?details.stats:{};
       let shopRows=value.shops ?? row?.shops ?? [];
       if(!Array.isArray(shopRows)&&shopRows&&typeof shopRows==='object')shopRows=Object.values(shopRows);
       const shops=(Array.isArray(shopRows)?shopRows:[]).map(normalizeCatalogShop);
@@ -103,13 +105,105 @@
         id,name,
         type:String(row?.type ?? row?.category ?? 'Other').trim()||'Other',
         subType:String(row?.sub_type ?? row?.subtype ?? '').trim(),
+        weaponCategory:String(details?.category ?? row?.weapon_category ?? '').trim(),
+        baseStats:{
+          damage:Math.max(0,Number(baseStats?.damage||0)||0),
+          accuracy:Math.max(0,Number(baseStats?.accuracy||0)||0),
+          armor:Math.max(0,Number(baseStats?.armor||0)||0)
+        },
         image:String(row?.image ?? ''),
         marketPrice,buyPrice,sellPrice,
         circulation:Math.max(0,Number(row?.circulation ?? 0)||0),
+        isTradable:row?.is_tradable!==false&&row?.tradable!==false,
         shops,
         buyable:Boolean(marketPrice>0||buyPrice>0||shops.some(shop=>Number(shop.price||0)>0))
       };
     }).filter(row=>/^\d+$/.test(row.id)&&row.name);
+  }
+
+  function normalizePricelistRows(data) {
+    const rows=Array.isArray(data)?data:(Array.isArray(data?.items)?data.items:[]);
+    return rows.map(row=>({
+      itemId:asId(row?.itemId??row?.itemID??row?.item_id),
+      name:String(row?.name??row?.itemName??'').trim(),
+      buyPrice:Math.max(0,Number(row?.buyPrice??row?.price??0)||0),
+      bulkThreshold:Math.max(0,Number(row?.bulkThreshold??0)||0),
+      bulkBuyPrice:Math.max(0,Number(row?.bulkBuyPrice??0)||0)
+    })).filter(row=>row.itemId&&row.name);
+  }
+
+  function normalizeRankedBonuses(value) {
+    let rows=value;
+    if(!Array.isArray(rows)&&rows&&typeof rows==='object')rows=Object.values(rows);
+    if(!Array.isArray(rows))rows=[];
+    return rows.map(row=>({
+      title:String(row?.title??row?.bonus??row?.name??'').trim(),
+      value:Number(row?.value??row?.percentage??row?.percent??0)||0,
+      description:String(row?.description??'')
+    })).filter(row=>row.title);
+  }
+
+  function normalizeRankedListing(row,{source='',itemId='',itemName='',subType='',weaponCategory=''}={}) {
+    const item=row?.item&&typeof row.item==='object'?row.item:{};
+    const details=row?.item_details&&typeof row.item_details==='object'?row.item_details:
+      (item?.details&&typeof item.details==='object'?item.details:{});
+    const stats=details?.stats&&typeof details.stats==='object'?details.stats:
+      (row?.stats&&typeof row.stats==='object'?row.stats:{});
+    const seller=row?.seller&&typeof row.seller==='object'?row.seller:{};
+    return {
+      uid:asId(row?.uid??details?.uid),
+      itemId:asId(row?.itemId??row?.item_id??item?.id??itemId),
+      itemName:String(row?.itemName??row?.item_name??item?.name??itemName??'').trim(),
+      weaponType:String(row?.weaponType??row?.weapon_type??details?.category??weaponCategory??'').trim(),
+      subType:String(row?.subType??row?.sub_type??item?.sub_type??subType??'').trim(),
+      rarity:String(row?.rarity??details?.rarity??'').trim().toLowerCase(),
+      damage:Number(row?.damage??stats?.damage??0)||0,
+      accuracy:Number(row?.accuracy??stats?.accuracy??0)||0,
+      quality:Number(row?.quality??stats?.quality??0)||0,
+      bonuses:normalizeRankedBonuses(row?.bonuses??details?.bonuses),
+      price:Math.max(0,Number(row?.price??row?.cost??row?.listing_price??0)||0),
+      quantity:Math.max(1,Number(row?.quantity??row?.amount??1)||1),
+      sellerId:asId(row?.playerId??row?.player_id??seller?.id??seller?.user_id),
+      sellerName:String(row?.playerName??row?.player_name??seller?.name??''),
+      source:String(row?.source??source??'').trim(),
+      lastUpdated:String(row?.lastUpdated??row?.lastUpdatedUnix??row?.last_updated??''),
+      endsAt:Number(row?.endsAtUnix??row?.ends_at??0)||0,
+      bids:Math.max(0,Number(row?.bids??0)||0),
+      url:String(row?.url??row?.listingUrl??'')
+    };
+  }
+
+  function normalizeAuctionHistoryRows(data,{itemId='',itemName='',subType='',weaponCategory=''}={}) {
+    let rows=data?.auctionhouse??data?.auction_house??data?.listings??data?.auctions??[];
+    if(!Array.isArray(rows)&&rows&&typeof rows==='object')rows=Object.values(rows);
+    if(!Array.isArray(rows))rows=[];
+    return rows.map(row=>{
+      const item=row?.item&&typeof row.item==='object'?row.item:{};
+      const details=item?.details&&typeof item.details==='object'?item.details:{};
+      const stats=details?.stats&&typeof details.stats==='object'?details.stats:{};
+      return {
+        id:asId(row?.id??row?.auction_id),
+        timestamp:Number(row?.timestamp??row?.ended_at??0)||0,
+        price:Math.max(0,Number(row?.price??row?.final_price??0)||0),
+        bids:Math.max(0,Number(row?.bids??0)||0),
+        itemId:asId(item?.id??row?.item_id??itemId),
+        itemName:String(item?.name??row?.item_name??itemName??'').trim(),
+        weaponType:String(details?.category??row?.weapon_type??weaponCategory??'').trim(),
+        subType:String(item?.sub_type??row?.sub_type??subType??'').trim(),
+        rarity:String(details?.rarity??row?.rarity??'').trim().toLowerCase(),
+        uid:asId(details?.uid??row?.uid),
+        damage:Number(stats?.damage??row?.damage??0)||0,
+        accuracy:Number(stats?.accuracy??row?.accuracy??0)||0,
+        quality:Number(stats?.quality??row?.quality??0)||0,
+        bonuses:normalizeRankedBonuses(details?.bonuses??row?.bonuses)
+      };
+    }).filter(row=>row.price>0&&row.itemId);
+  }
+
+  function apiNextUrl(data) {
+    const next=data?._metadata?.links?.next??data?.metadata?.links?.next??data?._metadata?.next??data?.pagination?.next??null;
+    if(typeof next!=='string'||!next.trim())return '';
+    try{return new URL(next,API_BASE+'/').toString();}catch{return '';}
   }
 
   function marketMetrics(rows) {
@@ -293,6 +387,99 @@
     if (typeof deps.bazaarRequest !== 'function') throw new Error('bazaarRequest dependency is required.');
     const hasTornKey=typeof deps.hasTornKey === 'function' ? deps.hasTornKey : ()=>true;
     const navigate=typeof deps.navigate === 'function' ? deps.navigate : url=>{ location.href=url; };
+
+    async function refreshPricelist(userId='4054377') {
+      const id=asId(userId);
+      if(!/^\d+$/.test(id))throw new Error('Invalid TornW3B pricelist user ID.');
+      const data=await deps.weavRequest('/pricelist/'+encodeURIComponent(id));
+      const rows=normalizePricelistRows(data);
+      if(!rows.length)throw new Error('TornW3B pricelist returned no readable rows.');
+      const at=nowIso();
+      const items={};
+      let bbRate=0,priced=0;
+      for(const row of rows){
+        if(row.itemId==='-3'){bbRate=row.buyPrice;continue;}
+        if(!/^\d+$/.test(row.itemId)||!(row.buyPrice>0))continue;
+        items[row.itemId]=row;
+        priced++;
+      }
+      await core.updateDomainState('market',draft=>{
+        const proc=draft.procurement || (draft.procurement={});
+        proc.pricelist={userId:id,items,bunkerBuckRate:bbRate,pricedCount:priced,lastSyncAt:at,source:'TornW3B Pricelist API'};
+        return draft;
+      });
+      return {state:await core.readLegacyState(),rows,priced,bbRate};
+    }
+
+    async function refreshRankedLive({pagesPerType=2,auctionPages=4,limit=100}={}) {
+      const types=['primary','secondary','melee'];
+      const market=[];
+      for(const weaponType of types){
+        for(let page=1;page<=Math.max(1,Number(pagesPerType)||1);page++){
+          const data=await deps.weavRequest('/ranked-weapons',{
+            tab:'weapons',weaponType,sortField:'price',sortOrder:'asc',page,limit:Math.min(100,Math.max(1,Number(limit)||100))
+          });
+          const rows=Array.isArray(data?.weapons)?data.weapons:[];
+          market.push(...rows.map(row=>normalizeRankedListing(row,{source:row?.source||'market'})));
+          if(rows.length<limit)break;
+        }
+      }
+      const auction=[];
+      for(let page=1;page<=Math.max(1,Number(auctionPages)||1);page++){
+        const data=await deps.weavRequest('/auction/listings',{
+          tab:'weapons',source:'auction',sortField:'endsAt',sortOrder:'asc',page,limit:Math.min(100,Math.max(1,Number(limit)||100))
+        });
+        const rows=Array.isArray(data?.items)?data.items:[];
+        auction.push(...rows.map(row=>normalizeRankedListing(row,{source:'auction'})));
+        if(!data?.hasMore||rows.length<limit)break;
+      }
+      const dedupe=rows=>[...new Map(rows.filter(row=>row.uid&&row.price>0).map(row=>[row.source+'|'+row.uid,row])).values()];
+      const liveMarket=dedupe(market),liveAuction=dedupe(auction),at=nowIso();
+      await core.updateDomainState('market',draft=>{
+        const proc=draft.procurement || (draft.procurement={});
+        const ranked=proc.ranked&&typeof proc.ranked==='object'?proc.ranked:(proc.ranked={});
+        ranked.liveMarket=liveMarket;
+        ranked.liveAuction=liveAuction;
+        ranked.lastLiveAt=at;
+        ranked.liveSource='TornW3B public ranked-weapons + auction APIs';
+        return draft;
+      });
+      return {state:await core.readLegacyState(),market:liveMarket,auction:liveAuction,at};
+    }
+
+    async function refreshRankedHistory(itemId,{days=90,maxPages=8}={}) {
+      if(!hasTornKey())throw new Error('Save a Torn API key in MM Acquisitions first.');
+      const id=asId(itemId);
+      if(!/^\d+$/.test(id))throw new Error('Invalid ranked weapon item ID.');
+      const before=await core.readLegacyState();
+      const catalog=before?.procurement?.catalog?.[id]||{};
+      const from=Math.floor((Date.now()-Math.max(7,Number(days)||90)*86400000)/1000);
+      let url='/market/'+encodeURIComponent(id)+'/auctionhouse?limit=100&sort=DESC&from='+from;
+      const history=[];
+      const seen=new Set();
+      for(let page=0;page<Math.max(1,Number(maxPages)||1)&&url;page++){
+        const data=await deps.tornRequest(url);
+        for(const row of normalizeAuctionHistoryRows(data,{
+          itemId:id,itemName:catalog.name||'',subType:catalog.subType||'',weaponCategory:catalog.weaponCategory||''
+        })){
+          const key=row.id||[row.timestamp,row.uid,row.price].join('|');
+          if(seen.has(key))continue;
+          seen.add(key);history.push(row);
+        }
+        url=apiNextUrl(data);
+      }
+      history.sort((a,b)=>Number(b.timestamp||0)-Number(a.timestamp||0));
+      const at=nowIso();
+      await core.updateDomainState('market',draft=>{
+        const proc=draft.procurement || (draft.procurement={});
+        const ranked=proc.ranked&&typeof proc.ranked==='object'?proc.ranked:(proc.ranked={});
+        ranked.history=ranked.history&&typeof ranked.history==='object'?ranked.history:{};
+        ranked.history[id]={itemId:id,itemName:String(catalog.name||('Item '+id)),rows:history.slice(0,800),lastSyncAt:at,days:Math.max(7,Number(days)||90),source:'Torn API finished Auction House'};
+        ranked.lastHistoryAt=at;
+        return draft;
+      });
+      return {state:await core.readLegacyState(),rows:history,at};
+    }
 
     async function refreshItemCatalog() {
       if (!hasTornKey()) throw new Error('Save a Torn API key in MM Acquisitions first.');
@@ -674,6 +861,7 @@
     }
 
     return Object.freeze({
+      refreshPricelist,refreshRankedLive,refreshRankedHistory,
       refreshItemCatalog,refreshGlobal,enrichItem,refreshItemMarket,refreshOpportunities,
       verifyBazaar,acquire,procurementSourceOptions,routeProcurementRequest,itemMarketPurchaseUrl,importTravelRows
     });
@@ -682,7 +870,9 @@
   Object.defineProperty(globalThis,'MMTornAcquisitionsLive',{
     value:Object.freeze({
       createService,normalizeMarketplaceItem,normalizeListing,normalizeTrader,
-      genericMarketListings,normalizeCatalogShop,normalizeTornCatalog,marketMetrics,bazaarSnapshotFreshness,itemMarketPurchaseUrl,
+      genericMarketListings,normalizeCatalogShop,normalizeTornCatalog,normalizePricelistRows,
+      normalizeRankedBonuses,normalizeRankedListing,normalizeAuctionHistoryRows,apiNextUrl,
+      marketMetrics,bazaarSnapshotFreshness,itemMarketPurchaseUrl,
       parseTravelNumber,parseTravelStockHtml,recordTravelSnapshots
     }),
     configurable:true,enumerable:false,writable:false
