@@ -1,6 +1,6 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.21**
+Status: **NON-PRODUCTION / alpha.22**
 
 ## Historical acceptance notes
 
@@ -503,5 +503,38 @@ The War/Peace stock-mode selector now determines what is included in the faction
 - [ ] Confirm **MINIMUM STOCK SHORTFALLS** is present and reflects the Peace minimum policy.
 - [ ] Confirm low/high cost totals change appropriately between War and Peace scope.
 - [ ] Sending remains manual in both modes.
+
+Production remains unchanged until live acceptance passes and the owner explicitly approves promotion.
+
+
+## Alpha.22 — War equipment / Peace minimums split and ordered dock
+
+### Static/source contract
+
+- [x] Faction Armory = alpha.22; suite = alpha.42; shared Core = alpha.9.
+- [x] War acquisition executes member build coverage and two equipment spares only.
+- [x] War acquisition contains no routine minimum-stock provision rows.
+- [x] Peace acquisition creates no member assignments and no unresolved member build slots.
+- [x] Peace acquisition uses Peace minimum-stock shortfalls only.
+- [x] Peace equipment-pool shortfalls resolve to named Budget/Standard/Ideal baseline items rather than an unpurchasable generic pool label.
+- [x] Peace stackable/provision minimum shortfalls remain included.
+- [x] Leader message uses the same mode-scoped acquisition plan: War = war equipment only; Peace = minimum replenishment only.
+- [x] Shared Core default dock order, read right-to-left, is Trade Rotation → Faction Armory → Customers → Acquisitions → Inventory Manager.
+- [x] Shared dock remains immediately left of Torn's detected native bottom toolbar, with the existing narrow-screen/fallback behavior.
+- [x] One-time alpha.9 dock migration re-docks/reorders launchers; later user reorder/undock/move remains persistent.
+- [x] Dock geometry is exposed through non-sensitive DOM dataset fields for DevTools verification.
+
+### Live acceptance
+
+- [ ] Select **War** on Acquire. Confirm member build equipment and War spares appear, but routine minimum-stock/provision replenishment does not.
+- [ ] Prepare the leader War message. Confirm its list and total contain only the War acquisition shown by Acquire.
+- [ ] Select **Peace** on Acquire. Confirm individual member build/equipment needs disappear.
+- [ ] Confirm Peace shows only faction minimum replenishment, including named equipment-pool targets and any stackable/provision shortfalls.
+- [ ] Prepare the leader Peace message. Confirm there is no individual-member build section and the total matches the Peace minimum acquisition list.
+- [ ] Confirm the custom dock sits immediately left of Torn's native bottom controls at the current viewport.
+- [ ] Confirm icon order from right to left is **MM Trade Rotation, MM Faction Armory, MM_Customers, MM_Acquisitions, MM_Inventory Manager/ROI Tracker**.
+- [ ] Reload Torn and confirm the same default position/order persists.
+- [ ] Move/reorder or undock one launcher, reload, and confirm that intentional user change persists.
+- [ ] In DevTools, inspect `document.querySelector('#mm-torn-module-dock').dataset` and confirm the live dock/native-row geometry fields match the visible placement.
 
 Production remains unchanged until live acceptance passes and the owner explicitly approves promotion.
