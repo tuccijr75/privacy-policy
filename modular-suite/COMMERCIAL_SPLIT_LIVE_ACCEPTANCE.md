@@ -1352,3 +1352,57 @@ Static/V8 verification passes for syntax, customer sale/coupon/refund/restock lo
 3. verify customer/contact/coupon/restock state changes only after Torn confirms a real manual Send.
 
 Outbox/recovery navigation is not part of alpha.17 acceptance.
+
+
+## MM_Customers alpha.18 — Torn compose readiness / username-only failure
+
+Live alpha.17 failure:
+- the original MM_Customers action navigated to Torn Compose but Torn could remain on its loading shell for a long time,
+- after the form finally appeared, only the XID-resolved username was present; Subject and Body were blank.
+
+Direct live browser inspection:
+- the failing alpha.17 URL included both `XID=<player>` and `subject=<message subject>`,
+- while Torn was still on the loading shell, the compose form did not exist in the accessibility tree,
+- after the shell eventually resolved, Torn exposed Name, Subject, SEND, and Toggle Code Editor, but Subject remained blank,
+- a separate live probe using the same XID **without the subject hash parameter** exposed the complete Compose controls immediately during inspection,
+- the page also contains Torn chat text inputs outside the message composer, so document-wide body/editor discovery can select unrelated chat surfaces.
+
+Root causes addressed in alpha.18:
+- alpha.17 started its 20-second fill timeout at navigation time, so a slow Torn SPA mount could exhaust the entire fill window before Subject/Editor existed,
+- alpha.17 repeatedly scanned editor surfaces while Torn was still mounting, adding avoidable work during the slowest part of page load,
+- alpha.17 put Subject in Torn's compose hash even though the current live route did not reliably hydrate it,
+- body/editor discovery could fall back to page-wide textbox/contenteditable candidates when the compose controls were not inside a formal `<form>`.
+
+Source repair:
+- canonical MM_Customers navigation is now XID-only; Subject is applied after Torn exposes its real Subject control,
+- the compose flow is split into a passive form-readiness phase and a bounded editor phase,
+- passive readiness checks run once per second and inspect only Subject + recipient; the rich editor is not scanned or toggled while Torn is mounting,
+- Subject is written and verified immediately after Name + Subject are live, before any body formatting work,
+- the editor phase starts only after the real recipient and Subject are stable,
+- editor/body/source/toggle candidates are constrained geometrically to the Torn compose region around Subject, excluding bottom chat inputs and unrelated page controls,
+- rich formatting still uses Torn source mode, then verifies the rendered branded payload,
+- no MutationObserver, history monkey patch, page-load customer sync, or pre-send polling was reintroduced.
+
+Versions:
+- MM_Customers: `8.0.0-alpha.18`
+- suite: `8.0.0-alpha.35`
+
+Static/V8 verification:
+- userscript, logic, and test source parse,
+- customer sales/coupon logic checks pass,
+- XID-only canonical route asserted,
+- navigation-coupled 20-second fill timeout is absent,
+- passive form wait and bounded editor wait are present,
+- editor discovery is compose-region scoped,
+- no document MutationObserver was reintroduced,
+- all four message actions still converge on the same compose transport.
+
+**PENDING MERGE / LIVE ACCEPTANCE**:
+1. from MM_Customers, prepare one Welcome/Message,
+2. verify Torn reaches Compose without the long alpha.17 loading behavior,
+3. verify Name resolves, then Subject appears before editor formatting,
+4. verify the full branded body appears,
+5. repeat with Coupon Reminder, Cashback Reminder, and Restock Alert,
+6. verify CRM state changes only after Torn confirms a real manual Send.
+
+Outbox/recovery behavior remains out of scope.
