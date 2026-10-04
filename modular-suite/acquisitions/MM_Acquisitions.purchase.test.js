@@ -12,7 +12,7 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.9'));
+assert(userSource.includes('// @version      8.0.0-alpha.10'));
 assert(userSource.includes('MM_Torn_Core.js?v=8.0.0-alpha.13'));
 assert(userSource.includes('// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js'));
 assert(userSource.includes('// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js'));
@@ -27,6 +27,13 @@ assert(userSource.includes('Stale/unknown travel data is not used for recommenda
 assert(userSource.includes('grid-template-columns:repeat(auto-fit,minmax(135px,1fr))'));
 assert(userSource.includes('Min confidence %'));
 assert(userSource.includes('Rule-Qualified Deals'));
+assert(userSource.includes('All Torn Items'));
+assert(userSource.includes('Enter item name or ID'));
+assert(userSource.includes('Find Best Price'));
+assert(userSource.includes('data-catalog-find'));
+assert(userSource.includes("data-acq-view=\"items\""));
+assert(userSource.includes('ITEM_PAGE_SIZE=75'));
+assert(userSource.includes('CATALOG_STALE_MS=24*60*60*1000'));
 assert(userSource.includes('Verify & Buy and final purchase remain manual'));
 console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS');
 
@@ -39,11 +46,15 @@ assert(liveSource.includes("source:'Bazaar'"));
 assert(liveSource.includes("source:'Item Market'"));
 assert(liveSource.includes("source:'Overseas'"));
 assert(liveSource.includes("reason:'overseas-recommended'"));
+assert(liveSource.includes('function normalizeTornCatalog'));
+assert(liveSource.includes('async function refreshItemCatalog'));
+assert(liveSource.includes("source:'Torn Shop'"));
+assert(liveSource.includes("reason:'shop-recommended'"));
 
 const userSourceArmory=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceArmory);
-assert(userSourceArmory.includes('// @version      8.0.0-alpha.9'));
-assert(userSourceArmory.includes('MM_Acquisitions.live.js?v=8.0.0-alpha.2'));
+assert(userSourceArmory.includes('// @version      8.0.0-alpha.10'));
+assert(userSourceArmory.includes('MM_Acquisitions.live.js?v=8.0.0-alpha.3'));
 assert(userSourceArmory.includes("type!=='armory-acquisition-request'"));
 assert(userSourceArmory.includes('Faction Armory request: '));
 assert(userSourceArmory.includes('Compare Sources'));
