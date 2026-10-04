@@ -602,6 +602,22 @@
       dock.style.top='auto';
       dock.style.bottom='6px';
     }
+
+    // Keep exact live geometry inspectable from the normal browser console.
+    requestAnimationFrame(()=>{
+      const r=dock.getBoundingClientRect();
+      dock.dataset.mmDockLeft=String(Math.round(r.left));
+      dock.dataset.mmDockTop=String(Math.round(r.top));
+      dock.dataset.mmDockRight=String(Math.round(r.right));
+      dock.dataset.mmDockBottom=String(Math.round(r.bottom));
+      if(native?.firstRect){
+        dock.dataset.mmNativeFirstLeft=String(Math.round(native.firstRect.left));
+        dock.dataset.mmNativeRowBottom=String(Math.round(native.rowBottom??native.firstRect.bottom));
+      }else{
+        delete dock.dataset.mmNativeFirstLeft;
+        delete dock.dataset.mmNativeRowBottom;
+      }
+    });
   }
 
   function applyDockOrder(dock){
@@ -743,8 +759,6 @@
       dock=document.createElement('div');
       dock.id=DOCK_ID;
       dock.setAttribute('aria-label','MM Torn module dock');
-      dock.dataset.mmDockAnchor='left-of-torn-native-bottom-toolbar';
-      dock.dataset.mmDefaultRightToLeft='trade-reminder,armory,customers,acquisitions,inventory-roi';
       document.body.appendChild(dock);
       dock.addEventListener('dragover',event=>event.preventDefault());
       dock.addEventListener('drop',event=>{
@@ -756,7 +770,7 @@
         if(source.dataset.mmFloating==='1')dockLauncher(source,sourceId);
         if(target&&target!==source&&target.parentElement===dock)dock.insertBefore(source,target);
         else if(source.parentElement===dock)dock.appendChild(source);
-        dockWriteOrder(dock);
+        dockWriteOrder(dock,{custom:true});
         positionDock();
       });
       window.addEventListener('resize',()=>{
@@ -770,6 +784,20 @@
         });
       },{passive:true});
     }
+
+    // This bridge is installed even when an older cached core created the shared
+    // dock first. That keeps Trade Rotation reorder/drag actions persistent too.
+    dock.dataset.mmDockAnchor='left-of-torn-native-bottom-toolbar';
+    dock.dataset.mmDefaultRightToLeft='trade-reminder,armory,customers,acquisitions,inventory-roi';
+    if(dock.dataset.mmAlpha9PersistenceBridge!=='1'){
+      dock.dataset.mmAlpha9PersistenceBridge='1';
+      const persistUserOrder=()=>setTimeout(()=>{
+        if(document.body.contains(dock))dockWriteOrder(dock,{custom:true});
+      },0);
+      dock.addEventListener('drop',persistUserOrder);
+      dock.addEventListener('dragend',persistUserOrder,true);
+    }
+
     requestAnimationFrame(positionDock);
     return dock;
   }
