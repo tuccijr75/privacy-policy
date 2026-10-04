@@ -47,11 +47,13 @@ if (fresh.unified !== 'u' || fresh.itemMarket !== 'm' || fresh.faction !== 'f') 
 console.log('MERGE PASS');
 
 const coreSource = require('fs').readFileSync(__dirname+'/MM_Torn_Core.js','utf8');
-if (!coreSource.includes("const CORE_VERSION = '8.0.0-alpha.12';")) throw new Error('core alpha.12 version missing');
+if (!coreSource.includes("const CORE_VERSION = '8.0.0-alpha.13';")) throw new Error('core alpha.13 version missing');
 if (!coreSource.includes('const rawEntries=')) throw new Error('native footer geometry de-duplication missing');
 if (!coreSource.includes('bottomDistance:Math.abs(window.innerHeight-rowBottom)')) throw new Error('bottom-distance footer priority missing');
 if (!coreSource.includes('a.bottomDistance-b.bottomDistance')) throw new Error('lowest footer row comparator missing');
-if (!coreSource.includes('const gap=clamp(Number(native.nativeGap)||LAUNCHER_SNAP_GAP,2,8);')) throw new Error('native footer gap alignment missing');
+if (!coreSource.includes('const NATIVE_DOCK_CLEARANCE=6;')) throw new Error('native dock clearance constant missing');
+if (!coreSource.includes('const nativeGap=clamp(Number(native.nativeGap)||LAUNCHER_SNAP_GAP,2,8);')) throw new Error('native footer gap calculation missing');
+if (!coreSource.includes('const gap=Math.max(NATIVE_DOCK_CLEARANCE,nativeGap);')) throw new Error('native dock clearance floor missing');
 if (!coreSource.includes('rightEdgeDistance:Math.abs(window.innerWidth-last.r.right)')) throw new Error('native footer right-edge metric missing');
 if (!coreSource.includes('candidate.bottomDistance<=minBottomDistance+8')) throw new Error('bottom peer tolerance missing');
 if (!coreSource.includes('a.rightEdgeDistance-b.rightEdgeDistance')) throw new Error('bottom-right native row priority missing');
@@ -60,7 +62,7 @@ if (!coreSource2.includes('mmNativeCandidateCount')) throw new Error('native can
 console.log('alpha.7 footer-row regression PASS');
 
 const coreSource2 = require('fs').readFileSync(__dirname+'/MM_Torn_Core.js','utf8');
-if (!coreSource2.includes("const CORE_VERSION = '8.0.0-alpha.12';")) throw new Error('core alpha.12 version missing');
+if (!coreSource2.includes("const CORE_VERSION = '8.0.0-alpha.13';")) throw new Error('core alpha.13 version missing');
 if (!coreSource2.includes("DOCK_DEFAULT_LAYOUT_REV='footer-adjacent-v4-relative-redock'")) throw new Error('default dock layout revision missing');
 if (!coreSource2.includes('function applyDefaultDockLayoutOnce()')) throw new Error('default dock migration missing');
 if (!coreSource2.includes('localStorage.removeItem(DOCK_FLOAT_KEY)')) throw new Error('legacy floating layout reset missing');
