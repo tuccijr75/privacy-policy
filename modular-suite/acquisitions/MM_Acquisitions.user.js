@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.9
+// @version      8.0.0-alpha.10
 // @description  Dedicated acquisition workflow for Bazaar, Item Market and Travel with live verification, ROI filters and purchase-ledger sync.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js
@@ -11,7 +11,7 @@
 // @run-at       document-idle
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.13
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.logic.js?v=8.0.0-alpha.2
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.live.js?v=8.0.0-alpha.2
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.live.js?v=8.0.0-alpha.3
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js?v=8.0.0-alpha.1
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -38,6 +38,8 @@
   const TRAVEL_FRESH_MS=300_000;
   const TRAVEL_STALE_MS=900_000;
   const TRAVEL_CONTEXT_REFRESH_MS=60_000;
+  const CATALOG_STALE_MS=24*60*60*1000;
+  const ITEM_PAGE_SIZE=75;
 
   let activeView='deals';
   let state=null;
@@ -53,6 +55,13 @@
   let armorySources=null;
   let travelContext=null;
   let travelContextCheckedAt=0;
+  let itemQuery='';
+  let itemCategory='All';
+  let itemAvailability='buyable';
+  let itemSort='name';
+  let itemPage=0;
+  let itemSelection=null;
+  let itemSources=null;
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornAcquisitionsLogic;
@@ -723,11 +732,230 @@
       :'<div style="font-size:11px;color:#888;">No profitable current travel rows match this trip context.</div>'));
   }
 
+  function catalogRows(){
+    const catalog=state?.procurement?.catalog||{};
+    return Object.entries(catalog).map(([id,row])=>({
+      id:String(row?.id||id),
+      name:String(row?.name||('Item '+id)),
+      type:String(row?.type||'Other')||'Other',
+      subType:String(row?.subType||row?.sub_type||''),
+      marketPrice:Math.max(0,Number(row?.marketPrice||row?.market_value||0)),
+      buyPrice:Math.max(0,Number(row?.buyPrice||row?.buy_price||0)),
+      sellPrice:Math.max(0,Number(row?.sellPrice||row?.sell_price||0)),
+      circulation:Math.max(0,Number(row?.circulation||0)),
+      shops:Array.isArray(row?.shops)?row.shops:[],
+      buyable:Boolean(row?.buyable||Number(row?.marketPrice||0)>0||Number(row?.buyPrice||0)>0||(Array.isArray(row?.shops)&&row.shops.some(shop=>Number(shop?.price||0)>0)))
+    })).filter(row=>/^\d+$/.test(row.id)&&row.name);
+  }
+
+  function filteredCatalogRows(){
+    const q=String(itemQuery||'').trim().toLowerCase();
+    let rows=catalogRows().filter(row=>{
+      if(itemCategory!=='All'&&row.type!==itemCategory)return false;
+      if(itemAvailability==='buyable'&&!row.buyable)return false;
+      if(itemAvailability==='market'&&!(row.marketPrice>0))return false;
+      if(itemAvailability==='shops'&&!row.shops.some(shop=>Number(shop?.price||0)>0))return false;
+      if(q&&!row.name.toLowerCase().includes(q)&&row.id!==q&&!row.type.toLowerCase().includes(q)&&!row.subType.toLowerCase().includes(q))return false;
+      return true;
+    });
+    rows.sort((a,b)=>{
+      if(itemSort==='category')return a.type.localeCompare(b.type)||a.name.localeCompare(b.name);
+      if(itemSort==='market-asc')return (a.marketPrice||Number.MAX_SAFE_INTEGER)-(b.marketPrice||Number.MAX_SAFE_INTEGER)||a.name.localeCompare(b.name);
+      if(itemSort==='market-desc')return b.marketPrice-a.marketPrice||a.name.localeCompare(b.name);
+      return a.name.localeCompare(b.name);
+    });
+    return rows;
+  }
+
+  function resolveCatalogQuery(value){
+    const q=String(value||'').trim();
+    if(!q)return {item:null,matches:[]};
+    const rows=catalogRows();
+    if(/^\d+$/.test(q)){
+      const exact=rows.find(row=>row.id===q);
+      if(exact)return {item:exact,matches:[exact]};
+    }
+    const lower=q.toLowerCase();
+    const exactName=rows.find(row=>row.name.toLowerCase()===lower);
+    if(exactName)return {item:exactName,matches:[exactName]};
+    const matches=rows.filter(row=>row.name.toLowerCase().includes(lower)||row.id.includes(q));
+    return {item:matches.length===1?matches[0]:null,matches};
+  }
+
+  async function refreshItemCatalog({silent=false}={}){
+    if(busy)return false;
+    if(!apiKey()){
+      statusText='Save a Torn API key in Settings before loading the Torn item catalog.';
+      activeView='settings';render();return false;
+    }
+    busy=true;
+    if(!silent)statusText='Loading the complete Torn item catalog…';
+    render();
+    try{
+      const result=await service.refreshItemCatalog();
+      state=result?.state||await core.readLegacyState();
+      const count=Number(state?.procurement?.catalogItemCount||result?.rows?.length||0);
+      const buyable=Number(state?.procurement?.catalogBuyableCount||0);
+      statusText='Torn item catalog updated: '+count.toLocaleString()+' items · '+buyable.toLocaleString()+' buyable.';
+      return true;
+    }catch(error){
+      statusText='Item catalog refresh failed: '+(error?.message||String(error));
+      return false;
+    }finally{busy=false;render();}
+  }
+
+  function ensureItemCatalog(){
+    const count=Object.keys(state?.procurement?.catalog||{}).length;
+    const at=Date.parse(state?.procurement?.catalogLastSyncAt||'')||0;
+    if(apiKey()&&(!count||!at||Date.now()-at>=CATALOG_STALE_MS))setTimeout(()=>refreshItemCatalog({silent:count>0}),40);
+  }
+
+  async function findCatalogPriceByItem(item){
+    if(!item||busy)return;
+    if(!apiKey()){
+      statusText='Save a Torn API key in Settings before checking live prices.';
+      activeView='settings';render();return;
+    }
+    itemSelection=item;
+    itemSources=null;
+    busy=true;
+    statusText='Finding current Bazaar, Item Market, shop and overseas prices for '+item.name+'…';
+    render();
+    try{
+      itemSources=await service.procurementSourceOptions(item.id,item.name);
+      state=itemSources?.state||await core.readLegacyState();
+      statusText=itemSources?.sources?.length
+        ?'Price comparison ready for '+item.name+'. Lowest available source is listed first.'
+        :'No current purchase source was found for '+item.name+'.';
+    }catch(error){statusText='Price lookup failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function findCatalogPriceFromInput(root){
+    itemQuery=String(root.querySelector('#mm-acq-item-query')?.value||itemQuery).trim();
+    const resolved=resolveCatalogQuery(itemQuery);
+    if(resolved.item){findCatalogPriceByItem(resolved.item);return;}
+    if(resolved.matches.length>1){
+      itemPage=0;
+      statusText=resolved.matches.length+' catalog matches for “'+itemQuery+'”. Select the exact item below.';
+      render();return;
+    }
+    statusText='No Torn catalog item matches “'+itemQuery+'”.';
+    render();
+  }
+
+  async function routeCatalogItem(preferredSource='Best'){
+    if(!itemSelection||busy)return;
+    busy=true;
+    statusText='Verifying '+preferredSource+' for '+itemSelection.name+'…';
+    render();
+    try{
+      await refreshTravelContext({force:true,silent:true});
+      const result=await service.routeProcurementRequest({itemId:itemSelection.id,itemName:itemSelection.name,preferredSource});
+      itemSources=result;
+      if(result?.routed){
+        statusText='Verified '+result.source+' for '+itemSelection.name+'. Complete the purchase manually on Torn.';
+        return;
+      }
+      if(result?.reason==='overseas-recommended'){
+        activeView='travel';
+        statusText='Best selected source is overseas: '+String(result.country||'destination')+' · '+money(result.price||0)+' each · stock '+Number(result.stock||0).toLocaleString()+'.';
+      }else if(result?.reason==='shop-recommended'){
+        statusText='Best selected source is '+String(result.shopName||'a Torn shop')+' at '+money(result.price||0)+' each'+(result.country?' · '+String(result.country):'')+'. Purchase remains manual.';
+      }else if(result?.reason==='preferred-source-unavailable'){
+        statusText=preferredSource+' is not currently available for '+itemSelection.name+'.';
+      }else{
+        statusText='Could not route '+itemSelection.name+': '+String(result?.reason||'no live source')+'.';
+      }
+    }catch(error){statusText='Price routing failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function itemPriceResultHtml(){
+    if(!itemSelection)return '';
+    const sources=Array.isArray(itemSources?.sources)?itemSources.sources:[];
+    const rows=sources.length?sources.map((source,index)=>{
+      const detail=[
+        source.shopName?String(source.shopName):'',
+        source.country?String(source.country):'',
+        source.sellerName?String(source.sellerName):'',
+        Number(source.quantity||0)>0?'qty/stock '+Number(source.quantity).toLocaleString():''
+      ].filter(Boolean).join(' · ');
+      return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+        '<div><b>'+(index===0?'BEST · ':'')+esc(source.source)+'</b> · <b>'+money(source.price)+'</b>'+(detail?' · '+esc(detail):'')+'</div>'+
+        '<button data-item-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(index===0)+(busy?'opacity:.5;':'')+'">Use</button>'+
+      '</div>';
+    }).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">No current source comparison loaded.</div>';
+    return card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+        '<div><b>'+esc(itemSelection.name)+' ['+esc(itemSelection.id)+']</b>'+
+          '<div style="font-size:10px;color:#888;">'+esc(itemSelection.type)+(itemSelection.subType?' · '+esc(itemSelection.subType):'')+' · Torn market reference '+money(itemSelection.marketPrice||0)+'</div>'+
+        '</div>'+
+        '<button data-item-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Use Best Source</button>'+
+      '</div>'+rows
+    );
+  }
+
+  function itemsHtml(){
+    const all=catalogRows();
+    const categories=[...new Set(all.map(row=>row.type).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    const rows=filteredCatalogRows();
+    const pages=Math.max(1,Math.ceil(rows.length/ITEM_PAGE_SIZE));
+    itemPage=Math.max(0,Math.min(itemPage,pages-1));
+    const start=itemPage*ITEM_PAGE_SIZE;
+    const visible=rows.slice(start,start+ITEM_PAGE_SIZE);
+    const lastSync=state?.procurement?.catalogLastSyncAt;
+    const options=categories.map(cat=>'<option value="'+esc(cat)+'"'+(itemCategory===cat?' selected':'')+'>'+esc(cat)+'</option>').join('');
+    return card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
+        '<div><b>All Torn Items</b><div style="font-size:10px;color:#888;">Complete Torn catalog, categorized and searchable. Price checks are live/on-demand.</div></div>'+
+        '<button id="mm-acq-catalog-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Refresh Catalog</button>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:4px;">Catalog '+all.length.toLocaleString()+' items · updated '+esc(age(lastSync))+'</div>'+
+      '<div style="display:grid;grid-template-columns:minmax(180px,2fr) minmax(110px,1fr) minmax(110px,1fr) minmax(100px,1fr);gap:5px;margin-top:8px;">'+
+        '<input id="mm-acq-item-query" type="search" placeholder="Enter item name or ID" value="'+esc(itemQuery)+'" style="'+inputCss()+'width:100%;">'+
+        '<select id="mm-acq-item-category" style="'+inputCss()+'width:100%;"><option value="All">All categories</option>'+options+'</select>'+
+        '<select id="mm-acq-item-availability" style="'+inputCss()+'width:100%;">'+
+          '<option value="buyable"'+(itemAvailability==='buyable'?' selected':'')+'>Buyable</option>'+
+          '<option value="market"'+(itemAvailability==='market'?' selected':'')+'>Market-valued</option>'+
+          '<option value="shops"'+(itemAvailability==='shops'?' selected':'')+'>Torn shop source</option>'+
+          '<option value="all"'+(itemAvailability==='all'?' selected':'')+'>All catalog</option>'+
+        '</select>'+
+        '<select id="mm-acq-item-sort" style="'+inputCss()+'width:100%;">'+
+          '<option value="name"'+(itemSort==='name'?' selected':'')+'>Name A-Z</option>'+
+          '<option value="category"'+(itemSort==='category'?' selected':'')+'>Category</option>'+
+          '<option value="market-asc"'+(itemSort==='market-asc'?' selected':'')+'>Market low-high</option>'+
+          '<option value="market-desc"'+(itemSort==='market-desc'?' selected':'')+'>Market high-low</option>'+
+        '</select>'+
+      '</div>'+
+      '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;">'+
+        '<button id="mm-acq-item-filter" style="'+button()+'">Apply Filters</button>'+
+        '<button id="mm-acq-item-find" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Find Best Price</button>'+
+      '</div>'
+    )+
+    itemPriceResultHtml()+
+    card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:10px;color:#888;">'+
+        '<span>'+rows.length.toLocaleString()+' matches · page '+(itemPage+1)+'/'+pages+'</span>'+
+        '<span><button id="mm-acq-item-prev" '+(itemPage<=0?'disabled':'')+' style="'+button()+(itemPage<=0?'opacity:.4;':'')+'padding:4px 7px;">Prev</button> '+
+        '<button id="mm-acq-item-next" '+(itemPage>=pages-1?'disabled':'')+' style="'+button()+(itemPage>=pages-1?'opacity:.4;':'')+'padding:4px 7px;">Next</button></span>'+
+      '</div>'+
+      (visible.length?visible.map(row=>
+        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+          '<div style="min-width:0;"><b>'+esc(row.name)+'</b> <span style="color:#777;">['+esc(row.id)+']</span>'+
+            '<div style="color:#888;">'+esc(row.type)+(row.subType?' · '+esc(row.subType):'')+' · Market '+money(row.marketPrice||0)+' · Shops '+row.shops.filter(shop=>Number(shop?.price||0)>0).length+'</div>'+
+          '</div>'+
+          '<button data-catalog-find="'+esc(row.id)+'" '+(busy?'disabled':'')+' style="'+button(itemSelection?.id===row.id)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Find Price</button>'+
+        '</div>'
+      ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No items match the current filters.</div>')
+    );
+  }
+
   function settingsHtml(){
     const r=state?.businessRules||{};
     return card(
       '<b>MM Acquisitions Connection</b>'+
-      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">The API key is stored only in this userscript\'s Tampermonkey GM storage. It is not copied to shared IndexedDB/localStorage. Required scope: User Basic, User Log purchase events used by the ledger, and market data needed for live verification.</div>'+
+      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">The API key is stored only in this userscript\'s Tampermonkey GM storage. It is not copied to shared IndexedDB/localStorage. Required scope: Torn Items catalog, User Basic, User Log purchase events used by the ledger, and market data needed for live verification.</div>'+
       '<div style="display:grid;grid-template-columns:minmax(160px,1fr) auto auto;gap:5px;align-items:center;">'+
         '<input id="mm-acq-api" type="password" autocomplete="off" placeholder="'+(apiKey()?'Torn API key saved — enter to replace':'Torn API key')+'" style="'+inputCss()+'">'+
         '<button id="mm-acq-save-key" style="'+button(true)+'">Save</button>'+
@@ -767,12 +995,13 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.9 · MARKET SCOUT / TRAVEL / VERIFY</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.10 · MARKET SCOUT / ITEM FINDER / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
         '<div style="display:flex;gap:5px;margin-bottom:7px;">'+
           '<button data-acq-view="deals" style="'+button(activeView==='deals')+'">Deals</button>'+
+          '<button data-acq-view="items" style="'+button(activeView==='items')+'">Items</button>'+
           '<button data-acq-view="travel" style="'+button(activeView==='travel')+'">Travel</button>'+
           '<button data-acq-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
         '</div>'+
@@ -780,7 +1009,7 @@
         sourceStrip()+
         (loadError?card('<b style="color:#ffaaaa;">Cannot read shared CRM state</b><div style="font-size:11px;margin-top:4px;">'+esc(loadError)+'</div>'):'')+
         '<div style="max-height:calc(100vh - 240px);overflow:auto;padding-right:2px;">'+
-          (activeView==='settings'?settingsHtml():activeView==='travel'?travelHtml():dealsHtml())+
+          (activeView==='settings'?settingsHtml():activeView==='travel'?travelHtml():activeView==='items'?itemsHtml():dealsHtml())+
         '</div>'+
       '</div>';
 
@@ -795,6 +1024,7 @@
       activeView=b.dataset.acqView||'deals';
       render();
       if(activeView==='travel'&&apiKey())refreshTravelContext({force:false,silent:true}).then(()=>render());
+      if(activeView==='items')ensureItemCatalog();
     }));
     root.querySelectorAll('#mm-acq-reload').forEach(b=>b.addEventListener('click',reloadCachedState));
     root.querySelector('#mm-acq-live-refresh')?.addEventListener('click',refreshOpportunities);
@@ -809,6 +1039,25 @@
     root.querySelector('#mm-acq-armory-travel-agency')?.addEventListener('click',()=>{location.href='https://www.torn.com/travelagency.php';});
     root.querySelector('#mm-acq-armory-clear')?.addEventListener('click',()=>{armoryRequest=null;armorySources=null;statusText='Faction Armory acquisition request cleared.';render();});
     root.querySelectorAll('[data-armory-route]').forEach(b=>b.addEventListener('click',()=>routeArmoryRequest(b.dataset.armoryRoute||'Best')));
+    root.querySelector('#mm-acq-catalog-refresh')?.addEventListener('click',()=>refreshItemCatalog({silent:false}));
+    root.querySelector('#mm-acq-item-filter')?.addEventListener('click',()=>{
+      itemQuery=String(root.querySelector('#mm-acq-item-query')?.value||'').trim();
+      itemCategory=String(root.querySelector('#mm-acq-item-category')?.value||'All');
+      itemAvailability=String(root.querySelector('#mm-acq-item-availability')?.value||'buyable');
+      itemSort=String(root.querySelector('#mm-acq-item-sort')?.value||'name');
+      itemPage=0;render();
+    });
+    root.querySelector('#mm-acq-item-find')?.addEventListener('click',()=>findCatalogPriceFromInput(root));
+    root.querySelector('#mm-acq-item-query')?.addEventListener('keydown',event=>{
+      if(event.key==='Enter'){event.preventDefault();findCatalogPriceFromInput(root);}
+    });
+    root.querySelector('#mm-acq-item-prev')?.addEventListener('click',()=>{itemPage=Math.max(0,itemPage-1);render();});
+    root.querySelector('#mm-acq-item-next')?.addEventListener('click',()=>{itemPage++;render();});
+    root.querySelectorAll('[data-catalog-find]').forEach(b=>b.addEventListener('click',()=>{
+      const item=catalogRows().find(row=>row.id===String(b.dataset.catalogFind||''));
+      if(item){itemQuery=item.name;findCatalogPriceByItem(item);}
+    }));
+    root.querySelectorAll('[data-item-route]').forEach(b=>b.addEventListener('click',()=>routeCatalogItem(b.dataset.itemRoute||'Best')));
     root.querySelector('#mm-acq-save-key')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-acq-api')?.value||'').trim();
       if(value)GM_setValue(API_KEY,value);
