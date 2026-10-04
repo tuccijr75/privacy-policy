@@ -884,7 +884,10 @@
     const weaponQ=rankedWeapon.trim().toLowerCase();
     return rows.filter(row=>{
       const source=String(row.source||'').toLowerCase();
-      if(source!=='auction'){
+      if(source==='auction'){
+        const endsAt=Number(row.endsAt||0);
+        if(endsAt>0&&endsAt*1000<=Date.now())return false;
+      }else{
         const observed=Date.parse(row.lastUpdated||'')||0;
         if(!observed||Date.now()-observed>cfg.maxLiveAgeHours*3600000)return false;
       }
