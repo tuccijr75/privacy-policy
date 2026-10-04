@@ -265,7 +265,8 @@
   const DOCK_ORDER_KEY='mm_torn_module_dock_order_v1';
   const DOCK_ORDER_CUSTOM_KEY='mm_torn_module_dock_order_custom_v1';
   const DOCK_FLOAT_KEY='mm_torn_module_float_positions_v1';
-  const DOCK_DEFAULT_LAYOUT_KEY='mm_torn_module_default_layout_rev_v1';
+  // v2 key prevents older cached core copies from undoing the alpha.9 migration.
+  const DOCK_DEFAULT_LAYOUT_KEY='mm_torn_module_default_layout_rev_v2';
   const DOCK_DEFAULT_LAYOUT_REV='footer-adjacent-v3-ordered';
   // Flex order is left -> right. The requested operational order is therefore
   // Trade, Armory, Customers, Acquisitions, Inventory when read right -> left.
