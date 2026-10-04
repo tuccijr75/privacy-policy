@@ -605,8 +605,9 @@
 
   async function routeArmoryRequest(preferredSource='Best'){
     if(!armoryRequest||busy)return;
-    busy=true;statusText='Verifying '+preferredSource+' source for '+armoryRequest.itemName+'…';render();
+    busy=true;statusText='Checking travel state and verifying '+preferredSource+' source for '+armoryRequest.itemName+'…';render();
     try{
+      await refreshTravelContext({force:true,silent:true});
       const result=await service.routeProcurementRequest({...armoryRequest,preferredSource});
       armorySources=result;
       if(result?.routed){
