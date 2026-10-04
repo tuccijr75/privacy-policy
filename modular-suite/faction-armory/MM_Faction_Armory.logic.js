@@ -577,7 +577,7 @@
         continue;
       }
       const inventoryKnown=Array.isArray(member?.profile?.ownedEquipment?.items);
-      const build=compareMemberBuild(member,factionInventory,rows,{procurementMode});
+      const build=member.buildAssessment||compareMemberBuild(member,factionInventory,rows,{procurementMode});
       for(const item of build.items){
         if(item.ready||item.route==='LOANED'||item.route==='OWNED')continue;
         if(!item.currentName&&!inventoryKnown){
@@ -823,7 +823,7 @@
       if(mode==='war'){
         const participating=rosterRows.slice(0,participants);
         coverageNeeded=participating.filter(member=>{
-          const build=compareMemberBuild(member,factionInventory,rosterRows,{procurementMode:options?.procurementMode||'budget'});
+          const build=member.buildAssessment||compareMemberBuild(member,factionInventory,rosterRows,{procurementMode:options?.procurementMode||'budget'});
           const row=build.items.find(item=>item.slot===slot);
           return !row?.ready;
         }).length;
