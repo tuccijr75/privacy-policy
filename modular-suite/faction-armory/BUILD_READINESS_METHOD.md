@@ -122,7 +122,7 @@ The Acquire screen aggregates all member requirements into a single list:
 - non-live reference value when known
 - reason / members driving the quantity
 
-War mode assumes 20 participants and also preserves two ready-to-issue equipment spares per standard slot.
+War mode derives participant count directly from the current faction roster and adjusts automatically as members join or leave. It also preserves two ready-to-issue equipment spares per standard slot.
 
 Provision shortfalls from the active War/Peace minimum policy are added to the same acquisition list.
 
@@ -188,6 +188,168 @@ The default known-cost acquisition cap is **$15,000,000**. The cap is editable l
 
 Unpriced provision lines remain requirements but do not consume the known-cost budget calculation until a reference price exists.
 
-Missing member stats, missing member inventory, and unknown-performance current gear are intentionally excluded from automatic buy quantity and shown as unresolved. This prevents a partially populated roster from generating a large speculative purchase list.
+Members with verified battle stats continue to use those exact stats. Members without private stats may receive a clearly labeled balanced planning estimate from public Torn rank/profile data; those estimated builds can create provisional requirements but can never be approved WAR READY. Unknown-performance current gear remains unresolved rather than being replaced speculatively. Faction loans assigned to a member are treated as known equipment evidence before acquisition.
 
 Budget-mode examples currently include lower-cost common equipment such as AK-47 / Mag 7 / Benelli M4 Super, BT MP9, Macana, WWII Helmet, Bulletproof Vest, Kevlar Gloves, Safety Boots, and Combat Pants where no sensible mid-tier general alternative exists. Standard and Ideal modes may recommend stronger/more expensive references.
+
+
+## Canonical member readiness workflow
+
+Members, Builds, leadership export, and acquisition planning now derive from the same per-member build assessment.
+
+The canonical readiness states are:
+
+- **MISSING DATA** — battle stats or equipped gear are not sufficiently known.
+- **STALE DATA** — the saved readiness profile is older than the configured freshness window.
+- **SUPPLY ACTION** — required medical/Ipecac readiness data reports an action is still needed.
+- **ACTION NEEDED** — current data is usable, but one or more standard equipment slots do not yet meet the active build baseline or still require equip/issue/acquisition/review.
+- **READY FOR REVIEW** — all eight standard equipped slots meet the active build baseline and the member is ready for an Inventory Manager/leadership review.
+- **WAR READY** — the same passing build has been explicitly approved by the Inventory Manager/leadership.
+
+\`WAR READY\` is therefore an approval state, not merely the automatic result of the equipment scorer.
+
+The approval is bound to:
+
+- the member profile's current \`verifiedAt\` timestamp; and
+- the active procurement mode (\`budget\`, \`standard\`, or \`ideal\`).
+
+Refreshing a member profile invalidates the previous approval and returns a still-passing build to \`READY FOR REVIEW\`. Changing procurement mode also requires review under the newly selected baseline.
+
+The Members tab provides **Approve / War Ready** only when the automatic build baseline passes. An approved member can be returned to **READY FOR REVIEW** with **Reopen Review**.
+
+## Build suggestion pipeline
+
+For each member:
+
+1. Battle stats are normalized into Strength, Defense, Speed, and Dexterity.
+2. The script derives a build shape and an offensive need:
+   - Strength materially above Speed → prefer Accuracy support.
+   - Speed materially above Strength → prefer Damage support.
+   - otherwise → balanced.
+3. The active procurement mode selects a generally available target for each standard slot:
+   - **Budget** keeps candidates at least 80% of the best routine performance in the slot, then chooses the least expensive viable reference.
+   - **Standard** raises the retention threshold to 92% of best routine performance, still favoring value among viable references.
+   - **Ideal** includes premium references and selects the highest-performance option only when its gain is material (currently at least 12%) or its cost is not more than 2.25× the value target.
+4. The target's minimum normal stat roll becomes the readiness floor.
+5. The member's currently equipped item is compared against that floor. Known adequate equipped gear is always kept, even when it is more expensive than the reference target.
+6. If current gear does not resolve the slot, the route order is:
+   - adequate member-owned item → **OWNED — EQUIP / VERIFY**;
+   - adequate faction item already loaned to that member → **LOANED / VERIFY**;
+   - adequate unloaned faction stock → **ISSUE**;
+   - otherwise the generally available target → **ACQUIRE**;
+   - unknown-performance current gear → **REVIEW**, never automatic replacement.
+7. The member's Build tab and Members tab consume this same assessment object so automatic readiness cannot disagree between views.
+
+Weapon performance uses the documented Damage × Accuracy expected-output proxy with a modest adjustment for the member's offensive need. Armor uses armor rating. Premium allocation priority uses relative battle-stat rank but does not change the ordinary readiness floor.
+
+## Acquisition construction
+
+The acquisition list is shortfall-based rather than standardization-based.
+
+For the selected War/Peace mode and procurement mode:
+
+1. Member rows are generated using the same canonical build assessment shown in Members and Builds.
+2. Members with missing battle stats are deferred as unresolved instead of generating speculative purchases.
+3. For each unresolved standard slot, the planner first consumes:
+   - adequate equipped gear;
+   - adequate member-owned inventory;
+   - adequate assigned faction loans;
+   - adequate unloaned faction stock.
+4. When faction stock can cover a slot, the allocation prefers the **least-cost item that still meets the readiness floor**. This avoids wasting premium equipment where a cheaper adequate item exists.
+5. Only remaining equipment shortfalls become named acquisition requirements.
+6. War mode also preserves two ready-to-issue equipment spares per standard slot.
+7. Medical, temporary, drug, booster, and consumable shortfalls from the active minimum-stock policy are added to the same acquisition list.
+8. Requirements are prioritized by slot/category, then the configured acquisition budget is applied to known reference prices. Quantities outside the budget become deferred.
+9. Items with no reliable reference price remain required but do not consume known-cost budget until live procurement resolves a price.
+10. MM Faction Armory decides **what and how many** are needed. MM_Acquisitions performs live source verification and routing before any manual purchase.
+
+The planner deliberately does not purchase around unresolved unknown-performance gear or unknown member inventory. Those slots remain visible as unresolved until data is sufficient.
+
+
+## Alpha.19 dynamic roster, public estimates, reminders, and leadership acquisition output
+
+### Dynamic roster sizing
+
+War planning no longer accepts a fixed participant assumption. The active roster from Torn faction membership is the participant set for:
+
+- member build coverage;
+- per-member war supply packages;
+- routine equipment pool requirements;
+- two-spare equipment reserves;
+- acquisition planning; and
+- leadership reporting.
+
+If the faction roster grows or shrinks, the next faction refresh changes the planning population automatically.
+
+### Missing private battle stats
+
+Verified member API/screenshot data always takes precedence.
+
+When verified battle stats are unavailable, the module may create a **balanced planning estimate** from public information obtainable through the faction/public Torn API surface. Current inputs are:
+
+- level;
+- Torn rank;
+- Torn age in days;
+- public crime-total information when available;
+- public networth information when available;
+- faction tenure/position as retained context.
+
+Torn Rank is driven by rank triggers from Level, Crimes, Networth, and Battle Stats. The estimator subtracts the known non-battle triggers from the visible Rank trigger count to infer a broad hidden-battle-stat band. It then creates an equal STR/DEF/SPD/DEX planning profile inside that band, using account age only as a modest position within the range.
+
+This estimate is deliberately labeled **ESTIMATED — NEEDS DATA**. It is not treated as the member's actual battle stats, and it cannot be approved **WAR READY**. Rank estimation has known uncertainty from ghost ranks and heavily unbalanced stat distributions.
+
+Current reference:
+- Torn Rank trigger model: https://wiki.torn.com/wiki/Rank
+- Torn API v2 endpoints/schemas: https://www.torn.com/swagger.php and https://www.torn.com/swagger/openapi.json
+
+### Equipment evidence when private API data is missing
+
+Faction-armory loans are associated with the borrowing member by Torn member ID. Those assigned loans are used as equipment evidence before creating a purchase.
+
+For every member, including an estimated-stat member, the equipment route remains:
+
+1. verified adequate equipped gear;
+2. adequate member-owned gear;
+3. adequate faction item already loaned to that member;
+4. adequate unloaned faction stock;
+5. acquire the active reference target.
+
+An adequate assigned loan therefore suppresses a duplicate acquisition for that slot.
+
+### Missing-data reminders
+
+Members lacking verified private battle stats or complete private equipment data show **Send Data Reminder**.
+
+The reminder asks for either:
+
+- a Limited Access Torn API key; or
+- screenshots covering STR/DEF/SPD/DEX, equipped weapons/armor, and medical/war supplies.
+
+The button is per-member and is not shown for members whose required private data is already present. Sending remains manual. The reminder is marked sent only after the operator clicks Torn's real Send control and the workflow sees post-send confirmation; only then does that member's reminder button disappear.
+
+### WAR READY and acquisition
+
+The Acquire planner is regenerated from the current canonical member rows every time the view renders or state changes.
+
+A member whose canonical status is **WAR READY** is excluded from individual build-equipment acquisition because their approved build requirement is fulfilled. They can still affect faction-wide minimum-stock policy through the current roster count.
+
+Members who are not WAR READY remain eligible to contribute unresolved/issue/acquisition needs. Estimated members are clearly identified in acquisition reasons.
+
+### Leadership acquisition report
+
+The Acquire view can prepare a manual Torn message to the faction leader resolved from Torn faction basic data.
+
+The report includes:
+
+- current faction member count;
+- approved WAR READY count;
+- members not yet WAR READY;
+- named individual build acquisition needs for non-WAR-READY members;
+- minimum-stock shortfalls;
+- combined acquisition quantities;
+- lowest/highest cached unit-price estimates from available reference, Item Market, Bazaar, and overseas sources;
+- low/high line totals;
+- low/high total acquisition estimate; and
+- any requirements that remain unpriced.
+
+The report is planning output. MM_Acquisitions remains responsible for live price/availability verification before manual purchasing.
