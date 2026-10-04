@@ -636,62 +636,65 @@
     return plain===expectedName;
   }
 
+  function composeElementNearSubject(element,subjectInput=findComposeSubjectInput(),{above=80,below=760,minOverlap=0.30}={}){
+    if(!element||!visible(element)||!subjectInput||!visible(subjectInput))return false;
+    const er=element.getBoundingClientRect?.(),sr=subjectInput.getBoundingClientRect?.();
+    if(!er||!sr)return false;
+    const overlap=Math.max(0,Math.min(er.right,sr.right)-Math.max(er.left,sr.left));
+    const needed=Math.min(er.width,sr.width)*minOverlap;
+    return er.top>=sr.top-above&&er.top<=sr.bottom+below&&overlap>=needed;
+  }
+
   function findComposeBodyInput(subjectInput=findComposeSubjectInput()){
-    const scope=subjectInput?.closest?.('form')||document;
-    const textareas=[...scope.querySelectorAll('textarea')].filter(visible);
-    const labelled=textareas.find(el=>el!==subjectInput&&/message|body|mail|content/.test(elementMeta(el)));
-    if(labelled)return labelled;
-    const editables=[...scope.querySelectorAll('[contenteditable="true"],[role="textbox"][contenteditable],[role="textbox"]')].filter(visible);
-    return editables.find(el=>el!==subjectInput&&/message|body|mail|content|write|compose/.test(elementMeta(el)))||
-      editables.find(el=>el!==subjectInput)||
-      textareas.find(el=>el!==subjectInput)||
+    const textareas=[...document.querySelectorAll('textarea')]
+      .filter(el=>el!==subjectInput&&composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.35}));
+    const editables=[...document.querySelectorAll('[contenteditable="true"],[role="textbox"][contenteditable],[role="textbox"]')]
+      .filter(el=>el!==subjectInput&&composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.35}));
+    const candidates=[...textareas,...editables];
+    return candidates.find(el=>/message|body|mail|content|write|compose|editor/.test(elementMeta(el)))||
+      candidates.sort((a,b)=>(a.getBoundingClientRect?.().top||0)-(b.getBoundingClientRect?.().top||0))[0]||
       null;
   }
 
-  function findComposeRichEditorBody(){
-    for(const frame of [...document.querySelectorAll('iframe')].filter(visible)){
+  function findComposeRichEditorBody(subjectInput=findComposeSubjectInput()){
+    for(const frame of [...document.querySelectorAll('iframe')].filter(el=>composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.35}))){
       try{
         const doc=frame.contentDocument||frame.contentWindow?.document,body=doc?.body;if(!body)continue;
         const meta=[frame.id,frame.name,frame.className,frame.title,frame.getAttribute('aria-label'),body.className,body.getAttribute('contenteditable'),body.getAttribute('role')].filter(Boolean).join(' ').toLowerCase();
         if(body.isContentEditable||body.getAttribute('contenteditable')==='true'||/editor|wysiwyg|message|compose|sceditor|mail/.test(meta))return body;
       }catch{}
     }
-    const body=findComposeBodyInput();
+    const body=findComposeBodyInput(subjectInput);
     const tag=String(body?.tagName||'').toLowerCase();
     return body&&tag!=='textarea'&&tag!=='input'?body:null;
   }
 
-  function findTornCodeEditorToggle(){
+  function findTornCodeEditorToggle(subjectInput=findComposeSubjectInput()){
     const selectors=['[aria-label="Toggle Code Editor"]','[title="Toggle Code Editor"]','button[aria-label*="Code Editor" i]','button[title*="Code Editor" i]','[role="button"][aria-label*="Code Editor" i]','[role="button"][title*="Code Editor" i]'];
-    for(const selector of selectors){const el=[...document.querySelectorAll(selector)].find(visible);if(el)return el;}
-    return [...document.querySelectorAll('button,a,[role="button"]')].filter(visible).find(el=>{
-      const meta=[el.title,el.getAttribute('aria-label'),el.getAttribute('data-tooltip'),el.textContent].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
-      return meta==='{}'||meta==='{ }'||/toggle code editor|code editor|source code|source editor|html source/.test(meta);
-    })||null;
+    for(const selector of selectors){
+      const el=[...document.querySelectorAll(selector)].find(node=>composeElementNearSubject(node,subjectInput,{above:20,below:760,minOverlap:0.15}));
+      if(el)return el;
+    }
+    return [...document.querySelectorAll('button,a,[role="button"]')]
+      .filter(el=>composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.15}))
+      .find(el=>{
+        const meta=[el.title,el.getAttribute('aria-label'),el.getAttribute('data-tooltip'),el.textContent].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
+        return meta==='{}'||meta==='{ }'||/toggle code editor|code editor|source code|source editor|html source/.test(meta);
+      })||null;
   }
 
-  function sourceEditorCandidates(){
+  function sourceEditorCandidates(subjectInput=findComposeSubjectInput()){
     const set=new Set();
-    // Torn source mode may expose an anonymous textarea, so candidates are
-    // narrowed by compose-area geometry and source characteristics below.
     for(const selector of ['textarea','.sceditor-source','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]']){
-      for(const el of document.querySelectorAll(selector))if(visible(el))set.add(el);
+      for(const el of document.querySelectorAll(selector)){
+        if(composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.30}))set.add(el);
+      }
     }
     return [...set];
   }
 
   function composeAreaTextarea(el){
-    if(!el)return false;
-    const r=el.getBoundingClientRect?.();
-    if(!r||r.width<280||r.height<70)return false;
-    const subject=findComposeSubjectInput();
-    if(!subject)return true;
-    const sr=subject.getBoundingClientRect?.();
-    if(!sr)return true;
-    const overlap=Math.max(0,Math.min(r.right,sr.right)-Math.max(r.left,sr.left));
-    const horizontalEnough=overlap>=Math.min(r.width,sr.width)*0.45;
-    const verticalNear=r.top>=sr.bottom-30&&r.top<=sr.bottom+700;
-    return horizontalEnough&&verticalNear;
+    return composeElementNearSubject(el,findComposeSubjectInput(),{above:20,below:760,minOverlap:0.45});
   }
 
   function looksLikeHtmlSource(el){
@@ -699,18 +702,18 @@
     return /<\/?(?:p|div|table|tr|td|span|img|a|br|strong)\b/i.test(value);
   }
 
-  function likelyTornSourceEditor(before=new Set(),allowFreshAnonymous=false){
+  function likelyTornSourceEditor(before=new Set(),allowFreshAnonymous=false,subjectInput=findComposeSubjectInput()){
     const score=el=>{
       const meta=elementMeta(el)+' '+String(el.className||'').toLowerCase();
       const tag=String(el.tagName||'').toLowerCase();
       if(/sceditor-source/.test(meta))return 7;
       if(/code|source|html|cm-|codemirror|monaco/.test(meta))return 6;
       if(el.matches?.('[data-language="html"],[data-mode="html"]'))return 5;
-      if(tag==='textarea'&&composeAreaTextarea(el)&&looksLikeHtmlSource(el))return 4;
-      if(tag==='textarea'&&allowFreshAnonymous&&!before.has(el)&&composeAreaTextarea(el))return 3;
+      if(tag==='textarea'&&looksLikeHtmlSource(el))return 4;
+      if(tag==='textarea'&&allowFreshAnonymous&&!before.has(el))return 3;
       return 0;
     };
-    const eligible=sourceEditorCandidates().filter(el=>{
+    const eligible=sourceEditorCandidates(subjectInput).filter(el=>{
       const meta=elementMeta(el);
       return !/subject|title/.test(meta)&&score(el)>0;
     });
