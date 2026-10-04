@@ -1426,9 +1426,16 @@
 
   function acquisitionPriceBand(row){
     const live=acquisitionSourceSnapshot(row);
-    const prices=[num(row?.marketValue),num(live.itemMarketPrice),num(live.bazaarPrice),num(live.travelPrice)].filter(value=>value>0);
+    const prices=[
+      num(row?.marketValue),
+      num(live.itemMarketPrice),
+      num(live.bazaarPrice),
+      num(live.travelPrice)
+    ].filter(value=>value>0);
     if(!prices.length)return {low:0,high:0,lowTotal:0,highTotal:0,priced:false};
-    const low=Math.min(...prices),high=Math.max(...prices),qty=Math.max(0,Math.round(num(row?.qty)));
+    const low=Math.min(...prices);
+    const high=Math.max(...prices);
+    const qty=Math.max(0,Math.round(num(row?.qty)));
     return {low,high,lowTotal:low*qty,highTotal:high*qty,priced:true};
   }
 
@@ -1443,7 +1450,9 @@
       mode:stockMode,
       procurementMode
     });
-    const nonReady=new Map(members.filter(row=>row.readinessStatus!=='WAR READY').map(row=>[row.memberId,row]));
+    const nonReady=new Map(
+      members.filter(row=>row.readinessStatus!=='WAR READY').map(row=>[row.memberId,row])
+    );
     const memberNeeds=plan.assignments.filter(row=>row.route==='ACQUIRE'&&nonReady.has(row.memberId));
     const minNeeds=minimums.actionable.filter(row=>num(row.shortfall)>0);
     const priceRows=plan.list.map(row=>({row,band:acquisitionPriceBand(row)}));
@@ -1461,25 +1470,79 @@
       '',
       'INDIVIDUAL MEMBER BUILD NEEDS'
     ];
+
     if(memberNeeds.length){
       for(const need of memberNeeds){
         const row=nonReady.get(need.memberId);
-        lines.push('- '+need.memberName+' ['+need.memberId+'] · '+String(need.slot||'').toUpperCase()+' → '+need.item+
-          (row?.statsEstimated?' (balanced public estimate)':''));
+        lines.push(
+          '- '+need.memberName+' ['+need.memberId+'] · '+String(need.slot||'').toUpperCase()+
+          ' → '+need.item+(row?.statsEstimated?' (balanced public estimate)':'')
+        );
       }
-    }else lines.push('- None currently require purchased build equipment.');
+    }else{
+      lines.push('- None currently require purchased build equipment.');
+    }
 
     lines.push('','MINIMUM STOCK SHORTFALLS');
     if(minNeeds.length){
-      for(const need of minNeeds)lines.push('- '+need.category+' · '+need.item+' · short '+fmt(need.shortfall)+' (target '+fmt(need.recommendedMin)+')');
-    }else lines.push('- No current minimum-stock shortfalls.');
+      for(const need of minNeeds){
+        lines.push(
+          '- '+need.category+' · '+need.item+' · short '+fmt(need.shortfall)+
+          ' (target '+fmt(need.recommendedMin)+')'
+        );
+      }
+    }else{
+      lines.push('- No current minimum-stock shortfalls.');
+    }
 
     lines.push('','COMBINED ACQUISITION LIST / PRICE RANGE');
     if(priceRows.length){
       for(const item of priceRows){
-        const row=item.row,band=item.band;
-        lines.push('- '+row.item+' x'+fmt(row.qty)+' · '+
-          (band.priced?'    const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+        const row=item.row;
+        const band=item.band;
+        lines.push(
+          '- '+row.item+' x'+fmt(row.qty)+' · '+
+          (band.priced
+            ? '$'+fmt(band.low)+'–$'+fmt(band.high)+' each · $'+fmt(band.lowTotal)+'–$'+fmt(band.highTotal)+' line total'
+            : 'price unresolved')+
+          (row.reasons?' · '+row.reasons:'')
+        );
+      }
+    }else{
+      lines.push('- Nothing currently requires acquisition.');
+    }
+
+    lines.push('','ESTIMATED TOTAL ACQUISITION COST');
+    lines.push(priced.length?'$'+fmt(lowTotal)+' – $'+fmt(highTotal):'$0 known');
+    if(unpriced.length){
+      lines.push(
+        'Unpriced requirements: '+
+        unpriced.map(item=>item.row.item+' x'+fmt(item.row.qty)).join(', ')
+      );
+    }
+    lines.push(
+      '',
+      'Price range uses currently cached reference / Item Market / Bazaar / overseas values. '+
+      'MM_Acquisitions should verify live availability and price before purchase.'
+    );
+    return lines.join('\n');
+  }
+
+  function messageFactionLeader(){
+    const leadership=state?.factionInventory?.leadership||{};
+    const leaderId=asId(leadership.leaderId);
+    if(!leaderId)throw new Error('Faction leader is not resolved. Refresh Faction first.');
+    openArmoryMessage({
+      playerId:leaderId,
+      playerName:String(leadership.leaderName||leaderId),
+      subject:'Faction Armory acquisition report',
+      body:leaderAcquisitionReport(),
+      kind:'leader-acquisition-report'
+    });
+  }
+
+  function acquireHtml(){
+    const plan=logic.acquisitionPlan(state?.factionInventory||{},{
       mode:stockMode,
       procurementMode,
       budgetCap:acquisitionBudget
@@ -1488,16 +1551,21 @@
     const groups=categories.map(cat=>{
       const rows=plan.list.filter(row=>row.category===cat);
       return '<details class="mm-fa-build-member" open>'+
-        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.qty),0)+' required</span></summary>'+
+        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+
+        '</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+
+        rows.reduce((sum,row)=>sum+num(row.qty),0)+' required</span></summary>'+
         '<div class="mm-fa-build-body">'+rows.map(row=>{
           const live=acquisitionSourceSnapshot(row);
           const best=live.best;
+          const band=acquisitionPriceBand(row);
           return '<div class="mm-fa-row">'+
             '<div class="mm-fa-main"><b>'+esc(row.item)+'</b>'+
-              '<div class="mm-fa-muted">'+esc(row.source||'General Torn availability')+(row.reasons?' · '+esc(row.reasons):'')+'</div>'+
+              '<div class="mm-fa-muted">'+esc(row.source||'General Torn availability')+
+                (row.reasons?' · '+esc(row.reasons):'')+'</div>'+
               '<div class="mm-fa-mini" style="margin-top:3px;">'+
                 (best
-                  ? 'Lowest observed source: '+esc(best.source)+(best.country?' · '+esc(best.country):'')+' · $'+fmt(best.price)
+                  ? 'Lowest observed source: '+esc(best.source)+(best.country?' · '+esc(best.country):'')+
+                    ' · $'+fmt(best.price)
                   : 'No live market/travel price cached yet — MM_Acquisitions will verify before routing.')+
               '</div>'+
               '<div class="mm-fa-actions" style="margin-top:4px;">'+
@@ -1515,6 +1583,7 @@
               (live.itemMarketPrice?tile('ITEM MKT','$'+fmt(live.itemMarketPrice)):'')+
               (live.bazaarPrice?tile('BAZAAR','$'+fmt(live.bazaarPrice)):'')+
               (live.travelPrice?tile('OVERSEAS','$'+fmt(live.travelPrice)+(live.travelCountry?' · '+live.travelCountry:''),{wide:true}):'')+
+              (band.priced?tile('PRICE RANGE','$'+fmt(band.low)+' – $'+fmt(band.high),{wide:true}):'')+
               (row.fundedEstimatedValue?tile('BUY-NOW COST','$'+fmt(row.fundedEstimatedValue)):'')+
             '</div>'+
           '</div>';
@@ -1523,9 +1592,15 @@
       '</details>';
     }).join('');
 
+    const leadership=state?.factionInventory?.leadership||{};
+    const leaderLabel=leadership.leaderName&&leadership.leaderName!==leadership.leaderId
+      ? 'Message '+leadership.leaderName
+      : 'Message Faction Leader';
+
     return '<div class="mm-fa-card mm-fa-compact">'+
       '<div class="mm-fa-module-head">'+
-        '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+procurementMode.toUpperCase()+' · '+plan.participants+' current faction members</span></div>'+
+        '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+
+          ' · '+procurementMode.toUpperCase()+' · '+plan.participants+' current faction members</span></div>'+
         '<div class="mm-fa-actions">'+
           '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
           '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
@@ -1533,6 +1608,7 @@
         '</div>'+
       '</div>'+
       '<div class="mm-fa-tiles">'+
+        tile('CURRENT MEMBERS',fmt(plan.participants))+
         tile('BUDGET CAP','$'+fmt(plan.budgetCap))+
         tile('BUY NOW','$'+fmt(plan.fundedEstimatedValue),{cls:'mm-fa-good'})+
         tile('KNOWN DEFERRED','$'+fmt(plan.deferredEstimatedValue),{cls:plan.deferredEstimatedValue?'mm-fa-warn':''})+
@@ -1540,14 +1616,20 @@
         tile('UNRESOLVED SLOTS',fmt(plan.unresolvedCount),{cls:plan.unresolvedCount?'mm-fa-warn':''})+
       '</div>'+
       '<div class="mm-fa-actions" style="margin-top:5px;">'+
-        '<label class="mm-fa-muted">Budget $ <input id="mm-fa-budget-cap" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:130px;"></label>'+
+        '<label class="mm-fa-muted">Budget $ <input id="mm-fa-budget-cap" class="mm-fa-input" type="number" min="0" step="100000" value="'+
+          Math.round(acquisitionBudget)+'" style="width:130px;"></label>'+
         '<button id="mm-fa-save-budget" style="'+button(true)+'">Save Budget</button>'+
-        '<button id="mm-fa-message-leader" style="'+button(true)+'">Message Faction Leader</button>'+
+        '<button id="mm-fa-message-leader" style="'+button(true)+'">'+esc(leaderLabel)+'</button>'+
       '</div>'+
-      '<div class="mm-fa-muted" style="margin-top:4px;">Equipped gear, member-owned inventory, assigned faction loans, and faction stock are consumed before purchases are created. Faction stock uses the least-cost item that still meets the build floor so premium gear is not wasted. Cached Item Market, Bazaar, and overseas prices are shown when known; MM_Acquisitions performs live source verification/routing before purchase.</div>'+
+      '<div class="mm-fa-muted" style="margin-top:4px;">'+
+        'War requirements are derived from the current faction roster. Approved War Ready members generate no individual equipment acquisition. '+
+        'Members without private stats use a clearly labeled balanced public estimate; faction loans are counted before purchases. '+
+        'Cached Item Market, Bazaar, overseas, and reference prices provide low/high planning estimates; MM_Acquisitions performs live source verification before purchase.'+
+      '</div>'+
       (plan.unresolvedCount
         ? '<details class="mm-fa-details"><summary>Unresolved build slots</summary><div class="mm-fa-muted" style="margin-top:3px;">'+
-          plan.unresolved.map(r=>esc(r.memberName)+' · '+esc(r.slot.toUpperCase())+(r.current?' · '+esc(r.current):'')+' · '+esc(r.reason||'')).join('<br>')+
+          plan.unresolved.map(row=>esc(row.memberName)+' · '+esc(row.slot.toUpperCase())+
+            (row.current?' · '+esc(row.current):'')+' · '+esc(row.reason||'')).join('<br>')+
           '</div></details>'
         : '')+
     '</div>'+(groups||card('Nothing currently requires acquisition.'));
