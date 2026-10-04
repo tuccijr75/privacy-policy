@@ -367,7 +367,7 @@ const primaryAlternatives=logic.equipmentOptionsForSlot('primary',balancedProfil
 assert(primaryAlternatives.length>=8,'a normal primary requirement should expose many qualifying choices');
 assert(primaryAlternatives.some(x=>x.name==='Enfield SA-80'),'qualifying primary alternatives should include Enfield SA-80');
 assert(primaryAlternatives.some(x=>x.name==='Tavor TAR-21'),'qualifying primary alternatives should include Tavor TAR-21');
-assert(primaryAlternatives.every(x=>x.meetsFloor&&x.score>=budgetPrimaryFloor),'every displayed alternative must meet the member slot floor');
+assert(primaryAlternatives.every(x=>x.meetsFloor&&x.minimumScore>=budgetPrimaryFloor),'every displayed alternative must meet the member slot floor at its minimum normal roll');
 
 const akAverage=logic.equipmentStatProfile({name:'AK-47'});
 assert.strictEqual(akAverage.source,'CATALOG AVG');
