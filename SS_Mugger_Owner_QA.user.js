@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.0-rc.2-qa.1
+// @version      1.1.0-rc.3-qa.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
-// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
-// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
 // @match        https://www.torn.com/*
 // @include      https://www.torn.com/*
 // @run-at       document-idle
@@ -623,7 +623,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.0-rc.2-qa.1';
+  const VERSION = '1.1.0-rc.3-qa.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
