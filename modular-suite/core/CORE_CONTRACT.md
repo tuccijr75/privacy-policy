@@ -132,7 +132,7 @@ Core exposes `makePanelDraggable(panel, handle, key, defaults)`.
 
 ### Ordered Torn-adjacent default
 
-Core alpha.9 defines one default launcher cluster beside Torn's native bottom toolbar. When read from **right to left**, the requested order is:
+Core alpha.10 defines one default launcher cluster beside Torn's native bottom toolbar. When read from **right to left**, the requested order is:
 
 1. **MM Trade Rotation** (`trade-reminder`)
 2. **MM Faction Armory** (`armory`)
@@ -146,13 +146,17 @@ The dock remains a responsive **relative anchor**, not a hard-coded screen coord
 - if the row cannot fit horizontally, the existing narrow-screen fallback places the MM dock above the native row;
 - if Torn's bottom controls cannot be identified, the existing lower-right fallback remains.
 
-The alpha.9 migration docks the MM launchers and applies the requested order once. After that:
+The alpha.10 migration clears stale absolute floating coordinates and physically re-docks the five canonical visible launchers once. This corrects legacy state where every launcher had been persisted as floating, which left the shared dock empty and unable to follow Torn when the viewport changed.
 
+After that one-time repair:
+
+- docked launchers never persist screen coordinates; their shared dock is recomputed from Torn's **current** native bottom-toolbar geometry;
+- switching between split-screen and full-screen layouts is handled by the normal viewport resize path, so the MM cluster moves with Torn rather than staying at old coordinates;
 - dragging within the dock creates a persistent custom order;
-- pulling an icon out creates a persistent floating position;
+- pulling an icon out creates a persistent floating position for that deliberately undocked icon;
 - right-click continues to toggle dock/undock;
-- later page loads honor those user changes instead of resetting them.
+- later page loads honor intentional user changes instead of repeatedly forcing the default layout.
 
 The default order is independent of userscript load order. A separate custom-order flag distinguishes the requested default from an intentional user reorder.
 
-For browser-console diagnostics, the shared `#mm-torn-module-dock` element exposes non-sensitive geometry/contract fields in its `dataset`, including the dock anchor, requested right-to-left order, live dock edges, and detected Torn native-row anchor coordinates. This is diagnostic UI geometry only.
+For browser-console diagnostics, the shared `#mm-torn-module-dock` element exposes non-sensitive geometry/contract fields in its `dataset`, including the Core version, relative-dock mode, layout revision, dock anchor, requested right-to-left order, live dock edges, and detected Torn native-row anchor coordinates. This is diagnostic UI geometry only and avoids relying on page-context access to the Tampermonkey sandbox.
