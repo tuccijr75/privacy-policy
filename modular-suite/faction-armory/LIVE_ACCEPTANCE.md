@@ -1,6 +1,6 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.20**
+Status: **NON-PRODUCTION / alpha.21**
 
 ## Historical acceptance notes
 
@@ -464,3 +464,44 @@ Alpha.20 expands per-member equipment evaluation without changing the canonical 
 - [ ] Confirm Alpha.19 dynamic roster, reminder, faction-loan, WAR READY suppression, and leader-report workflows continue to function.
 
 Production remains unchanged until this checklist passes and the owner explicitly approves promotion.
+
+
+## Alpha.21 — War/Pace scoped leader acquisition letter
+
+The War/Peace stock-mode selector now determines what is included in the faction-leader acquisition message.
+
+### War mode
+
+- [x] Leader report title/subject identify WAR mode.
+- [x] The report keeps individual equipment purchases for members who are not WAR READY.
+- [x] The report keeps War equipment-spare requirements.
+- [x] Minimum-stock/provision replenishment is excluded from the War leader report.
+- [x] The War low/high acquisition total is calculated only from the filtered War equipment list.
+- [x] The report explicitly states that minimum-stock replenishment is deferred until Peace mode.
+
+### Peace mode
+
+- [x] Leader report title/subject identify PEACE mode.
+- [x] Normal member acquisition remains visible.
+- [x] Peace minimum-stock shortfalls are included.
+- [x] The combined low/high total includes the Peace-mode acquisition list.
+- [x] Acquire exposes War/Peace buttons directly so report scope is visible before message generation.
+
+### Live acceptance
+
+- [ ] Open Acquire and select **War**.
+- [ ] Confirm the leader-message button says **War Needs**.
+- [ ] Prepare the leader message.
+- [ ] Confirm the Subject identifies WAR.
+- [ ] Confirm the body contains only non-WAR-READY member equipment needs and War equipment spares.
+- [ ] Confirm there is no **MINIMUM STOCK SHORTFALLS** section in the War message.
+- [ ] Confirm medical/temporary/drug/booster/other minimum-restock rows do not appear in the War combined list or total.
+- [ ] Return to Acquire and select **Peace**.
+- [ ] Confirm the leader-message button changes to **Peace / Minimums**.
+- [ ] Prepare the leader message.
+- [ ] Confirm the Subject identifies PEACE.
+- [ ] Confirm **MINIMUM STOCK SHORTFALLS** is present and reflects the Peace minimum policy.
+- [ ] Confirm low/high cost totals change appropriately between War and Peace scope.
+- [ ] Sending remains manual in both modes.
+
+Production remains unchanged until live acceptance passes and the owner explicitly approves promotion.
