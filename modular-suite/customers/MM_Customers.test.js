@@ -34,8 +34,8 @@ assert.strictEqual(logic.currentBazaarRows(db,db.subscribers['123']).length,1);
 
 const userSrc=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 assert.doesNotThrow(()=>new Function(userSrc));
-assert(userSrc.includes("const VERSION='8.0.0-alpha.19.2';"));
-assert(userSrc.includes('MM_Torn_Core.js?v=8.0.0-alpha.10'));
+assert(userSrc.includes("const VERSION='8.0.0-alpha.19.3';"));
+assert(userSrc.includes('MM_Torn_Core.js?v=8.0.0-alpha.11'));
 assert(userSrc.includes("const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';"));
 assert(userSrc.includes("const PENDING_SEND_KEY='mm_customers_pending_send_v1';"));
 assert(userSrc.includes("const DELIVERY_RECEIPTS_KEY='mm_customers_delivery_receipts_v1';"));
