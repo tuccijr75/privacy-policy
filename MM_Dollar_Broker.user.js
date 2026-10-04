@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.5
+// @version      0.1.0-rc.6
 // @description  Manual foreground Bazaar inspection and cross-tab $1 observations. Never buys or scans unattended.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -24,7 +24,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.5';
+const VERSION = '0.1.0-rc.6';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
@@ -158,7 +158,6 @@ const SELECTOR = Object.freeze({
 });
 
 const cleanText=value=>String(value??'').replace(/\s+/g,' ').trim();
-const stockMatch=value=>/^\(?\s*((?:[1-9]\d{0,8}|0)(?:,\d{3})*)\s+in stock\s*\)?$/i.exec(cleanText(value));
 
 function visible(element, win, viewportOnly=false) {
   if (!element?.isConnected) return false;
@@ -191,15 +190,29 @@ function currencyNodes(scope, win) {
   return textNodes(scope,win,value=>exactPrice(value)!==null);
 }
 
-function stockNodes(scope, win) {
-  const nodes=[];
-  const all=[scope,...scope.querySelectorAll('*')];
-  for(const el of all) {
-    if(!(el instanceof HTMLElement) || !visible(el,win,true)) continue;
-    const match=stockMatch(el.textContent);
-    if(match) nodes.push({element:el,quantity:Number(match[1].replaceAll(',',''))});
+function visibleText(scope, win) {
+  const parts=[];
+  const walker=scope.ownerDocument.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  let node;
+  while((node=walker.nextNode())) {
+    const parent=node.parentElement;
+    const value=cleanText(node.textContent);
+    if(value && parent && visible(parent,win,false)) parts.push(value);
   }
-  return nodes;
+  return cleanText(parts.join(' '));
+}
+
+function stockQuantity(scope, win) {
+  const text=visibleText(scope,win);
+  const patterns=[
+    /(?:^|\s|\()([1-9]\d{0,8}(?:,\d{3})*)\s+in stock(?:\)|\s|$)/i,
+    /(?:^|\s|\()in stock\)?\s*([1-9]\d{0,8}(?:,\d{3})*)(?:\s|$)/i,
+  ];
+  for(const pattern of patterns) {
+    const match=pattern.exec(text);
+    if(match) return Number(match[1].replaceAll(',',''));
+  }
+  return null;
 }
 
 function itemIdentity(scope, win) {
@@ -228,15 +241,16 @@ function itemIdentity(scope, win) {
 function semanticCards(root, win) {
   const found=[];
   const used=new Set();
-  for(const stock of stockNodes(root,win)) {
-    let node=stock.element;
-    for(let depth=0;node && node!==root && depth<9;depth++,node=node.parentElement) {
+  const images=[...root.querySelectorAll('img[src*="/images/items/"]')].filter(img=>visible(img,win,false));
+  for(const img of images) {
+    let node=img.parentElement;
+    for(let depth=0;node && node!==root && depth<10;depth++,node=node.parentElement) {
       if(!(node instanceof HTMLElement) || !visible(node,win,true)) continue;
       const identity=itemIdentity(node,win);
       if(!identity) continue;
       const prices=currencyNodes(node,win);
-      const stocks=stockNodes(node,win);
-      if(prices.length!==1 || stocks.length!==1) continue;
+      const quantity=stockQuantity(node,win);
+      if(prices.length!==1 || quantity===null) continue;
       if(!used.has(node)) {used.add(node);found.push(node);}
       break;
     }
@@ -264,10 +278,9 @@ function parseLegacyCard(card, win) {
 function parseSemanticCard(card, win) {
   const identity=itemIdentity(card,win);
   const prices=currencyNodes(card,win);
-  const stocks=stockNodes(card,win);
-  if(!identity || prices.length!==1 || stocks.length!==1) return null;
+  const quantity=stockQuantity(card,win);
+  if(!identity || prices.length!==1 || quantity===null) return null;
   const price=exactPrice(prices[0].value);
-  const quantity=stocks[0].quantity;
   if(price===null || !Number.isSafeInteger(quantity) || quantity<1) return null;
   const listingId=card.getAttribute('data-listing-id')||'';
   if(listingId.length>80) return null;
@@ -518,7 +531,14 @@ async function boot(gm, win, doc) {
   }));
   on(ui.el('inspect'),'click',e=>{
     if(!trusted(e) || busy) return;
-    const snapshot=inspectBazaar(doc,win,{trusted:e.isTrusted,targetId:state.worker?.targetId,documentId:identity.documentId,at:Date.now(),initialUrl});
+    const wasOpen=!ui.panel.hidden;
+    if(wasOpen) ui.panel.hidden=true;
+    let snapshot;
+    try {
+      snapshot=inspectBazaar(doc,win,{trusted:e.isTrusted,targetId:state.worker?.targetId,documentId:identity.documentId,at:Date.now(),initialUrl});
+    } finally {
+      if(wasOpen) ui.panel.hidden=false;
+    }
     void act(e,()=>change(s=>{
       if(!active()||win.location.href!==initialUrl)throw new Error('Focus or navigation changed. Inspection discarded.');
       return recordSnapshot(s,identity,snapshot,Date.now());
