@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.18
+// @version      8.0.0-alpha.19
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.18';
+  const VERSION='8.0.0-alpha.19';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -27,12 +27,17 @@
   const STOCK_MODE_KEY='mm_faction_armory_stock_mode_v1';
   const PROCUREMENT_MODE_KEY='mm_faction_armory_procurement_mode_v1';
   const ACQUISITION_BUDGET_KEY='mm_faction_armory_acquisition_budget_v1';
-  const WAR_PARTICIPANTS=20;
   const API_BASE='https://api.torn.com/v2';
   const CHANNEL='mm_bazaar_crm_cross_tab_v1';
   const AUTO_CHECK_MS=5*60*1000;
   const FACTION_STALE_FALLBACK_MS=60*60*1000;
   const AUTO_MEMBER_BATCH=2;
+  const PUBLIC_INTEL_BATCH=20;
+  const PUBLIC_INTEL_MAX_AGE_MS=24*60*60*1000;
+  const ARMORY_COMPOSE_KEY='mm_faction_armory_compose_v1';
+  const REMINDER_SENT_KEY='mm_faction_armory_reminder_sent_v1';
+  const ARMORY_COMPOSE_TTL_MS=2*60*1000;
+  const ARMORY_SEND_CONFIRM_MS=15*1000;
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornFactionLogic;
@@ -305,6 +310,7 @@
         position:String(raw?.position??raw?.role??raw?.position_name??raw?.faction_position??''),
         status:String(raw?.status?.state??raw?.status??raw?.user?.status?.state??''),
         lastActionAt:Number(raw?.last_action?.timestamp||raw?.lastActionAt||0)||0,
+        daysInFaction:num(raw?.days_in_faction??raw?.daysInFaction),
         joinedAt:Number(raw?.joined_at||raw?.joined||0)||0,
         fetchedAt:Date.now()
       };
@@ -326,15 +332,105 @@
     return out;
   }
 
+  function factionLeadershipFromResponse(data,rosterRows=[]){
+    const root=data?.basic??data?.faction??data||{};
+    const leaderId=asId(root?.leader_id??root?.leaderId);
+    const coLeaderId=asId(root?.co_leader_id??root?.coLeaderId);
+    const byId=new Map((rosterRows||[]).map(row=>[asId(row.memberId),row]));
+    return {
+      factionId:asId(root?.id),
+      factionName:String(root?.name||''),
+      leaderId,
+      leaderName:String(byId.get(leaderId)?.memberName||leaderId),
+      coLeaderId,
+      coLeaderName:String(byId.get(coLeaderId)?.memberName||coLeaderId),
+      fetchedAt:new Date().toISOString()
+    };
+  }
+
+  function publicProfileRoot(data){
+    return data?.profile&&typeof data.profile==='object'?data.profile:(data||{});
+  }
+
+  function publicPopularStatsRoot(data){
+    return data?.personalstats&&typeof data.personalstats==='object'?data.personalstats:(data||{});
+  }
+
+  async function fetchPublicMemberIntel(member,key){
+    const id=asId(member?.memberId);
+    if(!id)throw new Error('Member ID is required for public profile lookup.');
+    const [profileResult,statsResult]=await Promise.allSettled([
+      apiRequest('/user/'+encodeURIComponent(id)+'/profile',key),
+      apiRequest('/user/'+encodeURIComponent(id)+'/personalstats?cat=popular',key)
+    ]);
+    const profile=profileResult.status==='fulfilled'?publicProfileRoot(profileResult.value):{};
+    const popular=statsResult.status==='fulfilled'?publicPopularStatsRoot(statsResult.value):{};
+    if(!Object.keys(profile).length&&!Object.keys(popular).length){
+      throw new Error('No public profile data returned for '+id+'.');
+    }
+    return {
+      memberId:id,
+      memberName:String(profile?.name||member?.memberName||id),
+      level:num(profile?.level??member?.level),
+      rank:String(profile?.rank||''),
+      ageDays:num(profile?.age),
+      signedUp:Number(profile?.signed_up||0)||0,
+      awards:num(profile?.awards),
+      activitySeconds:num(popular?.other?.activity?.time),
+      crimesTotal:num(popular?.crimes?.total),
+      networth:num(popular?.networth?.total),
+      daysInFaction:num(member?.daysInFaction),
+      position:String(member?.position||''),
+      fetchedAt:new Date().toISOString(),
+      source:'Torn public profile + popular personalstats'
+    };
+  }
+
+  async function refreshMissingPublicIntel(rosterRows,key){
+    const latest=await core.readLegacyState();
+    const profiles=latest?.factionInventory?.memberReadiness?.profiles||{};
+    const now=Date.now();
+    const candidates=(rosterRows||[]).filter(member=>{
+      const profile=profiles[asId(member.memberId)]||{};
+      const actual=logic.battleProfile(profile?.stats||{});
+      if(actual.total>0)return false;
+      const fetched=Date.parse(profile?.publicIntel?.fetchedAt||'')||0;
+      return !fetched||now-fetched>=PUBLIC_INTEL_MAX_AGE_MS;
+    }).slice(0,PUBLIC_INTEL_BATCH);
+    if(!candidates.length)return {attempted:0,updated:0,failed:0};
+
+    const results=await mapLimit(candidates,3,member=>fetchPublicMemberIntel(member,key));
+    const successful=results.filter(result=>result.status==='fulfilled').map(result=>result.value);
+    if(successful.length){
+      await core.updateDomainState('faction',draft=>{
+        const fi=draft.factionInventory;
+        fi.memberReadiness=fi.memberReadiness&&typeof fi.memberReadiness==='object'?fi.memberReadiness:{};
+        fi.memberReadiness.profiles=fi.memberReadiness.profiles&&typeof fi.memberReadiness.profiles==='object'?fi.memberReadiness.profiles:{};
+        for(const intel of successful){
+          const id=asId(intel.memberId);
+          const previous=fi.memberReadiness.profiles[id]||{};
+          fi.memberReadiness.profiles[id]={...previous,memberId:id,publicIntel:intel};
+        }
+        return draft;
+      });
+    }
+    return {
+      attempted:candidates.length,
+      updated:successful.length,
+      failed:results.filter(result=>result.status==='rejected').length
+    };
+  }
+
   async function refreshFaction(){
     if(busy)return;
     const key=factionKey();
     if(!key){activeView='settings';statusText='Save a faction-compatible API key first.';render();return;}
     busy=true;statusText='Refreshing all 9 armory categories + roster…';render();
     try{
-      const [categoryResults,membersData]=await Promise.all([
+      const [categoryResults,membersData,basicData]=await Promise.all([
         mapLimit(logic.categories,3,fetchFactionCategory),
-        apiRequest('/faction/members',key)
+        apiRequest('/faction/members',key),
+        apiRequest('/faction/basic',key)
       ]);
       const failures=categoryResults.map((x,i)=>({x,cat:logic.categories[i]})).filter(r=>r.x.status==='rejected');
       if(failures.length)throw new Error(failures.map(r=>r.cat+': '+(r.x.reason?.message||String(r.x.reason))).join(' | '));
@@ -346,6 +442,7 @@
       const current=normalizeInventory(groups,fetchedAt);
       const rosterRows=factionMembersFromResponse(membersData);
       if(!rosterRows.length)throw new Error('Faction roster response contained no members.');
+      const leadership=factionLeadershipFromResponse(basicData,rosterRows);
 
       await core.updateDomainState('faction',draft=>{
         const fi=draft.factionInventory&&typeof draft.factionInventory==='object'?draft.factionInventory:{};
@@ -363,11 +460,16 @@
         next.memberReadiness.settings=next.memberReadiness.settings&&typeof next.memberReadiness.settings==='object'?next.memberReadiness.settings:{staleHours:72};
         next.memberReadiness.roster=Object.fromEntries(rosterRows.map(row=>[row.memberId,row]));
         next.memberReadiness.lastRosterSyncAt=new Date(fetchedAt).toISOString();
+        next.leadership=leadership;
         draft.factionInventory=next;
         return draft;
       });
+      let publicIntel={attempted:0,updated:0,failed:0};
+      try{publicIntel=await refreshMissingPublicIntel(rosterRows,key);}
+      catch(error){console.warn('[MM Faction Armory] public member intel refresh failed',error);}
       state=await core.readLegacyState();
-      statusText='Faction refreshed: '+Object.keys(current).length+' item rows · '+rosterRows.length+' members.';
+      statusText='Faction refreshed: '+Object.keys(current).length+' item rows · '+rosterRows.length+' current members'+
+        (publicIntel.attempted?' · public estimates '+publicIntel.updated+'/'+publicIntel.attempted+(publicIntel.failed?' ('+publicIntel.failed+' failed)':''):'')+'.';
     }catch(error){
       statusText='Faction refresh failed: '+(error?.message||String(error));
     }finally{busy=false;render();}
@@ -819,6 +921,199 @@
     return 'Ranked War readiness: please send either a Limited Access Torn API key in a private Torn message, or screenshots showing (1) Strength, Defense, Speed and Dexterity, (2) equipped weapons and armor, and (3) war supplies/medical items. Screenshots must be resent as your stats or gear change; a Limited Access API key can be refreshed automatically. A Limited Access API key is read-only and cannot log in, spend money, move/sell items, attack, or change account settings.';
   }
 
+  function reminderSentMap(){
+    const raw=GM_getValue(REMINDER_SENT_KEY,{});
+    return raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
+  }
+
+  function reminderSent(memberId){
+    return Boolean(reminderSentMap()[asId(memberId)]?.sentAt);
+  }
+
+  function recordReminderSent(memberId,memberName){
+    const id=asId(memberId);
+    if(!id)return;
+    const map=reminderSentMap();
+    map[id]={memberId:id,memberName:String(memberName||id),sentAt:new Date().toISOString()};
+    GM_setValue(REMINDER_SENT_KEY,map);
+  }
+
+  function readinessReminderMessage(row){
+    return [
+      'Faction Armory readiness reminder',
+      '',
+      'I still need your current Ranked War readiness information so I can build and provision your faction loadout accurately.',
+      '',
+      'Please send either:',
+      '1) a Limited Access Torn API key in a private message, OR',
+      '2) screenshots showing STR / DEF / SPD / DEX, your currently equipped Primary / Secondary / Melee and armor, plus your medical / war supplies.',
+      '',
+      'If you use screenshots, please resend them whenever your stats or equipment materially change.',
+      '',
+      'A Limited Access API key is read-only. It cannot log in as you, spend money, sell/move items, attack, or change your account settings.',
+      '',
+      'Thanks — this is only for faction readiness and equipment planning.'
+    ].join('\n');
+  }
+
+  function nativeSetValue(element,value){
+    if(!element)return;
+    const proto=Object.getPrototypeOf(element);
+    const descriptor=Object.getOwnPropertyDescriptor(proto,'value')||
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')||
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value');
+    if(descriptor?.set)descriptor.set.call(element,String(value??''));
+    else element.value=String(value??'');
+    for(const type of ['input','change']){
+      try{element.dispatchEvent(new Event(type,{bubbles:true}));}catch{}
+    }
+  }
+
+  function armoryComposeRecipient(){
+    for(const selector of ['input[name="sendto"]','#ac-search-0','input[placeholder="Name"]','input[placeholder*="recipient" i]']){
+      const el=[...document.querySelectorAll(selector)].find(node=>node&&node.offsetParent!==null);
+      if(el)return el;
+    }
+    return null;
+  }
+
+  function armoryComposeSubject(){
+    for(const selector of ['input.message-title','input[name="subject" i]','input[placeholder="Subject" i]','input[name="title" i]']){
+      const el=[...document.querySelectorAll(selector)].find(node=>node&&node.offsetParent!==null);
+      if(el)return el;
+    }
+    return null;
+  }
+
+  function armoryComposeEditor(){
+    for(const selector of ['#mce_0.mce-content-body[contenteditable="true"]','#mce_0[contenteditable="true"]','.editor-content.mce-content-body[contenteditable="true"]','.mce-content-body[contenteditable="true"]']){
+      const el=[...document.querySelectorAll(selector)].find(node=>node&&node.offsetParent!==null);
+      if(el)return el;
+    }
+    return null;
+  }
+
+  function armoryComposeSend(){
+    return [...document.querySelectorAll('button,input[type="submit"],[role="button"]')]
+      .filter(node=>node&&node.offsetParent!==null)
+      .find(node=>String(node.textContent||node.value||'').replace(/\s+/g,' ').trim().toLowerCase()==='send')||null;
+  }
+
+  function armoryRecipientMatches(payload,recipient=armoryComposeRecipient()){
+    const id=asId(payload?.playerId);
+    if(!id)return true;
+    const value=String(recipient?.value||recipient?.textContent||'').replace(/\s+/g,' ').trim();
+    if(value.includes('['+id+']'))return true;
+    const expected=String(payload?.playerName||'').trim().toLowerCase();
+    return Boolean(expected&&value.replace(/\s*\[\d+\]\s*$/,'').trim().toLowerCase()===expected);
+  }
+
+  function writeArmoryComposeBody(editor,text){
+    if(!editor)return false;
+    const value=String(text||'');
+    try{
+      editor.focus();
+      editor.textContent='';
+      value.split('\n').forEach((line,index)=>{
+        if(index)editor.appendChild(document.createElement('br'));
+        editor.appendChild(document.createTextNode(line));
+      });
+      try{editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText'}));}
+      catch{editor.dispatchEvent(new Event('input',{bubbles:true}));}
+      editor.dispatchEvent(new Event('change',{bubbles:true}));
+    }catch{return false;}
+    const actual=String(editor.innerText||editor.textContent||'').replace(/\s+/g,' ').trim();
+    const expected=value.replace(/\s+/g,' ').trim();
+    return actual===expected;
+  }
+
+  function openArmoryMessage({playerId,playerName='',subject='',body='',kind='generic',memberId=''}) {
+    const id=asId(playerId);
+    if(!id)throw new Error('Message recipient is not available.');
+    const payload={
+      composeId:'fa-'+Date.now()+'-'+id,
+      playerId:id,
+      playerName:String(playerName||''),
+      subject:String(subject||''),
+      body:String(body||''),
+      kind:String(kind||'generic'),
+      memberId:asId(memberId),
+      createdAt:Date.now(),
+      state:'awaiting-send'
+    };
+    GM_setValue(ARMORY_COMPOSE_KEY,payload);
+    location.href='https://www.torn.com/messages.php#/p=compose&XID='+encodeURIComponent(id);
+  }
+
+  async function verifyArmorySend(payload){
+    const started=Date.now();
+    while(Date.now()-started<ARMORY_SEND_CONFIRM_MS){
+      const current=GM_getValue(ARMORY_COMPOSE_KEY,null);
+      if(!current||String(current.composeId||'')!==String(payload.composeId||''))return;
+      const text=String(document.body?.innerText||'').toLowerCase();
+      const leftCompose=!location.hash.includes('compose')||!armoryComposeSend();
+      const successText=/message\s+(?:has\s+been\s+)?sent|sent\s+successfully/.test(text);
+      if(leftCompose||successText){
+        if(payload.kind==='member-data-reminder')recordReminderSent(payload.memberId,payload.playerName);
+        GM_deleteValue(ARMORY_COMPOSE_KEY);
+        return;
+      }
+      await new Promise(resolve=>setTimeout(resolve,500));
+    }
+    const current=GM_getValue(ARMORY_COMPOSE_KEY,null);
+    if(current&&String(current.composeId||'')===String(payload.composeId||'')){
+      GM_setValue(ARMORY_COMPOSE_KEY,{...current,state:'send-unconfirmed',sendVerificationFailedAt:Date.now()});
+    }
+  }
+
+  async function fillArmoryCompose(){
+    if(!location.pathname.includes('messages.php')||!location.hash.includes('compose'))return;
+    const payload=GM_getValue(ARMORY_COMPOSE_KEY,null);
+    if(!payload||Date.now()-Number(payload.createdAt||0)>ARMORY_COMPOSE_TTL_MS){
+      if(payload)GM_deleteValue(ARMORY_COMPOSE_KEY);
+      return;
+    }
+    const xid=new URLSearchParams(location.hash.replace(/^#\/?p=compose&?/,'')).get('XID')||
+      new URLSearchParams(location.hash.replace(/^#/,'')).get('XID')||'';
+    if(asId(xid)!==asId(payload.playerId)){
+      GM_deleteValue(ARMORY_COMPOSE_KEY);
+      return;
+    }
+    const deadline=Date.now()+30000;
+    let stableEditor=null,stableSince=0;
+    while(Date.now()<deadline){
+      const recipient=armoryComposeRecipient(),subject=armoryComposeSubject(),editor=armoryComposeEditor(),send=armoryComposeSend();
+      if(recipient&&subject&&editor&&send&&armoryRecipientMatches(payload,recipient)){
+        if(editor!==stableEditor){stableEditor=editor;stableSince=Date.now();}
+        else if(Date.now()-stableSince>=600){
+          nativeSetValue(subject,payload.subject);
+          if(!writeArmoryComposeBody(editor,payload.body))return;
+          break;
+        }
+      }else{stableEditor=null;stableSince=0;}
+      await new Promise(resolve=>setTimeout(resolve,250));
+    }
+  }
+
+  function installArmorySendTracking(){
+    document.addEventListener('click',event=>{
+      if(!event.isTrusted||!location.pathname.includes('messages.php'))return;
+      const payload=GM_getValue(ARMORY_COMPOSE_KEY,null);
+      if(!payload||payload.state!=='awaiting-send')return;
+      if(!armoryRecipientMatches(payload))return;
+      const send=armoryComposeSend();
+      const target=event.target?.closest?.('button,input[type="submit"],[role="button"]');
+      if(!send||!target||!(target===send||send.contains?.(target)||target.contains?.(send)))return;
+      const next={...payload,state:'send-clicked',sendClickedAt:Date.now()};
+      GM_setValue(ARMORY_COMPOSE_KEY,next);
+      verifyArmorySend(next).catch(()=>{});
+    },true);
+  }
+
+  function runArmoryPageHelpers(){
+    fillArmoryCompose().catch(error=>console.warn('[MM Faction Armory] compose preparation failed',error));
+  }
+
   function memberRows(){
     return state?logic.memberRows(state.factionInventory||{},savedKeyIds(),{procurementMode}):[];
   }
@@ -865,7 +1160,7 @@
 
   function membersHtml(){
     const rows=memberRows();
-    const missing=rows.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length;
+    const missing=rows.filter(r=>['MISSING DATA','STALE DATA','ESTIMATED — NEEDS DATA'].includes(r.readinessStatus)).length;
     const vault=getVault();
     const savedCount=savedKeyIds().length;
     const staleSaved=staleSavedMemberCount();
@@ -896,21 +1191,26 @@
       return '<details class="mm-fa-build-member">'+
         '<summary>'+
           '<span class="mm-fa-build-summary-main"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</span>'+
-          '<span class="mm-fa-muted">'+(row.hasStats?fmt(row.statProfile.total)+' stats':'stats missing')+'</span>'+
+          '<span class="mm-fa-muted">'+(row.statsEstimated?'~'+fmt(row.statProfile.total)+' estimated stats':row.hasStats?fmt(row.statProfile.total)+' stats':'stats missing')+'</span>'+
         '</summary>'+
         '<div class="mm-fa-build-body">'+
           '<div class="mm-fa-module-head"><div class="mm-fa-buttons">'+
             (entry?'<button data-refresh-member="'+esc(row.memberId)+'" style="'+button(true)+'">Refresh</button><button data-remove-member="'+esc(row.memberId)+'" style="'+button()+'">Remove Key</button>':'')+
             '<button data-paste-reply="'+esc(row.memberId)+'" style="'+button()+'">Paste Reply</button>'+
+            ((!row.hasVerifiedStats||!row.profileHasEquipment)&&!reminderSent(row.memberId)?'<button data-remind-member="'+esc(row.memberId)+'" style="'+button(true)+'">Send Data Reminder</button>':'')+
             (row.readinessStatus==='READY FOR REVIEW'&&row.buildWarReady?'<button data-war-ready="'+esc(row.memberId)+'" style="'+button(true)+'">Approve / War Ready</button>':'')+
             (row.readinessStatus==='WAR READY'?'<button data-reopen-review="'+esc(row.memberId)+'" style="'+button()+'">Reopen Review</button>':'')+
           '</div></div>'+
           '<div class="mm-fa-tiles">'+
-            tile('STR',row.hasStats?fmt(s.strength):'—')+
-            tile('DEF',row.hasStats?fmt(s.defense):'—')+
-            tile('SPD',row.hasStats?fmt(s.speed):'—')+
-            tile('DEX',row.hasStats?fmt(s.dexterity):'—')+
-            tile('TOTAL',row.hasStats?fmt(row.statProfile.total):'—')+
+            tile('STR',row.hasStats?(row.statsEstimated?'~':'')+fmt(s.strength):'—')+
+            tile('DEF',row.hasStats?(row.statsEstimated?'~':'')+fmt(s.defense):'—')+
+            tile('SPD',row.hasStats?(row.statsEstimated?'~':'')+fmt(s.speed):'—')+
+            tile('DEX',row.hasStats?(row.statsEstimated?'~':'')+fmt(s.dexterity):'—')+
+            tile('TOTAL',row.hasStats?(row.statsEstimated?'~':'')+fmt(row.statProfile.total):'—')+
+            (row.statsEstimated&&row.statEstimate?tile('EST RANGE',fmt(row.statEstimate.rangeMin)+' – '+(row.statEstimate.rangeMax?fmt(row.statEstimate.rangeMax):'250M+'),{wide:true}):'')+
+            (row.statsEstimated?tile('EST CONF',row.statEstimate?.confidence||'LOW'):'')+
+            (row.publicIntel?.ageDays?tile('TORN AGE',fmt(row.publicIntel.ageDays)+'d'):'')+
+            (row.publicIntel?.rank?tile('RANK',row.publicIntel.rank,{wide:true}):'')+
             tile('READINESS',row.readinessStatus||'—')+
             tile('BUILD BASELINE',row.buildWarReady?'PASS':'ACTION NEEDED')+
             (row.readinessApprovedAt?tile('APPROVED',when(row.readinessApprovedAt),{wide:true}):'')+
@@ -1026,11 +1326,10 @@
   function minimumsHtml(){
     const proposal=logic.minimumProposal(state?.factionInventory||{},{
       mode:stockMode,
-      participants:WAR_PARTICIPANTS,
       procurementMode
     });
     const categories=[...new Set(proposal.proposals.map(row=>String(row.category||'other')))];
-    const modeLabel=stockMode==='war'?'WAR · '+WAR_PARTICIPANTS+' PARTICIPANTS':'PEACE';
+    const modeLabel=stockMode==='war'?'WAR · '+proposal.participants+' CURRENT MEMBERS':'PEACE';
     const groups=categories.map(cat=>{
       const rows=proposal.proposals.filter(row=>String(row.category||'other')===cat)
         .sort((a,b)=>(b.shortfall||0)-(a.shortfall||0)||String(a.item).localeCompare(String(b.item)));
@@ -1125,10 +1424,63 @@
     render();
   }
 
-  function acquireHtml(){
+  function acquisitionPriceBand(row){
+    const live=acquisitionSourceSnapshot(row);
+    const prices=[num(row?.marketValue),num(live.itemMarketPrice),num(live.bazaarPrice),num(live.travelPrice)].filter(value=>value>0);
+    if(!prices.length)return {low:0,high:0,lowTotal:0,highTotal:0,priced:false};
+    const low=Math.min(...prices),high=Math.max(...prices),qty=Math.max(0,Math.round(num(row?.qty)));
+    return {low,high,lowTotal:low*qty,highTotal:high*qty,priced:true};
+  }
+
+  function leaderAcquisitionReport(){
+    const members=memberRows();
     const plan=logic.acquisitionPlan(state?.factionInventory||{},{
       mode:stockMode,
-      participants:WAR_PARTICIPANTS,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const minimums=logic.minimumProposal(state?.factionInventory||{},{
+      mode:stockMode,
+      procurementMode
+    });
+    const nonReady=new Map(members.filter(row=>row.readinessStatus!=='WAR READY').map(row=>[row.memberId,row]));
+    const memberNeeds=plan.assignments.filter(row=>row.route==='ACQUIRE'&&nonReady.has(row.memberId));
+    const minNeeds=minimums.actionable.filter(row=>num(row.shortfall)>0);
+    const priceRows=plan.list.map(row=>({row,band:acquisitionPriceBand(row)}));
+    const priced=priceRows.filter(item=>item.band.priced);
+    const lowTotal=priced.reduce((sum,item)=>sum+item.band.lowTotal,0);
+    const highTotal=priced.reduce((sum,item)=>sum+item.band.highTotal,0);
+    const unpriced=priceRows.filter(item=>!item.band.priced);
+
+    const lines=[
+      'FACTION ARMORY ACQUISITION REPORT',
+      'Mode: '+stockMode.toUpperCase()+' / '+procurementMode.toUpperCase(),
+      'Current roster: '+members.length+' members',
+      'Approved War Ready: '+members.filter(row=>row.readinessStatus==='WAR READY').length,
+      'Not War Ready: '+nonReady.size,
+      '',
+      'INDIVIDUAL MEMBER BUILD NEEDS'
+    ];
+    if(memberNeeds.length){
+      for(const need of memberNeeds){
+        const row=nonReady.get(need.memberId);
+        lines.push('- '+need.memberName+' ['+need.memberId+'] · '+String(need.slot||'').toUpperCase()+' → '+need.item+
+          (row?.statsEstimated?' (balanced public estimate)':''));
+      }
+    }else lines.push('- None currently require purchased build equipment.');
+
+    lines.push('','MINIMUM STOCK SHORTFALLS');
+    if(minNeeds.length){
+      for(const need of minNeeds)lines.push('- '+need.category+' · '+need.item+' · short '+fmt(need.shortfall)+' (target '+fmt(need.recommendedMin)+')');
+    }else lines.push('- No current minimum-stock shortfalls.');
+
+    lines.push('','COMBINED ACQUISITION LIST / PRICE RANGE');
+    if(priceRows.length){
+      for(const item of priceRows){
+        const row=item.row,band=item.band;
+        lines.push('- '+row.item+' x'+fmt(row.qty)+' · '+
+          (band.priced?'    const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+      mode:stockMode,
       procurementMode,
       budgetCap:acquisitionBudget
     });
@@ -1173,7 +1525,432 @@
 
     return '<div class="mm-fa-card mm-fa-compact">'+
       '<div class="mm-fa-module-head">'+
-        '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+procurementMode.toUpperCase()+' · '+WAR_PARTICIPANTS+' participants in War mode</span></div>'+
+        '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+procurementMode.toUpperCase()+' · '+plan.participants+' current faction members</span></div>'+
+        '<div class="mm-fa-actions">'+
+          '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+          '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+          '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="mm-fa-tiles">'+
+        tile('BUDGET CAP','$'+fmt(plan.budgetCap))+
+        tile('BUY NOW','$'+fmt(plan.fundedEstimatedValue),{cls:'mm-fa-good'})+
+        tile('KNOWN DEFERRED','$'+fmt(plan.deferredEstimatedValue),{cls:plan.deferredEstimatedValue?'mm-fa-warn':''})+
+        tile('FUNDED UNITS',fmt(plan.fundedUnits))+
+        tile('UNRESOLVED SLOTS',fmt(plan.unresolvedCount),{cls:plan.unresolvedCount?'mm-fa-warn':''})+
+      '</div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<label class="mm-fa-muted">Budget $ <input id="mm-fa-budget-cap" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:130px;"></label>'+
+        '<button id="mm-fa-save-budget" style="'+button(true)+'">Save Budget</button>'+
+        '<button id="mm-fa-message-leader" style="'+button(true)+'">Message Faction Leader</button>'+
+      '</div>'+
+      '<div class="mm-fa-muted" style="margin-top:4px;">Equipped gear, member-owned inventory, assigned faction loans, and faction stock are consumed before purchases are created. Faction stock uses the least-cost item that still meets the build floor so premium gear is not wasted. Cached Item Market, Bazaar, and overseas prices are shown when known; MM_Acquisitions performs live source verification/routing before purchase.</div>'+
+      (plan.unresolvedCount
+        ? '<details class="mm-fa-details"><summary>Unresolved build slots</summary><div class="mm-fa-muted" style="margin-top:3px;">'+
+          plan.unresolved.map(r=>esc(r.memberName)+' · '+esc(r.slot.toUpperCase())+(r.current?' · '+esc(r.current):'')+' · '+esc(r.reason||'')).join('<br>')+
+          '</div></details>'
+        : '')+
+    '</div>'+(groups||card('Nothing currently requires acquisition.'));
+  }
+
+  function settingsHtml(){
+    const keySaved=Boolean(factionKey());
+    return card(
+      '<b>Faction API</b><div class="mm-fa-muted">Stored only in this Faction Armory userscript. '+(keySaved?'Saved — automatic faction refresh is enabled when Torn data is due.':'Not saved — cached faction data cannot refresh automatically.')+'</div>'+
+      '<div class="mm-fa-grid" style="grid-template-columns:minmax(220px,1fr) auto auto;margin-top:7px;">'+
+        '<input id="mm-fa-faction-key" class="mm-fa-input" type="password" autocomplete="off" placeholder="'+(keySaved?'Faction API key saved':'Faction-compatible Limited/custom API key')+'">'+
+        '<button id="mm-fa-save-faction-key" style="'+button(true)+'">Save</button>'+
+        '<button id="mm-fa-clear-faction-key" style="'+button()+'">Clear</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:6px;">API use: stored locally only, shared with nobody, used only for faction inventory/readiness, and never sent to another service. Member keys remain in the encrypted Armory vault.</div>'+
+      '<div style="border-top:1px solid #333;margin-top:8px;padding-top:7px;"><b>Procurement policy</b></div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+        '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+        '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '<label class="mm-fa-muted">Acquisition cap $ <input id="mm-fa-settings-budget" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:140px;"></label>'+
+        '<button id="mm-fa-settings-budget-save" style="'+button(true)+'">Save</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:5px;">Budget is the default for a small/growing faction. It chooses lower-cost acceptable reference equipment, then counts member-owned gear, existing loans, and faction stock before creating purchases. Standard/Ideal are planning alternatives, not purchase authorization.</div>'
+    );
+  }
+
+  function sourceStrip(){
+    const fi=state?.factionInventory||{};
+    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
+  }
+
+  function createPanel(){
+    if(document.getElementById(ROOT_ID))return;
+    injectStyle();
+    const root=document.createElement('div');
+    root.id=ROOT_ID;
+    document.body.appendChild(root);
+  }
+
+  function render(){
+    const root=document.getElementById(ROOT_ID);
+    if(!root||root.style.display==='none')return;
+    const viewHtml=activeView==='members'?membersHtml()
+      :activeView==='builds'?buildsHtml()
+      :activeView==='inventory'?inventoryHtml()
+      :activeView==='minimums'?minimumsHtml()
+      :activeView==='acquire'?acquireHtml()
+      :settingsHtml();
+    root.innerHTML=
+      '<div class="mm-fa-head"><div><b style="font-size:14px;">MM Faction Armory</b><div class="mm-fa-muted">v'+VERSION+' · task-first faction readiness</div></div><button id="mm-fa-close" style="'+button()+'">×</button></div>'+
+      '<div class="mm-fa-body">'+
+        '<div class="mm-fa-tabs">'+
+          '<button data-view="members" style="'+button(activeView==='members')+'">Members</button>'+
+          '<button data-view="builds" style="'+button(activeView==='builds')+'">Builds</button>'+
+          '<button data-view="inventory" style="'+button(activeView==='inventory')+'">Stock</button>'+
+          '<button data-view="minimums" style="'+button(activeView==='minimums')+'">Minimums</button>'+
+          '<button data-view="acquire" style="'+button(activeView==='acquire')+'">Acquire</button>'+
+          '<button data-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
+        '</div>'+
+        '<div class="mm-fa-status">'+esc(statusText)+'</div>'+
+        sourceStrip()+
+        (loadError?card('<span class="mm-fa-bad"><b>Shared state unavailable:</b> '+esc(loadError)+'</span>'):'')+
+        '<div class="mm-fa-scroll">'+viewHtml+'</div>'+
+      '</div>';
+
+    core?.makePanelDraggable?.(
+      root,
+      root.querySelector('.mm-fa-head'),
+      'faction-armory',
+      window.innerWidth<=620?{right:'4px',top:'54px'}:{right:'12px',top:'72px'}
+    );
+    root.querySelector('#mm-fa-close')?.addEventListener('click',close);
+    root.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.view||'members';render();}));
+    root.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click',()=>{selectedCategory=b.dataset.cat||'all';render();}));
+    root.querySelectorAll('[data-stock-mode]').forEach(b=>b.addEventListener('click',()=>{
+      stockMode=b.dataset.stockMode==='peace'?'peace':'war';
+      GM_setValue(STOCK_MODE_KEY,stockMode);
+      const count=Object.keys(state?.factionInventory?.memberReadiness?.roster||{}).length; statusText='Inventory minimum mode: '+(stockMode==='war'?'WAR ('+count+' current members)':'PEACE')+'.';
+      render();
+    }));
+    root.querySelectorAll('[data-procurement-mode]').forEach(b=>b.addEventListener('click',()=>{
+      procurementMode=['budget','standard','ideal'].includes(b.dataset.procurementMode)?b.dataset.procurementMode:'budget';
+      GM_setValue(PROCUREMENT_MODE_KEY,procurementMode);
+      statusText='Procurement mode: '+procurementMode.toUpperCase()+'.';
+      render();
+    }));
+    const saveBudget=value=>{
+      const next=Math.max(0,Number(value)||0);
+      acquisitionBudget=next;
+      GM_setValue(ACQUISITION_BUDGET_KEY,next);
+      statusText='Acquisition budget saved: $'+Math.round(next).toLocaleString()+'.';
+      render();
+    };
+    root.querySelector('#mm-fa-save-budget')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-budget-cap')?.value));
+    root.querySelector('#mm-fa-message-leader')?.addEventListener('click',()=>{
+      try{messageFactionLeader();}
+      catch(error){statusText='Leader report could not be prepared: '+(error?.message||String(error));render();}
+    });
+    root.querySelectorAll('[data-armory-acquire]').forEach(b=>b.addEventListener('click',()=>{
+      const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+        mode:stockMode,
+          procurementMode,
+        budgetCap:acquisitionBudget
+      });
+      const row=plan.list.find(x=>String(x.item||'')===String(b.dataset.armoryAcquire||''));
+      if(row)handoffAcquisition(row,b.dataset.source||'Best');
+    }));
+    root.querySelector('#mm-fa-settings-budget-save')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-settings-budget')?.value));
+
+    root.querySelector('#mm-fa-refresh-faction')?.addEventListener('click',refreshFaction);
+    root.querySelector('#mm-fa-copy-request')?.addEventListener('click',()=>copyText(missingDataRequest()).then(()=>{statusText='Member data request copied.';render();}));
+    root.querySelector('#mm-fa-unlock-vault')?.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Unlocking member-key vault…';render();
+      try{
+        await unlockVault(false);
+        const stale=staleSavedMemberCount();
+        statusText=stale
+          ?'Member-key vault unlocked. Checking '+stale+' stale saved profile'+(stale===1?'':'s')+' automatically…'
+          :'Member-key vault unlocked. No saved member profiles are stale.';
+      }catch(error){statusText='Vault unlock failed: '+(error?.message||String(error));}
+      finally{
+        busy=false;render();
+        if(vaultSession?.key&&staleSavedMemberCount())setTimeout(()=>autoRefreshArmory({forceFaction:false}),50);
+      }
+    });
+    root.querySelector('#mm-fa-import-once')?.addEventListener('click',()=>importFromField(false));
+    root.querySelector('#mm-fa-import-save')?.addEventListener('click',()=>importFromField(true));
+    root.querySelector('#mm-fa-refresh-keys')?.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing saved member keys…';render();
+      try{
+        const result=await refreshAllSaved();
+        statusText='Saved member-key refresh: '+result.total+' saved key'+(result.total===1?'':'s')+' found · '+result.ok+' refreshed successfully'+(result.failures.length?' · '+result.failures.length+' failed':'')+'. This is the number of saved member API keys, not faction members.';
+      }catch(error){statusText='Saved key refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    });
+    root.querySelectorAll('[data-refresh-member]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing '+b.dataset.refreshMember+'…';render();
+      try{const r=await refreshSavedMember(b.dataset.refreshMember);statusText='Refreshed '+r.memberName+' ['+r.memberId+'].';}
+      catch(error){statusText='Member refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-remove-member]').forEach(b=>b.addEventListener('click',()=>{
+      if(removeMemberKey(b.dataset.removeMember)){statusText='Saved member key removed; readiness data preserved.';render();}
+    }));
+    root.querySelectorAll('[data-remind-member]').forEach(b=>b.addEventListener('click',()=>{
+      const row=memberRows().find(item=>item.memberId===asId(b.dataset.remindMember));
+      if(!row)return;
+      try{
+        openArmoryMessage({
+          playerId:row.memberId,
+          playerName:row.memberName,
+          subject:'Faction readiness information needed',
+          body:readinessReminderMessage(row),
+          kind:'member-data-reminder',
+          memberId:row.memberId
+        });
+      }catch(error){statusText='Could not prepare reminder: '+(error?.message||String(error));render();}
+    }));
+    root.querySelectorAll('[data-war-ready]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Approving member as War Ready…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.warReady,true);
+        statusText=result.memberName+' is now WAR READY across Members, Builds, and exports.';
+      }catch(error){statusText='War Ready approval failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-reopen-review]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Reopening readiness review…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.reopenReview,false);
+        statusText=result.memberName+' returned to READY FOR REVIEW.';
+      }catch(error){statusText='Readiness review update failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-paste-reply]').forEach(b=>b.addEventListener('click',async()=>{
+      const id=asId(b.dataset.pasteReply);
+      const row=memberRows().find(x=>x.memberId===id);
+      const raw=prompt('Paste '+String(row?.memberName||id)+'\'s completed readiness reply:','');
+      if(raw==null||!String(raw).trim())return;
+      if(busy)return;busy=true;statusText='Importing member reply…';render();
+      try{
+        const result=await importMemberReply(id,raw);
+        statusText='Imported reply for '+result.memberName+' · '+result.equipmentCount+' equipped item(s) parsed.';
+      }catch(error){statusText='Reply import failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelector('#mm-fa-save-faction-key')?.addEventListener('click',()=>{
+      const value=String(root.querySelector('#mm-fa-faction-key')?.value||'').trim();
+      if(!value){statusText='Enter a faction-compatible API key first.';render();return;}
+      GM_setValue(FACTION_API_KEY,value);statusText='Faction Armory API key saved. Refreshing automatically…';render();setTimeout(()=>autoRefreshArmory({forceFaction:true}),50);
+    });
+    root.querySelector('#mm-fa-clear-faction-key')?.addEventListener('click',()=>{
+      GM_deleteValue(FACTION_API_KEY);statusText='Faction Armory API key cleared.';render();
+    });
+    root.querySelector('#mm-fa-export')?.addEventListener('click',exportLeadershipExcel);
+  }
+
+  async function importFromField(save){
+    if(busy)return;
+    const root=document.getElementById(ROOT_ID);
+    const input=root?.querySelector('#mm-fa-member-key');
+    const key=String(input?.value||'').trim();
+    if(!key){statusText='Paste a member Limited Access API key first.';render();return;}
+    busy=true;statusText='Importing member readiness data…';render();
+    try{
+      const result=await importMemberKey(key,{save});
+      if(input)input.value='';
+      statusText='Imported '+result.memberName+' ['+result.memberId+']'+(save?' and saved key encrypted.':'. Key was not saved.');
+    }catch(error){statusText='Member import failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function xmlCell(value,type='String'){
+    const safe=esc(String(value??''));
+    return '<Cell><Data ss:Type="'+type+'">'+safe+'</Data></Cell>';
+  }
+  function xmlSheet(name,headers,rows){
+    return '<Worksheet ss:Name="'+esc(name).slice(0,31)+'"><Table>'+
+      '<Row>'+headers.map(h=>xmlCell(h)).join('')+'</Row>'+
+      rows.map(row=>'<Row>'+headers.map(h=>{
+        const v=row[h];
+        return xmlCell(v,typeof v==='number'&&Number.isFinite(v)?'Number':'String');
+      }).join('')+'</Row>').join('')+
+      '</Table></Worksheet>';
+  }
+
+  function exportLeadershipExcel(){
+    if(!state){statusText='Load shared state first.';render();return;}
+    const members=memberRows();
+    const minimums=logic.minimumProposal(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode
+    });
+    const acquisition=logic.acquisitionPlan(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const inventory=Object.values(state.factionInventory?.current||{});
+    const summaryHeaders=['Metric','Value'];
+    const summary=[
+      {Metric:'Generated',Value:new Date().toISOString()},
+      {Metric:'Stock mode',Value:stockMode.toUpperCase()},
+      {Metric:'Procurement mode',Value:procurementMode.toUpperCase()},
+      {Metric:'Acquisition budget',Value:acquisitionBudget},
+      {Metric:'Buy-now known cost',Value:acquisition.fundedEstimatedValue},
+      {Metric:'Known deferred cost',Value:acquisition.deferredEstimatedValue},
+      {Metric:'Unresolved build slots',Value:acquisition.unresolvedCount},
+      {Metric:'War roster members',Value:stockMode==='war'?members.length:''},
+      {Metric:'Faction members',Value:members.length},
+      {Metric:'Estimated-stat members',Value:members.filter(r=>r.statsEstimated).length},
+      {Metric:'War ready (approved)',Value:members.filter(r=>r.readinessStatus==='WAR READY').length},
+      {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
+      {Metric:'Action needed',Value:members.filter(r=>r.readinessStatus==='ACTION NEEDED'||r.readinessStatus==='SUPPLY ACTION').length},
+      {Metric:'Missing / stale',Value:members.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length},
+      {Metric:'Armory member API keys saved',Value:savedKeyIds().length},
+      {Metric:'Inventory rows',Value:inventory.length},
+      {Metric:'Observed inventory days',Value:Number(minimums.observedDays.toFixed(1))},
+      {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
+      {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length}
+    ];
+    const memberHeaders=['Member ID','Member','Level','Torn Age Days','API Saved','Stats Source','Estimate Confidence','Readiness','War Ready','Baseline Pass','Approved At','Approval Mode','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberData=members.map(r=>{
+      const build=r.buildAssessment||logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
+      return {
+        'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'Torn Age Days':num(r.publicIntel?.ageDays),'API Saved':r.apiSaved?'YES':'NO',
+        'Stats Source':r.statsEstimated?'PUBLIC ESTIMATE':'VERIFIED','Estimate Confidence':r.statsEstimated?String(r.statEstimate?.confidence||'LOW'):'',
+        'Readiness':r.readinessStatus,
+        'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO','Baseline Pass':build.warReady?'YES':'NO','Approved At':r.readinessApprovedAt||'','Approval Mode':r.readinessApprovalMode||'',
+        'Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
+        'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
+        'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
+      };
+    });
+    const invHeaders=['Category','Item ID','Item','Owned','Available','Loaned','Damage','Accuracy','Armor'];
+    const invData=inventory.map(r=>({'Category':r.category,'Item ID':r.itemId,'Item':r.name,'Owned':num(r.amountOwned),'Available':num(r.availableCount),'Loaned':num(r.loanedCount),'Damage':num(r.damage),'Accuracy':num(r.accuracy),'Armor':num(r.armorRating)}));
+    const minHeaders=['Category','Item / Pool','Current','Loaned','Proposed Min','Proposed Max','Shortfall','Data Required','Rationale'];
+    const minData=minimums.proposals.map(r=>({'Category':r.category,'Item / Pool':r.item,'Current':num(r.current),'Loaned':num(r.loaned),'Proposed Min':r.dataRequired?'':num(r.recommendedMin),'Proposed Max':r.dataRequired?'':num(r.recommendedMax),'Shortfall':r.dataRequired?'':num(r.shortfall),'Data Required':r.dataRequired?'YES':'NO','Rationale':r.rationale}));
+    const xml='<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>'+
+      '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'+
+      xmlSheet('Summary',summaryHeaders,summary)+
+      xmlSheet('Members',memberHeaders,memberData)+
+      xmlSheet('Inventory',invHeaders,invData)+
+      xmlSheet('Minimums',minHeaders,minData)+
+      xmlSheet('Acquire',['Category','Item','Required Qty','Buy Now Qty','Deferred Qty','Reference Source','Reference Unit Value','Buy Now Cost','Reasons'],acquisition.list.map(r=>({
+        'Category':r.category,'Item':r.item,'Required Qty':num(r.qty),'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Buy Now Cost':num(r.fundedEstimatedValue),'Reasons':r.reasons
+      })))+
+      '</Workbook>';
+    const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download='OBSIDIAN_FORCE_Faction_Readiness_'+new Date().toISOString().slice(0,10)+'.xml';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+    statusText='Leadership Excel workbook exported.';render();
+  }
+
+  function open(){
+    createPanel();
+    const root=document.getElementById(ROOT_ID);
+    root.style.display='block';
+    core?.setDockLauncherActive?.('armory',true);
+    render();
+    reloadState().then(()=>autoRefreshArmory({forceFaction:false}));
+    startAutoRefresh();
+  }
+  function close(){
+    const root=document.getElementById(ROOT_ID);
+    if(root)root.style.display='none';
+    core?.setDockLauncherActive?.('armory',false);
+    stopAutoRefresh();
+  }
+  function createLauncher(){
+    if(!document.body)return;
+    injectStyle();
+    if(core?.registerDockLauncher){
+      const b=core.registerDockLauncher({
+        id:'armory',
+        label:'MM Faction Armory',
+        accent:'#8b6a2f',
+        onClick:()=>{
+          const root=document.getElementById(ROOT_ID);
+          if(root&&root.style.display!=='none')close(); else open();
+        }
+      });
+      if(b)b.id=LAUNCHER_ID;
+      core.adoptLegacyCrmLauncher?.();
+      return;
+    }
+    if(document.getElementById(LAUNCHER_ID))return;
+    const b=document.createElement('button');
+    b.id=LAUNCHER_ID;b.textContent='Armory';
+    b.style.cssText='position:fixed;right:6px;bottom:6px;z-index:2147483647;'+button(true);
+    b.addEventListener('click',open);document.body.appendChild(b);
+  }
+
+  function installChannel(){
+    if(typeof BroadcastChannel==='undefined'||channel)return;
+    try{
+      channel=new BroadcastChannel(CHANNEL);
+      channel.addEventListener('message',event=>{
+        if(event?.data?.type==='state-updated'&&['faction','core'].includes(String(event.data.domain||''))){
+          reloadState().catch(()=>{});
+        }
+      });
+    }catch{}
+  }
+
+  if(document.body)createLauncher();
+  else window.addEventListener('DOMContentLoaded',createLauncher,{once:true});
+  installChannel();
+  installArmorySendTracking();
+  runArmoryPageHelpers();
+  window.addEventListener('hashchange',()=>runArmoryPageHelpers());
+  window.addEventListener('popstate',()=>runArmoryPageHelpers());
+})();+fmt(band.low)+'–    const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const categories=[...new Set(plan.list.map(row=>row.category))];
+    const groups=categories.map(cat=>{
+      const rows=plan.list.filter(row=>row.category===cat);
+      return '<details class="mm-fa-build-member" open>'+
+        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.qty),0)+' required</span></summary>'+
+        '<div class="mm-fa-build-body">'+rows.map(row=>{
+          const live=acquisitionSourceSnapshot(row);
+          const best=live.best;
+          return '<div class="mm-fa-row">'+
+            '<div class="mm-fa-main"><b>'+esc(row.item)+'</b>'+
+              '<div class="mm-fa-muted">'+esc(row.source||'General Torn availability')+(row.reasons?' · '+esc(row.reasons):'')+'</div>'+
+              '<div class="mm-fa-mini" style="margin-top:3px;">'+
+                (best
+                  ? 'Lowest observed source: '+esc(best.source)+(best.country?' · '+esc(best.country):'')+' · $'+fmt(best.price)
+                  : 'No live market/travel price cached yet — MM_Acquisitions will verify before routing.')+
+              '</div>'+
+              '<div class="mm-fa-actions" style="margin-top:4px;">'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Best" style="'+button(true)+'">Find Best Source</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Item Market" style="'+button()+'">Item Market</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Bazaar" style="'+button()+'">Bazaar</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Overseas" style="'+button()+'">Overseas</button>'+
+              '</div>'+
+            '</div>'+
+            '<div class="mm-fa-tiles">'+
+              tile('REQUIRED',fmt(row.qty))+
+              tile('BUY NOW',fmt(row.fundedQty),{cls:row.fundedQty?'mm-fa-good':''})+
+              (row.deferredQty?tile('DEFER',fmt(row.deferredQty),{cls:'mm-fa-warn'}):'')+
+              (row.marketValue?tile('REF EACH','$'+fmt(row.marketValue)):'')+
+              (live.itemMarketPrice?tile('ITEM MKT','$'+fmt(live.itemMarketPrice)):'')+
+              (live.bazaarPrice?tile('BAZAAR','$'+fmt(live.bazaarPrice)):'')+
+              (live.travelPrice?tile('OVERSEAS','$'+fmt(live.travelPrice)+(live.travelCountry?' · '+live.travelCountry:''),{wide:true}):'')+
+              (row.fundedEstimatedValue?tile('BUY-NOW COST','$'+fmt(row.fundedEstimatedValue)):'')+
+            '</div>'+
+          '</div>';
+        }).join('')+
+        '</div>'+
+      '</details>';
+    }).join('');
+
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head">'+
+        '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+procurementMode.toUpperCase()+' · '+plan.participants+' current faction members</span></div>'+
         '<div class="mm-fa-actions">'+
           '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
           '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
@@ -1273,7 +2050,7 @@
     root.querySelectorAll('[data-stock-mode]').forEach(b=>b.addEventListener('click',()=>{
       stockMode=b.dataset.stockMode==='peace'?'peace':'war';
       GM_setValue(STOCK_MODE_KEY,stockMode);
-      statusText='Inventory minimum mode: '+(stockMode==='war'?'WAR ('+WAR_PARTICIPANTS+' participants)':'PEACE')+'.';
+      const count=Object.keys(state?.factionInventory?.memberReadiness?.roster||{}).length; statusText='Inventory minimum mode: '+(stockMode==='war'?'WAR ('+count+' current members)':'PEACE')+'.';
       render();
     }));
     root.querySelectorAll('[data-procurement-mode]').forEach(b=>b.addEventListener('click',()=>{
@@ -1293,8 +2070,7 @@
     root.querySelectorAll('[data-armory-acquire]').forEach(b=>b.addEventListener('click',()=>{
       const plan=logic.acquisitionPlan(state?.factionInventory||{},{
         mode:stockMode,
-        participants:WAR_PARTICIPANTS,
-        procurementMode,
+          procurementMode,
         budgetCap:acquisitionBudget
       });
       const row=plan.list.find(x=>String(x.item||'')===String(b.dataset.armoryAcquire||''));
@@ -1337,6 +2113,20 @@
     }));
     root.querySelectorAll('[data-remove-member]').forEach(b=>b.addEventListener('click',()=>{
       if(removeMemberKey(b.dataset.removeMember)){statusText='Saved member key removed; readiness data preserved.';render();}
+    }));
+    root.querySelectorAll('[data-remind-member]').forEach(b=>b.addEventListener('click',()=>{
+      const row=memberRows().find(item=>item.memberId===asId(b.dataset.remindMember));
+      if(!row)return;
+      try{
+        openArmoryMessage({
+          playerId:row.memberId,
+          playerName:row.memberName,
+          subject:'Faction readiness information needed',
+          body:readinessReminderMessage(row),
+          kind:'member-data-reminder',
+          memberId:row.memberId
+        });
+      }catch(error){statusText='Could not prepare reminder: '+(error?.message||String(error));render();}
     }));
     root.querySelectorAll('[data-war-ready]').forEach(b=>b.addEventListener('click',async()=>{
       if(busy)return;busy=true;statusText='Approving member as War Ready…';render();
@@ -1411,12 +2201,10 @@
     const members=memberRows();
     const minimums=logic.minimumProposal(state.factionInventory||{},{
       mode:stockMode,
-      participants:WAR_PARTICIPANTS,
       procurementMode
     });
     const acquisition=logic.acquisitionPlan(state.factionInventory||{},{
       mode:stockMode,
-      participants:WAR_PARTICIPANTS,
       procurementMode,
       budgetCap:acquisitionBudget
     });
@@ -1430,7 +2218,2098 @@
       {Metric:'Buy-now known cost',Value:acquisition.fundedEstimatedValue},
       {Metric:'Known deferred cost',Value:acquisition.deferredEstimatedValue},
       {Metric:'Unresolved build slots',Value:acquisition.unresolvedCount},
-      {Metric:'War participants assumption',Value:stockMode==='war'?WAR_PARTICIPANTS:''},
+      {Metric:'War roster members',Value:stockMode==='war'?members.length:''},
+      {Metric:'Faction members',Value:members.length},
+      {Metric:'War ready (approved)',Value:members.filter(r=>r.readinessStatus==='WAR READY').length},
+      {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
+      {Metric:'Action needed',Value:members.filter(r=>r.readinessStatus==='ACTION NEEDED'||r.readinessStatus==='SUPPLY ACTION').length},
+      {Metric:'Missing / stale',Value:members.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length},
+      {Metric:'Armory member API keys saved',Value:savedKeyIds().length},
+      {Metric:'Inventory rows',Value:inventory.length},
+      {Metric:'Observed inventory days',Value:Number(minimums.observedDays.toFixed(1))},
+      {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
+      {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length}
+    ];
+    const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','War Ready','Baseline Pass','Approved At','Approval Mode','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberData=members.map(r=>{
+      const build=r.buildAssessment||logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
+      return {
+        'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'API Saved':r.apiSaved?'YES':'NO','Readiness':r.readinessStatus,
+        'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO','Baseline Pass':build.warReady?'YES':'NO','Approved At':r.readinessApprovedAt||'','Approval Mode':r.readinessApprovalMode||'',
+        'Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
+        'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
+        'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
+      };
+    });
+    const invHeaders=['Category','Item ID','Item','Owned','Available','Loaned','Damage','Accuracy','Armor'];
+    const invData=inventory.map(r=>({'Category':r.category,'Item ID':r.itemId,'Item':r.name,'Owned':num(r.amountOwned),'Available':num(r.availableCount),'Loaned':num(r.loanedCount),'Damage':num(r.damage),'Accuracy':num(r.accuracy),'Armor':num(r.armorRating)}));
+    const minHeaders=['Category','Item / Pool','Current','Loaned','Proposed Min','Proposed Max','Shortfall','Data Required','Rationale'];
+    const minData=minimums.proposals.map(r=>({'Category':r.category,'Item / Pool':r.item,'Current':num(r.current),'Loaned':num(r.loaned),'Proposed Min':r.dataRequired?'':num(r.recommendedMin),'Proposed Max':r.dataRequired?'':num(r.recommendedMax),'Shortfall':r.dataRequired?'':num(r.shortfall),'Data Required':r.dataRequired?'YES':'NO','Rationale':r.rationale}));
+    const xml='<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>'+
+      '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'+
+      xmlSheet('Summary',summaryHeaders,summary)+
+      xmlSheet('Members',memberHeaders,memberData)+
+      xmlSheet('Inventory',invHeaders,invData)+
+      xmlSheet('Minimums',minHeaders,minData)+
+      xmlSheet('Acquire',['Category','Item','Required Qty','Buy Now Qty','Deferred Qty','Reference Source','Reference Unit Value','Buy Now Cost','Reasons'],acquisition.list.map(r=>({
+        'Category':r.category,'Item':r.item,'Required Qty':num(r.qty),'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Buy Now Cost':num(r.fundedEstimatedValue),'Reasons':r.reasons
+      })))+
+      '</Workbook>';
+    const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download='OBSIDIAN_FORCE_Faction_Readiness_'+new Date().toISOString().slice(0,10)+'.xml';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+    statusText='Leadership Excel workbook exported.';render();
+  }
+
+  function open(){
+    createPanel();
+    const root=document.getElementById(ROOT_ID);
+    root.style.display='block';
+    core?.setDockLauncherActive?.('armory',true);
+    render();
+    reloadState().then(()=>autoRefreshArmory({forceFaction:false}));
+    startAutoRefresh();
+  }
+  function close(){
+    const root=document.getElementById(ROOT_ID);
+    if(root)root.style.display='none';
+    core?.setDockLauncherActive?.('armory',false);
+    stopAutoRefresh();
+  }
+  function createLauncher(){
+    if(!document.body)return;
+    injectStyle();
+    if(core?.registerDockLauncher){
+      const b=core.registerDockLauncher({
+        id:'armory',
+        label:'MM Faction Armory',
+        accent:'#8b6a2f',
+        onClick:()=>{
+          const root=document.getElementById(ROOT_ID);
+          if(root&&root.style.display!=='none')close(); else open();
+        }
+      });
+      if(b)b.id=LAUNCHER_ID;
+      core.adoptLegacyCrmLauncher?.();
+      return;
+    }
+    if(document.getElementById(LAUNCHER_ID))return;
+    const b=document.createElement('button');
+    b.id=LAUNCHER_ID;b.textContent='Armory';
+    b.style.cssText='position:fixed;right:6px;bottom:6px;z-index:2147483647;'+button(true);
+    b.addEventListener('click',open);document.body.appendChild(b);
+  }
+
+  function installChannel(){
+    if(typeof BroadcastChannel==='undefined'||channel)return;
+    try{
+      channel=new BroadcastChannel(CHANNEL);
+      channel.addEventListener('message',event=>{
+        if(event?.data?.type==='state-updated'&&['faction','core'].includes(String(event.data.domain||''))){
+          reloadState().catch(()=>{});
+        }
+      });
+    }catch{}
+  }
+
+  if(document.body)createLauncher();
+  else window.addEventListener('DOMContentLoaded',createLauncher,{once:true});
+  installChannel();
+})();+fmt(band.high)+' each ·     const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const categories=[...new Set(plan.list.map(row=>row.category))];
+    const groups=categories.map(cat=>{
+      const rows=plan.list.filter(row=>row.category===cat);
+      return '<details class="mm-fa-build-member" open>'+
+        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.qty),0)+' required</span></summary>'+
+        '<div class="mm-fa-build-body">'+rows.map(row=>{
+          const live=acquisitionSourceSnapshot(row);
+          const best=live.best;
+          return '<div class="mm-fa-row">'+
+            '<div class="mm-fa-main"><b>'+esc(row.item)+'</b>'+
+              '<div class="mm-fa-muted">'+esc(row.source||'General Torn availability')+(row.reasons?' · '+esc(row.reasons):'')+'</div>'+
+              '<div class="mm-fa-mini" style="margin-top:3px;">'+
+                (best
+                  ? 'Lowest observed source: '+esc(best.source)+(best.country?' · '+esc(best.country):'')+' · $'+fmt(best.price)
+                  : 'No live market/travel price cached yet — MM_Acquisitions will verify before routing.')+
+              '</div>'+
+              '<div class="mm-fa-actions" style="margin-top:4px;">'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Best" style="'+button(true)+'">Find Best Source</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Item Market" style="'+button()+'">Item Market</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Bazaar" style="'+button()+'">Bazaar</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Overseas" style="'+button()+'">Overseas</button>'+
+              '</div>'+
+            '</div>'+
+            '<div class="mm-fa-tiles">'+
+              tile('REQUIRED',fmt(row.qty))+
+              tile('BUY NOW',fmt(row.fundedQty),{cls:row.fundedQty?'mm-fa-good':''})+
+              (row.deferredQty?tile('DEFER',fmt(row.deferredQty),{cls:'mm-fa-warn'}):'')+
+              (row.marketValue?tile('REF EACH','$'+fmt(row.marketValue)):'')+
+              (live.itemMarketPrice?tile('ITEM MKT','$'+fmt(live.itemMarketPrice)):'')+
+              (live.bazaarPrice?tile('BAZAAR','$'+fmt(live.bazaarPrice)):'')+
+              (live.travelPrice?tile('OVERSEAS','$'+fmt(live.travelPrice)+(live.travelCountry?' · '+live.travelCountry:''),{wide:true}):'')+
+              (row.fundedEstimatedValue?tile('BUY-NOW COST','$'+fmt(row.fundedEstimatedValue)):'')+
+            '</div>'+
+          '</div>';
+        }).join('')+
+        '</div>'+
+      '</details>';
+    }).join('');
+
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head">'+
+        '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+procurementMode.toUpperCase()+' · '+plan.participants+' current faction members</span></div>'+
+        '<div class="mm-fa-actions">'+
+          '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+          '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+          '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="mm-fa-tiles">'+
+        tile('BUDGET CAP','$'+fmt(plan.budgetCap))+
+        tile('BUY NOW','$'+fmt(plan.fundedEstimatedValue),{cls:'mm-fa-good'})+
+        tile('KNOWN DEFERRED','$'+fmt(plan.deferredEstimatedValue),{cls:plan.deferredEstimatedValue?'mm-fa-warn':''})+
+        tile('FUNDED UNITS',fmt(plan.fundedUnits))+
+        tile('UNRESOLVED SLOTS',fmt(plan.unresolvedCount),{cls:plan.unresolvedCount?'mm-fa-warn':''})+
+      '</div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<label class="mm-fa-muted">Budget $ <input id="mm-fa-budget-cap" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:130px;"></label>'+
+        '<button id="mm-fa-save-budget" style="'+button(true)+'">Save Budget</button>'+
+      '</div>'+
+      '<div class="mm-fa-muted" style="margin-top:4px;">Equipped gear, member-owned inventory, assigned faction loans, and faction stock are consumed before purchases are created. Faction stock uses the least-cost item that still meets the build floor so premium gear is not wasted. Cached Item Market, Bazaar, and overseas prices are shown when known; MM_Acquisitions performs live source verification/routing before purchase.</div>'+
+      (plan.unresolvedCount
+        ? '<details class="mm-fa-details"><summary>Unresolved build slots</summary><div class="mm-fa-muted" style="margin-top:3px;">'+
+          plan.unresolved.map(r=>esc(r.memberName)+' · '+esc(r.slot.toUpperCase())+(r.current?' · '+esc(r.current):'')+' · '+esc(r.reason||'')).join('<br>')+
+          '</div></details>'
+        : '')+
+    '</div>'+(groups||card('Nothing currently requires acquisition.'));
+  }
+
+  function settingsHtml(){
+    const keySaved=Boolean(factionKey());
+    return card(
+      '<b>Faction API</b><div class="mm-fa-muted">Stored only in this Faction Armory userscript. '+(keySaved?'Saved — automatic faction refresh is enabled when Torn data is due.':'Not saved — cached faction data cannot refresh automatically.')+'</div>'+
+      '<div class="mm-fa-grid" style="grid-template-columns:minmax(220px,1fr) auto auto;margin-top:7px;">'+
+        '<input id="mm-fa-faction-key" class="mm-fa-input" type="password" autocomplete="off" placeholder="'+(keySaved?'Faction API key saved':'Faction-compatible Limited/custom API key')+'">'+
+        '<button id="mm-fa-save-faction-key" style="'+button(true)+'">Save</button>'+
+        '<button id="mm-fa-clear-faction-key" style="'+button()+'">Clear</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:6px;">API use: stored locally only, shared with nobody, used only for faction inventory/readiness, and never sent to another service. Member keys remain in the encrypted Armory vault.</div>'+
+      '<div style="border-top:1px solid #333;margin-top:8px;padding-top:7px;"><b>Procurement policy</b></div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+        '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+        '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '<label class="mm-fa-muted">Acquisition cap $ <input id="mm-fa-settings-budget" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:140px;"></label>'+
+        '<button id="mm-fa-settings-budget-save" style="'+button(true)+'">Save</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:5px;">Budget is the default for a small/growing faction. It chooses lower-cost acceptable reference equipment, then counts member-owned gear, existing loans, and faction stock before creating purchases. Standard/Ideal are planning alternatives, not purchase authorization.</div>'
+    );
+  }
+
+  function sourceStrip(){
+    const fi=state?.factionInventory||{};
+    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
+  }
+
+  function createPanel(){
+    if(document.getElementById(ROOT_ID))return;
+    injectStyle();
+    const root=document.createElement('div');
+    root.id=ROOT_ID;
+    document.body.appendChild(root);
+  }
+
+  function render(){
+    const root=document.getElementById(ROOT_ID);
+    if(!root||root.style.display==='none')return;
+    const viewHtml=activeView==='members'?membersHtml()
+      :activeView==='builds'?buildsHtml()
+      :activeView==='inventory'?inventoryHtml()
+      :activeView==='minimums'?minimumsHtml()
+      :activeView==='acquire'?acquireHtml()
+      :settingsHtml();
+    root.innerHTML=
+      '<div class="mm-fa-head"><div><b style="font-size:14px;">MM Faction Armory</b><div class="mm-fa-muted">v'+VERSION+' · task-first faction readiness</div></div><button id="mm-fa-close" style="'+button()+'">×</button></div>'+
+      '<div class="mm-fa-body">'+
+        '<div class="mm-fa-tabs">'+
+          '<button data-view="members" style="'+button(activeView==='members')+'">Members</button>'+
+          '<button data-view="builds" style="'+button(activeView==='builds')+'">Builds</button>'+
+          '<button data-view="inventory" style="'+button(activeView==='inventory')+'">Stock</button>'+
+          '<button data-view="minimums" style="'+button(activeView==='minimums')+'">Minimums</button>'+
+          '<button data-view="acquire" style="'+button(activeView==='acquire')+'">Acquire</button>'+
+          '<button data-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
+        '</div>'+
+        '<div class="mm-fa-status">'+esc(statusText)+'</div>'+
+        sourceStrip()+
+        (loadError?card('<span class="mm-fa-bad"><b>Shared state unavailable:</b> '+esc(loadError)+'</span>'):'')+
+        '<div class="mm-fa-scroll">'+viewHtml+'</div>'+
+      '</div>';
+
+    core?.makePanelDraggable?.(
+      root,
+      root.querySelector('.mm-fa-head'),
+      'faction-armory',
+      window.innerWidth<=620?{right:'4px',top:'54px'}:{right:'12px',top:'72px'}
+    );
+    root.querySelector('#mm-fa-close')?.addEventListener('click',close);
+    root.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.view||'members';render();}));
+    root.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click',()=>{selectedCategory=b.dataset.cat||'all';render();}));
+    root.querySelectorAll('[data-stock-mode]').forEach(b=>b.addEventListener('click',()=>{
+      stockMode=b.dataset.stockMode==='peace'?'peace':'war';
+      GM_setValue(STOCK_MODE_KEY,stockMode);
+      const count=Object.keys(state?.factionInventory?.memberReadiness?.roster||{}).length; statusText='Inventory minimum mode: '+(stockMode==='war'?'WAR ('+count+' current members)':'PEACE')+'.';
+      render();
+    }));
+    root.querySelectorAll('[data-procurement-mode]').forEach(b=>b.addEventListener('click',()=>{
+      procurementMode=['budget','standard','ideal'].includes(b.dataset.procurementMode)?b.dataset.procurementMode:'budget';
+      GM_setValue(PROCUREMENT_MODE_KEY,procurementMode);
+      statusText='Procurement mode: '+procurementMode.toUpperCase()+'.';
+      render();
+    }));
+    const saveBudget=value=>{
+      const next=Math.max(0,Number(value)||0);
+      acquisitionBudget=next;
+      GM_setValue(ACQUISITION_BUDGET_KEY,next);
+      statusText='Acquisition budget saved: $'+Math.round(next).toLocaleString()+'.';
+      render();
+    };
+    root.querySelector('#mm-fa-save-budget')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-budget-cap')?.value));
+    root.querySelectorAll('[data-armory-acquire]').forEach(b=>b.addEventListener('click',()=>{
+      const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+        mode:stockMode,
+          procurementMode,
+        budgetCap:acquisitionBudget
+      });
+      const row=plan.list.find(x=>String(x.item||'')===String(b.dataset.armoryAcquire||''));
+      if(row)handoffAcquisition(row,b.dataset.source||'Best');
+    }));
+    root.querySelector('#mm-fa-settings-budget-save')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-settings-budget')?.value));
+
+    root.querySelector('#mm-fa-refresh-faction')?.addEventListener('click',refreshFaction);
+    root.querySelector('#mm-fa-copy-request')?.addEventListener('click',()=>copyText(missingDataRequest()).then(()=>{statusText='Member data request copied.';render();}));
+    root.querySelector('#mm-fa-unlock-vault')?.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Unlocking member-key vault…';render();
+      try{
+        await unlockVault(false);
+        const stale=staleSavedMemberCount();
+        statusText=stale
+          ?'Member-key vault unlocked. Checking '+stale+' stale saved profile'+(stale===1?'':'s')+' automatically…'
+          :'Member-key vault unlocked. No saved member profiles are stale.';
+      }catch(error){statusText='Vault unlock failed: '+(error?.message||String(error));}
+      finally{
+        busy=false;render();
+        if(vaultSession?.key&&staleSavedMemberCount())setTimeout(()=>autoRefreshArmory({forceFaction:false}),50);
+      }
+    });
+    root.querySelector('#mm-fa-import-once')?.addEventListener('click',()=>importFromField(false));
+    root.querySelector('#mm-fa-import-save')?.addEventListener('click',()=>importFromField(true));
+    root.querySelector('#mm-fa-refresh-keys')?.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing saved member keys…';render();
+      try{
+        const result=await refreshAllSaved();
+        statusText='Saved member-key refresh: '+result.total+' saved key'+(result.total===1?'':'s')+' found · '+result.ok+' refreshed successfully'+(result.failures.length?' · '+result.failures.length+' failed':'')+'. This is the number of saved member API keys, not faction members.';
+      }catch(error){statusText='Saved key refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    });
+    root.querySelectorAll('[data-refresh-member]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing '+b.dataset.refreshMember+'…';render();
+      try{const r=await refreshSavedMember(b.dataset.refreshMember);statusText='Refreshed '+r.memberName+' ['+r.memberId+'].';}
+      catch(error){statusText='Member refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-remove-member]').forEach(b=>b.addEventListener('click',()=>{
+      if(removeMemberKey(b.dataset.removeMember)){statusText='Saved member key removed; readiness data preserved.';render();}
+    }));
+    root.querySelectorAll('[data-remind-member]').forEach(b=>b.addEventListener('click',()=>{
+      const row=memberRows().find(item=>item.memberId===asId(b.dataset.remindMember));
+      if(!row)return;
+      try{
+        openArmoryMessage({
+          playerId:row.memberId,
+          playerName:row.memberName,
+          subject:'Faction readiness information needed',
+          body:readinessReminderMessage(row),
+          kind:'member-data-reminder',
+          memberId:row.memberId
+        });
+      }catch(error){statusText='Could not prepare reminder: '+(error?.message||String(error));render();}
+    }));
+    root.querySelectorAll('[data-war-ready]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Approving member as War Ready…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.warReady,true);
+        statusText=result.memberName+' is now WAR READY across Members, Builds, and exports.';
+      }catch(error){statusText='War Ready approval failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-reopen-review]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Reopening readiness review…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.reopenReview,false);
+        statusText=result.memberName+' returned to READY FOR REVIEW.';
+      }catch(error){statusText='Readiness review update failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-paste-reply]').forEach(b=>b.addEventListener('click',async()=>{
+      const id=asId(b.dataset.pasteReply);
+      const row=memberRows().find(x=>x.memberId===id);
+      const raw=prompt('Paste '+String(row?.memberName||id)+'\'s completed readiness reply:','');
+      if(raw==null||!String(raw).trim())return;
+      if(busy)return;busy=true;statusText='Importing member reply…';render();
+      try{
+        const result=await importMemberReply(id,raw);
+        statusText='Imported reply for '+result.memberName+' · '+result.equipmentCount+' equipped item(s) parsed.';
+      }catch(error){statusText='Reply import failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelector('#mm-fa-save-faction-key')?.addEventListener('click',()=>{
+      const value=String(root.querySelector('#mm-fa-faction-key')?.value||'').trim();
+      if(!value){statusText='Enter a faction-compatible API key first.';render();return;}
+      GM_setValue(FACTION_API_KEY,value);statusText='Faction Armory API key saved. Refreshing automatically…';render();setTimeout(()=>autoRefreshArmory({forceFaction:true}),50);
+    });
+    root.querySelector('#mm-fa-clear-faction-key')?.addEventListener('click',()=>{
+      GM_deleteValue(FACTION_API_KEY);statusText='Faction Armory API key cleared.';render();
+    });
+    root.querySelector('#mm-fa-export')?.addEventListener('click',exportLeadershipExcel);
+  }
+
+  async function importFromField(save){
+    if(busy)return;
+    const root=document.getElementById(ROOT_ID);
+    const input=root?.querySelector('#mm-fa-member-key');
+    const key=String(input?.value||'').trim();
+    if(!key){statusText='Paste a member Limited Access API key first.';render();return;}
+    busy=true;statusText='Importing member readiness data…';render();
+    try{
+      const result=await importMemberKey(key,{save});
+      if(input)input.value='';
+      statusText='Imported '+result.memberName+' ['+result.memberId+']'+(save?' and saved key encrypted.':'. Key was not saved.');
+    }catch(error){statusText='Member import failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function xmlCell(value,type='String'){
+    const safe=esc(String(value??''));
+    return '<Cell><Data ss:Type="'+type+'">'+safe+'</Data></Cell>';
+  }
+  function xmlSheet(name,headers,rows){
+    return '<Worksheet ss:Name="'+esc(name).slice(0,31)+'"><Table>'+
+      '<Row>'+headers.map(h=>xmlCell(h)).join('')+'</Row>'+
+      rows.map(row=>'<Row>'+headers.map(h=>{
+        const v=row[h];
+        return xmlCell(v,typeof v==='number'&&Number.isFinite(v)?'Number':'String');
+      }).join('')+'</Row>').join('')+
+      '</Table></Worksheet>';
+  }
+
+  function exportLeadershipExcel(){
+    if(!state){statusText='Load shared state first.';render();return;}
+    const members=memberRows();
+    const minimums=logic.minimumProposal(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode
+    });
+    const acquisition=logic.acquisitionPlan(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const inventory=Object.values(state.factionInventory?.current||{});
+    const summaryHeaders=['Metric','Value'];
+    const summary=[
+      {Metric:'Generated',Value:new Date().toISOString()},
+      {Metric:'Stock mode',Value:stockMode.toUpperCase()},
+      {Metric:'Procurement mode',Value:procurementMode.toUpperCase()},
+      {Metric:'Acquisition budget',Value:acquisitionBudget},
+      {Metric:'Buy-now known cost',Value:acquisition.fundedEstimatedValue},
+      {Metric:'Known deferred cost',Value:acquisition.deferredEstimatedValue},
+      {Metric:'Unresolved build slots',Value:acquisition.unresolvedCount},
+      {Metric:'War roster members',Value:stockMode==='war'?members.length:''},
+      {Metric:'Faction members',Value:members.length},
+      {Metric:'War ready (approved)',Value:members.filter(r=>r.readinessStatus==='WAR READY').length},
+      {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
+      {Metric:'Action needed',Value:members.filter(r=>r.readinessStatus==='ACTION NEEDED'||r.readinessStatus==='SUPPLY ACTION').length},
+      {Metric:'Missing / stale',Value:members.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length},
+      {Metric:'Armory member API keys saved',Value:savedKeyIds().length},
+      {Metric:'Inventory rows',Value:inventory.length},
+      {Metric:'Observed inventory days',Value:Number(minimums.observedDays.toFixed(1))},
+      {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
+      {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length}
+    ];
+    const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','War Ready','Baseline Pass','Approved At','Approval Mode','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberData=members.map(r=>{
+      const build=r.buildAssessment||logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
+      return {
+        'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'API Saved':r.apiSaved?'YES':'NO','Readiness':r.readinessStatus,
+        'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO','Baseline Pass':build.warReady?'YES':'NO','Approved At':r.readinessApprovedAt||'','Approval Mode':r.readinessApprovalMode||'',
+        'Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
+        'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
+        'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
+      };
+    });
+    const invHeaders=['Category','Item ID','Item','Owned','Available','Loaned','Damage','Accuracy','Armor'];
+    const invData=inventory.map(r=>({'Category':r.category,'Item ID':r.itemId,'Item':r.name,'Owned':num(r.amountOwned),'Available':num(r.availableCount),'Loaned':num(r.loanedCount),'Damage':num(r.damage),'Accuracy':num(r.accuracy),'Armor':num(r.armorRating)}));
+    const minHeaders=['Category','Item / Pool','Current','Loaned','Proposed Min','Proposed Max','Shortfall','Data Required','Rationale'];
+    const minData=minimums.proposals.map(r=>({'Category':r.category,'Item / Pool':r.item,'Current':num(r.current),'Loaned':num(r.loaned),'Proposed Min':r.dataRequired?'':num(r.recommendedMin),'Proposed Max':r.dataRequired?'':num(r.recommendedMax),'Shortfall':r.dataRequired?'':num(r.shortfall),'Data Required':r.dataRequired?'YES':'NO','Rationale':r.rationale}));
+    const xml='<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>'+
+      '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'+
+      xmlSheet('Summary',summaryHeaders,summary)+
+      xmlSheet('Members',memberHeaders,memberData)+
+      xmlSheet('Inventory',invHeaders,invData)+
+      xmlSheet('Minimums',minHeaders,minData)+
+      xmlSheet('Acquire',['Category','Item','Required Qty','Buy Now Qty','Deferred Qty','Reference Source','Reference Unit Value','Buy Now Cost','Reasons'],acquisition.list.map(r=>({
+        'Category':r.category,'Item':r.item,'Required Qty':num(r.qty),'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Buy Now Cost':num(r.fundedEstimatedValue),'Reasons':r.reasons
+      })))+
+      '</Workbook>';
+    const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download='OBSIDIAN_FORCE_Faction_Readiness_'+new Date().toISOString().slice(0,10)+'.xml';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+    statusText='Leadership Excel workbook exported.';render();
+  }
+
+  function open(){
+    createPanel();
+    const root=document.getElementById(ROOT_ID);
+    root.style.display='block';
+    core?.setDockLauncherActive?.('armory',true);
+    render();
+    reloadState().then(()=>autoRefreshArmory({forceFaction:false}));
+    startAutoRefresh();
+  }
+  function close(){
+    const root=document.getElementById(ROOT_ID);
+    if(root)root.style.display='none';
+    core?.setDockLauncherActive?.('armory',false);
+    stopAutoRefresh();
+  }
+  function createLauncher(){
+    if(!document.body)return;
+    injectStyle();
+    if(core?.registerDockLauncher){
+      const b=core.registerDockLauncher({
+        id:'armory',
+        label:'MM Faction Armory',
+        accent:'#8b6a2f',
+        onClick:()=>{
+          const root=document.getElementById(ROOT_ID);
+          if(root&&root.style.display!=='none')close(); else open();
+        }
+      });
+      if(b)b.id=LAUNCHER_ID;
+      core.adoptLegacyCrmLauncher?.();
+      return;
+    }
+    if(document.getElementById(LAUNCHER_ID))return;
+    const b=document.createElement('button');
+    b.id=LAUNCHER_ID;b.textContent='Armory';
+    b.style.cssText='position:fixed;right:6px;bottom:6px;z-index:2147483647;'+button(true);
+    b.addEventListener('click',open);document.body.appendChild(b);
+  }
+
+  function installChannel(){
+    if(typeof BroadcastChannel==='undefined'||channel)return;
+    try{
+      channel=new BroadcastChannel(CHANNEL);
+      channel.addEventListener('message',event=>{
+        if(event?.data?.type==='state-updated'&&['faction','core'].includes(String(event.data.domain||''))){
+          reloadState().catch(()=>{});
+        }
+      });
+    }catch{}
+  }
+
+  if(document.body)createLauncher();
+  else window.addEventListener('DOMContentLoaded',createLauncher,{once:true});
+  installChannel();
+})();+fmt(band.lowTotal)+'–    const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const categories=[...new Set(plan.list.map(row=>row.category))];
+    const groups=categories.map(cat=>{
+      const rows=plan.list.filter(row=>row.category===cat);
+      return '<details class="mm-fa-build-member" open>'+
+        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.qty),0)+' required</span></summary>'+
+        '<div class="mm-fa-build-body">'+rows.map(row=>{
+          const live=acquisitionSourceSnapshot(row);
+          const best=live.best;
+          return '<div class="mm-fa-row">'+
+            '<div class="mm-fa-main"><b>'+esc(row.item)+'</b>'+
+              '<div class="mm-fa-muted">'+esc(row.source||'General Torn availability')+(row.reasons?' · '+esc(row.reasons):'')+'</div>'+
+              '<div class="mm-fa-mini" style="margin-top:3px;">'+
+                (best
+                  ? 'Lowest observed source: '+esc(best.source)+(best.country?' · '+esc(best.country):'')+' · $'+fmt(best.price)
+                  : 'No live market/travel price cached yet — MM_Acquisitions will verify before routing.')+
+              '</div>'+
+              '<div class="mm-fa-actions" style="margin-top:4px;">'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Best" style="'+button(true)+'">Find Best Source</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Item Market" style="'+button()+'">Item Market</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Bazaar" style="'+button()+'">Bazaar</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Overseas" style="'+button()+'">Overseas</button>'+
+              '</div>'+
+            '</div>'+
+            '<div class="mm-fa-tiles">'+
+              tile('REQUIRED',fmt(row.qty))+
+              tile('BUY NOW',fmt(row.fundedQty),{cls:row.fundedQty?'mm-fa-good':''})+
+              (row.deferredQty?tile('DEFER',fmt(row.deferredQty),{cls:'mm-fa-warn'}):'')+
+              (row.marketValue?tile('REF EACH','$'+fmt(row.marketValue)):'')+
+              (live.itemMarketPrice?tile('ITEM MKT','$'+fmt(live.itemMarketPrice)):'')+
+              (live.bazaarPrice?tile('BAZAAR','$'+fmt(live.bazaarPrice)):'')+
+              (live.travelPrice?tile('OVERSEAS','$'+fmt(live.travelPrice)+(live.travelCountry?' · '+live.travelCountry:''),{wide:true}):'')+
+              (row.fundedEstimatedValue?tile('BUY-NOW COST','$'+fmt(row.fundedEstimatedValue)):'')+
+            '</div>'+
+          '</div>';
+        }).join('')+
+        '</div>'+
+      '</details>';
+    }).join('');
+
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head">'+
+        '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+procurementMode.toUpperCase()+' · '+plan.participants+' current faction members</span></div>'+
+        '<div class="mm-fa-actions">'+
+          '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+          '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+          '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="mm-fa-tiles">'+
+        tile('BUDGET CAP','$'+fmt(plan.budgetCap))+
+        tile('BUY NOW','$'+fmt(plan.fundedEstimatedValue),{cls:'mm-fa-good'})+
+        tile('KNOWN DEFERRED','$'+fmt(plan.deferredEstimatedValue),{cls:plan.deferredEstimatedValue?'mm-fa-warn':''})+
+        tile('FUNDED UNITS',fmt(plan.fundedUnits))+
+        tile('UNRESOLVED SLOTS',fmt(plan.unresolvedCount),{cls:plan.unresolvedCount?'mm-fa-warn':''})+
+      '</div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<label class="mm-fa-muted">Budget $ <input id="mm-fa-budget-cap" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:130px;"></label>'+
+        '<button id="mm-fa-save-budget" style="'+button(true)+'">Save Budget</button>'+
+      '</div>'+
+      '<div class="mm-fa-muted" style="margin-top:4px;">Equipped gear, member-owned inventory, assigned faction loans, and faction stock are consumed before purchases are created. Faction stock uses the least-cost item that still meets the build floor so premium gear is not wasted. Cached Item Market, Bazaar, and overseas prices are shown when known; MM_Acquisitions performs live source verification/routing before purchase.</div>'+
+      (plan.unresolvedCount
+        ? '<details class="mm-fa-details"><summary>Unresolved build slots</summary><div class="mm-fa-muted" style="margin-top:3px;">'+
+          plan.unresolved.map(r=>esc(r.memberName)+' · '+esc(r.slot.toUpperCase())+(r.current?' · '+esc(r.current):'')+' · '+esc(r.reason||'')).join('<br>')+
+          '</div></details>'
+        : '')+
+    '</div>'+(groups||card('Nothing currently requires acquisition.'));
+  }
+
+  function settingsHtml(){
+    const keySaved=Boolean(factionKey());
+    return card(
+      '<b>Faction API</b><div class="mm-fa-muted">Stored only in this Faction Armory userscript. '+(keySaved?'Saved — automatic faction refresh is enabled when Torn data is due.':'Not saved — cached faction data cannot refresh automatically.')+'</div>'+
+      '<div class="mm-fa-grid" style="grid-template-columns:minmax(220px,1fr) auto auto;margin-top:7px;">'+
+        '<input id="mm-fa-faction-key" class="mm-fa-input" type="password" autocomplete="off" placeholder="'+(keySaved?'Faction API key saved':'Faction-compatible Limited/custom API key')+'">'+
+        '<button id="mm-fa-save-faction-key" style="'+button(true)+'">Save</button>'+
+        '<button id="mm-fa-clear-faction-key" style="'+button()+'">Clear</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:6px;">API use: stored locally only, shared with nobody, used only for faction inventory/readiness, and never sent to another service. Member keys remain in the encrypted Armory vault.</div>'+
+      '<div style="border-top:1px solid #333;margin-top:8px;padding-top:7px;"><b>Procurement policy</b></div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+        '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+        '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '<label class="mm-fa-muted">Acquisition cap $ <input id="mm-fa-settings-budget" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:140px;"></label>'+
+        '<button id="mm-fa-settings-budget-save" style="'+button(true)+'">Save</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:5px;">Budget is the default for a small/growing faction. It chooses lower-cost acceptable reference equipment, then counts member-owned gear, existing loans, and faction stock before creating purchases. Standard/Ideal are planning alternatives, not purchase authorization.</div>'
+    );
+  }
+
+  function sourceStrip(){
+    const fi=state?.factionInventory||{};
+    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
+  }
+
+  function createPanel(){
+    if(document.getElementById(ROOT_ID))return;
+    injectStyle();
+    const root=document.createElement('div');
+    root.id=ROOT_ID;
+    document.body.appendChild(root);
+  }
+
+  function render(){
+    const root=document.getElementById(ROOT_ID);
+    if(!root||root.style.display==='none')return;
+    const viewHtml=activeView==='members'?membersHtml()
+      :activeView==='builds'?buildsHtml()
+      :activeView==='inventory'?inventoryHtml()
+      :activeView==='minimums'?minimumsHtml()
+      :activeView==='acquire'?acquireHtml()
+      :settingsHtml();
+    root.innerHTML=
+      '<div class="mm-fa-head"><div><b style="font-size:14px;">MM Faction Armory</b><div class="mm-fa-muted">v'+VERSION+' · task-first faction readiness</div></div><button id="mm-fa-close" style="'+button()+'">×</button></div>'+
+      '<div class="mm-fa-body">'+
+        '<div class="mm-fa-tabs">'+
+          '<button data-view="members" style="'+button(activeView==='members')+'">Members</button>'+
+          '<button data-view="builds" style="'+button(activeView==='builds')+'">Builds</button>'+
+          '<button data-view="inventory" style="'+button(activeView==='inventory')+'">Stock</button>'+
+          '<button data-view="minimums" style="'+button(activeView==='minimums')+'">Minimums</button>'+
+          '<button data-view="acquire" style="'+button(activeView==='acquire')+'">Acquire</button>'+
+          '<button data-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
+        '</div>'+
+        '<div class="mm-fa-status">'+esc(statusText)+'</div>'+
+        sourceStrip()+
+        (loadError?card('<span class="mm-fa-bad"><b>Shared state unavailable:</b> '+esc(loadError)+'</span>'):'')+
+        '<div class="mm-fa-scroll">'+viewHtml+'</div>'+
+      '</div>';
+
+    core?.makePanelDraggable?.(
+      root,
+      root.querySelector('.mm-fa-head'),
+      'faction-armory',
+      window.innerWidth<=620?{right:'4px',top:'54px'}:{right:'12px',top:'72px'}
+    );
+    root.querySelector('#mm-fa-close')?.addEventListener('click',close);
+    root.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.view||'members';render();}));
+    root.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click',()=>{selectedCategory=b.dataset.cat||'all';render();}));
+    root.querySelectorAll('[data-stock-mode]').forEach(b=>b.addEventListener('click',()=>{
+      stockMode=b.dataset.stockMode==='peace'?'peace':'war';
+      GM_setValue(STOCK_MODE_KEY,stockMode);
+      const count=Object.keys(state?.factionInventory?.memberReadiness?.roster||{}).length; statusText='Inventory minimum mode: '+(stockMode==='war'?'WAR ('+count+' current members)':'PEACE')+'.';
+      render();
+    }));
+    root.querySelectorAll('[data-procurement-mode]').forEach(b=>b.addEventListener('click',()=>{
+      procurementMode=['budget','standard','ideal'].includes(b.dataset.procurementMode)?b.dataset.procurementMode:'budget';
+      GM_setValue(PROCUREMENT_MODE_KEY,procurementMode);
+      statusText='Procurement mode: '+procurementMode.toUpperCase()+'.';
+      render();
+    }));
+    const saveBudget=value=>{
+      const next=Math.max(0,Number(value)||0);
+      acquisitionBudget=next;
+      GM_setValue(ACQUISITION_BUDGET_KEY,next);
+      statusText='Acquisition budget saved: $'+Math.round(next).toLocaleString()+'.';
+      render();
+    };
+    root.querySelector('#mm-fa-save-budget')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-budget-cap')?.value));
+    root.querySelectorAll('[data-armory-acquire]').forEach(b=>b.addEventListener('click',()=>{
+      const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+        mode:stockMode,
+          procurementMode,
+        budgetCap:acquisitionBudget
+      });
+      const row=plan.list.find(x=>String(x.item||'')===String(b.dataset.armoryAcquire||''));
+      if(row)handoffAcquisition(row,b.dataset.source||'Best');
+    }));
+    root.querySelector('#mm-fa-settings-budget-save')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-settings-budget')?.value));
+
+    root.querySelector('#mm-fa-refresh-faction')?.addEventListener('click',refreshFaction);
+    root.querySelector('#mm-fa-copy-request')?.addEventListener('click',()=>copyText(missingDataRequest()).then(()=>{statusText='Member data request copied.';render();}));
+    root.querySelector('#mm-fa-unlock-vault')?.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Unlocking member-key vault…';render();
+      try{
+        await unlockVault(false);
+        const stale=staleSavedMemberCount();
+        statusText=stale
+          ?'Member-key vault unlocked. Checking '+stale+' stale saved profile'+(stale===1?'':'s')+' automatically…'
+          :'Member-key vault unlocked. No saved member profiles are stale.';
+      }catch(error){statusText='Vault unlock failed: '+(error?.message||String(error));}
+      finally{
+        busy=false;render();
+        if(vaultSession?.key&&staleSavedMemberCount())setTimeout(()=>autoRefreshArmory({forceFaction:false}),50);
+      }
+    });
+    root.querySelector('#mm-fa-import-once')?.addEventListener('click',()=>importFromField(false));
+    root.querySelector('#mm-fa-import-save')?.addEventListener('click',()=>importFromField(true));
+    root.querySelector('#mm-fa-refresh-keys')?.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing saved member keys…';render();
+      try{
+        const result=await refreshAllSaved();
+        statusText='Saved member-key refresh: '+result.total+' saved key'+(result.total===1?'':'s')+' found · '+result.ok+' refreshed successfully'+(result.failures.length?' · '+result.failures.length+' failed':'')+'. This is the number of saved member API keys, not faction members.';
+      }catch(error){statusText='Saved key refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    });
+    root.querySelectorAll('[data-refresh-member]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing '+b.dataset.refreshMember+'…';render();
+      try{const r=await refreshSavedMember(b.dataset.refreshMember);statusText='Refreshed '+r.memberName+' ['+r.memberId+'].';}
+      catch(error){statusText='Member refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-remove-member]').forEach(b=>b.addEventListener('click',()=>{
+      if(removeMemberKey(b.dataset.removeMember)){statusText='Saved member key removed; readiness data preserved.';render();}
+    }));
+    root.querySelectorAll('[data-remind-member]').forEach(b=>b.addEventListener('click',()=>{
+      const row=memberRows().find(item=>item.memberId===asId(b.dataset.remindMember));
+      if(!row)return;
+      try{
+        openArmoryMessage({
+          playerId:row.memberId,
+          playerName:row.memberName,
+          subject:'Faction readiness information needed',
+          body:readinessReminderMessage(row),
+          kind:'member-data-reminder',
+          memberId:row.memberId
+        });
+      }catch(error){statusText='Could not prepare reminder: '+(error?.message||String(error));render();}
+    }));
+    root.querySelectorAll('[data-war-ready]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Approving member as War Ready…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.warReady,true);
+        statusText=result.memberName+' is now WAR READY across Members, Builds, and exports.';
+      }catch(error){statusText='War Ready approval failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-reopen-review]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Reopening readiness review…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.reopenReview,false);
+        statusText=result.memberName+' returned to READY FOR REVIEW.';
+      }catch(error){statusText='Readiness review update failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-paste-reply]').forEach(b=>b.addEventListener('click',async()=>{
+      const id=asId(b.dataset.pasteReply);
+      const row=memberRows().find(x=>x.memberId===id);
+      const raw=prompt('Paste '+String(row?.memberName||id)+'\'s completed readiness reply:','');
+      if(raw==null||!String(raw).trim())return;
+      if(busy)return;busy=true;statusText='Importing member reply…';render();
+      try{
+        const result=await importMemberReply(id,raw);
+        statusText='Imported reply for '+result.memberName+' · '+result.equipmentCount+' equipped item(s) parsed.';
+      }catch(error){statusText='Reply import failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelector('#mm-fa-save-faction-key')?.addEventListener('click',()=>{
+      const value=String(root.querySelector('#mm-fa-faction-key')?.value||'').trim();
+      if(!value){statusText='Enter a faction-compatible API key first.';render();return;}
+      GM_setValue(FACTION_API_KEY,value);statusText='Faction Armory API key saved. Refreshing automatically…';render();setTimeout(()=>autoRefreshArmory({forceFaction:true}),50);
+    });
+    root.querySelector('#mm-fa-clear-faction-key')?.addEventListener('click',()=>{
+      GM_deleteValue(FACTION_API_KEY);statusText='Faction Armory API key cleared.';render();
+    });
+    root.querySelector('#mm-fa-export')?.addEventListener('click',exportLeadershipExcel);
+  }
+
+  async function importFromField(save){
+    if(busy)return;
+    const root=document.getElementById(ROOT_ID);
+    const input=root?.querySelector('#mm-fa-member-key');
+    const key=String(input?.value||'').trim();
+    if(!key){statusText='Paste a member Limited Access API key first.';render();return;}
+    busy=true;statusText='Importing member readiness data…';render();
+    try{
+      const result=await importMemberKey(key,{save});
+      if(input)input.value='';
+      statusText='Imported '+result.memberName+' ['+result.memberId+']'+(save?' and saved key encrypted.':'. Key was not saved.');
+    }catch(error){statusText='Member import failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function xmlCell(value,type='String'){
+    const safe=esc(String(value??''));
+    return '<Cell><Data ss:Type="'+type+'">'+safe+'</Data></Cell>';
+  }
+  function xmlSheet(name,headers,rows){
+    return '<Worksheet ss:Name="'+esc(name).slice(0,31)+'"><Table>'+
+      '<Row>'+headers.map(h=>xmlCell(h)).join('')+'</Row>'+
+      rows.map(row=>'<Row>'+headers.map(h=>{
+        const v=row[h];
+        return xmlCell(v,typeof v==='number'&&Number.isFinite(v)?'Number':'String');
+      }).join('')+'</Row>').join('')+
+      '</Table></Worksheet>';
+  }
+
+  function exportLeadershipExcel(){
+    if(!state){statusText='Load shared state first.';render();return;}
+    const members=memberRows();
+    const minimums=logic.minimumProposal(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode
+    });
+    const acquisition=logic.acquisitionPlan(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const inventory=Object.values(state.factionInventory?.current||{});
+    const summaryHeaders=['Metric','Value'];
+    const summary=[
+      {Metric:'Generated',Value:new Date().toISOString()},
+      {Metric:'Stock mode',Value:stockMode.toUpperCase()},
+      {Metric:'Procurement mode',Value:procurementMode.toUpperCase()},
+      {Metric:'Acquisition budget',Value:acquisitionBudget},
+      {Metric:'Buy-now known cost',Value:acquisition.fundedEstimatedValue},
+      {Metric:'Known deferred cost',Value:acquisition.deferredEstimatedValue},
+      {Metric:'Unresolved build slots',Value:acquisition.unresolvedCount},
+      {Metric:'War roster members',Value:stockMode==='war'?members.length:''},
+      {Metric:'Faction members',Value:members.length},
+      {Metric:'War ready (approved)',Value:members.filter(r=>r.readinessStatus==='WAR READY').length},
+      {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
+      {Metric:'Action needed',Value:members.filter(r=>r.readinessStatus==='ACTION NEEDED'||r.readinessStatus==='SUPPLY ACTION').length},
+      {Metric:'Missing / stale',Value:members.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length},
+      {Metric:'Armory member API keys saved',Value:savedKeyIds().length},
+      {Metric:'Inventory rows',Value:inventory.length},
+      {Metric:'Observed inventory days',Value:Number(minimums.observedDays.toFixed(1))},
+      {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
+      {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length}
+    ];
+    const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','War Ready','Baseline Pass','Approved At','Approval Mode','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberData=members.map(r=>{
+      const build=r.buildAssessment||logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
+      return {
+        'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'API Saved':r.apiSaved?'YES':'NO','Readiness':r.readinessStatus,
+        'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO','Baseline Pass':build.warReady?'YES':'NO','Approved At':r.readinessApprovedAt||'','Approval Mode':r.readinessApprovalMode||'',
+        'Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
+        'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
+        'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
+      };
+    });
+    const invHeaders=['Category','Item ID','Item','Owned','Available','Loaned','Damage','Accuracy','Armor'];
+    const invData=inventory.map(r=>({'Category':r.category,'Item ID':r.itemId,'Item':r.name,'Owned':num(r.amountOwned),'Available':num(r.availableCount),'Loaned':num(r.loanedCount),'Damage':num(r.damage),'Accuracy':num(r.accuracy),'Armor':num(r.armorRating)}));
+    const minHeaders=['Category','Item / Pool','Current','Loaned','Proposed Min','Proposed Max','Shortfall','Data Required','Rationale'];
+    const minData=minimums.proposals.map(r=>({'Category':r.category,'Item / Pool':r.item,'Current':num(r.current),'Loaned':num(r.loaned),'Proposed Min':r.dataRequired?'':num(r.recommendedMin),'Proposed Max':r.dataRequired?'':num(r.recommendedMax),'Shortfall':r.dataRequired?'':num(r.shortfall),'Data Required':r.dataRequired?'YES':'NO','Rationale':r.rationale}));
+    const xml='<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>'+
+      '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'+
+      xmlSheet('Summary',summaryHeaders,summary)+
+      xmlSheet('Members',memberHeaders,memberData)+
+      xmlSheet('Inventory',invHeaders,invData)+
+      xmlSheet('Minimums',minHeaders,minData)+
+      xmlSheet('Acquire',['Category','Item','Required Qty','Buy Now Qty','Deferred Qty','Reference Source','Reference Unit Value','Buy Now Cost','Reasons'],acquisition.list.map(r=>({
+        'Category':r.category,'Item':r.item,'Required Qty':num(r.qty),'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Buy Now Cost':num(r.fundedEstimatedValue),'Reasons':r.reasons
+      })))+
+      '</Workbook>';
+    const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download='OBSIDIAN_FORCE_Faction_Readiness_'+new Date().toISOString().slice(0,10)+'.xml';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+    statusText='Leadership Excel workbook exported.';render();
+  }
+
+  function open(){
+    createPanel();
+    const root=document.getElementById(ROOT_ID);
+    root.style.display='block';
+    core?.setDockLauncherActive?.('armory',true);
+    render();
+    reloadState().then(()=>autoRefreshArmory({forceFaction:false}));
+    startAutoRefresh();
+  }
+  function close(){
+    const root=document.getElementById(ROOT_ID);
+    if(root)root.style.display='none';
+    core?.setDockLauncherActive?.('armory',false);
+    stopAutoRefresh();
+  }
+  function createLauncher(){
+    if(!document.body)return;
+    injectStyle();
+    if(core?.registerDockLauncher){
+      const b=core.registerDockLauncher({
+        id:'armory',
+        label:'MM Faction Armory',
+        accent:'#8b6a2f',
+        onClick:()=>{
+          const root=document.getElementById(ROOT_ID);
+          if(root&&root.style.display!=='none')close(); else open();
+        }
+      });
+      if(b)b.id=LAUNCHER_ID;
+      core.adoptLegacyCrmLauncher?.();
+      return;
+    }
+    if(document.getElementById(LAUNCHER_ID))return;
+    const b=document.createElement('button');
+    b.id=LAUNCHER_ID;b.textContent='Armory';
+    b.style.cssText='position:fixed;right:6px;bottom:6px;z-index:2147483647;'+button(true);
+    b.addEventListener('click',open);document.body.appendChild(b);
+  }
+
+  function installChannel(){
+    if(typeof BroadcastChannel==='undefined'||channel)return;
+    try{
+      channel=new BroadcastChannel(CHANNEL);
+      channel.addEventListener('message',event=>{
+        if(event?.data?.type==='state-updated'&&['faction','core'].includes(String(event.data.domain||''))){
+          reloadState().catch(()=>{});
+        }
+      });
+    }catch{}
+  }
+
+  if(document.body)createLauncher();
+  else window.addEventListener('DOMContentLoaded',createLauncher,{once:true});
+  installChannel();
+})();+fmt(band.highTotal)+' line total':'price unresolved')+
+          (row.reasons?' · '+row.reasons:''));
+      }
+    }else lines.push('- Nothing currently requires acquisition.');
+
+    lines.push('','ESTIMATED TOTAL ACQUISITION COST');
+    lines.push(priced.length?'    const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const categories=[...new Set(plan.list.map(row=>row.category))];
+    const groups=categories.map(cat=>{
+      const rows=plan.list.filter(row=>row.category===cat);
+      return '<details class="mm-fa-build-member" open>'+
+        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.qty),0)+' required</span></summary>'+
+        '<div class="mm-fa-build-body">'+rows.map(row=>{
+          const live=acquisitionSourceSnapshot(row);
+          const best=live.best;
+          return '<div class="mm-fa-row">'+
+            '<div class="mm-fa-main"><b>'+esc(row.item)+'</b>'+
+              '<div class="mm-fa-muted">'+esc(row.source||'General Torn availability')+(row.reasons?' · '+esc(row.reasons):'')+'</div>'+
+              '<div class="mm-fa-mini" style="margin-top:3px;">'+
+                (best
+                  ? 'Lowest observed source: '+esc(best.source)+(best.country?' · '+esc(best.country):'')+' · $'+fmt(best.price)
+                  : 'No live market/travel price cached yet — MM_Acquisitions will verify before routing.')+
+              '</div>'+
+              '<div class="mm-fa-actions" style="margin-top:4px;">'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Best" style="'+button(true)+'">Find Best Source</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Item Market" style="'+button()+'">Item Market</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Bazaar" style="'+button()+'">Bazaar</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Overseas" style="'+button()+'">Overseas</button>'+
+              '</div>'+
+            '</div>'+
+            '<div class="mm-fa-tiles">'+
+              tile('REQUIRED',fmt(row.qty))+
+              tile('BUY NOW',fmt(row.fundedQty),{cls:row.fundedQty?'mm-fa-good':''})+
+              (row.deferredQty?tile('DEFER',fmt(row.deferredQty),{cls:'mm-fa-warn'}):'')+
+              (row.marketValue?tile('REF EACH','$'+fmt(row.marketValue)):'')+
+              (live.itemMarketPrice?tile('ITEM MKT','$'+fmt(live.itemMarketPrice)):'')+
+              (live.bazaarPrice?tile('BAZAAR','$'+fmt(live.bazaarPrice)):'')+
+              (live.travelPrice?tile('OVERSEAS','$'+fmt(live.travelPrice)+(live.travelCountry?' · '+live.travelCountry:''),{wide:true}):'')+
+              (row.fundedEstimatedValue?tile('BUY-NOW COST','$'+fmt(row.fundedEstimatedValue)):'')+
+            '</div>'+
+          '</div>';
+        }).join('')+
+        '</div>'+
+      '</details>';
+    }).join('');
+
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head">'+
+        '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+procurementMode.toUpperCase()+' · '+plan.participants+' current faction members</span></div>'+
+        '<div class="mm-fa-actions">'+
+          '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+          '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+          '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="mm-fa-tiles">'+
+        tile('BUDGET CAP','$'+fmt(plan.budgetCap))+
+        tile('BUY NOW','$'+fmt(plan.fundedEstimatedValue),{cls:'mm-fa-good'})+
+        tile('KNOWN DEFERRED','$'+fmt(plan.deferredEstimatedValue),{cls:plan.deferredEstimatedValue?'mm-fa-warn':''})+
+        tile('FUNDED UNITS',fmt(plan.fundedUnits))+
+        tile('UNRESOLVED SLOTS',fmt(plan.unresolvedCount),{cls:plan.unresolvedCount?'mm-fa-warn':''})+
+      '</div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<label class="mm-fa-muted">Budget $ <input id="mm-fa-budget-cap" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:130px;"></label>'+
+        '<button id="mm-fa-save-budget" style="'+button(true)+'">Save Budget</button>'+
+      '</div>'+
+      '<div class="mm-fa-muted" style="margin-top:4px;">Equipped gear, member-owned inventory, assigned faction loans, and faction stock are consumed before purchases are created. Faction stock uses the least-cost item that still meets the build floor so premium gear is not wasted. Cached Item Market, Bazaar, and overseas prices are shown when known; MM_Acquisitions performs live source verification/routing before purchase.</div>'+
+      (plan.unresolvedCount
+        ? '<details class="mm-fa-details"><summary>Unresolved build slots</summary><div class="mm-fa-muted" style="margin-top:3px;">'+
+          plan.unresolved.map(r=>esc(r.memberName)+' · '+esc(r.slot.toUpperCase())+(r.current?' · '+esc(r.current):'')+' · '+esc(r.reason||'')).join('<br>')+
+          '</div></details>'
+        : '')+
+    '</div>'+(groups||card('Nothing currently requires acquisition.'));
+  }
+
+  function settingsHtml(){
+    const keySaved=Boolean(factionKey());
+    return card(
+      '<b>Faction API</b><div class="mm-fa-muted">Stored only in this Faction Armory userscript. '+(keySaved?'Saved — automatic faction refresh is enabled when Torn data is due.':'Not saved — cached faction data cannot refresh automatically.')+'</div>'+
+      '<div class="mm-fa-grid" style="grid-template-columns:minmax(220px,1fr) auto auto;margin-top:7px;">'+
+        '<input id="mm-fa-faction-key" class="mm-fa-input" type="password" autocomplete="off" placeholder="'+(keySaved?'Faction API key saved':'Faction-compatible Limited/custom API key')+'">'+
+        '<button id="mm-fa-save-faction-key" style="'+button(true)+'">Save</button>'+
+        '<button id="mm-fa-clear-faction-key" style="'+button()+'">Clear</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:6px;">API use: stored locally only, shared with nobody, used only for faction inventory/readiness, and never sent to another service. Member keys remain in the encrypted Armory vault.</div>'+
+      '<div style="border-top:1px solid #333;margin-top:8px;padding-top:7px;"><b>Procurement policy</b></div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+        '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+        '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '<label class="mm-fa-muted">Acquisition cap $ <input id="mm-fa-settings-budget" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:140px;"></label>'+
+        '<button id="mm-fa-settings-budget-save" style="'+button(true)+'">Save</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:5px;">Budget is the default for a small/growing faction. It chooses lower-cost acceptable reference equipment, then counts member-owned gear, existing loans, and faction stock before creating purchases. Standard/Ideal are planning alternatives, not purchase authorization.</div>'
+    );
+  }
+
+  function sourceStrip(){
+    const fi=state?.factionInventory||{};
+    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
+  }
+
+  function createPanel(){
+    if(document.getElementById(ROOT_ID))return;
+    injectStyle();
+    const root=document.createElement('div');
+    root.id=ROOT_ID;
+    document.body.appendChild(root);
+  }
+
+  function render(){
+    const root=document.getElementById(ROOT_ID);
+    if(!root||root.style.display==='none')return;
+    const viewHtml=activeView==='members'?membersHtml()
+      :activeView==='builds'?buildsHtml()
+      :activeView==='inventory'?inventoryHtml()
+      :activeView==='minimums'?minimumsHtml()
+      :activeView==='acquire'?acquireHtml()
+      :settingsHtml();
+    root.innerHTML=
+      '<div class="mm-fa-head"><div><b style="font-size:14px;">MM Faction Armory</b><div class="mm-fa-muted">v'+VERSION+' · task-first faction readiness</div></div><button id="mm-fa-close" style="'+button()+'">×</button></div>'+
+      '<div class="mm-fa-body">'+
+        '<div class="mm-fa-tabs">'+
+          '<button data-view="members" style="'+button(activeView==='members')+'">Members</button>'+
+          '<button data-view="builds" style="'+button(activeView==='builds')+'">Builds</button>'+
+          '<button data-view="inventory" style="'+button(activeView==='inventory')+'">Stock</button>'+
+          '<button data-view="minimums" style="'+button(activeView==='minimums')+'">Minimums</button>'+
+          '<button data-view="acquire" style="'+button(activeView==='acquire')+'">Acquire</button>'+
+          '<button data-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
+        '</div>'+
+        '<div class="mm-fa-status">'+esc(statusText)+'</div>'+
+        sourceStrip()+
+        (loadError?card('<span class="mm-fa-bad"><b>Shared state unavailable:</b> '+esc(loadError)+'</span>'):'')+
+        '<div class="mm-fa-scroll">'+viewHtml+'</div>'+
+      '</div>';
+
+    core?.makePanelDraggable?.(
+      root,
+      root.querySelector('.mm-fa-head'),
+      'faction-armory',
+      window.innerWidth<=620?{right:'4px',top:'54px'}:{right:'12px',top:'72px'}
+    );
+    root.querySelector('#mm-fa-close')?.addEventListener('click',close);
+    root.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.view||'members';render();}));
+    root.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click',()=>{selectedCategory=b.dataset.cat||'all';render();}));
+    root.querySelectorAll('[data-stock-mode]').forEach(b=>b.addEventListener('click',()=>{
+      stockMode=b.dataset.stockMode==='peace'?'peace':'war';
+      GM_setValue(STOCK_MODE_KEY,stockMode);
+      const count=Object.keys(state?.factionInventory?.memberReadiness?.roster||{}).length; statusText='Inventory minimum mode: '+(stockMode==='war'?'WAR ('+count+' current members)':'PEACE')+'.';
+      render();
+    }));
+    root.querySelectorAll('[data-procurement-mode]').forEach(b=>b.addEventListener('click',()=>{
+      procurementMode=['budget','standard','ideal'].includes(b.dataset.procurementMode)?b.dataset.procurementMode:'budget';
+      GM_setValue(PROCUREMENT_MODE_KEY,procurementMode);
+      statusText='Procurement mode: '+procurementMode.toUpperCase()+'.';
+      render();
+    }));
+    const saveBudget=value=>{
+      const next=Math.max(0,Number(value)||0);
+      acquisitionBudget=next;
+      GM_setValue(ACQUISITION_BUDGET_KEY,next);
+      statusText='Acquisition budget saved: $'+Math.round(next).toLocaleString()+'.';
+      render();
+    };
+    root.querySelector('#mm-fa-save-budget')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-budget-cap')?.value));
+    root.querySelectorAll('[data-armory-acquire]').forEach(b=>b.addEventListener('click',()=>{
+      const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+        mode:stockMode,
+          procurementMode,
+        budgetCap:acquisitionBudget
+      });
+      const row=plan.list.find(x=>String(x.item||'')===String(b.dataset.armoryAcquire||''));
+      if(row)handoffAcquisition(row,b.dataset.source||'Best');
+    }));
+    root.querySelector('#mm-fa-settings-budget-save')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-settings-budget')?.value));
+
+    root.querySelector('#mm-fa-refresh-faction')?.addEventListener('click',refreshFaction);
+    root.querySelector('#mm-fa-copy-request')?.addEventListener('click',()=>copyText(missingDataRequest()).then(()=>{statusText='Member data request copied.';render();}));
+    root.querySelector('#mm-fa-unlock-vault')?.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Unlocking member-key vault…';render();
+      try{
+        await unlockVault(false);
+        const stale=staleSavedMemberCount();
+        statusText=stale
+          ?'Member-key vault unlocked. Checking '+stale+' stale saved profile'+(stale===1?'':'s')+' automatically…'
+          :'Member-key vault unlocked. No saved member profiles are stale.';
+      }catch(error){statusText='Vault unlock failed: '+(error?.message||String(error));}
+      finally{
+        busy=false;render();
+        if(vaultSession?.key&&staleSavedMemberCount())setTimeout(()=>autoRefreshArmory({forceFaction:false}),50);
+      }
+    });
+    root.querySelector('#mm-fa-import-once')?.addEventListener('click',()=>importFromField(false));
+    root.querySelector('#mm-fa-import-save')?.addEventListener('click',()=>importFromField(true));
+    root.querySelector('#mm-fa-refresh-keys')?.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing saved member keys…';render();
+      try{
+        const result=await refreshAllSaved();
+        statusText='Saved member-key refresh: '+result.total+' saved key'+(result.total===1?'':'s')+' found · '+result.ok+' refreshed successfully'+(result.failures.length?' · '+result.failures.length+' failed':'')+'. This is the number of saved member API keys, not faction members.';
+      }catch(error){statusText='Saved key refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    });
+    root.querySelectorAll('[data-refresh-member]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing '+b.dataset.refreshMember+'…';render();
+      try{const r=await refreshSavedMember(b.dataset.refreshMember);statusText='Refreshed '+r.memberName+' ['+r.memberId+'].';}
+      catch(error){statusText='Member refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-remove-member]').forEach(b=>b.addEventListener('click',()=>{
+      if(removeMemberKey(b.dataset.removeMember)){statusText='Saved member key removed; readiness data preserved.';render();}
+    }));
+    root.querySelectorAll('[data-remind-member]').forEach(b=>b.addEventListener('click',()=>{
+      const row=memberRows().find(item=>item.memberId===asId(b.dataset.remindMember));
+      if(!row)return;
+      try{
+        openArmoryMessage({
+          playerId:row.memberId,
+          playerName:row.memberName,
+          subject:'Faction readiness information needed',
+          body:readinessReminderMessage(row),
+          kind:'member-data-reminder',
+          memberId:row.memberId
+        });
+      }catch(error){statusText='Could not prepare reminder: '+(error?.message||String(error));render();}
+    }));
+    root.querySelectorAll('[data-war-ready]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Approving member as War Ready…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.warReady,true);
+        statusText=result.memberName+' is now WAR READY across Members, Builds, and exports.';
+      }catch(error){statusText='War Ready approval failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-reopen-review]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Reopening readiness review…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.reopenReview,false);
+        statusText=result.memberName+' returned to READY FOR REVIEW.';
+      }catch(error){statusText='Readiness review update failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-paste-reply]').forEach(b=>b.addEventListener('click',async()=>{
+      const id=asId(b.dataset.pasteReply);
+      const row=memberRows().find(x=>x.memberId===id);
+      const raw=prompt('Paste '+String(row?.memberName||id)+'\'s completed readiness reply:','');
+      if(raw==null||!String(raw).trim())return;
+      if(busy)return;busy=true;statusText='Importing member reply…';render();
+      try{
+        const result=await importMemberReply(id,raw);
+        statusText='Imported reply for '+result.memberName+' · '+result.equipmentCount+' equipped item(s) parsed.';
+      }catch(error){statusText='Reply import failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelector('#mm-fa-save-faction-key')?.addEventListener('click',()=>{
+      const value=String(root.querySelector('#mm-fa-faction-key')?.value||'').trim();
+      if(!value){statusText='Enter a faction-compatible API key first.';render();return;}
+      GM_setValue(FACTION_API_KEY,value);statusText='Faction Armory API key saved. Refreshing automatically…';render();setTimeout(()=>autoRefreshArmory({forceFaction:true}),50);
+    });
+    root.querySelector('#mm-fa-clear-faction-key')?.addEventListener('click',()=>{
+      GM_deleteValue(FACTION_API_KEY);statusText='Faction Armory API key cleared.';render();
+    });
+    root.querySelector('#mm-fa-export')?.addEventListener('click',exportLeadershipExcel);
+  }
+
+  async function importFromField(save){
+    if(busy)return;
+    const root=document.getElementById(ROOT_ID);
+    const input=root?.querySelector('#mm-fa-member-key');
+    const key=String(input?.value||'').trim();
+    if(!key){statusText='Paste a member Limited Access API key first.';render();return;}
+    busy=true;statusText='Importing member readiness data…';render();
+    try{
+      const result=await importMemberKey(key,{save});
+      if(input)input.value='';
+      statusText='Imported '+result.memberName+' ['+result.memberId+']'+(save?' and saved key encrypted.':'. Key was not saved.');
+    }catch(error){statusText='Member import failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function xmlCell(value,type='String'){
+    const safe=esc(String(value??''));
+    return '<Cell><Data ss:Type="'+type+'">'+safe+'</Data></Cell>';
+  }
+  function xmlSheet(name,headers,rows){
+    return '<Worksheet ss:Name="'+esc(name).slice(0,31)+'"><Table>'+
+      '<Row>'+headers.map(h=>xmlCell(h)).join('')+'</Row>'+
+      rows.map(row=>'<Row>'+headers.map(h=>{
+        const v=row[h];
+        return xmlCell(v,typeof v==='number'&&Number.isFinite(v)?'Number':'String');
+      }).join('')+'</Row>').join('')+
+      '</Table></Worksheet>';
+  }
+
+  function exportLeadershipExcel(){
+    if(!state){statusText='Load shared state first.';render();return;}
+    const members=memberRows();
+    const minimums=logic.minimumProposal(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode
+    });
+    const acquisition=logic.acquisitionPlan(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const inventory=Object.values(state.factionInventory?.current||{});
+    const summaryHeaders=['Metric','Value'];
+    const summary=[
+      {Metric:'Generated',Value:new Date().toISOString()},
+      {Metric:'Stock mode',Value:stockMode.toUpperCase()},
+      {Metric:'Procurement mode',Value:procurementMode.toUpperCase()},
+      {Metric:'Acquisition budget',Value:acquisitionBudget},
+      {Metric:'Buy-now known cost',Value:acquisition.fundedEstimatedValue},
+      {Metric:'Known deferred cost',Value:acquisition.deferredEstimatedValue},
+      {Metric:'Unresolved build slots',Value:acquisition.unresolvedCount},
+      {Metric:'War roster members',Value:stockMode==='war'?members.length:''},
+      {Metric:'Faction members',Value:members.length},
+      {Metric:'War ready (approved)',Value:members.filter(r=>r.readinessStatus==='WAR READY').length},
+      {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
+      {Metric:'Action needed',Value:members.filter(r=>r.readinessStatus==='ACTION NEEDED'||r.readinessStatus==='SUPPLY ACTION').length},
+      {Metric:'Missing / stale',Value:members.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length},
+      {Metric:'Armory member API keys saved',Value:savedKeyIds().length},
+      {Metric:'Inventory rows',Value:inventory.length},
+      {Metric:'Observed inventory days',Value:Number(minimums.observedDays.toFixed(1))},
+      {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
+      {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length}
+    ];
+    const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','War Ready','Baseline Pass','Approved At','Approval Mode','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberData=members.map(r=>{
+      const build=r.buildAssessment||logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
+      return {
+        'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'API Saved':r.apiSaved?'YES':'NO','Readiness':r.readinessStatus,
+        'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO','Baseline Pass':build.warReady?'YES':'NO','Approved At':r.readinessApprovedAt||'','Approval Mode':r.readinessApprovalMode||'',
+        'Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
+        'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
+        'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
+      };
+    });
+    const invHeaders=['Category','Item ID','Item','Owned','Available','Loaned','Damage','Accuracy','Armor'];
+    const invData=inventory.map(r=>({'Category':r.category,'Item ID':r.itemId,'Item':r.name,'Owned':num(r.amountOwned),'Available':num(r.availableCount),'Loaned':num(r.loanedCount),'Damage':num(r.damage),'Accuracy':num(r.accuracy),'Armor':num(r.armorRating)}));
+    const minHeaders=['Category','Item / Pool','Current','Loaned','Proposed Min','Proposed Max','Shortfall','Data Required','Rationale'];
+    const minData=minimums.proposals.map(r=>({'Category':r.category,'Item / Pool':r.item,'Current':num(r.current),'Loaned':num(r.loaned),'Proposed Min':r.dataRequired?'':num(r.recommendedMin),'Proposed Max':r.dataRequired?'':num(r.recommendedMax),'Shortfall':r.dataRequired?'':num(r.shortfall),'Data Required':r.dataRequired?'YES':'NO','Rationale':r.rationale}));
+    const xml='<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>'+
+      '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'+
+      xmlSheet('Summary',summaryHeaders,summary)+
+      xmlSheet('Members',memberHeaders,memberData)+
+      xmlSheet('Inventory',invHeaders,invData)+
+      xmlSheet('Minimums',minHeaders,minData)+
+      xmlSheet('Acquire',['Category','Item','Required Qty','Buy Now Qty','Deferred Qty','Reference Source','Reference Unit Value','Buy Now Cost','Reasons'],acquisition.list.map(r=>({
+        'Category':r.category,'Item':r.item,'Required Qty':num(r.qty),'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Buy Now Cost':num(r.fundedEstimatedValue),'Reasons':r.reasons
+      })))+
+      '</Workbook>';
+    const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download='OBSIDIAN_FORCE_Faction_Readiness_'+new Date().toISOString().slice(0,10)+'.xml';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+    statusText='Leadership Excel workbook exported.';render();
+  }
+
+  function open(){
+    createPanel();
+    const root=document.getElementById(ROOT_ID);
+    root.style.display='block';
+    core?.setDockLauncherActive?.('armory',true);
+    render();
+    reloadState().then(()=>autoRefreshArmory({forceFaction:false}));
+    startAutoRefresh();
+  }
+  function close(){
+    const root=document.getElementById(ROOT_ID);
+    if(root)root.style.display='none';
+    core?.setDockLauncherActive?.('armory',false);
+    stopAutoRefresh();
+  }
+  function createLauncher(){
+    if(!document.body)return;
+    injectStyle();
+    if(core?.registerDockLauncher){
+      const b=core.registerDockLauncher({
+        id:'armory',
+        label:'MM Faction Armory',
+        accent:'#8b6a2f',
+        onClick:()=>{
+          const root=document.getElementById(ROOT_ID);
+          if(root&&root.style.display!=='none')close(); else open();
+        }
+      });
+      if(b)b.id=LAUNCHER_ID;
+      core.adoptLegacyCrmLauncher?.();
+      return;
+    }
+    if(document.getElementById(LAUNCHER_ID))return;
+    const b=document.createElement('button');
+    b.id=LAUNCHER_ID;b.textContent='Armory';
+    b.style.cssText='position:fixed;right:6px;bottom:6px;z-index:2147483647;'+button(true);
+    b.addEventListener('click',open);document.body.appendChild(b);
+  }
+
+  function installChannel(){
+    if(typeof BroadcastChannel==='undefined'||channel)return;
+    try{
+      channel=new BroadcastChannel(CHANNEL);
+      channel.addEventListener('message',event=>{
+        if(event?.data?.type==='state-updated'&&['faction','core'].includes(String(event.data.domain||''))){
+          reloadState().catch(()=>{});
+        }
+      });
+    }catch{}
+  }
+
+  if(document.body)createLauncher();
+  else window.addEventListener('DOMContentLoaded',createLauncher,{once:true});
+  installChannel();
+})();+fmt(lowTotal)+' –     const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const categories=[...new Set(plan.list.map(row=>row.category))];
+    const groups=categories.map(cat=>{
+      const rows=plan.list.filter(row=>row.category===cat);
+      return '<details class="mm-fa-build-member" open>'+
+        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.qty),0)+' required</span></summary>'+
+        '<div class="mm-fa-build-body">'+rows.map(row=>{
+          const live=acquisitionSourceSnapshot(row);
+          const best=live.best;
+          return '<div class="mm-fa-row">'+
+            '<div class="mm-fa-main"><b>'+esc(row.item)+'</b>'+
+              '<div class="mm-fa-muted">'+esc(row.source||'General Torn availability')+(row.reasons?' · '+esc(row.reasons):'')+'</div>'+
+              '<div class="mm-fa-mini" style="margin-top:3px;">'+
+                (best
+                  ? 'Lowest observed source: '+esc(best.source)+(best.country?' · '+esc(best.country):'')+' · $'+fmt(best.price)
+                  : 'No live market/travel price cached yet — MM_Acquisitions will verify before routing.')+
+              '</div>'+
+              '<div class="mm-fa-actions" style="margin-top:4px;">'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Best" style="'+button(true)+'">Find Best Source</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Item Market" style="'+button()+'">Item Market</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Bazaar" style="'+button()+'">Bazaar</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Overseas" style="'+button()+'">Overseas</button>'+
+              '</div>'+
+            '</div>'+
+            '<div class="mm-fa-tiles">'+
+              tile('REQUIRED',fmt(row.qty))+
+              tile('BUY NOW',fmt(row.fundedQty),{cls:row.fundedQty?'mm-fa-good':''})+
+              (row.deferredQty?tile('DEFER',fmt(row.deferredQty),{cls:'mm-fa-warn'}):'')+
+              (row.marketValue?tile('REF EACH','$'+fmt(row.marketValue)):'')+
+              (live.itemMarketPrice?tile('ITEM MKT','$'+fmt(live.itemMarketPrice)):'')+
+              (live.bazaarPrice?tile('BAZAAR','$'+fmt(live.bazaarPrice)):'')+
+              (live.travelPrice?tile('OVERSEAS','$'+fmt(live.travelPrice)+(live.travelCountry?' · '+live.travelCountry:''),{wide:true}):'')+
+              (row.fundedEstimatedValue?tile('BUY-NOW COST','$'+fmt(row.fundedEstimatedValue)):'')+
+            '</div>'+
+          '</div>';
+        }).join('')+
+        '</div>'+
+      '</details>';
+    }).join('');
+
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head">'+
+        '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+procurementMode.toUpperCase()+' · '+plan.participants+' current faction members</span></div>'+
+        '<div class="mm-fa-actions">'+
+          '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+          '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+          '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="mm-fa-tiles">'+
+        tile('BUDGET CAP','$'+fmt(plan.budgetCap))+
+        tile('BUY NOW','$'+fmt(plan.fundedEstimatedValue),{cls:'mm-fa-good'})+
+        tile('KNOWN DEFERRED','$'+fmt(plan.deferredEstimatedValue),{cls:plan.deferredEstimatedValue?'mm-fa-warn':''})+
+        tile('FUNDED UNITS',fmt(plan.fundedUnits))+
+        tile('UNRESOLVED SLOTS',fmt(plan.unresolvedCount),{cls:plan.unresolvedCount?'mm-fa-warn':''})+
+      '</div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<label class="mm-fa-muted">Budget $ <input id="mm-fa-budget-cap" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:130px;"></label>'+
+        '<button id="mm-fa-save-budget" style="'+button(true)+'">Save Budget</button>'+
+      '</div>'+
+      '<div class="mm-fa-muted" style="margin-top:4px;">Equipped gear, member-owned inventory, assigned faction loans, and faction stock are consumed before purchases are created. Faction stock uses the least-cost item that still meets the build floor so premium gear is not wasted. Cached Item Market, Bazaar, and overseas prices are shown when known; MM_Acquisitions performs live source verification/routing before purchase.</div>'+
+      (plan.unresolvedCount
+        ? '<details class="mm-fa-details"><summary>Unresolved build slots</summary><div class="mm-fa-muted" style="margin-top:3px;">'+
+          plan.unresolved.map(r=>esc(r.memberName)+' · '+esc(r.slot.toUpperCase())+(r.current?' · '+esc(r.current):'')+' · '+esc(r.reason||'')).join('<br>')+
+          '</div></details>'
+        : '')+
+    '</div>'+(groups||card('Nothing currently requires acquisition.'));
+  }
+
+  function settingsHtml(){
+    const keySaved=Boolean(factionKey());
+    return card(
+      '<b>Faction API</b><div class="mm-fa-muted">Stored only in this Faction Armory userscript. '+(keySaved?'Saved — automatic faction refresh is enabled when Torn data is due.':'Not saved — cached faction data cannot refresh automatically.')+'</div>'+
+      '<div class="mm-fa-grid" style="grid-template-columns:minmax(220px,1fr) auto auto;margin-top:7px;">'+
+        '<input id="mm-fa-faction-key" class="mm-fa-input" type="password" autocomplete="off" placeholder="'+(keySaved?'Faction API key saved':'Faction-compatible Limited/custom API key')+'">'+
+        '<button id="mm-fa-save-faction-key" style="'+button(true)+'">Save</button>'+
+        '<button id="mm-fa-clear-faction-key" style="'+button()+'">Clear</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:6px;">API use: stored locally only, shared with nobody, used only for faction inventory/readiness, and never sent to another service. Member keys remain in the encrypted Armory vault.</div>'+
+      '<div style="border-top:1px solid #333;margin-top:8px;padding-top:7px;"><b>Procurement policy</b></div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+        '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+        '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '<label class="mm-fa-muted">Acquisition cap $ <input id="mm-fa-settings-budget" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:140px;"></label>'+
+        '<button id="mm-fa-settings-budget-save" style="'+button(true)+'">Save</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:5px;">Budget is the default for a small/growing faction. It chooses lower-cost acceptable reference equipment, then counts member-owned gear, existing loans, and faction stock before creating purchases. Standard/Ideal are planning alternatives, not purchase authorization.</div>'
+    );
+  }
+
+  function sourceStrip(){
+    const fi=state?.factionInventory||{};
+    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
+  }
+
+  function createPanel(){
+    if(document.getElementById(ROOT_ID))return;
+    injectStyle();
+    const root=document.createElement('div');
+    root.id=ROOT_ID;
+    document.body.appendChild(root);
+  }
+
+  function render(){
+    const root=document.getElementById(ROOT_ID);
+    if(!root||root.style.display==='none')return;
+    const viewHtml=activeView==='members'?membersHtml()
+      :activeView==='builds'?buildsHtml()
+      :activeView==='inventory'?inventoryHtml()
+      :activeView==='minimums'?minimumsHtml()
+      :activeView==='acquire'?acquireHtml()
+      :settingsHtml();
+    root.innerHTML=
+      '<div class="mm-fa-head"><div><b style="font-size:14px;">MM Faction Armory</b><div class="mm-fa-muted">v'+VERSION+' · task-first faction readiness</div></div><button id="mm-fa-close" style="'+button()+'">×</button></div>'+
+      '<div class="mm-fa-body">'+
+        '<div class="mm-fa-tabs">'+
+          '<button data-view="members" style="'+button(activeView==='members')+'">Members</button>'+
+          '<button data-view="builds" style="'+button(activeView==='builds')+'">Builds</button>'+
+          '<button data-view="inventory" style="'+button(activeView==='inventory')+'">Stock</button>'+
+          '<button data-view="minimums" style="'+button(activeView==='minimums')+'">Minimums</button>'+
+          '<button data-view="acquire" style="'+button(activeView==='acquire')+'">Acquire</button>'+
+          '<button data-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
+        '</div>'+
+        '<div class="mm-fa-status">'+esc(statusText)+'</div>'+
+        sourceStrip()+
+        (loadError?card('<span class="mm-fa-bad"><b>Shared state unavailable:</b> '+esc(loadError)+'</span>'):'')+
+        '<div class="mm-fa-scroll">'+viewHtml+'</div>'+
+      '</div>';
+
+    core?.makePanelDraggable?.(
+      root,
+      root.querySelector('.mm-fa-head'),
+      'faction-armory',
+      window.innerWidth<=620?{right:'4px',top:'54px'}:{right:'12px',top:'72px'}
+    );
+    root.querySelector('#mm-fa-close')?.addEventListener('click',close);
+    root.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.view||'members';render();}));
+    root.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click',()=>{selectedCategory=b.dataset.cat||'all';render();}));
+    root.querySelectorAll('[data-stock-mode]').forEach(b=>b.addEventListener('click',()=>{
+      stockMode=b.dataset.stockMode==='peace'?'peace':'war';
+      GM_setValue(STOCK_MODE_KEY,stockMode);
+      const count=Object.keys(state?.factionInventory?.memberReadiness?.roster||{}).length; statusText='Inventory minimum mode: '+(stockMode==='war'?'WAR ('+count+' current members)':'PEACE')+'.';
+      render();
+    }));
+    root.querySelectorAll('[data-procurement-mode]').forEach(b=>b.addEventListener('click',()=>{
+      procurementMode=['budget','standard','ideal'].includes(b.dataset.procurementMode)?b.dataset.procurementMode:'budget';
+      GM_setValue(PROCUREMENT_MODE_KEY,procurementMode);
+      statusText='Procurement mode: '+procurementMode.toUpperCase()+'.';
+      render();
+    }));
+    const saveBudget=value=>{
+      const next=Math.max(0,Number(value)||0);
+      acquisitionBudget=next;
+      GM_setValue(ACQUISITION_BUDGET_KEY,next);
+      statusText='Acquisition budget saved: $'+Math.round(next).toLocaleString()+'.';
+      render();
+    };
+    root.querySelector('#mm-fa-save-budget')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-budget-cap')?.value));
+    root.querySelectorAll('[data-armory-acquire]').forEach(b=>b.addEventListener('click',()=>{
+      const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+        mode:stockMode,
+          procurementMode,
+        budgetCap:acquisitionBudget
+      });
+      const row=plan.list.find(x=>String(x.item||'')===String(b.dataset.armoryAcquire||''));
+      if(row)handoffAcquisition(row,b.dataset.source||'Best');
+    }));
+    root.querySelector('#mm-fa-settings-budget-save')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-settings-budget')?.value));
+
+    root.querySelector('#mm-fa-refresh-faction')?.addEventListener('click',refreshFaction);
+    root.querySelector('#mm-fa-copy-request')?.addEventListener('click',()=>copyText(missingDataRequest()).then(()=>{statusText='Member data request copied.';render();}));
+    root.querySelector('#mm-fa-unlock-vault')?.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Unlocking member-key vault…';render();
+      try{
+        await unlockVault(false);
+        const stale=staleSavedMemberCount();
+        statusText=stale
+          ?'Member-key vault unlocked. Checking '+stale+' stale saved profile'+(stale===1?'':'s')+' automatically…'
+          :'Member-key vault unlocked. No saved member profiles are stale.';
+      }catch(error){statusText='Vault unlock failed: '+(error?.message||String(error));}
+      finally{
+        busy=false;render();
+        if(vaultSession?.key&&staleSavedMemberCount())setTimeout(()=>autoRefreshArmory({forceFaction:false}),50);
+      }
+    });
+    root.querySelector('#mm-fa-import-once')?.addEventListener('click',()=>importFromField(false));
+    root.querySelector('#mm-fa-import-save')?.addEventListener('click',()=>importFromField(true));
+    root.querySelector('#mm-fa-refresh-keys')?.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing saved member keys…';render();
+      try{
+        const result=await refreshAllSaved();
+        statusText='Saved member-key refresh: '+result.total+' saved key'+(result.total===1?'':'s')+' found · '+result.ok+' refreshed successfully'+(result.failures.length?' · '+result.failures.length+' failed':'')+'. This is the number of saved member API keys, not faction members.';
+      }catch(error){statusText='Saved key refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    });
+    root.querySelectorAll('[data-refresh-member]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing '+b.dataset.refreshMember+'…';render();
+      try{const r=await refreshSavedMember(b.dataset.refreshMember);statusText='Refreshed '+r.memberName+' ['+r.memberId+'].';}
+      catch(error){statusText='Member refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-remove-member]').forEach(b=>b.addEventListener('click',()=>{
+      if(removeMemberKey(b.dataset.removeMember)){statusText='Saved member key removed; readiness data preserved.';render();}
+    }));
+    root.querySelectorAll('[data-remind-member]').forEach(b=>b.addEventListener('click',()=>{
+      const row=memberRows().find(item=>item.memberId===asId(b.dataset.remindMember));
+      if(!row)return;
+      try{
+        openArmoryMessage({
+          playerId:row.memberId,
+          playerName:row.memberName,
+          subject:'Faction readiness information needed',
+          body:readinessReminderMessage(row),
+          kind:'member-data-reminder',
+          memberId:row.memberId
+        });
+      }catch(error){statusText='Could not prepare reminder: '+(error?.message||String(error));render();}
+    }));
+    root.querySelectorAll('[data-war-ready]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Approving member as War Ready…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.warReady,true);
+        statusText=result.memberName+' is now WAR READY across Members, Builds, and exports.';
+      }catch(error){statusText='War Ready approval failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-reopen-review]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Reopening readiness review…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.reopenReview,false);
+        statusText=result.memberName+' returned to READY FOR REVIEW.';
+      }catch(error){statusText='Readiness review update failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-paste-reply]').forEach(b=>b.addEventListener('click',async()=>{
+      const id=asId(b.dataset.pasteReply);
+      const row=memberRows().find(x=>x.memberId===id);
+      const raw=prompt('Paste '+String(row?.memberName||id)+'\'s completed readiness reply:','');
+      if(raw==null||!String(raw).trim())return;
+      if(busy)return;busy=true;statusText='Importing member reply…';render();
+      try{
+        const result=await importMemberReply(id,raw);
+        statusText='Imported reply for '+result.memberName+' · '+result.equipmentCount+' equipped item(s) parsed.';
+      }catch(error){statusText='Reply import failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelector('#mm-fa-save-faction-key')?.addEventListener('click',()=>{
+      const value=String(root.querySelector('#mm-fa-faction-key')?.value||'').trim();
+      if(!value){statusText='Enter a faction-compatible API key first.';render();return;}
+      GM_setValue(FACTION_API_KEY,value);statusText='Faction Armory API key saved. Refreshing automatically…';render();setTimeout(()=>autoRefreshArmory({forceFaction:true}),50);
+    });
+    root.querySelector('#mm-fa-clear-faction-key')?.addEventListener('click',()=>{
+      GM_deleteValue(FACTION_API_KEY);statusText='Faction Armory API key cleared.';render();
+    });
+    root.querySelector('#mm-fa-export')?.addEventListener('click',exportLeadershipExcel);
+  }
+
+  async function importFromField(save){
+    if(busy)return;
+    const root=document.getElementById(ROOT_ID);
+    const input=root?.querySelector('#mm-fa-member-key');
+    const key=String(input?.value||'').trim();
+    if(!key){statusText='Paste a member Limited Access API key first.';render();return;}
+    busy=true;statusText='Importing member readiness data…';render();
+    try{
+      const result=await importMemberKey(key,{save});
+      if(input)input.value='';
+      statusText='Imported '+result.memberName+' ['+result.memberId+']'+(save?' and saved key encrypted.':'. Key was not saved.');
+    }catch(error){statusText='Member import failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function xmlCell(value,type='String'){
+    const safe=esc(String(value??''));
+    return '<Cell><Data ss:Type="'+type+'">'+safe+'</Data></Cell>';
+  }
+  function xmlSheet(name,headers,rows){
+    return '<Worksheet ss:Name="'+esc(name).slice(0,31)+'"><Table>'+
+      '<Row>'+headers.map(h=>xmlCell(h)).join('')+'</Row>'+
+      rows.map(row=>'<Row>'+headers.map(h=>{
+        const v=row[h];
+        return xmlCell(v,typeof v==='number'&&Number.isFinite(v)?'Number':'String');
+      }).join('')+'</Row>').join('')+
+      '</Table></Worksheet>';
+  }
+
+  function exportLeadershipExcel(){
+    if(!state){statusText='Load shared state first.';render();return;}
+    const members=memberRows();
+    const minimums=logic.minimumProposal(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode
+    });
+    const acquisition=logic.acquisitionPlan(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const inventory=Object.values(state.factionInventory?.current||{});
+    const summaryHeaders=['Metric','Value'];
+    const summary=[
+      {Metric:'Generated',Value:new Date().toISOString()},
+      {Metric:'Stock mode',Value:stockMode.toUpperCase()},
+      {Metric:'Procurement mode',Value:procurementMode.toUpperCase()},
+      {Metric:'Acquisition budget',Value:acquisitionBudget},
+      {Metric:'Buy-now known cost',Value:acquisition.fundedEstimatedValue},
+      {Metric:'Known deferred cost',Value:acquisition.deferredEstimatedValue},
+      {Metric:'Unresolved build slots',Value:acquisition.unresolvedCount},
+      {Metric:'War roster members',Value:stockMode==='war'?members.length:''},
+      {Metric:'Faction members',Value:members.length},
+      {Metric:'War ready (approved)',Value:members.filter(r=>r.readinessStatus==='WAR READY').length},
+      {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
+      {Metric:'Action needed',Value:members.filter(r=>r.readinessStatus==='ACTION NEEDED'||r.readinessStatus==='SUPPLY ACTION').length},
+      {Metric:'Missing / stale',Value:members.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length},
+      {Metric:'Armory member API keys saved',Value:savedKeyIds().length},
+      {Metric:'Inventory rows',Value:inventory.length},
+      {Metric:'Observed inventory days',Value:Number(minimums.observedDays.toFixed(1))},
+      {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
+      {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length}
+    ];
+    const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','War Ready','Baseline Pass','Approved At','Approval Mode','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberData=members.map(r=>{
+      const build=r.buildAssessment||logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
+      return {
+        'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'API Saved':r.apiSaved?'YES':'NO','Readiness':r.readinessStatus,
+        'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO','Baseline Pass':build.warReady?'YES':'NO','Approved At':r.readinessApprovedAt||'','Approval Mode':r.readinessApprovalMode||'',
+        'Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
+        'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
+        'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
+      };
+    });
+    const invHeaders=['Category','Item ID','Item','Owned','Available','Loaned','Damage','Accuracy','Armor'];
+    const invData=inventory.map(r=>({'Category':r.category,'Item ID':r.itemId,'Item':r.name,'Owned':num(r.amountOwned),'Available':num(r.availableCount),'Loaned':num(r.loanedCount),'Damage':num(r.damage),'Accuracy':num(r.accuracy),'Armor':num(r.armorRating)}));
+    const minHeaders=['Category','Item / Pool','Current','Loaned','Proposed Min','Proposed Max','Shortfall','Data Required','Rationale'];
+    const minData=minimums.proposals.map(r=>({'Category':r.category,'Item / Pool':r.item,'Current':num(r.current),'Loaned':num(r.loaned),'Proposed Min':r.dataRequired?'':num(r.recommendedMin),'Proposed Max':r.dataRequired?'':num(r.recommendedMax),'Shortfall':r.dataRequired?'':num(r.shortfall),'Data Required':r.dataRequired?'YES':'NO','Rationale':r.rationale}));
+    const xml='<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>'+
+      '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'+
+      xmlSheet('Summary',summaryHeaders,summary)+
+      xmlSheet('Members',memberHeaders,memberData)+
+      xmlSheet('Inventory',invHeaders,invData)+
+      xmlSheet('Minimums',minHeaders,minData)+
+      xmlSheet('Acquire',['Category','Item','Required Qty','Buy Now Qty','Deferred Qty','Reference Source','Reference Unit Value','Buy Now Cost','Reasons'],acquisition.list.map(r=>({
+        'Category':r.category,'Item':r.item,'Required Qty':num(r.qty),'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Buy Now Cost':num(r.fundedEstimatedValue),'Reasons':r.reasons
+      })))+
+      '</Workbook>';
+    const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download='OBSIDIAN_FORCE_Faction_Readiness_'+new Date().toISOString().slice(0,10)+'.xml';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);
+    statusText='Leadership Excel workbook exported.';render();
+  }
+
+  function open(){
+    createPanel();
+    const root=document.getElementById(ROOT_ID);
+    root.style.display='block';
+    core?.setDockLauncherActive?.('armory',true);
+    render();
+    reloadState().then(()=>autoRefreshArmory({forceFaction:false}));
+    startAutoRefresh();
+  }
+  function close(){
+    const root=document.getElementById(ROOT_ID);
+    if(root)root.style.display='none';
+    core?.setDockLauncherActive?.('armory',false);
+    stopAutoRefresh();
+  }
+  function createLauncher(){
+    if(!document.body)return;
+    injectStyle();
+    if(core?.registerDockLauncher){
+      const b=core.registerDockLauncher({
+        id:'armory',
+        label:'MM Faction Armory',
+        accent:'#8b6a2f',
+        onClick:()=>{
+          const root=document.getElementById(ROOT_ID);
+          if(root&&root.style.display!=='none')close(); else open();
+        }
+      });
+      if(b)b.id=LAUNCHER_ID;
+      core.adoptLegacyCrmLauncher?.();
+      return;
+    }
+    if(document.getElementById(LAUNCHER_ID))return;
+    const b=document.createElement('button');
+    b.id=LAUNCHER_ID;b.textContent='Armory';
+    b.style.cssText='position:fixed;right:6px;bottom:6px;z-index:2147483647;'+button(true);
+    b.addEventListener('click',open);document.body.appendChild(b);
+  }
+
+  function installChannel(){
+    if(typeof BroadcastChannel==='undefined'||channel)return;
+    try{
+      channel=new BroadcastChannel(CHANNEL);
+      channel.addEventListener('message',event=>{
+        if(event?.data?.type==='state-updated'&&['faction','core'].includes(String(event.data.domain||''))){
+          reloadState().catch(()=>{});
+        }
+      });
+    }catch{}
+  }
+
+  if(document.body)createLauncher();
+  else window.addEventListener('DOMContentLoaded',createLauncher,{once:true});
+  installChannel();
+})();+fmt(highTotal):'$0 known');
+    if(unpriced.length)lines.push('Unpriced requirements: '+unpriced.map(item=>item.row.item+' x'+fmt(item.row.qty)).join(', '));
+    lines.push('','Price range uses currently cached reference / Item Market / Bazaar / overseas values. MM_Acquisitions should verify live availability and price before purchase.');
+    return lines.join('\n');
+  }
+
+  function messageFactionLeader(){
+    const leadership=state?.factionInventory?.leadership||{};
+    const leaderId=asId(leadership.leaderId);
+    if(!leaderId)throw new Error('Faction leader is not resolved. Refresh Faction first.');
+    openArmoryMessage({
+      playerId:leaderId,
+      playerName:String(leadership.leaderName||leaderId),
+      subject:'Faction Armory acquisition report',
+      body:leaderAcquisitionReport(),
+      kind:'leader-acquisition-report'
+    });
+  }
+
+  function acquireHtml(){
+    const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const categories=[...new Set(plan.list.map(row=>row.category))];
+    const groups=categories.map(cat=>{
+      const rows=plan.list.filter(row=>row.category===cat);
+      return '<details class="mm-fa-build-member" open>'+
+        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.qty),0)+' required</span></summary>'+
+        '<div class="mm-fa-build-body">'+rows.map(row=>{
+          const live=acquisitionSourceSnapshot(row);
+          const best=live.best;
+          return '<div class="mm-fa-row">'+
+            '<div class="mm-fa-main"><b>'+esc(row.item)+'</b>'+
+              '<div class="mm-fa-muted">'+esc(row.source||'General Torn availability')+(row.reasons?' · '+esc(row.reasons):'')+'</div>'+
+              '<div class="mm-fa-mini" style="margin-top:3px;">'+
+                (best
+                  ? 'Lowest observed source: '+esc(best.source)+(best.country?' · '+esc(best.country):'')+' · $'+fmt(best.price)
+                  : 'No live market/travel price cached yet — MM_Acquisitions will verify before routing.')+
+              '</div>'+
+              '<div class="mm-fa-actions" style="margin-top:4px;">'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Best" style="'+button(true)+'">Find Best Source</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Item Market" style="'+button()+'">Item Market</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Bazaar" style="'+button()+'">Bazaar</button>'+
+                '<button data-armory-acquire="'+esc(row.item)+'" data-source="Overseas" style="'+button()+'">Overseas</button>'+
+              '</div>'+
+            '</div>'+
+            '<div class="mm-fa-tiles">'+
+              tile('REQUIRED',fmt(row.qty))+
+              tile('BUY NOW',fmt(row.fundedQty),{cls:row.fundedQty?'mm-fa-good':''})+
+              (row.deferredQty?tile('DEFER',fmt(row.deferredQty),{cls:'mm-fa-warn'}):'')+
+              (row.marketValue?tile('REF EACH','$'+fmt(row.marketValue)):'')+
+              (live.itemMarketPrice?tile('ITEM MKT','$'+fmt(live.itemMarketPrice)):'')+
+              (live.bazaarPrice?tile('BAZAAR','$'+fmt(live.bazaarPrice)):'')+
+              (live.travelPrice?tile('OVERSEAS','$'+fmt(live.travelPrice)+(live.travelCountry?' · '+live.travelCountry:''),{wide:true}):'')+
+              (row.fundedEstimatedValue?tile('BUY-NOW COST','$'+fmt(row.fundedEstimatedValue)):'')+
+            '</div>'+
+          '</div>';
+        }).join('')+
+        '</div>'+
+      '</details>';
+    }).join('');
+
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head">'+
+        '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+' · '+procurementMode.toUpperCase()+' · '+plan.participants+' current faction members</span></div>'+
+        '<div class="mm-fa-actions">'+
+          '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+          '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+          '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="mm-fa-tiles">'+
+        tile('BUDGET CAP','$'+fmt(plan.budgetCap))+
+        tile('BUY NOW','$'+fmt(plan.fundedEstimatedValue),{cls:'mm-fa-good'})+
+        tile('KNOWN DEFERRED','$'+fmt(plan.deferredEstimatedValue),{cls:plan.deferredEstimatedValue?'mm-fa-warn':''})+
+        tile('FUNDED UNITS',fmt(plan.fundedUnits))+
+        tile('UNRESOLVED SLOTS',fmt(plan.unresolvedCount),{cls:plan.unresolvedCount?'mm-fa-warn':''})+
+      '</div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<label class="mm-fa-muted">Budget $ <input id="mm-fa-budget-cap" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:130px;"></label>'+
+        '<button id="mm-fa-save-budget" style="'+button(true)+'">Save Budget</button>'+
+      '</div>'+
+      '<div class="mm-fa-muted" style="margin-top:4px;">Equipped gear, member-owned inventory, assigned faction loans, and faction stock are consumed before purchases are created. Faction stock uses the least-cost item that still meets the build floor so premium gear is not wasted. Cached Item Market, Bazaar, and overseas prices are shown when known; MM_Acquisitions performs live source verification/routing before purchase.</div>'+
+      (plan.unresolvedCount
+        ? '<details class="mm-fa-details"><summary>Unresolved build slots</summary><div class="mm-fa-muted" style="margin-top:3px;">'+
+          plan.unresolved.map(r=>esc(r.memberName)+' · '+esc(r.slot.toUpperCase())+(r.current?' · '+esc(r.current):'')+' · '+esc(r.reason||'')).join('<br>')+
+          '</div></details>'
+        : '')+
+    '</div>'+(groups||card('Nothing currently requires acquisition.'));
+  }
+
+  function settingsHtml(){
+    const keySaved=Boolean(factionKey());
+    return card(
+      '<b>Faction API</b><div class="mm-fa-muted">Stored only in this Faction Armory userscript. '+(keySaved?'Saved — automatic faction refresh is enabled when Torn data is due.':'Not saved — cached faction data cannot refresh automatically.')+'</div>'+
+      '<div class="mm-fa-grid" style="grid-template-columns:minmax(220px,1fr) auto auto;margin-top:7px;">'+
+        '<input id="mm-fa-faction-key" class="mm-fa-input" type="password" autocomplete="off" placeholder="'+(keySaved?'Faction API key saved':'Faction-compatible Limited/custom API key')+'">'+
+        '<button id="mm-fa-save-faction-key" style="'+button(true)+'">Save</button>'+
+        '<button id="mm-fa-clear-faction-key" style="'+button()+'">Clear</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:6px;">API use: stored locally only, shared with nobody, used only for faction inventory/readiness, and never sent to another service. Member keys remain in the encrypted Armory vault.</div>'+
+      '<div style="border-top:1px solid #333;margin-top:8px;padding-top:7px;"><b>Procurement policy</b></div>'+
+      '<div class="mm-fa-actions" style="margin-top:5px;">'+
+        '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
+        '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
+        '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
+        '<label class="mm-fa-muted">Acquisition cap $ <input id="mm-fa-settings-budget" class="mm-fa-input" type="number" min="0" step="100000" value="'+Math.round(acquisitionBudget)+'" style="width:140px;"></label>'+
+        '<button id="mm-fa-settings-budget-save" style="'+button(true)+'">Save</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:5px;">Budget is the default for a small/growing faction. It chooses lower-cost acceptable reference equipment, then counts member-owned gear, existing loans, and faction stock before creating purchases. Standard/Ideal are planning alternatives, not purchase authorization.</div>'
+    );
+  }
+
+  function sourceStrip(){
+    const fi=state?.factionInventory||{};
+    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
+  }
+
+  function createPanel(){
+    if(document.getElementById(ROOT_ID))return;
+    injectStyle();
+    const root=document.createElement('div');
+    root.id=ROOT_ID;
+    document.body.appendChild(root);
+  }
+
+  function render(){
+    const root=document.getElementById(ROOT_ID);
+    if(!root||root.style.display==='none')return;
+    const viewHtml=activeView==='members'?membersHtml()
+      :activeView==='builds'?buildsHtml()
+      :activeView==='inventory'?inventoryHtml()
+      :activeView==='minimums'?minimumsHtml()
+      :activeView==='acquire'?acquireHtml()
+      :settingsHtml();
+    root.innerHTML=
+      '<div class="mm-fa-head"><div><b style="font-size:14px;">MM Faction Armory</b><div class="mm-fa-muted">v'+VERSION+' · task-first faction readiness</div></div><button id="mm-fa-close" style="'+button()+'">×</button></div>'+
+      '<div class="mm-fa-body">'+
+        '<div class="mm-fa-tabs">'+
+          '<button data-view="members" style="'+button(activeView==='members')+'">Members</button>'+
+          '<button data-view="builds" style="'+button(activeView==='builds')+'">Builds</button>'+
+          '<button data-view="inventory" style="'+button(activeView==='inventory')+'">Stock</button>'+
+          '<button data-view="minimums" style="'+button(activeView==='minimums')+'">Minimums</button>'+
+          '<button data-view="acquire" style="'+button(activeView==='acquire')+'">Acquire</button>'+
+          '<button data-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
+        '</div>'+
+        '<div class="mm-fa-status">'+esc(statusText)+'</div>'+
+        sourceStrip()+
+        (loadError?card('<span class="mm-fa-bad"><b>Shared state unavailable:</b> '+esc(loadError)+'</span>'):'')+
+        '<div class="mm-fa-scroll">'+viewHtml+'</div>'+
+      '</div>';
+
+    core?.makePanelDraggable?.(
+      root,
+      root.querySelector('.mm-fa-head'),
+      'faction-armory',
+      window.innerWidth<=620?{right:'4px',top:'54px'}:{right:'12px',top:'72px'}
+    );
+    root.querySelector('#mm-fa-close')?.addEventListener('click',close);
+    root.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.view||'members';render();}));
+    root.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click',()=>{selectedCategory=b.dataset.cat||'all';render();}));
+    root.querySelectorAll('[data-stock-mode]').forEach(b=>b.addEventListener('click',()=>{
+      stockMode=b.dataset.stockMode==='peace'?'peace':'war';
+      GM_setValue(STOCK_MODE_KEY,stockMode);
+      const count=Object.keys(state?.factionInventory?.memberReadiness?.roster||{}).length; statusText='Inventory minimum mode: '+(stockMode==='war'?'WAR ('+count+' current members)':'PEACE')+'.';
+      render();
+    }));
+    root.querySelectorAll('[data-procurement-mode]').forEach(b=>b.addEventListener('click',()=>{
+      procurementMode=['budget','standard','ideal'].includes(b.dataset.procurementMode)?b.dataset.procurementMode:'budget';
+      GM_setValue(PROCUREMENT_MODE_KEY,procurementMode);
+      statusText='Procurement mode: '+procurementMode.toUpperCase()+'.';
+      render();
+    }));
+    const saveBudget=value=>{
+      const next=Math.max(0,Number(value)||0);
+      acquisitionBudget=next;
+      GM_setValue(ACQUISITION_BUDGET_KEY,next);
+      statusText='Acquisition budget saved: $'+Math.round(next).toLocaleString()+'.';
+      render();
+    };
+    root.querySelector('#mm-fa-save-budget')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-budget-cap')?.value));
+    root.querySelectorAll('[data-armory-acquire]').forEach(b=>b.addEventListener('click',()=>{
+      const plan=logic.acquisitionPlan(state?.factionInventory||{},{
+        mode:stockMode,
+          procurementMode,
+        budgetCap:acquisitionBudget
+      });
+      const row=plan.list.find(x=>String(x.item||'')===String(b.dataset.armoryAcquire||''));
+      if(row)handoffAcquisition(row,b.dataset.source||'Best');
+    }));
+    root.querySelector('#mm-fa-settings-budget-save')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-settings-budget')?.value));
+
+    root.querySelector('#mm-fa-refresh-faction')?.addEventListener('click',refreshFaction);
+    root.querySelector('#mm-fa-copy-request')?.addEventListener('click',()=>copyText(missingDataRequest()).then(()=>{statusText='Member data request copied.';render();}));
+    root.querySelector('#mm-fa-unlock-vault')?.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Unlocking member-key vault…';render();
+      try{
+        await unlockVault(false);
+        const stale=staleSavedMemberCount();
+        statusText=stale
+          ?'Member-key vault unlocked. Checking '+stale+' stale saved profile'+(stale===1?'':'s')+' automatically…'
+          :'Member-key vault unlocked. No saved member profiles are stale.';
+      }catch(error){statusText='Vault unlock failed: '+(error?.message||String(error));}
+      finally{
+        busy=false;render();
+        if(vaultSession?.key&&staleSavedMemberCount())setTimeout(()=>autoRefreshArmory({forceFaction:false}),50);
+      }
+    });
+    root.querySelector('#mm-fa-import-once')?.addEventListener('click',()=>importFromField(false));
+    root.querySelector('#mm-fa-import-save')?.addEventListener('click',()=>importFromField(true));
+    root.querySelector('#mm-fa-refresh-keys')?.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing saved member keys…';render();
+      try{
+        const result=await refreshAllSaved();
+        statusText='Saved member-key refresh: '+result.total+' saved key'+(result.total===1?'':'s')+' found · '+result.ok+' refreshed successfully'+(result.failures.length?' · '+result.failures.length+' failed':'')+'. This is the number of saved member API keys, not faction members.';
+      }catch(error){statusText='Saved key refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    });
+    root.querySelectorAll('[data-refresh-member]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Refreshing '+b.dataset.refreshMember+'…';render();
+      try{const r=await refreshSavedMember(b.dataset.refreshMember);statusText='Refreshed '+r.memberName+' ['+r.memberId+'].';}
+      catch(error){statusText='Member refresh failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-remove-member]').forEach(b=>b.addEventListener('click',()=>{
+      if(removeMemberKey(b.dataset.removeMember)){statusText='Saved member key removed; readiness data preserved.';render();}
+    }));
+    root.querySelectorAll('[data-remind-member]').forEach(b=>b.addEventListener('click',()=>{
+      const row=memberRows().find(item=>item.memberId===asId(b.dataset.remindMember));
+      if(!row)return;
+      try{
+        openArmoryMessage({
+          playerId:row.memberId,
+          playerName:row.memberName,
+          subject:'Faction readiness information needed',
+          body:readinessReminderMessage(row),
+          kind:'member-data-reminder',
+          memberId:row.memberId
+        });
+      }catch(error){statusText='Could not prepare reminder: '+(error?.message||String(error));render();}
+    }));
+    root.querySelectorAll('[data-war-ready]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Approving member as War Ready…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.warReady,true);
+        statusText=result.memberName+' is now WAR READY across Members, Builds, and exports.';
+      }catch(error){statusText='War Ready approval failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-reopen-review]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Reopening readiness review…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.reopenReview,false);
+        statusText=result.memberName+' returned to READY FOR REVIEW.';
+      }catch(error){statusText='Readiness review update failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-paste-reply]').forEach(b=>b.addEventListener('click',async()=>{
+      const id=asId(b.dataset.pasteReply);
+      const row=memberRows().find(x=>x.memberId===id);
+      const raw=prompt('Paste '+String(row?.memberName||id)+'\'s completed readiness reply:','');
+      if(raw==null||!String(raw).trim())return;
+      if(busy)return;busy=true;statusText='Importing member reply…';render();
+      try{
+        const result=await importMemberReply(id,raw);
+        statusText='Imported reply for '+result.memberName+' · '+result.equipmentCount+' equipped item(s) parsed.';
+      }catch(error){statusText='Reply import failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelector('#mm-fa-save-faction-key')?.addEventListener('click',()=>{
+      const value=String(root.querySelector('#mm-fa-faction-key')?.value||'').trim();
+      if(!value){statusText='Enter a faction-compatible API key first.';render();return;}
+      GM_setValue(FACTION_API_KEY,value);statusText='Faction Armory API key saved. Refreshing automatically…';render();setTimeout(()=>autoRefreshArmory({forceFaction:true}),50);
+    });
+    root.querySelector('#mm-fa-clear-faction-key')?.addEventListener('click',()=>{
+      GM_deleteValue(FACTION_API_KEY);statusText='Faction Armory API key cleared.';render();
+    });
+    root.querySelector('#mm-fa-export')?.addEventListener('click',exportLeadershipExcel);
+  }
+
+  async function importFromField(save){
+    if(busy)return;
+    const root=document.getElementById(ROOT_ID);
+    const input=root?.querySelector('#mm-fa-member-key');
+    const key=String(input?.value||'').trim();
+    if(!key){statusText='Paste a member Limited Access API key first.';render();return;}
+    busy=true;statusText='Importing member readiness data…';render();
+    try{
+      const result=await importMemberKey(key,{save});
+      if(input)input.value='';
+      statusText='Imported '+result.memberName+' ['+result.memberId+']'+(save?' and saved key encrypted.':'. Key was not saved.');
+    }catch(error){statusText='Member import failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function xmlCell(value,type='String'){
+    const safe=esc(String(value??''));
+    return '<Cell><Data ss:Type="'+type+'">'+safe+'</Data></Cell>';
+  }
+  function xmlSheet(name,headers,rows){
+    return '<Worksheet ss:Name="'+esc(name).slice(0,31)+'"><Table>'+
+      '<Row>'+headers.map(h=>xmlCell(h)).join('')+'</Row>'+
+      rows.map(row=>'<Row>'+headers.map(h=>{
+        const v=row[h];
+        return xmlCell(v,typeof v==='number'&&Number.isFinite(v)?'Number':'String');
+      }).join('')+'</Row>').join('')+
+      '</Table></Worksheet>';
+  }
+
+  function exportLeadershipExcel(){
+    if(!state){statusText='Load shared state first.';render();return;}
+    const members=memberRows();
+    const minimums=logic.minimumProposal(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode
+    });
+    const acquisition=logic.acquisitionPlan(state.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const inventory=Object.values(state.factionInventory?.current||{});
+    const summaryHeaders=['Metric','Value'];
+    const summary=[
+      {Metric:'Generated',Value:new Date().toISOString()},
+      {Metric:'Stock mode',Value:stockMode.toUpperCase()},
+      {Metric:'Procurement mode',Value:procurementMode.toUpperCase()},
+      {Metric:'Acquisition budget',Value:acquisitionBudget},
+      {Metric:'Buy-now known cost',Value:acquisition.fundedEstimatedValue},
+      {Metric:'Known deferred cost',Value:acquisition.deferredEstimatedValue},
+      {Metric:'Unresolved build slots',Value:acquisition.unresolvedCount},
+      {Metric:'War roster members',Value:stockMode==='war'?members.length:''},
       {Metric:'Faction members',Value:members.length},
       {Metric:'War ready (approved)',Value:members.filter(r=>r.readinessStatus==='WAR READY').length},
       {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
