@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.9.1
+// @version      1.1.10.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -22,7 +22,7 @@
 
   const RUNTIME_GUARD = '__SS_MUGGER_RUNTIME_ACTIVE__';
   if (window[RUNTIME_GUARD]) return;
-  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.9'};
+  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.10'};
 
   const BOOT_PROBE_ID = 'ss-mugger-boot-probe';
   function showBootProbe(label = 'SSQ', isError = false) {
@@ -627,7 +627,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.9.1';
+  const VERSION = '1.1.10.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
@@ -875,7 +875,9 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       const windowSeconds = windowMinutes*60;
       const freshness = Math.max(0, 100 - (ageSeconds/windowSeconds)*70);
       const repeatBonus = Math.min(12, Math.max(0,g.signals.length-1)*3);
-      const confidence = Math.max(0, Math.min(99, Math.round(avgSignalConfidence*0.72 + freshness*0.18 + repeatBonus)));
+      const rawConfidence = Math.max(0, Math.min(99, Math.round(avgSignalConfidence*0.72 + freshness*0.18 + repeatBonus)));
+      const evidenceCap = g.signals.length <= 1 ? 58 : g.signals.length === 2 ? 76 : g.signals.length === 3 ? 88 : 99;
+      const confidence = Math.min(rawConfidence, evidenceCap);
       if (confidence < Math.max(40, Number(settings.minItemConfidence)||60)) continue;
       const turnoverPerHour = Math.round(g.gross/windowHours);
       const mugTotal = mugReturnEstimate(g.gross, modifiers).planningAmount;
@@ -918,6 +920,11 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     watches = []; saveWatches();
     render(true);
   }
+  function sanitizeWatches() {
+    const before = watches.length;
+    watches = watches.filter((w) => String(w?.sellerId || '') !== String(LICENSED_USER_ID));
+    if (watches.length !== before) saveWatches();
+  }
   function clearItemHistory() {
     itemSignals = []; itemScans = {}; pendingItemScan = null;
     saveItemSignals(); saveItemScans(); savePendingScan();
@@ -945,6 +952,13 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     return text.match(/(?:itemID|itemId|item_id)[=/](\d+)/i)?.[1]
       || text.match(/[?&#](?:itemID|itemId|item_id)=(\d+)/i)?.[1]
       || '';
+  }
+  function currentItemName() {
+    try {
+      const decoded = decodeURIComponent(location.href);
+      const match = decoded.match(/[?&#](?:itemName|item_name)=([^&#]+)/i);
+      return match?.[1] ? String(match[1]).replace(/\+/g, ' ').trim().slice(0, 120) : '';
+    } catch { return ''; }
   }
   function isItemMarket() {
     const href = location.href;
@@ -1003,6 +1017,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     return `im:${watch.sellerId}:${watch.itemId}:${watch.uid || ''}:${watch.price}`;
   }
   function upsertWatch(watch) {
+    if (String(watch?.sellerId || '') === String(LICENSED_USER_ID)) return null;
     const key = watchKey(watch);
     const existing = watches.find((w) => watchKey(w) === key);
     if (existing) {
@@ -1014,6 +1029,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       if (existing.active === false && ['itemmarket','pointsmarket'].includes(watch.source)) {
         existing.active = true;
         existing.baseline = null;
+        existing.baselineAttempts = 0;
         existing.nextPollAt = 0;
       }
       saveWatches();
@@ -1026,6 +1042,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       lastSeenAt: nowSec(),
       nextPollAt: 0,
       status: 'new',
+      baselineAttempts: 0,
       ...watch
     };
     watches.push(entry);
@@ -1038,13 +1055,17 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     if (!focused() || !isItemMarket()) return 0;
     const itemId = currentItemId();
     if (!itemId) return 0;
+    const itemName = currentItemName() || (String(pendingItemScan?.itemId || '') === String(itemId) ? String(pendingItemScan?.itemName || '') : '') || `Item ${itemId}`;
     const anchors = [...document.querySelectorAll('a[href*="profiles.php"][href*="XID="]')].filter(isVisible);
     let added = 0;
     for (const anchor of anchors) {
       const sellerId = sellerIdFromHref(anchor.href);
-      if (!sellerId || !/^\d+$/.test(sellerId)) continue;
+      if (!sellerId || !/^\d+$/.test(sellerId) || String(sellerId) === String(LICENSED_USER_ID)) continue;
       const container = findListingContainer(anchor);
       if (!container) continue;
+      const rowText = String(container.textContent || '');
+      const hasBuyControl = [...container.querySelectorAll('button,[role="button"]')].some((node) => /\bBUY\b/i.test(String(node.textContent || node.getAttribute?.('aria-label') || '')));
+      if (!/\bavailable\b/i.test(rowText) && !hasBuyControl) continue;
       const price = extractPrice(container);
       if (!price) continue;
       const amount = extractAmount(container);
@@ -1052,7 +1073,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       const before = watches.length;
       upsertWatch({
         source: 'itemmarket', sellerId, sellerName: (anchor.textContent || `Player ${sellerId}`).trim().slice(0, 120),
-        itemId, itemName: `Item ${itemId}`, price, amount, uid: uidValue,
+        itemId, itemName, price, amount, uid: uidValue,
         observedUrl: location.href.slice(0, 500), baseline: null
       });
       if (watches.length > before) added++;
@@ -1537,7 +1558,16 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         if (!watch.baseline?.ok) {
           const baseline = establishMarketBaseline(snapshot, fp);
           watch.baseline = baseline;
-          watch.status = baseline.ok ? `tracking:${baseline.reason}` : `waiting:${baseline.reason}`;
+          watch.baselineAttempts = Math.max(0, Number(watch.baselineAttempts) || 0) + 1;
+          if (baseline.ok) {
+            watch.status = `tracking:${baseline.reason}`;
+            watch.baselineAttempts = 0;
+          } else if (watch.baselineAttempts >= 3) {
+            watch.active = false;
+            watch.status = `untrackable:${baseline.reason}`;
+          } else {
+            watch.status = `validating:${baseline.reason}`;
+          }
           continue;
         }
         const result = diffMarketBaseline(watch.baseline, snapshot, fp);
@@ -1568,7 +1598,16 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         watch.nextPollAt = nextAt; watch.lastPollAt = nowSec();
         if (!watch.baseline?.ok) {
           watch.baseline = establishPointsBaseline(snapshot, {cost:watch.price});
-          watch.status = watch.baseline.ok ? `tracking:${watch.baseline.reason}` : `waiting:${watch.baseline.reason}`;
+          watch.baselineAttempts = Math.max(0, Number(watch.baselineAttempts) || 0) + 1;
+          if (watch.baseline.ok) {
+            watch.status = `tracking:${watch.baseline.reason}`;
+            watch.baselineAttempts = 0;
+          } else if (watch.baselineAttempts >= 3) {
+            watch.active = false;
+            watch.status = `untrackable:${watch.baseline.reason}`;
+          } else {
+            watch.status = `validating:${watch.baseline.reason}`;
+          }
           continue;
         }
         const result = diffPointsBaseline(watch.baseline, snapshot);
@@ -1976,10 +2015,16 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
 
   function savedTabHtml() {
-    const list = watches.slice().sort((a,b)=>(b.active-a.active)||(b.lastSeenAt-a.lastSeenAt)).slice(0,180);
-    return `<div class="mmms-section"><h3>Saved scans / watchlist</h3><div class="mmms-muted" style="margin-bottom:7px">These are sellers/listings SS_Mugger is monitoring. They no longer clutter the main Hot view.</div>
+    const active = watches.filter((w) => w.active);
+    const validating = active.filter((w) => ['itemmarket','pointsmarket'].includes(w.source) && !w.baseline?.ok);
+    const list = active
+      .filter((w) => !['itemmarket','pointsmarket'].includes(w.source) || w.baseline?.ok)
+      .sort((a,b)=>(b.lastSeenAt-a.lastSeenAt))
+      .slice(0,120);
+    return `<div class="mmms-section"><h3>Saved scans / watchlist</h3><div class="mmms-muted" style="margin-bottom:7px">Only validated market watches and active Bazaar watches are shown. Unresolved market rows get a short validation window and are dropped automatically.</div>
+      <div class="mmms-grid" style="padding:0 0 8px"><div class="mmms-stat"><b>${list.length}</b>tracked</div><div class="mmms-stat"><b>${validating.length}</b>validating</div><div class="mmms-stat"><b>${watches.filter((w)=>!w.active).length}</b>inactive</div><div class="mmms-stat"><b>${active.length}</b>active total</div></div>
       <div class="mmms-actions" style="padding:0 0 8px"><button class="mmms-btn danger" data-action="clear-saved">Clear saved list</button><button class="mmms-btn" data-action="clear-inactive">Remove inactive</button></div>
-      ${list.length ? list.map(watchHtml).join('') : '<div class="mmms-empty">No saved scans yet. Open a hot item POS or browse an Item Market/Bazaar page to populate this list.</div>'}
+      ${list.length ? list.map(watchHtml).join('') : '<div class="mmms-empty">No validated saved watches yet. Open a Hot item POS and SS_Mugger will validate trackable seller listings automatically.</div>'}
       <div class="mmms-settings" style="margin-top:10px"><label>Bazaar player ID</label><div style="display:flex;gap:5px"><input id="mmms-bazaar-id" class="mmms-input" inputmode="numeric" placeholder="Player ID"><button class="mmms-btn" data-action="add-bazaar">Add</button></div></div>
       <div class="mmms-actions" style="padding:10px 0 0"><button class="mmms-btn danger" data-action="clear-item-history">Clear mover history</button></div>
     </div>`;
@@ -2019,7 +2064,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
   function watchHtml(w) {
     const title = w.source === 'itemmarket'
-      ? `${w.sellerName || w.sellerId} · Item ${w.itemId} @ ${money(w.price)}`
+      ? `${w.sellerName || w.sellerId} · ${w.itemName || `Item ${w.itemId}`} @ ${money(w.price)}`
       : w.source === 'pointsmarket'
         ? `${w.sellerName || w.sellerId} · Points @ ${money(w.price)}/pt`
         : `${w.sellerName || w.sellerId} · Bazaar`;
@@ -2175,6 +2220,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   window.addEventListener('focus', () => { if (licensed()) { captureActivePage(); if (pendingItemScan) void runPendingItemScan(); } });
   window.addEventListener('orientationchange', () => setTimeout(render, 120));
   window.addEventListener('pagehide', () => { saveWatches(); saveCandidates(); saveItemSignals(); saveItemScans(); savePendingScan(); });
+  sanitizeWatches();
   seedItemSignalHistory();
   setTimeout(() => { if (pendingItemScan) void runPendingItemScan(); }, 1400);
 
