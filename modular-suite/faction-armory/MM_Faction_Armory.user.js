@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.17
+// @version      8.0.0-alpha.18
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.17';
+  const VERSION='8.0.0-alpha.18';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -820,7 +820,47 @@
   }
 
   function memberRows(){
-    return state?logic.memberRows(state.factionInventory||{},savedKeyIds()):[];
+    return state?logic.memberRows(state.factionInventory||{},savedKeyIds(),{procurementMode}):[];
+  }
+
+  function readinessStatusClass(status){
+    const value=String(status||'');
+    if(value==='WAR READY'||value==='READY FOR REVIEW')return 'mm-fa-good';
+    if(value==='MISSING DATA'||value==='STALE DATA')return 'mm-fa-bad';
+    return 'mm-fa-warn';
+  }
+
+  async function setMemberWarReady(memberId,approved){
+    const id=asId(memberId);
+    if(!id)throw new Error('Member ID is required.');
+    state=await core.readLegacyState();
+    const rows=logic.memberRows(state?.factionInventory||{},savedKeyIds(),{procurementMode});
+    const row=rows.find(item=>item.memberId===id);
+    if(!row)throw new Error('Faction member not found.');
+    if(approved&&(row.readinessStatus!=='READY FOR REVIEW'||!row.buildWarReady)){
+      throw new Error('Member is not currently eligible for War Ready approval.');
+    }
+    const at=new Date().toISOString();
+    await core.updateDomainState('faction',draft=>{
+      const fi=draft.factionInventory;
+      fi.memberReadiness=fi.memberReadiness&&typeof fi.memberReadiness==='object'?fi.memberReadiness:{};
+      fi.memberReadiness.profiles=fi.memberReadiness.profiles&&typeof fi.memberReadiness.profiles==='object'?fi.memberReadiness.profiles:{};
+      const profile=fi.memberReadiness.profiles[id];
+      if(!profile)throw new Error('No readiness profile exists for this member.');
+      if(approved){
+        profile.readinessApproval={
+          status:'WAR READY',
+          approvedAt:at,
+          verifiedAt:String(profile.verifiedAt||''),
+          procurementMode
+        };
+      }else{
+        delete profile.readinessApproval;
+      }
+      return draft;
+    });
+    state=await core.readLegacyState();
+    return {memberId:id,memberName:row.memberName,approved};
   }
 
   function membersHtml(){
@@ -851,7 +891,7 @@
       const source=String(row.profile?.source||'');
       const gear=String(row.equipmentSummary||'');
       const entry=vault?.entries?.[row.memberId];
-      const statusClass=row.readinessStatus==='READY FOR REVIEW'?'mm-fa-good':row.readinessStatus==='MISSING DATA'?'mm-fa-bad':'mm-fa-warn';
+      const statusClass=readinessStatusClass(row.readinessStatus);
       const med=row.profile?.supplyReadiness?.medical||{};
       return '<details class="mm-fa-build-member">'+
         '<summary>'+
@@ -862,6 +902,8 @@
           '<div class="mm-fa-module-head"><div class="mm-fa-buttons">'+
             (entry?'<button data-refresh-member="'+esc(row.memberId)+'" style="'+button(true)+'">Refresh</button><button data-remove-member="'+esc(row.memberId)+'" style="'+button()+'">Remove Key</button>':'')+
             '<button data-paste-reply="'+esc(row.memberId)+'" style="'+button()+'">Paste Reply</button>'+
+            (row.readinessStatus==='READY FOR REVIEW'&&row.buildWarReady?'<button data-war-ready="'+esc(row.memberId)+'" style="'+button(true)+'">Approve / War Ready</button>':'')+
+            (row.readinessStatus==='WAR READY'?'<button data-reopen-review="'+esc(row.memberId)+'" style="'+button()+'">Reopen Review</button>':'')+
           '</div></div>'+
           '<div class="mm-fa-tiles">'+
             tile('STR',row.hasStats?fmt(s.strength):'—')+
@@ -869,6 +911,9 @@
             tile('SPD',row.hasStats?fmt(s.speed):'—')+
             tile('DEX',row.hasStats?fmt(s.dexterity):'—')+
             tile('TOTAL',row.hasStats?fmt(row.statProfile.total):'—')+
+            tile('READINESS',row.readinessStatus||'—')+
+            tile('BUILD BASELINE',row.buildWarReady?'PASS':'ACTION NEEDED')+
+            (row.readinessApprovedAt?tile('APPROVED',when(row.readinessApprovedAt),{wide:true}):'')+
             tile('LOANS',row.loans?row.loans+' units':'—')+
             (source?tile('SOURCE',source+' · '+when(row.profile?.verifiedAt),{wide:true}):tile('SOURCE','No current profile',{wide:true}))+
           '</div>'+
@@ -892,21 +937,28 @@
     if(!rows.length)return card('No member roster is loaded.');
     return '<div class="mm-fa-card mm-fa-compact"><b>War-ready build baseline</b> <span class="mm-fa-muted">Performance determines readiness; reference price determines what we buy or issue next. Adequate gear already owned/equipped is kept.</span></div>'+
     rows.map(row=>{
-      const build=logic.compareMemberBuild(row,state?.factionInventory||{},rows,{procurementMode});
-      const statusClass=build.warReady?'mm-fa-good':'mm-fa-warn';
+      const build=row.buildAssessment||logic.compareMemberBuild(row,state?.factionInventory||{},rows,{procurementMode});
+      const statusClass=readinessStatusClass(row.readinessStatus);
       const unresolved=build.items.filter(item=>!item.ready&&item.route!=='OWNED'&&item.route!=='LOANED').length;
       return '<details class="mm-fa-build-member">'+
         '<summary>'+
           '<span class="mm-fa-build-summary-main">'+
             '<b>'+esc(row.memberName)+'</b>'+
             '<span class="mm-fa-pill">Lv '+num(row.level)+'</span>'+
-            '<span class="'+statusClass+'">'+(build.warReady?'WAR READY':'ACTION NEEDED')+'</span>'+
+            '<span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+
           '</span>'+
-          '<span class="mm-fa-muted">'+(build.warReady?'ready':unresolved+' actionable slot'+(unresolved===1?'':'s'))+'</span>'+
+          '<span class="mm-fa-muted">'+
+            (row.readinessStatus==='WAR READY'?'approved war ready':
+              row.readinessStatus==='READY FOR REVIEW'?'baseline passes · approval pending':
+              build.warReady?esc(row.readinessStatus.toLowerCase()):
+              unresolved+' actionable slot'+(unresolved===1?'':'s'))+
+          '</span>'+
         '</summary>'+
         '<div class="mm-fa-build-body">'+
           '<div class="mm-fa-tiles">'+
             tile('TOTAL STATS',build.totalStats?fmt(build.totalStats):'—')+
+            tile('READINESS',row.readinessStatus||'—')+
+            tile('BASELINE',build.warReady?'PASS':'ACTION NEEDED')+
             tile('BUILD',build.buildStyle||'UNKNOWN',{wide:true})+
             tile('OFFENSE NEED',build.offensiveNeed||'balanced')+
             tile('DEFENSE STYLE',build.defensiveStyle||'balanced')+
@@ -1286,6 +1338,22 @@
     root.querySelectorAll('[data-remove-member]').forEach(b=>b.addEventListener('click',()=>{
       if(removeMemberKey(b.dataset.removeMember)){statusText='Saved member key removed; readiness data preserved.';render();}
     }));
+    root.querySelectorAll('[data-war-ready]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Approving member as War Ready…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.warReady,true);
+        statusText=result.memberName+' is now WAR READY across Members, Builds, and exports.';
+      }catch(error){statusText='War Ready approval failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-reopen-review]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;busy=true;statusText='Reopening readiness review…';render();
+      try{
+        const result=await setMemberWarReady(b.dataset.reopenReview,false);
+        statusText=result.memberName+' returned to READY FOR REVIEW.';
+      }catch(error){statusText='Readiness review update failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
     root.querySelectorAll('[data-paste-reply]').forEach(b=>b.addEventListener('click',async()=>{
       const id=asId(b.dataset.pasteReply);
       const row=memberRows().find(x=>x.memberId===id);
@@ -1364,7 +1432,9 @@
       {Metric:'Unresolved build slots',Value:acquisition.unresolvedCount},
       {Metric:'War participants assumption',Value:stockMode==='war'?WAR_PARTICIPANTS:''},
       {Metric:'Faction members',Value:members.length},
+      {Metric:'War ready (approved)',Value:members.filter(r=>r.readinessStatus==='WAR READY').length},
       {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
+      {Metric:'Action needed',Value:members.filter(r=>r.readinessStatus==='ACTION NEEDED'||r.readinessStatus==='SUPPLY ACTION').length},
       {Metric:'Missing / stale',Value:members.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length},
       {Metric:'Armory member API keys saved',Value:savedKeyIds().length},
       {Metric:'Inventory rows',Value:inventory.length},
@@ -1372,12 +1442,13 @@
       {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
       {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length}
     ];
-    const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','War Ready','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberHeaders=['Member ID','Member','Level','API Saved','Readiness','War Ready','Baseline Pass','Approved At','Approval Mode','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
     const memberData=members.map(r=>{
-      const build=logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
+      const build=r.buildAssessment||logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
       return {
         'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'API Saved':r.apiSaved?'YES':'NO','Readiness':r.readinessStatus,
-        'War Ready':build.warReady?'YES':'NO','Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
+        'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO','Baseline Pass':build.warReady?'YES':'NO','Approved At':r.readinessApprovedAt||'','Approval Mode':r.readinessApprovalMode||'',
+        'Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
         'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
         'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
       };
