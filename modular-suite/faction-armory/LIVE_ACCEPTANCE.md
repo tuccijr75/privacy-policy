@@ -325,3 +325,31 @@ Live check:
 - [ ] Confirm dock/undock and movable-panel behavior still works after the alignment change.
 
 Production unchanged.
+
+
+## Alpha.18 — canonical member/build readiness workflow
+
+Observed inconsistency:
+- Members could show **READY FOR REVIEW** while Builds independently showed **WAR READY** for the same member.
+- The Members status previously described data completeness/freshness only, while Builds separately calculated equipment readiness.
+
+Source repair:
+- \`memberRows(...)\` now computes and carries one \`buildAssessment\` per member for the active procurement mode.
+- Members, Builds, acquisition planning, minimum planning, and leadership export reuse that same assessment.
+- Canonical statuses are \`MISSING DATA\`, \`STALE DATA\`, \`SUPPLY ACTION\`, \`ACTION NEEDED\`, \`READY FOR REVIEW\`, and \`WAR READY\`.
+- Automatic equipment success produces \`READY FOR REVIEW\`, not \`WAR READY\`.
+- **Approve / War Ready** is available in the expanded Members row only when the build baseline passes.
+- Approval is stored against the current member \`verifiedAt\` timestamp and procurement mode.
+- A new member-data refresh or a different procurement mode requires review again.
+- **Reopen Review** removes the approval.
+- Builds displays the same canonical readiness status and separately shows whether the automatic baseline passes.
+- Leadership export uses canonical \`WAR READY\` instead of treating an unapproved automatic build pass as approved readiness.
+
+Live acceptance:
+1. Find a member whose eight equipped standard slots pass the current baseline.
+2. Confirm Members and Builds both show **READY FOR REVIEW** before approval.
+3. Click **Approve / War Ready** from that member's expanded Members row.
+4. Confirm Members and Builds both show **WAR READY**.
+5. Confirm the leadership export reports \`Readiness = WAR READY\`, \`War Ready = YES\`, and \`Baseline Pass = YES\`.
+6. Refresh that member's readiness data; confirm the approval is invalidated and a still-passing member returns to **READY FOR REVIEW**.
+7. Confirm an \`ACTION NEEDED\`, \`SUPPLY ACTION\`, missing-data, or stale-data member cannot be approved War Ready.
