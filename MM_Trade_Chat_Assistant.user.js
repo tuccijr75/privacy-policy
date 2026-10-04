@@ -266,10 +266,18 @@
 
   function restoreTradeAfterForumRoute() {
     if (!GM_getValue(FORUM_ROUTE_KEY, false)) return;
-    GM_setValue(FORUM_ROUTE_KEY, false);
-    setTimeout(() => {
-      ensureTradeOpen().catch(() => {});
-    }, 250);
+
+    const deadline = Date.now() + 8000;
+    const attempt = async () => {
+      const composer = await ensureTradeOpen();
+      if (composer || Date.now() >= deadline) {
+        GM_setValue(FORUM_ROUTE_KEY, false);
+        return;
+      }
+      setTimeout(attempt, 300);
+    };
+
+    setTimeout(attempt, 300);
   }
 
   function insertTradeMessage(textarea, message) {
