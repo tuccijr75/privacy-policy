@@ -466,7 +466,7 @@ Alpha.20 expands per-member equipment evaluation without changing the canonical 
 Production remains unchanged until this checklist passes and the owner explicitly approves promotion.
 
 
-## Alpha.21 — War/Pace scoped leader acquisition letter
+## Alpha.21 — War/Peace scoped leader acquisition letter
 
 The War/Peace stock-mode selector now determines what is included in the faction-leader acquisition message.
 
