@@ -1469,3 +1469,51 @@ Live acceptance remains the original MM_Customers action only:
 5. Confirm customer state changes only after Torn confirms a real manual Send.
 
 Outbox/recovery behavior remains out of scope.
+
+## MM_Acquisitions alpha.9 — market-readiness hardening candidate — 2026-10-04
+
+**Status:** STATIC / FIXTURE PASS; LIVE CUSTOMER ACCEPTANCE PENDING  
+**Branch:** `crm-v8-acquisitions-market-readiness`  
+**Canonical base:** `crm-v8-modular-suite@24e5476b862823d814ae3a36cea4d71de559cd1f`
+
+Owner requested that the Market Scout + Travel Acquisition offer be verified as market-ready before a customer quote is sent.
+
+Architecture reconciliation:
+- legacy **MM Market Scout** remains superseded and must not be sold as a separate maintained product;
+- the maintained product is **MM_Acquisitions**, with two customer-facing workflows: **Market Scout / Deals** and **Travel Acquisition**;
+- splitting them back into independent scripts would reintroduce duplicate market/travel state and maintenance surfaces and is not part of this candidate.
+
+Hardening in alpha.9:
+- rule-qualified deal labeling replaces misleading "Best Buyable Deals" wording;
+- current cash is explicitly not implied; final purchase remains manual;
+- fresh Item Market candidates now obey the visible live-listing minimum instead of bypassing it;
+- new minimum-confidence rule is enforced by the ranking engine;
+- personal-demand threshold semantics are labeled accurately when MARKET PROXY evidence is used;
+- deal rows show confidence and live-listing count;
+- Settings rule grid uses responsive auto-fit layout;
+- current Torn travel context is read from API v2 `/user/basic` when a key is present;
+- Bazaar / Item Market navigation is blocked while the user is Traveling or Abroad;
+- Travel Acquisition labels FRESH / AGING / STALE state;
+- stale/unknown travel data is hard-blocked from recommendation display until refreshed;
+- Travel Acquisition scopes rows to the current abroad country or foreign destination when that context is available;
+- browser-capture import is moved under recovery tools rather than presented as a normal primary action;
+- API-key storage and required data scope are explained in Settings.
+
+Regression coverage:
+- added dedicated `MM_Acquisitions.logic.test.js`;
+- fixtures cover max price, minimum live listings, minimum ROI, minimum confidence, qualified personal-demand floor, documented MARKET PROXY behavior, stale evidence rejection, and travel ranking;
+- all six Acquisitions JavaScript/test files compile in connector-side V8 validation;
+- nine executable ranking/travel fixtures pass.
+
+Promotion blockers:
+1. install alpha.9 on desktop and repeat Deals + Travel live acceptance;
+2. verify a Traveling/Abroad account is prevented from routing to Bazaar / Item Market;
+3. verify stale Travel rows are suppressed until Update Travel succeeds;
+4. verify abroad/destination travel filtering on a real trip;
+5. verify narrow-width/mobile layout;
+6. verify TornPDA userscript behavior and travel capture/return path;
+7. after PASS, prepare a stable customer distribution path that does not point at the development branch;
+8. explicit owner approval is required before stable/public promotion or customer delivery.
+
+Do not send a customer-ready claim or stable install link before those live gates pass.
+

@@ -12,7 +12,7 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.8.6'));
+assert(userSource.includes('// @version      8.0.0-alpha.9'));
 assert(userSource.includes('MM_Torn_Core.js?v=8.0.0-alpha.13'));
 assert(userSource.includes('// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js'));
 assert(userSource.includes('// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js'));
@@ -20,6 +20,13 @@ assert(userSource.includes('async function autoRefreshAcquisitions'));
 assert(userSource.includes('AUTO_REFRESH_MS=60_000'));
 assert(userSource.includes('PURCHASE_STALE_MS=120_000'));
 assert(userSource.includes('OPPORTUNITY_STALE_MS=300_000'));
+assert(userSource.includes('TRAVEL_FRESH_MS=300_000'));
+assert(userSource.includes('TRAVEL_STALE_MS=900_000'));
+assert(userSource.includes('Market purchase deferred: '));
+assert(userSource.includes('Stale/unknown travel data is not used for recommendations.'));
+assert(userSource.includes('grid-template-columns:repeat(auto-fit,minmax(135px,1fr))'));
+assert(userSource.includes('Min confidence %'));
+assert(userSource.includes('Rule-Qualified Deals'));
 assert(userSource.includes('Verify & Buy and final purchase remain manual'));
 console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS');
 
@@ -35,7 +42,7 @@ assert(liveSource.includes("reason:'overseas-recommended'"));
 
 const userSourceArmory=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceArmory);
-assert(userSourceArmory.includes('// @version      8.0.0-alpha.8.6'));
+assert(userSourceArmory.includes('// @version      8.0.0-alpha.9'));
 assert(userSourceArmory.includes('MM_Acquisitions.live.js?v=8.0.0-alpha.2'));
 assert(userSourceArmory.includes("type!=='armory-acquisition-request'"));
 assert(userSourceArmory.includes('Faction Armory request: '));

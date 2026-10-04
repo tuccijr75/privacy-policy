@@ -15,6 +15,7 @@
       maxPrice: Math.max(minPrice, Number(r.maxPrice || Number.MAX_SAFE_INTEGER)),
       minAbsoluteProfit: Math.max(0, Number(r.minAbsoluteProfit || 0)),
       minSellerCount: Math.max(0, Math.round(Number(r.minSellerCount || 0))),
+      minConfidencePct: Math.max(0, Math.min(100, Number(r.minConfidencePct || 0))),
       maxListingAgeSec: Math.max(30, Math.round(Number(r.maxListingAgeSec || 180)))
     };
   }
@@ -127,7 +128,8 @@
 
       if (!(discoveryBuy > 1) || discoveryBuy < rules.minPrice || discoveryBuy > rules.maxPrice) continue;
       const sellerCount = Number(base.totalBazaars || 0);
-      if (!itemMarketFresh && sellerCount < rules.minSellerCount) continue;
+      const liveListingCount = itemMarketFresh ? Number(snap?.itemMarket?.listings || 0) : sellerCount;
+      if (liveListingCount < rules.minSellerCount) continue;
 
       const detail = intel?.details?.[id];
       const trader = intel?.traders?.[id];
@@ -210,6 +212,7 @@
       const confidence = Math.max(0,Math.min(100,
         sourceFreshness*0.40+sellerConfidence*0.25+Math.min(100,Number(history.samples||0)*6)*0.20+sellThrough3dPct*0.15
       ));
+      if (confidence < rules.minConfidencePct) continue;
       const roiScore = Math.min(100,Math.max(0,roiPct)*4);
       const conversionScore = Math.min(100,sellThrough3dPct);
       const profitVelocityScore = Math.min(100,Math.log10(1+expectedProfitPerDay)*18);
@@ -223,7 +226,7 @@
         id,
         name:String(base.itemName || db?.procurement?.catalog?.[id]?.name || ('Item '+id)),
         itemType:String(db?.procurement?.catalog?.[id]?.type || ''),
-        buyPrice,maxBuyPrice,bazaarAverage,marketPrice,sellerCount,traderExit,
+        buyPrice,maxBuyPrice,bazaarAverage,marketPrice,sellerCount,liveListingCount,traderExit,
         bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,score,confidence,
         freshness:globalFresh,history,enriched:Boolean(detail),
         listingQty:Number(live?.quantity||0),sellerId:String(live?.sellerId||''),

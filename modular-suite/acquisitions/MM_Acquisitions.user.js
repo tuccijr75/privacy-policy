@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.8.6
+// @version      8.0.0-alpha.9
 // @description  Dedicated acquisition workflow for Bazaar, Item Market and Travel with live verification, ROI filters and purchase-ledger sync.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.user.js
@@ -10,7 +10,7 @@
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.13
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.logic.js?v=8.0.0-alpha.1
+// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.logic.js?v=8.0.0-alpha.2
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.live.js?v=8.0.0-alpha.2
 // @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js?v=8.0.0-alpha.1
 // @grant        GM_xmlhttpRequest
@@ -35,6 +35,9 @@
   const AUTO_REFRESH_MS=60_000;
   const PURCHASE_STALE_MS=120_000;
   const OPPORTUNITY_STALE_MS=300_000;
+  const TRAVEL_FRESH_MS=300_000;
+  const TRAVEL_STALE_MS=900_000;
+  const TRAVEL_CONTEXT_REFRESH_MS=60_000;
 
   let activeView='deals';
   let state=null;
@@ -48,6 +51,8 @@
   let channel=null;
   let armoryRequest=null;
   let armorySources=null;
+  let travelContext=null;
+  let travelContextCheckedAt=0;
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornAcquisitionsLogic;
@@ -80,6 +85,79 @@
     if(sec<3600)return Math.floor(sec/60)+'m ago';
     if(sec<86400)return Math.floor(sec/3600)+'h ago';
     return Math.floor(sec/86400)+'d ago';
+  }
+
+  function normalizeTravelLocation(value){
+    const raw=String(value||'').trim().toLowerCase().replaceAll('.','');
+    const aliases={
+      'torn':'torn',
+      'uk':'united kingdom',
+      'united kingdom':'united kingdom',
+      'uae':'united arab emirates',
+      'united arab emirates':'united arab emirates',
+      'south africa':'south africa',
+      'cayman islands':'cayman islands',
+      'switzerland':'switzerland',
+      'japan':'japan',
+      'china':'china',
+      'mexico':'mexico',
+      'canada':'canada',
+      'argentina':'argentina',
+      'hawaii':'hawaii'
+    };
+    return aliases[raw]||raw;
+  }
+
+  function parseTravelContext(data){
+    const profile=(data?.profile&&typeof data.profile==='object')?data.profile:
+      ((data?.user&&typeof data.user==='object')?data.user:(data||{}));
+    const status=(profile?.status&&typeof profile.status==='object')?profile.status:{};
+    const stateName=String(status.state||profile.state||'').trim();
+    const description=String(status.description||profile.status_description||'').trim();
+    const lower=stateName.toLowerCase();
+    let mode='torn',origin='',destination='',country='';
+    if(lower==='traveling'){
+      mode='traveling';
+      const m=description.match(/travel(?:ing)?\s+from\s+(.+?)\s+to\s+(.+)$/i);
+      if(m){origin=String(m[1]||'').trim();destination=String(m[2]||'').trim();}
+    }else if(lower==='abroad'){
+      mode='abroad';
+      const m=description.match(/(?:in|at)\s+(.+)$/i);
+      country=String(m?.[1]||'').trim();
+    }else if(!stateName){
+      mode='unknown';
+    }
+    return {
+      mode,state:stateName,description,origin,destination,country,
+      checkedAt:Date.now()
+    };
+  }
+
+  function marketNavigationBlocked(ctx=travelContext){
+    return ctx?.mode==='traveling'||ctx?.mode==='abroad';
+  }
+
+  function travelContextLabel(ctx=travelContext){
+    if(!ctx||ctx.mode==='unknown')return 'Travel context unavailable';
+    if(ctx.mode==='traveling')return ctx.description||'Traveling';
+    if(ctx.mode==='abroad')return ctx.country?('Abroad · '+ctx.country):(ctx.description||'Abroad');
+    return ctx.state||'In Torn';
+  }
+
+  async function refreshTravelContext({force=false,silent=true}={}){
+    if(!apiKey())return travelContext;
+    if(!force&&travelContext&&Date.now()-travelContextCheckedAt<TRAVEL_CONTEXT_REFRESH_MS)return travelContext;
+    try{
+      const data=await tornRequest('/user/basic');
+      travelContext=parseTravelContext(data);
+      travelContextCheckedAt=Date.now();
+      if(!silent)statusText='Travel context updated: '+travelContextLabel(travelContext)+'.';
+      return travelContext;
+    }catch(error){
+      travelContextCheckedAt=Date.now();
+      if(!silent)statusText='Travel context unavailable: '+(error?.message||String(error));
+      return travelContext;
+    }
   }
 
   function gmText(url){
@@ -212,8 +290,13 @@
   }
 
   function navigate(url){
+    const target=String(url||'');
+    const isTornMarket=/^https:\/\/www\.torn\.com\/(?:bazaar\.php|page\.php\?sid=ItemMarket)/i.test(target);
+    if(isTornMarket&&marketNavigationBlocked()){
+      throw new Error('Torn market purchase pages are unavailable while traveling or abroad. Return to Torn before routing this market purchase.');
+    }
     close();
-    setTimeout(()=>{location.href=String(url||'');},20);
+    setTimeout(()=>{location.href=target;},20);
   }
 
   const service=live?.createService({
@@ -306,6 +389,7 @@
       maxPrice:Math.max(minPrice,read('#mm-acq-rule-max-price')),
       minAbsoluteProfit:Math.max(0,read('#mm-acq-rule-min-profit')),
       minSellerCount:Math.max(0,Math.round(read('#mm-acq-rule-min-sellers'))),
+      minConfidencePct:Math.max(0,Math.min(100,read('#mm-acq-rule-min-confidence'))),
       maxListingAgeSec:Math.max(30,Math.round(read('#mm-acq-rule-max-age')))
     };
     await core.updateDomainState('core',draft=>{
@@ -326,9 +410,14 @@
       return;
     }
     busy=true;
-    statusText='Re-checking live price and seller availability…';
+    statusText='Checking travel state, live price and seller availability…';
     render();
     try{
+      const ctx=await refreshTravelContext({force:true,silent:true});
+      if(marketNavigationBlocked(ctx)){
+        statusText='Market purchase deferred: '+travelContextLabel(ctx)+'. Torn Bazaar / Item Market routing resumes when you are back in Torn.';
+        return;
+      }
       const result=await service.acquire(itemId);
       if(!result?.routed){
         const reason=String(result?.reason||'no-live-source');
@@ -439,6 +528,7 @@
     try{
       state=await core.readLegacyState();
       try{await importTravelCapture({silent:true});}catch{}
+      if(apiKey())try{await refreshTravelContext({force:false,silent:true});}catch{}
       const f=core.freshnessSnapshot(state||{});
       const now=Date.now();
       const purchaseAt=Date.parse(f.acquisitions||state?.procurement?.lastAcquisitionSyncAt||'')||0;
@@ -515,8 +605,9 @@
 
   async function routeArmoryRequest(preferredSource='Best'){
     if(!armoryRequest||busy)return;
-    busy=true;statusText='Verifying '+preferredSource+' source for '+armoryRequest.itemName+'…';render();
+    busy=true;statusText='Checking travel state and verifying '+preferredSource+' source for '+armoryRequest.itemName+'…';render();
     try{
+      await refreshTravelContext({force:true,silent:true});
       const result=await service.routeProcurementRequest({...armoryRequest,preferredSource});
       armorySources=result;
       if(result?.routed){
@@ -567,12 +658,13 @@
         '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-reload" style="'+button()+'">Reload Cache</button><button id="mm-acq-sync-purchases" '+(busy?'disabled':'')+' style="'+button()+'">Sync Purchases</button><button id="mm-acq-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Opportunities</button></div>'+
       '</div>'
     )+
-    card('<b>Best Buyable Deals</b>'+
+    card('<b>Rule-Qualified Deals</b>'+
+      '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Meets current ROI / profit / listing / confidence rules. Current cash balance is not checked; Verify & Buy re-verifies the source and keeps final purchase manual.</div>'+
       (buyable.length?buyable.map((r,i)=>
         '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
           '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.purchaseSource)+
           '<div>Buy <b>'+money(r.buyPrice)+'</b> · Max '+money(r.maxBuyPrice)+' · Exit '+money(r.bestExit)+' · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
-          '<div style="color:#888;">3d sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% ('+esc(r.conversionSource)+') · Qty '+Number(r.recommendedQty||1)+' · Est. 3d profit '+money(r.expectedProfit3d||0)+'</div></div>'+
+          '<div style="color:#888;">3d sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% ('+esc(r.conversionSource)+') · Confidence '+Number(r.confidence||0).toFixed(0)+'% · Live listings '+Number(r.liveListingCount||0)+' · Qty '+Number(r.recommendedQty||1)+' · Est. 3d profit '+money(r.expectedProfit3d||0)+'</div></div>'+
           '<button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Verify & Buy</button>'+
         '</div>'
       ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No current cached opportunity meets the active business rules.</div>')
@@ -590,28 +682,53 @@
 
   function travelHtml(){
     if(!state)return card('<b>No cached travel state available.</b>');
-    const rows=logic.rankCachedTravel(state).slice(0,20);
+    const ranked=logic.rankCachedTravel(state);
     const feed=readTravelFeed();
     const captureAge=feed?.capturedAt?age(new Date(Number(feed.capturedAt)).toISOString()):'none';
+    const syncedAt=Date.parse(state.travelIntel?.lastSyncAt||'')||0;
+    const travelAgeMs=syncedAt?Math.max(0,Date.now()-syncedAt):Infinity;
+    const freshness=!Number.isFinite(travelAgeMs)?'UNKNOWN':travelAgeMs<=TRAVEL_FRESH_MS?'FRESH':travelAgeMs<=TRAVEL_STALE_MS?'AGING':'STALE';
+    const ctx=travelContext;
+    const current=normalizeTravelLocation(ctx?.country||'');
+    const destination=normalizeTravelLocation(ctx?.destination||'');
+    let scope='Next-trip planning from Torn';
+    let scopedRows=ranked;
+    if(ctx?.mode==='abroad'&&current){
+      scope='Buy here now · '+String(ctx.country||'current destination');
+      scopedRows=ranked.filter(r=>normalizeTravelLocation(r.country)===current);
+    }else if(ctx?.mode==='traveling'&&destination&&destination!=='torn'){
+      scope='Arrival planning · '+String(ctx.destination||'destination');
+      scopedRows=ranked.filter(r=>normalizeTravelLocation(r.country)===destination);
+    }else if(ctx?.mode==='traveling'){
+      scope='In transit · next-trip planning only';
+    }
+    const stale=freshness==='STALE'||freshness==='UNKNOWN';
+    const rows=(stale?[]:scopedRows).slice(0,20);
+    const freshnessColor=freshness==='FRESH'?'#9fe3a8':freshness==='AGING'?'#ffd18a':'#ff9b9b';
     return armoryRequestHtml()+card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
-        '<div><b>Travel Acquisition</b><div style="font-size:10px;color:#888;">TornW3B live stock/profit stays in Acquisitions; deeper forecast analytics move to BI.</div></div>'+
-        '<div style="display:flex;gap:5px;"><button id="mm-acq-travel-import" style="'+button()+'">Import Capture</button><button id="mm-acq-travel-update" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Update Travel</button></div>'+
+        '<div><b>Travel Acquisition</b><div style="font-size:10px;color:#888;">Live overseas stock / profit with trip-aware filtering. Purchases and travel remain manual.</div></div>'+
+        '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-travel-update" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Update Travel</button></div>'+
       '</div>'+
-      '<div style="font-size:10px;color:#888;margin-top:5px;">Last browser capture: '+esc(captureAge)+' · Shared travel state: '+esc(age(state.travelIntel?.lastSyncAt))+'</div>'
+      '<div style="font-size:10px;margin-top:5px;"><b style="color:'+freshnessColor+';">'+esc(freshness)+'</b> · '+esc(scope)+' · '+esc(travelContextLabel(ctx))+'</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:3px;">Last browser capture: '+esc(captureAge)+' · Shared travel state: '+esc(age(state.travelIntel?.lastSyncAt))+'</div>'+
+      (stale?'<div style="margin-top:6px;padding:6px;border:1px solid #7d3b3b;border-radius:5px;color:#ffb3b3;font-size:11px;"><b>Refresh required.</b> Stale/unknown travel data is not used for recommendations.</div>':'')+
+      '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:10px;color:#888;">Recovery tools</summary><button id="mm-acq-travel-import" style="'+button()+'margin-top:5px;">Import Browser Capture</button></details>'
     )+
     card(rows.length?rows.map((r,i)=>
       '<div style="border-top:1px solid #303030;padding:7px 0;font-size:11px;"><b>#'+(i+1)+' '+esc(r.itemName)+'</b> · '+esc(r.country)+
       '<div>Stock '+Number(r.stock||0).toLocaleString()+' · Profit '+money(r.profit||0)+' · Source profit/hr '+money(r.sourceProfitPerHour||0)+'</div></div>'
-    ).join(''):'<div style="font-size:11px;color:#888;">No profitable current travel rows.</div>');
+    ).join(''):(stale
+      ?'<div style="font-size:11px;color:#888;">No travel recommendations shown until data is refreshed.</div>'
+      :'<div style="font-size:11px;color:#888;">No profitable current travel rows match this trip context.</div>'));
   }
 
   function settingsHtml(){
     const r=state?.businessRules||{};
     return card(
       '<b>MM Acquisitions Connection</b>'+
-      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">The API key is stored only in this userscript\'s Tampermonkey GM storage. It is not copied to shared IndexedDB/localStorage.</div>'+
-      '<div style="display:grid;grid-template-columns:1fr auto auto;gap:5px;">'+
+      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">The API key is stored only in this userscript\'s Tampermonkey GM storage. It is not copied to shared IndexedDB/localStorage. Required scope: User Basic, User Log purchase events used by the ledger, and market data needed for live verification.</div>'+
+      '<div style="display:grid;grid-template-columns:minmax(160px,1fr) auto auto;gap:5px;align-items:center;">'+
         '<input id="mm-acq-api" type="password" autocomplete="off" placeholder="'+(apiKey()?'Torn API key saved — enter to replace':'Torn API key')+'" style="'+inputCss()+'">'+
         '<button id="mm-acq-save-key" style="'+button(true)+'">Save</button>'+
         '<button id="mm-acq-clear-key" style="'+button()+'">Clear</button>'+
@@ -621,14 +738,16 @@
     card(
       '<b>Shared Acquisition Rules</b>'+
       '<div style="font-size:10px;color:#888;margin:4px 0 7px;">These are the same shared rules used by the legacy CRM. MM Acquisitions writes only the Core configuration domain.</div>'+
-      '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;">'+
+      '<div style="font-size:10px;color:#777;margin:0 0 6px;">Personal-demand minimum applies only when enough personal sales history exists; otherwise the deal is labeled MARKET PROXY and ranked by market sell-through evidence.</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:5px;">'+
         '<label style="font-size:10px;color:#aaa;">Min ROI %<input id="mm-acq-rule-min-roi" type="number" min="0" step="0.1" value="'+Number(r.minRoiPct||0)+'" style="'+inputCss()+'width:100%;"></label>'+
-        '<label style="font-size:10px;color:#aaa;">Min demand/day<input id="mm-acq-rule-min-demand" type="number" min="0" step="0.01" value="'+Number(r.minDemandPerDay||0)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Min personal demand/day<input id="mm-acq-rule-min-demand" type="number" min="0" step="0.01" value="'+Number(r.minDemandPerDay||0)+'" style="'+inputCss()+'width:100%;"></label>'+
         '<label style="font-size:10px;color:#aaa;">Min buy<input id="mm-acq-rule-min-price" type="number" min="0" value="'+Number(r.minPrice||0)+'" style="'+inputCss()+'width:100%;"></label>'+
         '<label style="font-size:10px;color:#aaa;">Max buy<input id="mm-acq-rule-max-price" type="number" min="0" value="'+Number(r.maxPrice||0)+'" style="'+inputCss()+'width:100%;"></label>'+
         '<label style="font-size:10px;color:#aaa;">Min profit/unit<input id="mm-acq-rule-min-profit" type="number" min="0" value="'+Number(r.minAbsoluteProfit||0)+'" style="'+inputCss()+'width:100%;"></label>'+
-        '<label style="font-size:10px;color:#aaa;">Min sellers<input id="mm-acq-rule-min-sellers" type="number" min="0" value="'+Number(r.minSellerCount||0)+'" style="'+inputCss()+'width:100%;"></label>'+
-        '<label style="font-size:10px;color:#aaa;">Max listing age sec<input id="mm-acq-rule-max-age" type="number" min="30" value="'+Number(r.maxListingAgeSec||180)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Min live listings<input id="mm-acq-rule-min-sellers" type="number" min="0" value="'+Number(r.minSellerCount||0)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Min confidence %<input id="mm-acq-rule-min-confidence" type="number" min="0" max="100" step="1" value="'+Number(r.minConfidencePct||0)+'" style="'+inputCss()+'width:100%;"></label>'+
+        '<label style="font-size:10px;color:#aaa;">Listing freshness sec<input id="mm-acq-rule-max-age" type="number" min="30" value="'+Number(r.maxListingAgeSec||180)+'" style="'+inputCss()+'width:100%;"></label>'+
       '</div>'+
       '<button id="mm-acq-save-rules" style="'+button(true)+'margin-top:7px;">Save Shared Rules</button>'
     );
@@ -648,7 +767,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.8.6 · ACQUIRE / VERIFY / LEDGER</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.9 · MARKET SCOUT / TRAVEL / VERIFY</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -672,7 +791,11 @@
       window.innerWidth<=620?{right:'4px',top:'54px'}:{right:'12px',top:'90px'}
     );
     root.querySelector('#mm-acq-close')?.addEventListener('click',close);
-    root.querySelectorAll('[data-acq-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.acqView||'deals';render();}));
+    root.querySelectorAll('[data-acq-view]').forEach(b=>b.addEventListener('click',()=>{
+      activeView=b.dataset.acqView||'deals';
+      render();
+      if(activeView==='travel'&&apiKey())refreshTravelContext({force:false,silent:true}).then(()=>render());
+    }));
     root.querySelectorAll('#mm-acq-reload').forEach(b=>b.addEventListener('click',reloadCachedState));
     root.querySelector('#mm-acq-live-refresh')?.addEventListener('click',refreshOpportunities);
     root.querySelector('#mm-acq-sync-purchases')?.addEventListener('click',syncPurchases);
@@ -711,6 +834,7 @@
     core?.setDockLauncherActive?.('acquisitions',true);
     render();
     reloadCachedState().then(()=>autoRefreshAcquisitions({force:false}));
+    if(apiKey())refreshTravelContext({force:false,silent:true}).then(()=>render());
     startWatcher();
     startAutoRefresh();
   }
