@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.0-rc.4-qa.1
+// @version      1.1.0-rc.5-qa.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -623,7 +623,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.0-rc.4-qa.1';
+  const VERSION = '1.1.0-rc.5-qa.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
@@ -1320,6 +1320,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         rejectSignal(watch, signal, gate);
       restorePanelDraft();
       updatePanelDraftIndicators();
+      panel.dataset.mmRendered = '1';
         return;
       }
       const owner = settings.excludeOwnFaction ? await ensureOwnerIdentity() : null;
@@ -1569,13 +1570,13 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   function removeWatch(id) {
     watches = watches.filter((w) => w.id !== id);
     saveWatches();
-    render();
+    render(true);
   }
 
   function clearInactive() {
     watches = watches.filter((w) => w.active);
     saveWatches();
-    render();
+    render(true);
   }
 
   function attackUrl(id) { return `https://www.torn.com/loader.php?sid=attack&user2ID=${encodeURIComponent(id)}`; }
@@ -1634,7 +1635,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       launcher.dataset.mmDockId = 'mug-signals';
       launcher.title = APP;
       launcher.innerHTML = '<span aria-hidden="true">MUG</span><span class="mm-badge" hidden>0</span>';
-      launcher.addEventListener('click', () => { panelOpen = !panelOpen; render(); });
+      launcher.addEventListener('click', () => { panelOpen = !panelOpen; render(true); });
     }
     const dock = document.querySelector('#mm-torn-module-dock');
     const host = document.body || document.documentElement;
@@ -1700,11 +1701,11 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       const button = event.target.closest('[data-action]');
       if (!button) return;
       const action = button.dataset.action;
-      if (action === 'close') { panelOpen = false; render(); }
-      if (action === 'pause') { paused = !paused; render(); }
-      if (action === 'capture' && licensed()) { captureItemMarketVisible(); capturePointsMarketVisible(); captureBazaarOwner(); setAllDue(); render(); }
-      if (action === 'poll') { setAllDue(); discovery.nextAuctionAt=0; discovery.nextBazaarAt=0; discovery.nextCandidateAt=0; saveDiscovery(); await schedulerTick(); }
-      if (action === 'clear-candidates') { candidates = []; saveCandidates(); render(); }
+      if (action === 'close') { panelOpen = false; render(true); }
+      if (action === 'pause') { paused = !paused; render(true); }
+      if (action === 'capture' && licensed()) { captureItemMarketVisible(); capturePointsMarketVisible(); captureBazaarOwner(); setAllDue(); render(true); }
+      if (action === 'poll') { setAllDue(); discovery.nextAuctionAt=0; discovery.nextBazaarAt=0; discovery.nextCandidateAt=0; saveDiscovery(); await schedulerTick(); render(true); }
+      if (action === 'clear-candidates') { candidates = []; saveCandidates(); render(true); }
       if (action === 'clear-inactive') clearInactive();
       if (action === 'remove-watch') removeWatch(button.dataset.id);
       if (action === 'profile') openTornUrl(profileUrl(button.dataset.id));
@@ -1716,7 +1717,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         settings.displayReadyOnly = Boolean(document.getElementById('mmms-filter-ready')?.checked);
         saveSettings();
         clearPanelDraft(FILTER_FIELD_IDS);
-        render();
+        render(true);
       }
       if (action === 'test-key') await testApiKey();
       if (action === 'add-bazaar') addBazaarFromInput();
@@ -1757,7 +1758,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     return `<div class="mmms-watch"><div><div>${esc(title)}</div><div class="mmms-muted">${esc(detail)}</div></div><button class="mmms-btn danger" data-action="remove-watch" data-id="${esc(w.id)}">×</button></div>`;
   }
 
-  function render() {
+  function render(forcePanel = false) {
     if (!document.body) return;
     ensureStyle(); attachLauncher(); ensurePanel(); trimState();
     const badge = launcher.querySelector('.mm-badge');
@@ -1767,7 +1768,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     launcher.classList.toggle('hot', ready > 0);
     panel.hidden = !panelOpen;
     if (!panelOpen) return;
-    if (activePanelTextEditor()) {
+    if (!forcePanel && panel.dataset.mmRendered === '1') {
       updatePanelDraftIndicators();
       return;
     }
@@ -1824,6 +1825,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       <div class="mmms-section"><h3>Recent rejects/errors</h3><div class="mmms-muted">Rejected signals: ${rejections.length}. Errors: ${errors.length}. The most common expected rejection is seller activity at/after the market-change timestamp.</div></div>`;
     restorePanelDraft();
     updatePanelDraftIndicators();
+    panel.dataset.mmRendered = '1';
   }
 
   function savePanelSettings() {
@@ -1859,7 +1861,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     clearPanelDraft(SETTINGS_FIELD_IDS);
     setAllDue();
     discovery.nextAuctionAt = 0; discovery.nextBazaarAt = 0; discovery.nextCandidateAt = 0; saveDiscovery();
-    render();
+    render(true);
   }
 
   async function testApiKey() {
@@ -1882,7 +1884,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       if (!licenseOk) throw new Error(`This build is licensed exclusively to ${LICENSED_USER_NAME} [${LICENSED_USER_ID}].`);
       await refreshOwnerBattleStats(true);
       await refreshOwnerMugProfile(true);
-      render();
+      render(true);
       alert(`${APP}: API key test passed (${owner}). Exclusive license verified for ${LICENSED_USER_NAME} [${LICENSED_USER_ID}]. Combat: ${ownerBattleStatsStatus}. Mug model: ML ${ownerMugProfile.masterfulLevel}/10, Plunder ${ownerMugProfile.effectivePlunderPercent}%, awards ${ownerMugProfile.awards?.total || 0}.`);
     } catch (error) {
       logError('key-test', error);
@@ -1897,7 +1899,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     upsertWatch({source:'bazaar', sellerId, sellerName:`Player ${sellerId}`, snapshot:null});
     if (input) input.value = '';
     clearPanelDraft(['mmms-bazaar-id']);
-    render();
+    render(true);
   }
 
   function exportDiagnostics() {
