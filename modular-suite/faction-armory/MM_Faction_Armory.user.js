@@ -376,9 +376,9 @@
       ageDays:num(profile?.age),
       signedUp:Number(profile?.signed_up||0)||0,
       awards:num(profile?.awards),
-      activitySeconds:num(popular?.other?.activity?.time),
-      crimesTotal:num(popular?.crimes?.total),
-      networth:num(popular?.networth?.total),
+      activitySeconds:popular?.other?.activity?.time==null?null:num(popular.other.activity.time),
+      crimesTotal:popular?.crimes?.total==null?null:num(popular.crimes.total),
+      networth:popular?.networth?.total==null?null:num(popular.networth.total),
       daysInFaction:num(member?.daysInFaction),
       position:String(member?.position||''),
       fetchedAt:new Date().toISOString(),
@@ -936,6 +936,8 @@
     const map=reminderSentMap();
     map[id]={memberId:id,memberName:String(memberName||id),sentAt:new Date().toISOString()};
     GM_setValue(REMINDER_SENT_KEY,map);
+    const root=document.getElementById(ROOT_ID);
+    if(root&&root.style.display!=='none')render();
   }
 
   function readinessReminderMessage(row){
@@ -1167,7 +1169,7 @@
     const vaultUnlocked=Boolean(vaultSession?.key);
     return '<div class="mm-fa-card mm-fa-compact">'+
       '<div class="mm-fa-module-head">'+
-        '<div><b>Member readiness</b> <span class="mm-fa-muted">'+rows.length+' roster members · '+missing+' missing/stale · '+savedCount+' saved member API key'+(savedCount===1?'':'s')+'</span></div>'+
+        '<div><b>Member readiness</b> <span class="mm-fa-muted">'+rows.length+' roster members · '+missing+' missing/stale/estimated · '+savedCount+' saved member API key'+(savedCount===1?'':'s')+'</span></div>'+
         '<div class="mm-fa-actions">'+
           (vault&&savedCount&&!vaultUnlocked?'<button id="mm-fa-unlock-vault" style="'+button(true)+'">Unlock Vault</button>':'')+
           '<button id="mm-fa-refresh-keys" style="'+button()+'">Refresh Keys</button><button id="mm-fa-copy-request" style="'+button()+'">Copy Request</button>'+
