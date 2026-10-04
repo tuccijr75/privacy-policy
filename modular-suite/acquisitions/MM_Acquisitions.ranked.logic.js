@@ -143,7 +143,9 @@
     const newest=times[0]?times[0]*1000:0;
     const recency=newest?Math.max(0,Math.min(1,1-(now-newest)/(90*DAY))):0;
     const sample=Math.min(1,filtered.length/12);
-    const confidence=Math.round(100*Math.max(0,Math.min(1,cohort.specificity*.55+sample*.30+recency*.15)));
+    const confidence=filtered.length
+      ?Math.round(100*Math.max(0,Math.min(1,cohort.specificity*.55+sample*.30+recency*.15)))
+      :0;
     const recent=cohort.rows.filter(row=>row.timestamp>0&&now-row.timestamp*1000<=30*DAY).map(row=>row.price);
     const older=cohort.rows.filter(row=>row.timestamp>0&&now-row.timestamp*1000>30*DAY&&now-row.timestamp*1000<=90*DAY).map(row=>row.price);
     const recentMedian=quantile(robustPrices(recent),.5);
