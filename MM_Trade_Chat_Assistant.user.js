@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.2.0-alpha.5
+// @version      0.2.0-alpha.6
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -97,6 +97,16 @@
       index: Number.isInteger(src.index) ? Math.max(0, src.index % ROTATION_MESSAGES.length) : 0,
       nextAt: Number.isFinite(src.nextAt) ? src.nextAt : 0,
       lastSentAt: Number.isFinite(src.lastSentAt) ? src.lastSentAt : 0,
+      timerStartedAt: Number.isFinite(src.timerStartedAt)
+        ? src.timerStartedAt
+        : (
+          Number.isFinite(src.lastSentAt) &&
+          Number.isFinite(src.nextAt) &&
+          src.lastSentAt > 0 &&
+          src.lastSentAt < src.nextAt
+            ? src.lastSentAt
+            : 0
+        ),
       completedCount: Number.isFinite(src.completedCount) ? src.completedCount : 0,
       lastCompletedAt: Number.isFinite(src.lastCompletedAt) ? src.lastCompletedAt : 0,
     };
@@ -109,6 +119,7 @@
       index: state.index,
       nextAt: state.nextAt,
       lastSentAt: state.lastSentAt,
+      timerStartedAt: state.timerStartedAt,
       completedCount: state.completedCount,
       lastCompletedAt: state.lastCompletedAt,
     });
@@ -133,7 +144,9 @@
   }
 
   function scheduleNext(base) {
-    state.nextAt = (base || Date.now()) + randomDelayMs();
+    const startedAt = base || Date.now();
+    state.timerStartedAt = startedAt;
+    state.nextAt = startedAt + randomDelayMs();
     saveState();
   }
 
@@ -559,6 +572,20 @@
     setTimeout(() => checkForumBumpStatus(true), 3500);
   }
 
+  function timerRemainingRatio() {
+    if (!state.enabled || isPostingDue()) return 0;
+
+    const startedAt = Number(state.timerStartedAt) || Number(state.lastSentAt) || 0;
+    const duration = state.nextAt - startedAt;
+    if (!Number.isFinite(duration) || duration <= 0) return 0;
+
+    return Math.max(0, Math.min(1, (state.nextAt - Date.now()) / duration));
+  }
+
+  function timerStatusHue() {
+    return Math.round(120 * timerRemainingRatio());
+  }
+
   function formatCountdown() {
     if (!state.enabled) return 'PAUSE';
     if (isPostingDue()) return '0:00';
@@ -647,11 +674,14 @@
     const style = document.createElement('style');
     style.id = APP_ID + '-style';
     style.textContent = [
-      '[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-face{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden}',
-      '[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-bell{position:absolute;width:27px!important;height:27px!important;opacity:.24;filter:drop-shadow(0 1px 1px #000);pointer-events:none}',
-      '[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-timer{position:relative;z-index:1;color:#f1f3f4;font:700 9.5px/1 Arial,sans-serif;letter-spacing:-.25px;text-shadow:0 1px 2px #000,0 0 3px #000;pointer-events:none}',
-      '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-due="1"] .mmta-launch-timer{color:#ffd66d}',
-      '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-due="1"] .mmta-launch-bell{opacity:.42}',
+      '[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-face{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;border-radius:inherit;background:linear-gradient(145deg,hsl(var(--mmta-timer-hue,120) 78% 24%),hsl(var(--mmta-timer-hue,120) 84% 47%));box-shadow:inset 0 1px 1px rgba(255,255,255,.16);transition:background .8s linear,box-shadow .8s linear}',
+      '[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-bell{position:absolute;width:27px!important;height:27px!important;color:hsl(var(--mmta-timer-hue,120) 88% 72%);opacity:.34;filter:drop-shadow(0 1px 1px #000);pointer-events:none;transition:color .8s linear,opacity .8s linear}',
+      '[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-timer{position:relative;z-index:1;color:#fff;font:700 9.5px/1 Arial,sans-serif;letter-spacing:-.25px;text-shadow:0 1px 2px #000,0 0 3px #000;pointer-events:none}',
+      '@keyframes mmtaDueTimerPulse{0%,100%{transform:scale(1);filter:brightness(1)}50%{transform:scale(1.055);filter:brightness(1.22)}}',
+      '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-due="1"] .mmta-launch-face{animation:mmtaDueTimerPulse 2.8s ease-in-out infinite}',
+      '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-due="1"] .mmta-launch-bell{opacity:.58}',
+      '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-enabled="0"] .mmta-launch-face{background:linear-gradient(145deg,#303030,#555);animation:none}',
+      '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-enabled="0"] .mmta-launch-bell{color:#bbb;opacity:.28}',
       '@keyframes mmtaForumPulse{0%,100%{box-shadow:0 0 5px rgba(225,58,58,.4)}50%{box-shadow:0 0 14px rgba(255,65,65,.95)}}',
       '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-forum-bump="1"]{outline:1px solid #d83d3d;animation:mmtaForumPulse 1.2s ease-in-out infinite}',
       '#' + APP_ID + '{display:none;position:fixed;z-index:2147483646;width:min(390px,calc(100vw - 24px));max-height:calc(100vh - 88px);overflow:hidden;color:#eee;background:#111;border:1px solid #8b6a2f;border-radius:8px;box-shadow:0 12px 35px #000b;font:12px/1.35 Arial,sans-serif}',
@@ -692,6 +722,9 @@
     if (!button) return;
     const timer = button.querySelector('[data-mm-trade-timer]');
     if (timer) timer.textContent = formatCountdown();
+
+    button.style.setProperty('--mmta-timer-hue', String(timerStatusHue()));
+    button.dataset.mmEnabled = state.enabled ? '1' : '0';
     button.dataset.mmDue = state.enabled && isPostingDue() ? '1' : '0';
     button.dataset.mmForumBump = forumStatus.needsBump ? '1' : '0';
   }
