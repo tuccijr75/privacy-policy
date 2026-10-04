@@ -1406,3 +1406,66 @@ Static/V8 verification:
 6. verify CRM state changes only after Torn confirms a real manual Send.
 
 Outbox/recovery behavior remains out of scope.
+
+
+## MM_Customers alpha.19 — current Torn TinyMCE compose contract
+
+Alpha.18 live acceptance still failed: Torn could take an abnormally long time to show the mail composer and MM_Customers ultimately left only the XID-resolved username.
+
+### Complete interference audit
+
+The modular suite was searched for Torn Messages / Compose manipulation and long-lived DOM activity.
+
+- MM_Acquisitions, MM_Faction_Armory, MM_Inventory Manager/ROI Tracker, and MM_Market_Scout do not manipulate Torn mail Compose.
+- MM_Bazaar_Manager only opens an XID compose route after its own explicit copy-message action; it does not fill or observe the mail editor.
+- The visible MM Trade Reminder remained active during a same-browser manual XID-only Compose control that loaded the complete Torn mail form, so its presence alone does not reproduce the failure.
+- The retired/legacy Bazaar Customer CRM source does contain old Compose observers, source-mode logic, route wrapping, and polling. Its current lazy-start contract only activates workflow initialization for its own pending workflow state, and Core would expose an active legacy CRM launcher in the shared dock. No Legacy CRM launcher was present during the live control.
+- A same-browser manual XID-only Compose control, with the other running MM scripts still present, exposed Name, Subject, SEND, and the editor toolbar. The failure is therefore isolated to MM_Customers' compose handling rather than the other currently running scripts.
+
+No other script was modified.
+
+### Current Torn research
+
+Recent Torn userscript source confirms the mail message body is TinyMCE. A current script whose live DOM was checked documents `#mce_0` / `.mce-content-body` as the editable surface and explicitly notes that TinyMCE's hidden `textarea.sourceArea` is not the submitted message body. It writes the visible contenteditable and dispatches `input` so TinyMCE synchronizes its internal state.
+
+Other 2026 Torn scripts independently use the same model: locate Torn's subject input, locate the TinyMCE contenteditable, write its content, and dispatch input/change events. Newsletter tooling uses TinyMCE `setContent` when page-context access is available and direct editor `innerHTML` plus `input` as the userscript fallback.
+
+### Root cause
+
+Alpha.14–18 were built around the wrong editor abstraction. Even after the retry/load cleanup, alpha.18 still treated Torn's mail editor as a source/code-editor workflow:
+
+- find Toggle Code Editor,
+- switch to or detect a source textarea,
+- write HTML into that source surface,
+- switch back,
+- verify the rendered result.
+
+On current Torn, the hidden source textarea is a TinyMCE mirror and is not the authoritative submitted field. Toggling/scanning source mode added initialization work and could silently write to a surface Torn would not submit.
+
+### Alpha.19 source replacement
+
+The source-mode adapter was deleted and replaced, not layered over:
+
+- XID-only navigation remains.
+- Recipient is read from Torn's native `input[name="sendto"]` / `#ac-search-0` controls.
+- Subject uses Torn's current message-title/subject input selectors.
+- Body targets only TinyMCE mail-editor selectors, including `#mce_0` and `.mce-content-body[contenteditable="true"]`.
+- There is no generic contenteditable fallback, preventing Torn chat editors from being selected.
+- Branded HTML is written directly to the TinyMCE contenteditable, followed by input/change/keyup events.
+- Plain text is built as text nodes plus `<br>` elements, then an input event is dispatched.
+- The compose operation waits for recipient + subject + TinyMCE editor + Send to exist together and remain stable before it writes.
+- If Torn replaces the editor during final initialization, the same source operation is retried up to three bounded attempts and then fails closed.
+- The old Toggle Code Editor, source textarea, SCEditor, CodeMirror, Monaco, source-mode polling, and generic editor discovery code is absent.
+
+Versions:
+- MM_Customers: `8.0.0-alpha.19`
+- suite: `8.0.0-alpha.36`
+
+Live acceptance remains the original MM_Customers action only:
+1. Prepare Welcome/Message.
+2. Confirm the Torn mail page reaches its normal Compose UI without an MM_Customers-induced loading stall.
+3. Confirm Name, Subject, and full branded body are present.
+4. Repeat Coupon Reminder, Cashback Reminder, and Restock Alert.
+5. Confirm customer state changes only after Torn confirms a real manual Send.
+
+Outbox/recovery behavior remains out of scope.
