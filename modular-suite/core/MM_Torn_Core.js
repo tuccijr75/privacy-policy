@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.8';
+  const CORE_VERSION = '8.0.0-alpha.9';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -263,9 +263,18 @@
   const DOCK_ID='mm-torn-module-dock';
   const DOCK_STYLE_ID='mm-torn-module-dock-style';
   const DOCK_ORDER_KEY='mm_torn_module_dock_order_v1';
+  const DOCK_ORDER_CUSTOM_KEY='mm_torn_module_dock_order_custom_v1';
   const DOCK_FLOAT_KEY='mm_torn_module_float_positions_v1';
-  const DOCK_DEFAULT_LAYOUT_KEY='mm_torn_module_default_layout_rev_v1';
-  const DOCK_DEFAULT_LAYOUT_REV='footer-adjacent-v2';
+  // v2 key prevents older cached core copies from undoing the alpha.9 migration.
+  const DOCK_DEFAULT_LAYOUT_KEY='mm_torn_module_default_layout_rev_v2';
+  const DOCK_DEFAULT_LAYOUT_REV='footer-adjacent-v3-ordered';
+  // Flex order is left -> right. The requested operational order is therefore
+  // Trade, Armory, Customers, Acquisitions, Inventory when read right -> left.
+  // Other MM launchers remain to the left and never displace that five-icon cluster.
+  const DOCK_DEFAULT_ORDER=Object.freeze([
+    'crm','scout','bazaar','intelligence',
+    'inventory-roi','acquisitions','customers','armory','trade-reminder'
+  ]);
   const PANEL_POSITION_PREFIX='mm_torn_panel_position_v1:';
   const LAUNCHER_EDGE_MARGIN=4;
   const LAUNCHER_SNAP_GAP=4;
@@ -282,17 +291,25 @@
     return Math.min(Math.max(Number(value)||0,min),Math.max(min,max));
   }
 
-  function dockReadOrder(){
-    try{
-      const raw=JSON.parse(localStorage.getItem(DOCK_ORDER_KEY)||'[]');
-      return Array.isArray(raw)?raw.map(String):[];
-    }catch{return [];}
+  function dockHasCustomOrder(){
+    try{return localStorage.getItem(DOCK_ORDER_CUSTOM_KEY)==='1';}
+    catch{return false;}
   }
 
-  function dockWriteOrder(dock){
+  function dockReadOrder(){
+    if(!dockHasCustomOrder())return DOCK_DEFAULT_ORDER.slice();
+    try{
+      const raw=JSON.parse(localStorage.getItem(DOCK_ORDER_KEY)||'[]');
+      return Array.isArray(raw)&&raw.length?raw.map(String):DOCK_DEFAULT_ORDER.slice();
+    }catch{return DOCK_DEFAULT_ORDER.slice();}
+  }
+
+  function dockWriteOrder(dock,{custom=true}={}){
+    if(!custom)return;
     try{
       const ids=[...dock.querySelectorAll('[data-mm-dock-id]')].map(el=>String(el.dataset.mmDockId||'')).filter(Boolean);
       localStorage.setItem(DOCK_ORDER_KEY,JSON.stringify(ids));
+      localStorage.setItem(DOCK_ORDER_CUSTOM_KEY,'1');
     }catch{}
   }
 
@@ -324,9 +341,12 @@
   function applyDefaultDockLayoutOnce(){
     try{
       if(localStorage.getItem(DOCK_DEFAULT_LAYOUT_KEY)===DOCK_DEFAULT_LAYOUT_REV)return;
-      // One-time migration for this layout revision: start every MM launcher
-      // docked beside Torn's footer. Any later user undock/move is persisted.
+      // One-time migration for this layout revision: put every MM launcher back
+      // in the shared Torn-adjacent dock and apply the requested default order.
+      // After this migration, any user undock/reorder/move is persisted.
       localStorage.removeItem(DOCK_FLOAT_KEY);
+      localStorage.removeItem(DOCK_ORDER_KEY);
+      localStorage.removeItem(DOCK_ORDER_CUSTOM_KEY);
       localStorage.setItem(DOCK_DEFAULT_LAYOUT_KEY,DOCK_DEFAULT_LAYOUT_REV);
     }catch{}
   }
@@ -582,13 +602,30 @@
       dock.style.top='auto';
       dock.style.bottom='6px';
     }
+
+    // Keep exact live geometry inspectable from the normal browser console.
+    requestAnimationFrame(()=>{
+      const r=dock.getBoundingClientRect();
+      dock.dataset.mmDockLeft=String(Math.round(r.left));
+      dock.dataset.mmDockTop=String(Math.round(r.top));
+      dock.dataset.mmDockRight=String(Math.round(r.right));
+      dock.dataset.mmDockBottom=String(Math.round(r.bottom));
+      if(native?.firstRect){
+        dock.dataset.mmNativeFirstLeft=String(Math.round(native.firstRect.left));
+        dock.dataset.mmNativeRowBottom=String(Math.round(native.rowBottom??native.firstRect.bottom));
+      }else{
+        delete dock.dataset.mmNativeFirstLeft;
+        delete dock.dataset.mmNativeRowBottom;
+      }
+    });
   }
 
   function applyDockOrder(dock){
     const order=dockReadOrder();
     const rank=new Map(order.map((id,index)=>[id,index]));
     const buttons=[...dock.querySelectorAll('[data-mm-dock-id]')];
-    buttons.sort((a,b)=>(rank.get(a.dataset.mmDockId)??999)-(rank.get(b.dataset.mmDockId)??999));
+    const fallback=dockHasCustomOrder()?999:-1;
+    buttons.sort((a,b)=>(rank.get(a.dataset.mmDockId)??fallback)-(rank.get(b.dataset.mmDockId)??fallback));
     for(const b of buttons)dock.appendChild(b);
   }
 
@@ -623,8 +660,8 @@
     dock.appendChild(button);
     setLauncherTitle(button,button.__mmLabel||key,false);
     if(persist)saveLauncherFloat(key,null);
-    dockWriteOrder(dock);
     applyDockOrder(dock);
+    if(persist)dockWriteOrder(dock,{custom:true});
     requestAnimationFrame(positionDock);
   }
 
@@ -632,7 +669,7 @@
     if(!button||typeof document==='undefined'||!document.body)return;
     const dock=document.getElementById(DOCK_ID);
     const rect=button.getBoundingClientRect();
-    if(dock&&button.parentElement===dock)dockWriteOrder(dock);
+    if(dock&&button.parentElement===dock)dockWriteOrder(dock,{custom:true});
     document.body.appendChild(button);
     button.classList.remove('mm-torn-dock-btn');
     button.classList.add('mm-torn-floating-btn');
@@ -733,7 +770,7 @@
         if(source.dataset.mmFloating==='1')dockLauncher(source,sourceId);
         if(target&&target!==source&&target.parentElement===dock)dock.insertBefore(source,target);
         else if(source.parentElement===dock)dock.appendChild(source);
-        dockWriteOrder(dock);
+        dockWriteOrder(dock,{custom:true});
         positionDock();
       });
       window.addEventListener('resize',()=>{
@@ -747,6 +784,20 @@
         });
       },{passive:true});
     }
+
+    // This bridge is installed even when an older cached core created the shared
+    // dock first. That keeps Trade Rotation reorder/drag actions persistent too.
+    dock.dataset.mmDockAnchor='left-of-torn-native-bottom-toolbar';
+    dock.dataset.mmDefaultRightToLeft='trade-reminder,armory,customers,acquisitions,inventory-roi';
+    if(dock.dataset.mmAlpha9PersistenceBridge!=='1'){
+      dock.dataset.mmAlpha9PersistenceBridge='1';
+      const persistUserOrder=()=>setTimeout(()=>{
+        if(document.body.contains(dock))dockWriteOrder(dock,{custom:true});
+      },0);
+      dock.addEventListener('drop',persistUserOrder);
+      dock.addEventListener('dragend',persistUserOrder,true);
+    }
+
     requestAnimationFrame(positionDock);
     return dock;
   }
@@ -799,7 +850,7 @@
             return;
           }
         }
-        dockWriteOrder(dockNow||dock);
+        dockWriteOrder(dockNow||dock,{custom:true});
         positionDock();
       });
       button.addEventListener('contextmenu',event=>{
@@ -821,7 +872,6 @@
       dockLauncher(button,key,{persist:false});
     }
     applyDockOrder(dock);
-    dockWriteOrder(dock);
     requestAnimationFrame(positionDock);
     return button;
   }

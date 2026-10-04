@@ -840,41 +840,43 @@
       return pick;
     }
 
-    for(const member of selected){
-      if(member?.readinessStatus==='WAR READY')continue;
-      if(!member?.hasStats){
-        for(const slot of STANDARD_SLOTS)unresolved.push({memberId:member.memberId,memberName:member.memberName,slot,current:'',reason:'Current battle stats are missing; acquisition deferred.'});
-        continue;
-      }
-      const inventoryKnown=Array.isArray(member?.profile?.ownedEquipment?.items);
-      const build=member.buildAssessment||compareMemberBuild(member,factionInventory,rows,{procurementMode});
-      for(const item of build.items){
-        if(item.ready||item.route==='LOANED'||item.route==='OWNED')continue;
-        if(!item.currentName&&!inventoryKnown&&!member.statsEstimated){
-          unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:'',reason:'Member inventory has not been refreshed; purchase deferred.'});
-          continue;
-        }
-        if(item.route==='REVIEW'){
-          unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:item.currentName||'',reason:'Current item exists but performance is not known.'});
-          continue;
-        }
-        const target=item.targetItem;
-        if(!target){
-          unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:item.currentName||'',reason:'No baseline target could be resolved.'});
-          continue;
-        }
-        const factionPick=allocateFaction(item.slot,target,build.offensiveNeed);
-        if(factionPick){
-          assignments.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,route:'ISSUE',item:factionPick.name});
-        }else{
-          addRequirement(target,1,member.memberName+' '+item.slot+(member.statsEstimated?' (estimated balanced build)':''),'equipment');
-          assignments.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,route:'ACQUIRE',item:target.name,estimated:Boolean(member.statsEstimated)});
-        }
-      }
-    }
-
-    // War inventory includes two ready-to-issue spares per standard slot after member coverage.
     if(mode==='war'){
+      // War acquisition is member-readiness equipment only. Routine minimum-stock
+      // replenishment is intentionally deferred until Peace mode.
+      for(const member of selected){
+        if(member?.readinessStatus==='WAR READY')continue;
+        if(!member?.hasStats){
+          for(const slot of STANDARD_SLOTS)unresolved.push({memberId:member.memberId,memberName:member.memberName,slot,current:'',reason:'Current battle stats are missing; acquisition deferred.'});
+          continue;
+        }
+        const inventoryKnown=Array.isArray(member?.profile?.ownedEquipment?.items);
+        const build=member.buildAssessment||compareMemberBuild(member,factionInventory,rows,{procurementMode});
+        for(const item of build.items){
+          if(item.ready||item.route==='LOANED'||item.route==='OWNED')continue;
+          if(!item.currentName&&!inventoryKnown&&!member.statsEstimated){
+            unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:'',reason:'Member inventory has not been refreshed; purchase deferred.'});
+            continue;
+          }
+          if(item.route==='REVIEW'){
+            unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:item.currentName||'',reason:'Current item exists but performance is not known.'});
+            continue;
+          }
+          const target=item.targetItem;
+          if(!target){
+            unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:item.currentName||'',reason:'No baseline target could be resolved.'});
+            continue;
+          }
+          const factionPick=allocateFaction(item.slot,target,build.offensiveNeed);
+          if(factionPick){
+            assignments.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,route:'ISSUE',item:factionPick.name});
+          }else{
+            addRequirement(target,1,member.memberName+' '+item.slot+(member.statsEstimated?' (estimated balanced build)':''),'equipment');
+            assignments.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,route:'ACQUIRE',item:target.name,estimated:Boolean(member.statsEstimated)});
+          }
+        }
+      }
+
+      // Preserve two ready-to-issue equipment spares per standard slot during War.
       const neutral=battleProfile({strength:1,defense:1,speed:1,dexterity:1});
       for(const slot of STANDARD_SLOTS){
         const target=generalTargetForSlot(slot,neutral,procurementMode);
@@ -883,17 +885,25 @@
           if(!factionPick)addRequirement(target,1,'War spare '+slot,'equipment');
         }
       }
-    }
-
-    // Stackable acquisition comes from the selected Peace/War minimum policy.
-    const minimums=minimumProposal(factionInventory,{mode,participants,procurementMode});
-    for(const row of minimums.proposals){
-      if(row.kind==='equipment'||row.dataRequired||n(row.shortfall)<=0)continue;
-      addRequirement({
-        name:row.item,
-        source:'General Torn supply / faction procurement',
-        marketValue:0
-      },n(row.shortfall),'Inventory minimum','provisions');
+    }else{
+      // Peace acquisition is minimum-stock replenishment only. Individual member
+      // build gaps are deliberately ignored until War mode is selected.
+      const minimums=minimumProposal(factionInventory,{mode:'peace',participants,procurementMode});
+      const neutral=battleProfile({strength:1,defense:1,speed:1,dexterity:1});
+      for(const row of minimums.proposals){
+        if(row.dataRequired||n(row.shortfall)<=0)continue;
+        if(row.kind==='equipment'){
+          const target=generalTargetForSlot(String(row.slot||''),neutral,procurementMode);
+          if(target)addRequirement(target,n(row.shortfall),'Peace minimum '+String(row.slot||'equipment')+' pool','equipment');
+          else unresolved.push({memberId:'',memberName:'',slot:String(row.slot||''),current:'',reason:'Peace equipment minimum has no resolvable baseline target.'});
+          continue;
+        }
+        addRequirement({
+          name:row.item,
+          source:'General Torn supply / faction procurement',
+          marketValue:0
+        },n(row.shortfall),'Peace inventory minimum','provisions');
+      }
     }
 
     const priorityFor=row=>{

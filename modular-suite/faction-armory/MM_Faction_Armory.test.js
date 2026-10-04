@@ -206,8 +206,20 @@ const acquisition=logic.acquisitionPlan({
   memberReadiness:{...factionInventory.memberReadiness,roster:twentyRoster}
 },{mode:'war',participants:3});
 assert.strictEqual(acquisition.participants,20,'acquisition participant count must equal the live roster size');
-assert(acquisition.list.some(row=>row.category==='equipment'),'acquisition plan must contain named equipment requirements');
-assert(acquisition.list.some(row=>row.category==='provisions'),'acquisition plan must contain provision requirements');
+assert(acquisition.list.some(row=>row.category==='equipment'),'War acquisition must contain named equipment requirements');
+assert(!acquisition.list.some(row=>row.category==='provisions'),'War acquisition must defer routine minimum-stock provisions until Peace mode');
+
+const peaceAcquisition=logic.acquisitionPlan({
+  ...factionInventory,
+  memberReadiness:{...factionInventory.memberReadiness,roster:twentyRoster}
+},{mode:'peace',participants:3,procurementMode:'budget'});
+assert.strictEqual(peaceAcquisition.participants,20,'Peace acquisition still derives its minimums from the current roster');
+assert.strictEqual(peaceAcquisition.assignments.length,0,'Peace mode must not create member equipment assignments');
+assert.strictEqual(peaceAcquisition.unresolvedCount,0,'Peace mode must not create unresolved member build slots');
+assert(peaceAcquisition.list.length>0,'Peace mode must expose minimum-stock replenishment');
+assert(peaceAcquisition.list.some(row=>row.category==='equipment'),'Peace minimums must include routine equipment-pool replenishment when short');
+assert(peaceAcquisition.list.some(row=>row.category==='provisions'),'Peace minimums must include stackable/provision replenishment when short');
+assert(peaceAcquisition.list.every(row=>String(row.reasons||'').includes('Peace')),'Peace acquisition reasons must be minimum-stock scoped rather than member-build scoped');
 
 const ownedFactionInventory={
   current:{},
@@ -329,7 +341,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.21';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.22';"));
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -338,7 +350,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.21';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.22';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -346,7 +358,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.21';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.22';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -445,8 +457,8 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.21';"));
-assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.3'));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.22';"));
+assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.4'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
 assert(userSourceValue.includes('Find Best Source'));
@@ -472,14 +484,13 @@ assert(userSourceValue.includes('armorySentConfirmationTexts'),'send confirmatio
 assert(!userSourceValue.includes('const leftCompose='),'leaving Compose alone must not count as successful delivery');
 assert(userSourceValue.includes('fingerprintBaselineCount'),'send detector must compare post-send transcript against a pre-send baseline');
 assert(userSourceValue.includes('Message Faction Leader'),'Acquire must expose leader-message output');
-assert(userSourceValue.includes("stockMode==='war'?'FACTION ARMORY WAR ACQUISITION REPORT':'FACTION ARMORY PEACE / POST-WAR ACQUISITION REPORT'"),'leader report title must follow War/Peace mode');
-assert(userSourceValue.includes("const reportList=isWar"),'leader report must build a mode-specific acquisition list');
-assert(userSourceValue.includes("plan.list.filter(row=>row.category==='equipment')"),'War leader report must exclude minimum-stock provisions');
-assert(userSourceValue.includes("const minNeeds=isWar?[]"),'War leader report must suppress minimum-stock section');
-assert(userSourceValue.includes('Minimum-stock replenishment is deferred until Peace mode.'),'War report must explicitly defer minimums');
-assert(userSourceValue.includes("if(!isWar){"),'minimum-stock section must be Peace-only');
-assert(userSourceValue.includes("'WAR ACQUISITION LIST / PRICE RANGE'"),'War report must label the filtered acquisition list');
-assert(userSourceValue.includes("'ESTIMATED WAR ACQUISITION COST'"),'War total must exclude deferred minimum replenishment');
+assert(userSourceValue.includes("stockMode==='war'?'FACTION ARMORY WAR ACQUISITION REPORT':'FACTION ARMORY PEACE MINIMUMS REPORT'"),'leader report title must follow War/Peace scope');
+assert(userSourceValue.includes("const memberNeeds=isWar"),'member-build needs must be War-only in the leader report');
+assert(userSourceValue.includes("const minNeeds=isWar?[]"),'minimum-stock section must be Peace-only');
+assert(userSourceValue.includes('Routine minimum-stock replenishment is deferred until Peace mode.'),'War report must explicitly defer minimums');
+assert(userSourceValue.includes('Member build/equipment gaps are deferred until War mode.'),'Peace report must explicitly defer member equipment');
+assert(userSourceValue.includes("'WAR ACQUISITION LIST / PRICE RANGE':'PEACE MINIMUM REPLENISHMENT / PRICE RANGE'"),'combined list label must expose mode scope');
+assert(userSourceValue.includes("'ESTIMATED WAR ACQUISITION COST':'ESTIMATED PEACE MINIMUM REPLENISHMENT COST'"),'cost total must expose mode scope');
 assert(userSourceValue.includes("subject:'Faction Armory '+stockMode.toUpperCase()+' acquisition report'"),'leader message subject must expose active mode');
 assert(userSourceValue.includes("leaderBaseLabel+(stockMode==='war'?' · War Needs':' · Peace / Minimums')"),'leader button must expose the active report scope');
 assert((userSourceValue.match(/data-stock-mode="war"/g)||[]).length>=2,'War/Peace selection must be available on Acquire as well as Minimums');
@@ -487,7 +498,7 @@ assert(userSourceValue.includes('function leaderAcquisitionReport'),'leader acqu
 assert(userSourceValue.includes('ESTIMATED TOTAL ACQUISITION COST'),'leader report must contain total low/high acquisition cost');
 assert(userSourceValue.includes('PRICE RANGE'),'Acquire rows must expose low/high price estimates');
 assert(userSourceValue.includes('#mce_0'),'Armory messaging must use the shared current Torn TinyMCE compose contract');
-assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.3'),'alpha20 must load the expanded logic contract');
+assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.4'),'alpha20 must load the expanded logic contract');
 assert(userSourceValue.includes("/torn/items?cat=All&sort=ASC"),'explicit faction refresh must collect broad Torn market-price references');
 assert(userSourceValue.includes('equipmentMarketCatalog'),'current Torn equipment-price references must be cached in faction state');
 assert(userSourceValue.includes('function equipmentStatsText'),'equipment stat display helper must exist');
