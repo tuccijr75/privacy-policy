@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.2.0-alpha.3
+// @version      0.2.0-alpha.4
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -25,7 +25,8 @@
   const TICK_MS = 1000;
   const PLAYER_ID = '4325346';
   const PLAYER_NAME = 'Manic-Mike';
-  const SERVICE_THREAD = '/forums.php#/p=threads&f=67&t=16608018';
+  const CONTACT_LABEL = PLAYER_NAME + ' [' + PLAYER_ID + ']';
+  const SERVICE_THREAD = 'https://www.torn.com/forums.php?p=threads&t=16608018';
   const FORUM_ROUTE_KEY = 'mmTradeChatAssistantForumRouteV1';
   const core = globalThis.MMTornCore;
 
@@ -37,12 +38,14 @@
 
   // Colored emoji are intentional. Torn Chat does not expose arbitrary text/icon colors,
   // so category color is carried by emoji glyphs that render through the client's emoji font.
+  // Use Torn's native URL linkification. Raw absolute URLs are more reliable in Chat
+  // than injected <a> markup and keep every rotation within the 125-character limit.
   const ROTATION_MESSAGES = Object.freeze([
-    '🧰 <b>MM TORN SYSTEMS</b> | Custom <b>50M+</b> • Repair <b>25M+</b> | DM <a href="/profiles.php?XID=4325346">Manic-Mike</a>',
-    '💰 <b>MM TORN SYSTEMS</b> | Bazaar • ROI • Procure | <b>50M+</b> | DM <a href="/profiles.php?XID=4325346">Manic-Mike</a>',
-    '🥊 <b>MM TORN SYSTEMS</b> | Armory • Builds • War | <b>50M+</b> | DM <a href="/profiles.php?XID=4325346">Manic-Mike</a>',
-    '📱 <b>MM TORN SYSTEMS</b> | TornPDA • API • Data | <b>50M+</b> | DM <a href="/profiles.php?XID=4325346">Manic-Mike</a>',
-    '📌 <b>MM TORN SYSTEMS</b> | 50M+ Custom • 25M+ Repair | <a href="/forums.php#/p=threads&f=67&t=16608018">INFO + CONTACT</a>',
+    `🧰 MM TORN SYSTEMS | Custom 50M+ • Repair 25M+ | ${CONTACT_LABEL} | ${SERVICE_THREAD}`,
+    `💰 MM TORN SYSTEMS | Bazaar • ROI • Procure | ${CONTACT_LABEL} | ${SERVICE_THREAD}`,
+    `🥊 MM TORN SYSTEMS | Armory • Builds • War | ${CONTACT_LABEL} | ${SERVICE_THREAD}`,
+    `📱 MM TORN SYSTEMS | TornPDA • API • Data | ${CONTACT_LABEL} | ${SERVICE_THREAD}`,
+    `📌 MM TORN SYSTEMS | 50M+ Custom • 25M+ Repair | ${CONTACT_LABEL} | ${SERVICE_THREAD}`,
   ]);
 
   const OTHER_MM_PANELS = Object.freeze([
