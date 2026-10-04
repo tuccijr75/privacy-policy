@@ -6,7 +6,7 @@ if (!c) throw new Error('MMTornCore unavailable');
 
 const fs = require('fs');
 const coreSource = fs.readFileSync(__dirname + '/core/MM_Torn_Core.js', 'utf8');
-if (!coreSource.includes("CORE_VERSION = '8.0.0-alpha.11'")) throw new Error('core ordered-dock version missing');
+if (!coreSource.includes("CORE_VERSION = '8.0.0-alpha.12'")) throw new Error('core ordered-dock version missing');
 if (!coreSource.includes('const LAUNCHER_SNAP_GAP=4')) throw new Error('fixed launcher gap missing');
 if (!coreSource.includes('function launcherTooClose')) throw new Error('launcher overlap guard missing');
 if (!coreSource.includes('function resolveLauncherPosition')) throw new Error('launcher snap resolver missing');
@@ -22,6 +22,9 @@ if (!coreSource.includes("dock.dataset.mmAlpha10PersistenceBridge='1'")) throw n
 if (!coreSource.includes('function redockCanonicalLaunchersForMigration(dock)')) throw new Error('canonical redock migration helper missing');
 if (!coreSource.includes("dock.dataset.mmDockMode='relative-native-row'")) throw new Error('relative dock diagnostic missing');
 if (!coreSource.includes('clamp(desiredTop,4,window.innerHeight-dock.offsetHeight)')) throw new Error('exact Torn bottom-edge alignment missing');
+if (!coreSource.includes('rightEdgeDistance:Math.abs(window.innerWidth-last.r.right)')) throw new Error('bottom-right Torn row metric missing');
+if (!coreSource.includes('candidate.bottomDistance<=minBottomDistance+8')) throw new Error('bottom-row peer tolerance missing');
+if (!coreSource.includes('a.rightEdgeDistance-b.rightEdgeDistance')) throw new Error('right-edge native row priority missing');
 if (!coreSource.includes('mmDockLeft')) throw new Error('dock geometry diagnostics missing');
 
 

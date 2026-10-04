@@ -14,8 +14,8 @@ const userSource=fs.readFileSync(__dirname+'/MM_Inventory_Manager_ROI_Tracker.us
 assert(!/async\s+function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml must remain synchronous because render concatenates its return value directly into HTML');
 assert(/function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml declaration missing');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.7.4';"));
-assert(userSource.includes('MM_Torn_Core.js?v=8.0.0-alpha.11'));
+assert(userSource.includes("const VERSION='8.0.0-alpha.7.5';"));
+assert(userSource.includes('MM_Torn_Core.js?v=8.0.0-alpha.12'));
 assert(userSource.includes('// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js'));
 assert(userSource.includes('// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js'));
 assert(userSource.includes('async function autoRefreshInventory'));
