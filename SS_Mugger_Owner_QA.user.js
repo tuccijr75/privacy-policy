@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.0-rc.5-qa.1
+// @version      1.1.0-rc.6-qa.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -19,6 +19,10 @@
 
 (() => {
   'use strict';
+
+  const RUNTIME_GUARD = '__SS_MUGGER_RUNTIME_ACTIVE__';
+  if (window[RUNTIME_GUARD]) return;
+  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.6'};
 
   const BOOT_PROBE_ID = 'ss-mugger-boot-probe';
   function showBootProbe(label = 'SSQ', isError = false) {
@@ -623,7 +627,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.0-rc.5-qa.1';
+  const VERSION = '1.1.0-rc.6-qa.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
@@ -1318,9 +1322,6 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       const gate = candidateGate(signal, profile, settings.minGrossValue);
       if (!gate.eligible) {
         rejectSignal(watch, signal, gate);
-      restorePanelDraft();
-      updatePanelDraftIndicators();
-      panel.dataset.mmRendered = '1';
         return;
       }
       const owner = settings.excludeOwnFaction ? await ensureOwnerIdentity() : null;
@@ -1607,6 +1608,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     #mm-mug-signal-launcher.hot{box-shadow:0 0 0 2px #b33,0 0 14px #c33a;animation:mmms-pulse 1.5s ease-in-out infinite}@keyframes mmms-pulse{50%{transform:scale(1.04)}}
     #mm-mug-signal-launcher .mm-badge{position:absolute;right:-5px;top:-6px;min-width:16px;height:16px;padding:0 3px;border-radius:9px;background:#b62828;color:#fff;font:700 10px/16px Arial;text-align:center}
     #mm-mug-signals-panel{position:fixed;right:12px;top:130px;width:min(510px,calc(100vw - 24px));max-height:72vh;overflow:auto;background:#17191c;color:#ddd;border:1px solid #4c5056;border-radius:8px;box-shadow:0 8px 30px #000a;z-index:2147482999;font:12px/1.35 Arial,sans-serif;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+    #mm-mug-signals-panel input,#mm-mug-signals-panel select,#mm-mug-signals-panel textarea{pointer-events:auto!important;touch-action:auto!important;-webkit-user-select:text!important;user-select:text!important}
     #mm-mug-signals-panel[hidden]{display:none!important}.mmms-head{position:sticky;top:0;background:#22262a;border-bottom:1px solid #3c4045;padding:9px 10px;display:flex;gap:8px;align-items:center;z-index:2}.mmms-title{font-weight:700;font-size:14px;flex:1}.mmms-dot{width:8px;height:8px;border-radius:50%;background:#50a450}.mmms-dot.pause{background:#b28b3b}.mmms-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 10px}.mmms-stat{background:#202327;border:1px solid #34383d;border-radius:5px;padding:6px}.mmms-stat b{display:block;font-size:14px;color:#fff}.mmms-actions{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 9px}.mmms-btn{border:1px solid #555;background:#2c3035;color:#eee;border-radius:4px;padding:5px 8px;cursor:pointer;font:12px Arial;touch-action:manipulation;-webkit-tap-highlight-color:transparent}.mmms-btn:hover{background:#393e44}.mmms-btn.danger{border-color:#744}.mmms-section{border-top:1px solid #333;padding:9px 10px}.mmms-section h3{font-size:12px;margin:0 0 7px;color:#f3f3f3}.mmms-card{border:1px solid #3b4046;background:#202327;border-radius:5px;padding:7px;margin:0 0 6px}.mmms-card.high{border-left:3px solid #4da35a}.mmms-card.medium{border-left:3px solid #b68b39}.mmms-card.stale{opacity:.55;border-left-color:#666}.mmms-row{display:flex;gap:8px;align-items:center}.mmms-grow{flex:1;min-width:0}.mmms-name{font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmms-muted{color:#9da3a9;font-size:11px}.mmms-value{font-size:14px;font-weight:700;color:#f5f5f5}.mmms-tag{display:inline-block;border:1px solid #4a4e54;border-radius:10px;padding:1px 6px;margin-right:4px;color:#bbb;font-size:10px}.mmms-empty{color:#8f969d;padding:6px 0}.mmms-settings{display:grid;grid-template-columns:145px 1fr;gap:7px;align-items:center}.mmms-input{width:100%;box-sizing:border-box;background:#101214;color:#eee;border:1px solid #4a4e54;border-radius:4px;padding:5px}.mmms-small{font-size:10px;color:#8f969d}.mmms-watch{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;border-bottom:1px solid #2d3034;padding:5px 0}.mmms-watch:last-child{border-bottom:0}
     @media (max-width:640px),(pointer:coarse){
       #mm-mug-signal-launcher{width:44px;height:44px;font-size:12px}
@@ -1758,7 +1760,9 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     return `<div class="mmms-watch"><div><div>${esc(title)}</div><div class="mmms-muted">${esc(detail)}</div></div><button class="mmms-btn danger" data-action="remove-watch" data-id="${esc(w.id)}">×</button></div>`;
   }
 
+  // UI invariant: background acquisition must never replace the open panel DOM.
   function render(forcePanel = false) {
+    if (panelOpen && !forcePanel && panel?.dataset.mmRendered === '1') return;
     if (!document.body) return;
     ensureStyle(); attachLauncher(); ensurePanel(); trimState();
     const badge = launcher.querySelector('.mm-badge');
@@ -1768,15 +1772,12 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     launcher.classList.toggle('hot', ready > 0);
     panel.hidden = !panelOpen;
     if (!panelOpen) return;
-    if (!forcePanel && panel.dataset.mmRendered === '1') {
-      updatePanelDraftIndicators();
-      return;
-    }
     if (!licensed()) {
       const ownerLabel = licenseState.ownerId ? `${esc(licenseState.ownerName || 'Player')} [${esc(licenseState.ownerId)}]` : 'unverified';
       panel.innerHTML = `<div class="mmms-head"><span class="mmms-dot pause"></span><span class="mmms-title">${APP} <span class="mmms-muted">${VERSION}</span></span><button class="mmms-btn" data-action="close">Close</button></div>
         <div class="mmms-section"><h3>Exclusive license</h3><div class="mmms-muted">Licensed only to ${LICENSED_USER_NAME} [${LICENSED_USER_ID}]. Current API owner: ${ownerLabel}. ${licenseState.status === 'denied' ? 'This installation is disabled.' : 'Enter the licensed user API key and press Test key.'}</div></div>
         <div class="mmms-section"><h3>API</h3><div class="mmms-settings"><label>API key</label><input id="mmms-key" class="mmms-input" type="password" autocomplete="off" value="${PLATFORM.pda && PDA_INJECTED_API_KEY ? '' : esc(apiKey)}" placeholder="${PLATFORM.pda && PDA_INJECTED_API_KEY ? 'TornPDA API key auto-detected' : 'Torn API key'}"></div><div class="mmms-actions" style="padding-top:8px"><button class="mmms-btn" data-action="test-key">Test key</button></div></div>`;
+      panel.dataset.mmRendered = '1';
       return;
     }
     const visibleCandidates = displayCandidates();
@@ -1919,8 +1920,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
   try {
     if (typeof GM_registerMenuCommand === 'function') {
-      GM_registerMenuCommand('SS_Mugger: Open', () => { panelOpen = true; render(); });
-      GM_registerMenuCommand('SS_Mugger: Capture current page', () => { captureActivePage(); render(); });
+      GM_registerMenuCommand('SS_Mugger: Open', () => { panelOpen = true; render(true); });
+      GM_registerMenuCommand('SS_Mugger: Capture current page', () => { captureActivePage(); render(true); });
       GM_registerMenuCommand('SS_Mugger: Export diagnostics', exportDiagnostics);
     }
   } catch {}
@@ -1939,9 +1940,6 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   document.addEventListener('visibilitychange', () => { if (licensed() && document.visibilityState === 'visible') captureActivePage(); });
   window.addEventListener('focus', () => { if (licensed()) captureActivePage(); });
   window.addEventListener('orientationchange', () => setTimeout(render, 120));
-  if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', () => { if (panelOpen) render(); }, {passive:true});
-  }
   window.addEventListener('pagehide', () => { saveWatches(); saveCandidates(); });
 
   render();
