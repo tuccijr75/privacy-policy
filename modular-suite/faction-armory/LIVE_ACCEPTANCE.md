@@ -1,6 +1,10 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.9**
+Status: **NON-PRODUCTION / alpha.19**
+
+## Historical acceptance notes
+
+Earlier alpha sections below retain their original fixture assumptions for traceability. Fixed 20-member / 20-participant language in those historical sections is **superseded by alpha.19**; current War planning derives its population from the live faction roster.
 
 ## Scope implemented
 
@@ -353,3 +357,61 @@ Live acceptance:
 5. Confirm the leadership export reports \`Readiness = WAR READY\`, \`War Ready = YES\`, and \`Baseline Pass = YES\`.
 6. Refresh that member's readiness data; confirm the approval is invalidated and a still-passing member returns to **READY FOR REVIEW**.
 7. Confirm an \`ACTION NEEDED\`, \`SUPPLY ACTION\`, missing-data, or stale-data member cannot be approved War Ready.
+
+## Alpha.19 — dynamic roster planning, public estimates, reminders, and leadership report
+
+Current behavior supersedes every earlier fixed-participant War assumption.
+
+### Source behavior
+
+- War participant count is the current faction roster size; no fixed participant constant remains.
+- minimumProposal(...) and acquisitionPlan(...) ignore any legacy caller participant override and derive member count from current roster state.
+- Missing private battle stats can use a clearly labeled balanced estimate from public Rank/profile/personal-stats evidence.
+- Estimated members remain ESTIMATED — NEEDS DATA and cannot become WAR READY.
+- Faction loans assigned to a member are evaluated before acquisition, including when private member equipment data is missing.
+- Approved WAR READY members are skipped for individual build-equipment acquisition.
+- Members missing verified stats/equipment show **Send Data Reminder** unless a reminder has already been confirmed sent.
+- The reminder is prepared in Torn's visible compose editor; sending remains manual.
+- Reminder-sent state is recorded only after a trusted manual Send and post-send confirmation.
+- Acquire provides a faction-leader message containing member needs, minimum-stock needs, cached low/high price estimates, and low/high total acquisition cost.
+- Faction leader identity is resolved from current Torn faction basic data.
+- No other module is modified by these Faction Armory runtime changes.
+
+### Static/V8 acceptance
+
+- [x] Userscript parses.
+- [x] Logic parses/loads.
+- [x] Regression test source parses.
+- [x] Suite manifest = alpha.39; Faction Armory = alpha.19.
+- [x] No fixed War-participant constant remains.
+- [x] Seven-member fixture produces seven War participants even when caller supplies 99.
+- [x] Public Rank/profile fixture produces a balanced estimated stat profile.
+- [x] Estimated member is explicitly ESTIMATED — NEEDS DATA.
+- [x] Assigned BT MP9 faction loan satisfies the member's Secondary slot before acquisition.
+- [x] Approved WAR READY fixture produces no individual acquisition assignment.
+- [x] Reminder workflow is manual-Send gated.
+- [x] Acquire contains leader-report and price-range output.
+- [x] No document-wide MutationObserver was introduced.
+- [x] Only the existing panel/session auto-refresh interval remains.
+
+### Live acceptance
+
+- [ ] Refresh Faction and compare the Members count with Torn's current faction roster.
+- [ ] Add/remove or otherwise observe a roster-count change, refresh, and confirm Minimums and Acquire immediately use the new current-member count.
+- [ ] Confirm no UI or export says War assumes 20 participants.
+- [ ] For a member with no imported private stats, confirm public data produces ESTIMATED — NEEDS DATA with ~ stats, estimate range/confidence, Torn age, and Rank.
+- [ ] Confirm that estimated member cannot expose **Approve / War Ready**.
+- [ ] If that member has faction-loaned equipment, confirm the matching slot is LOANED/covered before any duplicate acquisition is generated.
+- [ ] Confirm a member with complete imported private stats/equipment does **not** show **Send Data Reminder**.
+- [ ] Confirm a member missing verified private stats or equipment does show **Send Data Reminder**.
+- [ ] Click **Send Data Reminder**; confirm Torn opens the correct recipient with the reminder Subject/body prepared.
+- [ ] Do not send; return to Armory and confirm the reminder button still exists.
+- [ ] Send the reminder manually; after Torn confirms the send, confirm that member's reminder button disappears.
+- [ ] Approve a passing member WAR READY and confirm their individual equipment requirements disappear from Acquire on the next render/state refresh.
+- [ ] Reopen Review and confirm that member becomes eligible to contribute build needs again if the build requires action.
+- [ ] Open Acquire and confirm each priced requirement exposes a low/high cached price range.
+- [ ] Click **Message Faction Leader** and confirm the recipient is the current faction leader.
+- [ ] Confirm the prepared report includes only non-WAR-READY individual build purchases, minimum-stock shortfalls, combined quantities, low/high unit and line estimates, total low/high acquisition cost, and unpriced requirements.
+- [ ] Manually send only after reviewing the report; no automatic message sending occurs.
+
+Production remains unchanged until these live checks pass and owner explicitly approves promotion.
