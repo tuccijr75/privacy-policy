@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.2.0-alpha.2
+// @version      0.2.0-alpha.3
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -93,6 +93,10 @@
 
   function currentMessage() {
     return ROTATION_MESSAGES[state.index % ROTATION_MESSAGES.length];
+  }
+
+  function isPostingDue() {
+    return !state.nextAt || Date.now() >= state.nextAt;
   }
 
   function randomDelayMs() {
@@ -305,6 +309,11 @@
       return;
     }
 
+    if (!isPostingDue()) {
+      setNote('Timer is still running. Press Fill Trade to paste manually.', false);
+      return;
+    }
+
     const result = fillCurrentSession();
     setNote(
       result.ok ? 'Next rotation message is ready. Review it, then send manually.' : result.reason,
@@ -361,7 +370,7 @@
 
   function formatCountdown() {
     if (!state.enabled) return 'PAUSE';
-    if (!state.nextAt || Date.now() >= state.nextAt) return '0:00';
+    if (isPostingDue()) return '0:00';
     const seconds = Math.ceil((state.nextAt - Date.now()) / 1000);
     return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
   }
@@ -488,7 +497,7 @@
     if (!button) return;
     const timer = button.querySelector('[data-mm-trade-timer]');
     if (timer) timer.textContent = formatCountdown();
-    button.dataset.mmDue = state.enabled && (!state.nextAt || Date.now() >= state.nextAt) ? '1' : '0';
+    button.dataset.mmDue = state.enabled && isPostingDue() ? '1' : '0';
   }
 
   function createLauncher() {
