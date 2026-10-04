@@ -1469,3 +1469,48 @@ Live acceptance remains the original MM_Customers action only:
 5. Confirm customer state changes only after Torn confirms a real manual Send.
 
 Outbox/recovery behavior remains out of scope.
+
+
+## MM_Customers alpha.20 — native coupon redemption link
+
+Customer report revisited:
+- an older recipient reported that the coupon redemption link did not work correctly.
+
+Current source audit:
+- the alpha.19 welcome/reminder templates still generated a customer-facing link with `&subject=Coupon Code <code>`,
+- the link text claimed Torn would open a message to the owner **with the coupon code already in the Subject**.
+
+Current Torn evidence:
+- the stable/native compose route is `messages.php#/p=compose&XID=<id>`,
+- subject/body URL-prefill seen in 2026 community tooling is added by a separate userscript and is not a native Torn guarantee,
+- therefore an ordinary customer without that helper script can be addressed to the owner but cannot be relied on to receive the coupon code prefilled.
+
+Alpha.20 source repair:
+- one `couponRedeemUrl()` helper now owns the customer-facing link,
+- it returns only the native XID compose route to the owner,
+- branded and plain-text templates both use that same helper,
+- the coupon code is displayed prominently before the link,
+- customer instructions now say to copy the code, open the owner-addressed message, paste the code into Subject or Body, then manually Send,
+- the false claim that Torn will prefill the coupon code in Subject was removed,
+- no automatic send or customer-side helper script is required.
+
+Versions:
+- MM_Customers: `8.0.0-alpha.20`
+- suite: `8.0.0-alpha.37`
+
+Static verification:
+- userscript/tests/logic parse,
+- native XID-only coupon URL asserted,
+- no coupon `subject` or `body` URL parameter remains,
+- both branded and plain-text coupon flows share the same URL helper,
+- coupon code remains visible in the message before the customer opens Compose.
+
+Live acceptance after merge:
+1. receive a fresh welcome/coupon message on a non-owner Torn account,
+2. copy the displayed coupon code,
+3. click **OPEN MESSAGE TO Manic-Mike**,
+4. verify Torn opens a blank mail addressed to Manic-Mike,
+5. paste the coupon code into Subject or Body and manually Send,
+6. verify the received mail contains the exact coupon code.
+
+This is intentionally a two-step customer action (copy code + open/send mail) because native Torn does not guarantee subject/body URL prefilling.
