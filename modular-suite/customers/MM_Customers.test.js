@@ -88,7 +88,7 @@ assert(userSrc.includes('function matchingBrandedTable'));
 assert(!composePayload.includes('urlSubject')&&!composePayload.includes('urlBody'),'generic compose URLs must not be hydrated by MM_Customers');
 assert(userSrc.includes('const hasBody=requiresBranding||Boolean(payload.body);'),'plain-message support must remain available for MM_Customers drafts');
 assert(userSrc.includes('injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent)'));
-assert(userSrc.includes('recipient + branded formatting verified'));
+assert(userSrc.includes('recipient + subject + branded body verified'));
 
 // Old runtime repair layers must stay gone.
 assert(!userSrc.includes('function repairRenderedBrandedTable'));
