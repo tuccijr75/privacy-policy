@@ -1620,6 +1620,8 @@ Verification completed:
 Candidate install safety:
 - alpha.11 candidate `@updateURL` / `@downloadURL` and changed `@require` files intentionally point at `crm-v8-acquisitions-ranked-profit` so live acceptance cannot silently load alpha.10 dependencies;
 - **before merge**, these candidate URLs must be switched back to `crm-v8-modular-suite` and revalidated.
+- 2026-10-04 install-host correction: owner browser returned `ERR_SSL_PROTOCOL_ERROR` for `raw.githubusercontent.com`; alpha.11 candidate install/update and every userscript dependency URL were moved to `cdn.jsdelivr.net/gh/` while preserving the same branch/path isolation.
+- Browser verification reached Tampermonkey's Script Installation handoff from the jsDelivr `.user.js` URL; the prior SSL failure did not reproduce.
 
 Live acceptance blockers:
 1. install alpha.11 candidate on desktop and confirm existing Acquisitions dock placement/collision behavior is unchanged;
