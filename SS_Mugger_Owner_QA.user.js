@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.0-rc.3-qa.1
+// @version      1.1.0-rc.4-qa.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -623,7 +623,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.0-rc.3-qa.1';
+  const VERSION = '1.1.0-rc.4-qa.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
@@ -745,6 +745,14 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   let schedulerBusy = false;
   let panelOpen = false;
   let lastCaptureUrl = '';
+  const panelDraft = new Map();
+  const FILTER_FIELD_IDS = Object.freeze(['mmms-filter-payout','mmms-filter-win','mmms-filter-ready']);
+  const SETTINGS_FIELD_IDS = Object.freeze([
+    'mmms-key','mmms-min','mmms-market-poll','mmms-points-poll','mmms-bazaar-poll',
+    'mmms-auto-bazaar-poll','mmms-discover-bazaar','mmms-bazaar-cap','mmms-discover-auction',
+    'mmms-auction-poll','mmms-own-faction','mmms-notify','mmms-combat','mmms-plunder',
+    'mmms-other-mug','mmms-plan-mug','mmms-target-protect','mmms-auto'
+  ]);
   const recentCalls = [];
   const BAZAAR_DISCOVERY_CATEGORIES = ['Drug','Primary','Secondary','Melee','Defensive','Booster','Energy Drink','Enhancer','Supply Pack','Collectible'];
 
@@ -1310,6 +1318,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       const gate = candidateGate(signal, profile, settings.minGrossValue);
       if (!gate.eligible) {
         rejectSignal(watch, signal, gate);
+      restorePanelDraft();
+      updatePanelDraftIndicators();
         return;
       }
       const owner = settings.excludeOwnFaction ? await ensureOwnerIdentity() : null;
@@ -1638,12 +1648,54 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     if (launcher.isConnected) document.getElementById(BOOT_PROBE_ID)?.remove();
   }
 
+  function isDraftableControl(control) {
+    return control instanceof HTMLElement && control.matches('input[id],select[id],textarea[id]');
+  }
+  function rememberPanelDraft(control) {
+    if (!isDraftableControl(control)) return;
+    panelDraft.set(control.id, {
+      value: 'value' in control ? String(control.value ?? '') : '',
+      checked: 'checked' in control ? Boolean(control.checked) : undefined
+    });
+    updatePanelDraftIndicators();
+  }
+  function clearPanelDraft(ids) {
+    for (const id of ids || []) panelDraft.delete(id);
+    updatePanelDraftIndicators();
+  }
+  function restorePanelDraft() {
+    if (!panel || !panelDraft.size) return;
+    for (const [id, draft] of panelDraft.entries()) {
+      const control = document.getElementById(id);
+      if (!control || !panel.contains(control) || !isDraftableControl(control)) continue;
+      if ('checked' in control && draft.checked !== undefined) control.checked = draft.checked;
+      if ('value' in control) control.value = draft.value;
+    }
+  }
+  function activePanelTextEditor() {
+    const control = document.activeElement;
+    if (!panel?.contains(control) || !isDraftableControl(control)) return false;
+    const type = String(control.getAttribute('type') || '').toLowerCase();
+    return !['checkbox','radio','button','submit'].includes(type);
+  }
+  function updatePanelDraftIndicators() {
+    if (!panel) return;
+    const filterDirty = FILTER_FIELD_IDS.some((id) => panelDraft.has(id));
+    const settingsDirty = SETTINGS_FIELD_IDS.some((id) => panelDraft.has(id));
+    const filterStatus = panel.querySelector('#mmms-filter-draft-status');
+    const settingsStatus = panel.querySelector('#mmms-settings-draft-status');
+    if (filterStatus) filterStatus.textContent = filterDirty ? 'Unsaved filter edits preserved' : '';
+    if (settingsStatus) settingsStatus.textContent = settingsDirty ? 'Unsaved setting edits preserved' : '';
+  }
+
   function ensurePanel() {
     if (panel) return;
     panel = document.createElement('section');
     panel.id = 'mm-mug-signals-panel';
     panel.hidden = true;
     document.body.appendChild(panel);
+    panel.addEventListener('input', (event) => rememberPanelDraft(event.target));
+    panel.addEventListener('change', (event) => rememberPanelDraft(event.target));
     panel.addEventListener('click', async (event) => {
       const button = event.target.closest('[data-action]');
       if (!button) return;
@@ -1662,7 +1714,9 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         settings.minDisplayPayout = Math.max(0, Number(document.getElementById('mmms-filter-payout')?.value) || 0);
         settings.minDisplayWinProbability = Math.max(0, Math.min(100, Number(document.getElementById('mmms-filter-win')?.value) || 0));
         settings.displayReadyOnly = Boolean(document.getElementById('mmms-filter-ready')?.checked);
-        saveSettings(); render();
+        saveSettings();
+        clearPanelDraft(FILTER_FIELD_IDS);
+        render();
       }
       if (action === 'test-key') await testApiKey();
       if (action === 'add-bazaar') addBazaarFromInput();
@@ -1713,6 +1767,10 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     launcher.classList.toggle('hot', ready > 0);
     panel.hidden = !panelOpen;
     if (!panelOpen) return;
+    if (activePanelTextEditor()) {
+      updatePanelDraftIndicators();
+      return;
+    }
     if (!licensed()) {
       const ownerLabel = licenseState.ownerId ? `${esc(licenseState.ownerName || 'Player')} [${esc(licenseState.ownerId)}]` : 'unverified';
       panel.innerHTML = `<div class="mmms-head"><span class="mmms-dot pause"></span><span class="mmms-title">${APP} <span class="mmms-muted">${VERSION}</span></span><button class="mmms-btn" data-action="close">Close</button></div>
@@ -1737,7 +1795,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
           <label>Min est. payout</label><input id="mmms-filter-payout" class="mmms-input" type="number" min="0" step="100000" value="${Number(settings.minDisplayPayout)||0}">
           <label>Min win chance %</label><input id="mmms-filter-win" class="mmms-input" type="number" min="0" max="100" step="1" value="${Number(settings.minDisplayWinProbability)||0}">
           <label>Ready only</label><input id="mmms-filter-ready" type="checkbox" ${settings.displayReadyOnly ? 'checked' : ''}>
-        </div><div class="mmms-actions" style="padding:0 0 8px"><button class="mmms-btn" data-action="apply-filters">Apply filters</button><span class="mmms-muted">Showing ${visibleCandidates.length} of ${candidates.length}</span></div>
+        </div><div class="mmms-actions" style="padding:0 0 8px"><button class="mmms-btn" data-action="apply-filters">Apply filters</button><span class="mmms-muted">Showing ${visibleCandidates.length} of ${candidates.length}</span><span class="mmms-muted" id="mmms-filter-draft-status"></span></div>
         ${visibleCandidates.length ? visibleCandidates.map(candidateHtml).join('') : '<div class="mmms-empty">No targets match the current payout / win filters.</div>'}<button class="mmms-btn" data-action="clear-candidates">Clear candidates</button></div>
       <div class="mmms-section"><h3>Watchlist</h3>${watches.length ? watches.slice().sort((a,b)=>(b.active-a.active)||(b.lastSeenAt-a.lastSeenAt)).slice(0,120).map(watchHtml).join('') : '<div class="mmms-empty">Browse Item Market or a Bazaar while this tab is focused, or add a Bazaar player ID below.</div>'}<button class="mmms-btn" data-action="clear-inactive">Remove inactive listings</button></div>
       <div class="mmms-section"><h3>Settings</h3><div class="mmms-settings">
@@ -1760,10 +1818,12 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         <label>Detect target protection</label><input id="mmms-target-protect" type="checkbox" ${settings.detectTargetMugProtection ? 'checked' : ''}>
         <label>Auto-capture</label><input id="mmms-auto" type="checkbox" ${settings.autoCapture ? 'checked' : ''}>
         <label>Bazaar player ID</label><div style="display:flex;gap:5px"><input id="mmms-bazaar-id" class="mmms-input" inputmode="numeric" placeholder="Player ID"><button class="mmms-btn" data-action="add-bazaar">Add</button></div>
-      </div><div class="mmms-actions" style="padding:8px 0 0"><button class="mmms-btn" data-action="save-settings">Save settings</button><button class="mmms-btn" data-action="test-key">Test key</button></div>
+      </div><div class="mmms-actions" style="padding:8px 0 0"><button class="mmms-btn" data-action="save-settings">Save settings</button><button class="mmms-btn" data-action="test-key">Test key</button><span class="mmms-muted" id="mmms-settings-draft-status"></span></div>
       <div class="mmms-small">Mug model: Masterful Looting ${ownerMugProfile.masterfulLevel || 0}/10 (+${ownerMugProfile.masterfulBonusPercent || 0}%), detected Plunder ${ownerMugProfile.detectedPlunderPercent || 0}%, effective Plunder ${ownerMugProfile.effectivePlunderPercent || 0}%, other bonus ${ownerMugProfile.otherBonusPercent || 0}%. Merits: ${ownerMugProfile.merits?.used || 0} used / ${ownerMugProfile.merits?.available || 0} available. Awards: ${ownerMugProfile.awards?.medals || 0} medals + ${ownerMugProfile.awards?.honors || 0} honors. A manual Plunder value above 0 overrides detected equipment. Awards are displayed but are not treated as direct mug multipliers unless Torn documents a specific modifier.</div>
       <div class="mmms-small">Item/Points Market seller identity is captured only from the focused, manually viewed page. Bazaar directory discovery and completed-auction signals are API-only. Background websocket/page scraping is not used. API polling is rate-limited locally to ${settings.requestBudgetPerMinute}/min.</div></div>
       <div class="mmms-section"><h3>Recent rejects/errors</h3><div class="mmms-muted">Rejected signals: ${rejections.length}. Errors: ${errors.length}. The most common expected rejection is seller activity at/after the market-change timestamp.</div></div>`;
+    restorePanelDraft();
+    updatePanelDraftIndicators();
   }
 
   function savePanelSettings() {
@@ -1796,6 +1856,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     ownerMugProfileNextAt = 0;
     settings.autoCapture = Boolean(document.getElementById('mmms-auto')?.checked);
     saveSettings();
+    clearPanelDraft(SETTINGS_FIELD_IDS);
     setAllDue();
     discovery.nextAuctionAt = 0; discovery.nextBazaarAt = 0; discovery.nextCandidateAt = 0; saveDiscovery();
     render();
@@ -1835,6 +1896,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     if (!/^\d+$/.test(sellerId)) return alert('Enter a numeric Torn player ID.');
     upsertWatch({source:'bazaar', sellerId, sellerName:`Player ${sellerId}`, snapshot:null});
     if (input) input.value = '';
+    clearPanelDraft(['mmms-bazaar-id']);
     render();
   }
 
