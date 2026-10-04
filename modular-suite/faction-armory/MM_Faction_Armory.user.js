@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.20
+// @version      8.0.0-alpha.21
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.20';
+  const VERSION='8.0.0-alpha.21';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -1609,35 +1609,57 @@
 
   function leaderAcquisitionReport(){
     const members=memberRows();
+    const isWar=stockMode==='war';
     const plan=logic.acquisitionPlan(state?.factionInventory||{},{
       mode:stockMode,
       procurementMode,
       budgetCap:acquisitionBudget
     });
-    const minimums=logic.minimumProposal(state?.factionInventory||{},{
-      mode:stockMode,
+    const minimums=isWar?null:logic.minimumProposal(state?.factionInventory||{},{
+      mode:'peace',
       procurementMode
     });
     const nonReady=new Map(
       members.filter(row=>row.readinessStatus!=='WAR READY').map(row=>[row.memberId,row])
     );
     const memberNeeds=plan.assignments.filter(row=>row.route==='ACQUIRE'&&nonReady.has(row.memberId));
-    const minNeeds=minimums.actionable.filter(row=>num(row.shortfall)>0);
-    const priceRows=plan.list.map(row=>({row,band:acquisitionPriceBand(row)}));
+    const minNeeds=isWar?[]:(minimums?.actionable||[]).filter(row=>num(row.shortfall)>0);
+
+    // WAR leader mail is intentionally restricted to equipment that is needed now:
+    // non-WAR-READY member build gaps plus the two ready-to-issue war spares.
+    // Inventory-minimum provisions are deferred until Peace mode.
+    const reportList=isWar
+      ? plan.list.filter(row=>row.category==='equipment')
+      : plan.list;
+
+    const priceRows=reportList.map(row=>({row,band:acquisitionPriceBand(row)}));
     const priced=priceRows.filter(item=>item.band.priced);
     const lowTotal=priced.reduce((sum,item)=>sum+item.band.lowTotal,0);
     const highTotal=priced.reduce((sum,item)=>sum+item.band.highTotal,0);
     const unpriced=priceRows.filter(item=>!item.band.priced);
 
     const lines=[
-      'FACTION ARMORY ACQUISITION REPORT',
+      isWar?'FACTION ARMORY WAR ACQUISITION REPORT':'FACTION ARMORY PEACE / POST-WAR ACQUISITION REPORT',
       'Mode: '+stockMode.toUpperCase()+' / '+procurementMode.toUpperCase(),
       'Current roster: '+members.length+' members',
       'Approved War Ready: '+members.filter(row=>row.readinessStatus==='WAR READY').length,
-      'Not War Ready: '+nonReady.size,
-      '',
-      'INDIVIDUAL MEMBER BUILD NEEDS'
+      'Not War Ready: '+nonReady.size
     ];
+
+    if(isWar){
+      lines.push(
+        'Scope: WAR NEEDS ONLY — non-WAR-READY member equipment plus war equipment spares.',
+        'Minimum-stock replenishment is deferred until Peace mode.',
+        '',
+        'INDIVIDUAL MEMBER WAR BUILD NEEDS'
+      );
+    }else{
+      lines.push(
+        'Scope: PEACE / POST-WAR — normal member acquisition plus minimum-stock replenishment.',
+        '',
+        'INDIVIDUAL MEMBER BUILD NEEDS'
+      );
+    }
 
     if(memberNeeds.length){
       for(const need of memberNeeds){
@@ -1651,19 +1673,21 @@
       lines.push('- None currently require purchased build equipment.');
     }
 
-    lines.push('','MINIMUM STOCK SHORTFALLS');
-    if(minNeeds.length){
-      for(const need of minNeeds){
-        lines.push(
-          '- '+need.category+' · '+need.item+' · short '+fmt(need.shortfall)+
-          ' (target '+fmt(need.recommendedMin)+')'
-        );
+    if(!isWar){
+      lines.push('','MINIMUM STOCK SHORTFALLS');
+      if(minNeeds.length){
+        for(const need of minNeeds){
+          lines.push(
+            '- '+need.category+' · '+need.item+' · short '+fmt(need.shortfall)+
+            ' (target '+fmt(need.recommendedMin)+')'
+          );
+        }
+      }else{
+        lines.push('- No current minimum-stock shortfalls.');
       }
-    }else{
-      lines.push('- No current minimum-stock shortfalls.');
     }
 
-    lines.push('','COMBINED ACQUISITION LIST / PRICE RANGE');
+    lines.push('',isWar?'WAR ACQUISITION LIST / PRICE RANGE':'COMBINED ACQUISITION LIST / PRICE RANGE');
     if(priceRows.length){
       for(const item of priceRows){
         const row=item.row;
@@ -1677,10 +1701,10 @@
         );
       }
     }else{
-      lines.push('- Nothing currently requires acquisition.');
+      lines.push(isWar?'- No War acquisition is currently required.':'- Nothing currently requires acquisition.');
     }
 
-    lines.push('','ESTIMATED TOTAL ACQUISITION COST');
+    lines.push('',isWar?'ESTIMATED WAR ACQUISITION COST':'ESTIMATED TOTAL ACQUISITION COST');
     lines.push(priced.length?'$'+fmt(lowTotal)+' – $'+fmt(highTotal):'$0 known');
     if(unpriced.length){
       lines.push(
@@ -1703,7 +1727,7 @@
     openArmoryMessage({
       playerId:leaderId,
       playerName:String(leadership.leaderName||leaderId),
-      subject:'Faction Armory acquisition report',
+      subject:'Faction Armory '+stockMode.toUpperCase()+' acquisition report',
       body:leaderAcquisitionReport(),
       kind:'leader-acquisition-report'
     });
@@ -1761,15 +1785,18 @@
     }).join('');
 
     const leadership=state?.factionInventory?.leadership||{};
-    const leaderLabel=leadership.leaderName&&leadership.leaderName!==leadership.leaderId
+    const leaderBaseLabel=leadership.leaderName&&leadership.leaderName!==leadership.leaderId
       ? 'Message '+leadership.leaderName
       : 'Message Faction Leader';
+    const leaderLabel=leaderBaseLabel+(stockMode==='war'?' · War Needs':' · Peace / Minimums');
 
     return '<div class="mm-fa-card mm-fa-compact">'+
       '<div class="mm-fa-module-head">'+
         '<div><b>Acquisition requirement</b> <span class="mm-fa-muted">'+stockMode.toUpperCase()+
           ' · '+procurementMode.toUpperCase()+' · '+plan.participants+' current faction members</span></div>'+
         '<div class="mm-fa-actions">'+
+          '<button data-stock-mode="peace" style="'+button(stockMode==='peace')+'">Peace</button>'+
+          '<button data-stock-mode="war" style="'+button(stockMode==='war')+'">War</button>'+
           '<button data-procurement-mode="budget" style="'+button(procurementMode==='budget')+'">Budget</button>'+
           '<button data-procurement-mode="standard" style="'+button(procurementMode==='standard')+'">Standard</button>'+
           '<button data-procurement-mode="ideal" style="'+button(procurementMode==='ideal')+'">Ideal</button>'+
@@ -1790,8 +1817,10 @@
         '<button id="mm-fa-message-leader" style="'+button(true)+'">'+esc(leaderLabel)+'</button>'+
       '</div>'+
       '<div class="mm-fa-muted" style="margin-top:4px;">'+
-        'War requirements are derived from the current faction roster. Approved War Ready members generate no individual equipment acquisition. '+
-        'Members without private stats use a clearly labeled balanced public estimate; faction loans are counted before purchases. '+
+        (stockMode==='war'
+          ? 'Leader message scope: WAR NEEDS ONLY. It includes non-War-Ready member equipment requirements and war equipment spares; minimum-stock replenishment is deferred until Peace mode. '
+          : 'Leader message scope: PEACE / POST-WAR. It includes normal acquisition needs plus minimum-stock replenishment. ')+
+        'Approved War Ready members generate no individual equipment acquisition. Members without private stats use a clearly labeled balanced public estimate; faction loans are counted before purchases. '+
         'Cached Item Market, Bazaar, overseas, and reference prices provide low/high planning estimates; MM_Acquisitions performs live source verification before purchase.'+
       '</div>'+
       (plan.unresolvedCount
