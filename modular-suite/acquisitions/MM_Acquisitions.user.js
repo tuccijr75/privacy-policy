@@ -807,7 +807,11 @@
   function ensureItemCatalog(){
     const count=Object.keys(state?.procurement?.catalog||{}).length;
     const at=Date.parse(state?.procurement?.catalogLastSyncAt||'')||0;
-    if(apiKey()&&(!count||!at||Date.now()-at>=CATALOG_STALE_MS))setTimeout(()=>refreshItemCatalog({silent:count>0}),40);
+    if(!apiKey()||(!count&&busy))return;
+    if(!count||!at||Date.now()-at>=CATALOG_STALE_MS){
+      if(busy){setTimeout(ensureItemCatalog,1200);return;}
+      setTimeout(()=>refreshItemCatalog({silent:count>0}),40);
+    }
   }
 
   async function findCatalogPriceByItem(item){
@@ -912,7 +916,7 @@
         '<button id="mm-acq-catalog-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Refresh Catalog</button>'+
       '</div>'+
       '<div style="font-size:10px;color:#888;margin-top:4px;">Catalog '+all.length.toLocaleString()+' items · updated '+esc(age(lastSync))+'</div>'+
-      '<div style="display:grid;grid-template-columns:minmax(180px,2fr) minmax(110px,1fr) minmax(110px,1fr) minmax(100px,1fr);gap:5px;margin-top:8px;">'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:5px;margin-top:8px;">'+
         '<input id="mm-acq-item-query" type="search" placeholder="Enter item name or ID" value="'+esc(itemQuery)+'" style="'+inputCss()+'width:100%;">'+
         '<select id="mm-acq-item-category" style="'+inputCss()+'width:100%;"><option value="All">All categories</option>'+options+'</select>'+
         '<select id="mm-acq-item-availability" style="'+inputCss()+'width:100%;">'+
