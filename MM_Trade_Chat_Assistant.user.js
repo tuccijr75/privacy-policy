@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.2.0-alpha.2
+// @version      0.2.0-alpha.3
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -26,6 +26,7 @@
   const PLAYER_ID = '4325346';
   const PLAYER_NAME = 'Manic-Mike';
   const SERVICE_THREAD = '/forums.php#/p=threads&f=67&t=16608018';
+  const FORUM_ROUTE_KEY = 'mmTradeChatAssistantForumRouteV1';
   const core = globalThis.MMTornCore;
 
   const MODES = Object.freeze({
@@ -93,6 +94,10 @@
 
   function currentMessage() {
     return ROTATION_MESSAGES[state.index % ROTATION_MESSAGES.length];
+  }
+
+  function isPostingDue() {
+    return !state.nextAt || Date.now() >= state.nextAt;
   }
 
   function randomDelayMs() {
@@ -254,6 +259,27 @@
     if (control) control.click();
   }
 
+  function openServiceThread() {
+    GM_setValue(FORUM_ROUTE_KEY, true);
+    location.assign(SERVICE_THREAD);
+  }
+
+  function restoreTradeAfterForumRoute() {
+    if (!GM_getValue(FORUM_ROUTE_KEY, false)) return;
+
+    const deadline = Date.now() + 8000;
+    const attempt = async () => {
+      const composer = await ensureTradeOpen();
+      if (composer || Date.now() >= deadline) {
+        GM_setValue(FORUM_ROUTE_KEY, false);
+        return;
+      }
+      setTimeout(attempt, 300);
+    };
+
+    setTimeout(attempt, 300);
+  }
+
   function insertTradeMessage(textarea, message) {
     if (!(textarea instanceof HTMLTextAreaElement)) return false;
     textarea.focus({ preventScroll: true });
@@ -302,6 +328,11 @@
     if (openedSessionId !== sessionId || sessionFilled) return;
     if (!composer) {
       setNote('Trade Chat could not be opened. Open it manually, then press Fill Trade.', false);
+      return;
+    }
+
+    if (!isPostingDue()) {
+      setNote('Timer is still running. Press Fill Trade to paste manually.', false);
       return;
     }
 
@@ -361,7 +392,7 @@
 
   function formatCountdown() {
     if (!state.enabled) return 'PAUSE';
-    if (!state.nextAt || Date.now() >= state.nextAt) return '0:00';
+    if (isPostingDue()) return '0:00';
     const seconds = Math.ceil((state.nextAt - Date.now()) / 1000);
     return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
   }
@@ -466,6 +497,7 @@
       '#' + APP_ID + ' .mmta-meta{color:#aaa}',
       '#' + APP_ID + ' .mmta-actions{display:grid;grid-template-columns:1fr 1fr;gap:5px}',
       '#' + APP_ID + ' .mmta-actions button:first-child{border-color:#9a7418}',
+      '#' + APP_ID + ' .mmta-actions [data-act="forum"]{grid-column:1/-1}',
       '#' + APP_ID + ' .mmta-note{margin-top:7px;color:#8fd59a}',
       '@media(max-width:620px){[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-timer{font-size:9px}#' + APP_ID + '{width:calc(100vw - 8px);max-height:calc(100vh - 62px)}#' + APP_ID + ' .mmta-body{max-height:calc(100vh - 106px)}}',
     ].join('\n');
@@ -488,7 +520,7 @@
     if (!button) return;
     const timer = button.querySelector('[data-mm-trade-timer]');
     if (timer) timer.textContent = formatCountdown();
-    button.dataset.mmDue = state.enabled && (!state.nextAt || Date.now() >= state.nextAt) ? '1' : '0';
+    button.dataset.mmDue = state.enabled && isPostingDue() ? '1' : '0';
   }
 
   function createLauncher() {
@@ -529,6 +561,7 @@
       '<button type="button" data-act="sent">Mark Sent</button>',
       '<button type="button" data-act="skip">Next Copy</button>',
       '<button type="button" data-act="toggle"></button>',
+      '<button type="button" data-act="forum">Open Forum Thread</button>',
       '</div>',
       '<div class="mmta-note" data-role="note">One fill per opened session. Send remains manual.</div>',
       '</div>',
@@ -559,6 +592,10 @@
       }
       if (action === 'sent') {
         completeAssistedPost();
+        return;
+      }
+      if (action === 'forum') {
+        openServiceThread();
         return;
       }
       if (action === 'fill') {
@@ -659,6 +696,7 @@
 
     createLauncher();
     render();
+    restoreTradeAfterForumRoute();
 
     document.addEventListener('keydown', handleComposerKeydown, true);
     document.addEventListener('click', handleTradeClick, true);
