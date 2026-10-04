@@ -488,6 +488,8 @@ assert(userSourceValue.includes("'LOW COST','MID COST','HIGH COST','PRICE UNKNOW
 assert(userSourceValue.includes('data-build-option-member'),'each alternative must route independently to acquisition');
 assert(userSourceValue.includes('Torn Market Reference'),'current Torn market reference must participate in planning-price display');
 assert(userSourceValue.includes('bestPlanning'),'option pricing must distinguish planning price from verified live source');
+assert(userSourceValue.includes('equipmentOptionPriceMemo'),'alternative pricing must be memoized within a render');
+assert(userSourceValue.includes("!item.ready&&!['OWNED','LOANED'].includes(item.route)?equipmentOptionsHtml"),'full alternative lists should be limited to actionable equipment slots');
 assert.strictEqual((userSourceValue.match(/MutationObserver/g)||[]).length,0,'equipment alternatives must not add document-wide mutation observers');
 assert.strictEqual((userSourceValue.match(/setInterval\(/g)||[]).length,1,'equipment alternatives must not add new background polling intervals');
 console.log('MM Faction Armory acquisition handoff regression: PASS');
