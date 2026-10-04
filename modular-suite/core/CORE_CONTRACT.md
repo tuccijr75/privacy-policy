@@ -128,3 +128,31 @@ Core exposes `makePanelDraggable(panel, handle, key, defaults)`.
 - Panel positions persist locally per module under `mm_torn_panel_position_v1:<module>`.
 - Double-clicking a non-interactive part of the header resets that panel to its module default position.
 - Saved positions are clamped when the viewport changes so the header remains reachable.
+
+
+### Ordered Torn-adjacent default
+
+Core alpha.9 defines one default launcher cluster beside Torn's native bottom toolbar. When read from **right to left**, the requested order is:
+
+1. **MM Trade Rotation** (`trade-reminder`)
+2. **MM Faction Armory** (`armory`)
+3. **MM_Customers** (`customers`)
+4. **MM_Acquisitions** (`acquisitions`)
+5. **MM_Inventory Manager/ROI Tracker** (`inventory-roi`)
+
+The dock remains a responsive **relative anchor**, not a hard-coded screen coordinate:
+
+- when Torn's native bottom button row is detectable, the MM dock is positioned immediately to its left and aligned to the same bottom edge;
+- if the row cannot fit horizontally, the existing narrow-screen fallback places the MM dock above the native row;
+- if Torn's bottom controls cannot be identified, the existing lower-right fallback remains.
+
+The alpha.9 migration docks the MM launchers and applies the requested order once. After that:
+
+- dragging within the dock creates a persistent custom order;
+- pulling an icon out creates a persistent floating position;
+- right-click continues to toggle dock/undock;
+- later page loads honor those user changes instead of resetting them.
+
+The default order is independent of userscript load order. A separate custom-order flag distinguishes the requested default from an intentional user reorder.
+
+For browser-console diagnostics, the shared `#mm-torn-module-dock` element exposes non-sensitive geometry/contract fields in its `dataset`, including the dock anchor, requested right-to-left order, live dock edges, and detected Torn native-row anchor coordinates. This is diagnostic UI geometry only.
