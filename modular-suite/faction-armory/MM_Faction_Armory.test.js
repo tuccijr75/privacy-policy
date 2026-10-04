@@ -279,7 +279,12 @@ const estimatedPlan=logic.acquisitionPlan(estimatedFaction,{mode:'war',procureme
 assert.strictEqual(estimatedPlan.participants,1);
 assert(!estimatedPlan.assignments.some(row=>row.memberId==='400'&&row.slot==='secondary'&&row.route==='ACQUIRE'),'loaned adequate secondary must not be re-acquired for an estimated member');
 
-const approvedPlan=logic.acquisitionPlan(readyFaction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+const approvedFaction=JSON.parse(JSON.stringify(readyFaction));
+approvedFaction.memberReadiness.profiles['150'].verifiedAt=readyVerifiedAt;
+approvedFaction.memberReadiness.profiles['150'].readinessApproval={
+  status:'WAR READY',approvedAt:new Date().toISOString(),verifiedAt:readyVerifiedAt,procurementMode:'budget'
+};
+const approvedPlan=logic.acquisitionPlan(approvedFaction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
 assert(!approvedPlan.assignments.some(row=>row.memberId==='150'),'approved WAR READY member must not generate individual acquisition assignments');
 
 const unknownInventoryFaction={
