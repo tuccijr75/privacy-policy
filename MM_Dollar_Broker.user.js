@@ -1,16 +1,16 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.7
+// @version      0.1.0-rc.8
 // @description  Manual foreground Bazaar inspection and cross-tab $1 observations. Never buys or scans unattended.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @noframes
 // @sandbox      JavaScript
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.13
-// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/main/MM_Dollar_Broker.user.js
-// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/main/MM_Dollar_Broker.user.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@5cf7e5c114b8e1a2c4d60d70456c2f0c3f5bdbf9/modular-suite/core/MM_Torn_Core.js
+// @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@main/MM_Dollar_Broker.user.js
+// @downloadURL  https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@main/MM_Dollar_Broker.user.js
 // @grant        GM.getValue
 // @grant        GM.setValue
 // @grant        GM.addValueChangeListener
@@ -24,7 +24,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.7';
+const VERSION = '0.1.0-rc.8';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
