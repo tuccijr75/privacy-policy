@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.10';
+  const CORE_VERSION = '8.0.0-alpha.11';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -593,12 +593,12 @@
       if(desiredLeft>=4){
         // Exact target: immediately left of Torn's first native button, same bottom edge.
         dock.style.left=Math.round(desiredLeft)+'px';
-        dock.style.top=Math.round(clamp(desiredTop,4,window.innerHeight-dock.offsetHeight-4))+'px';
+        dock.style.top=Math.round(clamp(desiredTop,4,window.innerHeight-dock.offsetHeight))+'px';
       }else{
         // Narrow-screen fallback: same left edge as Torn, one native-button row above.
         dock.style.left=Math.max(4,Math.round(first.left))+'px';
         const aboveTop=first.top-dock.offsetHeight-gap;
-        dock.style.top=Math.round(clamp(aboveTop,4,window.innerHeight-dock.offsetHeight-4))+'px';
+        dock.style.top=Math.round(clamp(aboveTop,4,window.innerHeight-dock.offsetHeight))+'px';
       }
     }else{
       dock.style.right='6px';
@@ -815,6 +815,7 @@
 
     // This bridge is installed even when an older cached core created the shared
     // dock first. That keeps Trade Rotation reorder/drag actions persistent too.
+    delete dock.dataset.mmAlpha9PersistenceBridge;
     dock.dataset.mmCoreVersion=CORE_VERSION;
     dock.dataset.mmDockMode='relative-native-row';
     dock.dataset.mmLayoutRevision=DOCK_DEFAULT_LAYOUT_REV;
