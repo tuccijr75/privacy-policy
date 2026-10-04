@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.18
+// @version      8.0.0-alpha.19
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.18';
+  const VERSION='8.0.0-alpha.19';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -38,12 +38,11 @@
   const USERNAME_RESOLVE_BATCH=12;
   const PENDING_DELIVERY_TTL_MS=30*60*1000;
   const COMPOSE_BRIDGE_TTL_MS=120_000;
-  const COMPOSE_FORM_POLL_MS=1000;
-  const COMPOSE_EDITOR_POLL_MS=250;
-  const COMPOSE_EDITOR_READY_TIMEOUT_MS=12_000;
-  const COMPOSE_SURFACE_STABLE_MS=350;
-  const COMPOSE_POST_FILL_VERIFY_MS=400;
-  const COMPOSE_MAX_FORMAT_ATTEMPTS=3;
+  const COMPOSE_READY_POLL_MS=250;
+  const COMPOSE_READY_TIMEOUT_MS=30_000;
+  const COMPOSE_EDITOR_SETTLE_MS=600;
+  const COMPOSE_POST_FILL_VERIFY_MS=450;
+  const COMPOSE_MAX_FILL_ATTEMPTS=3;
   const DELIVERY_CONFIRM_WINDOW_MS=12_000;
   const FALSE_SEND_RECOVERY_MS=2*60*60*1000;
 
@@ -405,9 +404,8 @@
       });
     }else GM_deleteValue(PENDING_SEND_KEY);
     statusText='Opening Torn composer with the prepared message. Sending remains manual.';
-    render();
     const url=canonicalComposeUrl(payload);
-    try{window.location.assign(url);}catch{location.href=url;}
+    location.href=url;
   }
 
   function customerMessage(customer,coupon,reminder=false){
@@ -593,34 +591,41 @@
   function elementMeta(element){
     if(!element)return '';
     const labels=element.labels?[...element.labels].map(label=>label.textContent||'').join(' '):'';
-    return [element.name,element.id,element.placeholder,element.getAttribute?.('aria-label'),element.getAttribute?.('data-placeholder'),element.getAttribute?.('title'),labels].filter(Boolean).join(' ').toLowerCase();
+    return [element.name,element.id,element.className,element.placeholder,element.getAttribute?.('aria-label'),element.getAttribute?.('title'),labels]
+      .filter(Boolean).join(' ').toLowerCase();
   }
 
   function findComposeSubjectInput(){
-    const selectors=['input[placeholder="Subject"]','input[placeholder*="subject" i]','input[name*="subject" i]','input[id*="subject" i]','input[aria-label*="subject" i]','textarea[placeholder="Subject"]','textarea[placeholder*="subject" i]'];
-    for(const selector of selectors){const el=[...document.querySelectorAll(selector)].find(visible);if(el)return el;}
-    return [...document.querySelectorAll('input:not([type="hidden"]),textarea')].filter(visible).find(el=>/subject|title/.test(elementMeta(el)))||null;
+    const selectors=[
+      'input.message-title',
+      'input[name="subject" i]',
+      'input[placeholder="Subject" i]',
+      'input[name="title" i]',
+      'input[class*="titleField" i]'
+    ];
+    for(const selector of selectors){
+      const el=[...document.querySelectorAll(selector)].find(visible);
+      if(el)return el;
+    }
+    return [...document.querySelectorAll('input:not([type="hidden"])')]
+      .filter(visible)
+      .find(el=>/\bsubject\b|message-title|titlefield/.test(elementMeta(el)))||null;
   }
 
-  function findComposeRecipientInput(subjectInput=findComposeSubjectInput()){
-    if(!subjectInput)return null;
-    const scope=subjectInput.closest?.('form')||subjectInput.parentElement?.parentElement||document;
-    const fields=[...scope.querySelectorAll('input:not([type="hidden"]),textarea')]
+  function findComposeRecipientInput(){
+    const selectors=[
+      'input[name="sendto"]',
+      '#ac-search-0',
+      'input[placeholder="Name"]',
+      'input[placeholder*="recipient" i]'
+    ];
+    for(const selector of selectors){
+      const el=[...document.querySelectorAll(selector)].find(visible);
+      if(el)return el;
+    }
+    return [...document.querySelectorAll('input:not([type="hidden"])')]
       .filter(visible)
-      .filter(el=>el!==subjectInput)
-      .filter(el=>!/subject|title|search/.test(elementMeta(el)));
-    const labelled=fields.find(el=>{
-      const meta=elementMeta(el).replace(/\s+/g,' ').trim();
-      return /^(name|recipient|to|user|player|player name|username)$/.test(meta)||/\b(recipient|send to|player name|username)\b/.test(meta);
-    });
-    if(labelled)return labelled;
-    const sr=subjectInput.getBoundingClientRect?.();
-    if(!sr)return null;
-    return fields.filter(el=>String(el.tagName||'').toLowerCase()==='input').find(el=>{
-      const r=el.getBoundingClientRect?.();if(!r)return false;
-      const overlap=Math.max(0,Math.min(r.right,sr.right)-Math.max(r.left,sr.left));
-      return r.bottom<=sr.top+40&&r.bottom>=sr.top-220&&overlap>=Math.min(r.width,sr.width)*0.35;
-    })||null;
+      .find(el=>/\bsendto\b|\brecipient\b|\bplayer name\b/.test(elementMeta(el)))||null;
   }
 
   function recipientMatchesPayload(payload,recipient=findComposeRecipientInput()){
@@ -632,136 +637,70 @@
     if(value.includes('['+id+']'))return true;
     const expectedName=String(payload?.recipientName||'').replace(/\s+/g,' ').trim().toLowerCase();
     if(!expectedName)return false;
-    const plain=value.replace(/\s*\[\d+\]\s*$/,'').trim().toLowerCase();
-    return plain===expectedName;
+    return value.replace(/\s*\[\d+\]\s*$/,'').trim().toLowerCase()===expectedName;
   }
 
-  function composeElementNearSubject(element,subjectInput=findComposeSubjectInput(),{above=80,below=760,minOverlap=0.30}={}){
-    if(!element||!visible(element)||!subjectInput||!visible(subjectInput))return false;
-    const er=element.getBoundingClientRect?.(),sr=subjectInput.getBoundingClientRect?.();
-    if(!er||!sr)return false;
-    const overlap=Math.max(0,Math.min(er.right,sr.right)-Math.max(er.left,sr.left));
-    const needed=Math.min(er.width,sr.width)*minOverlap;
-    return er.top>=sr.top-above&&er.top<=sr.bottom+below&&overlap>=needed;
-  }
-
-  function findComposeBodyInput(subjectInput=findComposeSubjectInput()){
-    const textareas=[...document.querySelectorAll('textarea')]
-      .filter(el=>el!==subjectInput&&composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.35}));
-    const editables=[...document.querySelectorAll('[contenteditable="true"],[role="textbox"][contenteditable],[role="textbox"]')]
-      .filter(el=>el!==subjectInput&&composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.35}));
-    const candidates=[...textareas,...editables];
-    return candidates.find(el=>/message|body|mail|content|write|compose|editor/.test(elementMeta(el)))||
-      candidates.sort((a,b)=>(a.getBoundingClientRect?.().top||0)-(b.getBoundingClientRect?.().top||0))[0]||
-      null;
-  }
-
-  function findComposeRichEditorBody(subjectInput=findComposeSubjectInput()){
-    for(const frame of [...document.querySelectorAll('iframe')].filter(el=>composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.35}))){
-      try{
-        const doc=frame.contentDocument||frame.contentWindow?.document,body=doc?.body;if(!body)continue;
-        const meta=[frame.id,frame.name,frame.className,frame.title,frame.getAttribute('aria-label'),body.className,body.getAttribute('contenteditable'),body.getAttribute('role')].filter(Boolean).join(' ').toLowerCase();
-        if(body.isContentEditable||body.getAttribute('contenteditable')==='true'||/editor|wysiwyg|message|compose|sceditor|mail/.test(meta))return body;
-      }catch{}
-    }
-    const body=findComposeBodyInput(subjectInput);
-    const tag=String(body?.tagName||'').toLowerCase();
-    return body&&tag!=='textarea'&&tag!=='input'?body:null;
-  }
-
-  function findTornCodeEditorToggle(subjectInput=findComposeSubjectInput()){
-    const selectors=['[aria-label="Toggle Code Editor"]','[title="Toggle Code Editor"]','button[aria-label*="Code Editor" i]','button[title*="Code Editor" i]','[role="button"][aria-label*="Code Editor" i]','[role="button"][title*="Code Editor" i]'];
+  function findComposeEditor(){
+    // Torn's current mail composer is TinyMCE. Keep this intentionally narrow:
+    // generic contenteditable elements include Torn chat and must never be used.
+    const selectors=[
+      '#mce_0.mce-content-body[contenteditable="true"]',
+      '#mce_0[contenteditable="true"]',
+      'div.editor-content.mce-content-body[contenteditable="true"]',
+      'div.editorContent.mce-content-body[contenteditable="true"]',
+      '.editor-content[contenteditable="true"].mce-content-body',
+      '.mce-content-body[contenteditable="true"]'
+    ];
     for(const selector of selectors){
-      const el=[...document.querySelectorAll(selector)].find(node=>composeElementNearSubject(node,subjectInput,{above:20,below:760,minOverlap:0.15}));
+      const el=[...document.querySelectorAll(selector)].find(visible);
       if(el)return el;
     }
-    return [...document.querySelectorAll('button,a,[role="button"]')]
-      .filter(el=>composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.15}))
+    return null;
+  }
+
+  function findComposeSendButton(){
+    return [...document.querySelectorAll('button,input[type="submit"],[role="button"]')]
+      .filter(visible)
       .find(el=>{
-        const meta=[el.title,el.getAttribute('aria-label'),el.getAttribute('data-tooltip'),el.textContent].filter(Boolean).join(' ').replace(/\s+/g,' ').trim().toLowerCase();
-        return meta==='{}'||meta==='{ }'||/toggle code editor|code editor|source code|source editor|html source/.test(meta);
+        const text=String(el.textContent||el.value||'').replace(/\s+/g,' ').trim().toLowerCase();
+        return text==='send'||text==='send message';
       })||null;
   }
 
-  function sourceEditorCandidates(subjectInput=findComposeSubjectInput()){
-    const set=new Set();
-    for(const selector of ['textarea','.sceditor-source','.cm-content[contenteditable="true"]','.CodeMirror textarea','.monaco-editor textarea','.monaco-editor [contenteditable="true"]','[data-language="html"][contenteditable="true"]','[data-mode="html"][contenteditable="true"]']){
-      for(const el of document.querySelectorAll(selector)){
-        if(composeElementNearSubject(el,subjectInput,{above:20,below:760,minOverlap:0.30}))set.add(el);
-      }
-    }
-    return [...set];
-  }
-
-  function composeAreaTextarea(el){
-    return composeElementNearSubject(el,findComposeSubjectInput(),{above:20,below:760,minOverlap:0.45});
-  }
-
-  function looksLikeHtmlSource(el){
-    const value=editorText(el);
-    return /<\/?(?:p|div|table|tr|td|span|img|a|br|strong)\b/i.test(value);
-  }
-
-  function likelyTornSourceEditor(before=new Set(),allowFreshAnonymous=false,subjectInput=findComposeSubjectInput()){
-    const score=el=>{
-      const meta=elementMeta(el)+' '+String(el.className||'').toLowerCase();
-      const tag=String(el.tagName||'').toLowerCase();
-      if(/sceditor-source/.test(meta))return 7;
-      if(/code|source|html|cm-|codemirror|monaco/.test(meta))return 6;
-      if(el.matches?.('[data-language="html"],[data-mode="html"]'))return 5;
-      if(tag==='textarea'&&looksLikeHtmlSource(el))return 4;
-      if(tag==='textarea'&&allowFreshAnonymous&&!before.has(el))return 3;
-      return 0;
-    };
-    const eligible=sourceEditorCandidates(subjectInput).filter(el=>{
-      const meta=elementMeta(el);
-      return !/subject|title/.test(meta)&&score(el)>0;
-    });
-    const fresh=eligible.filter(el=>!before.has(el)).sort((a,b)=>score(b)-score(a));
-    return fresh[0]||eligible.sort((a,b)=>score(b)-score(a))[0]||null;
-  }
-
-  function editorText(element){
-    if(!element)return '';
-    const tag=String(element.tagName||'').toLowerCase();
-    return tag==='textarea'||tag==='input'?String(element.value||''):String(element.innerText||element.textContent||'');
-  }
-
-  function dispatchEditorEvents(element){
-    const win=element?.ownerDocument?.defaultView||window;
-    for(const type of ['input','change','keyup','blur']){
-      try{element.dispatchEvent(new win.Event(type,{bubbles:true}));}catch{}
+  function dispatchComposeEditorInput(editor){
+    if(!editor)return;
+    const win=editor.ownerDocument?.defaultView||window;
+    try{editor.dispatchEvent(new win.InputEvent('input',{bubbles:true,inputType:'insertText'}));}
+    catch{editor.dispatchEvent(new win.Event('input',{bubbles:true}));}
+    for(const type of ['change','keyup']){
+      try{editor.dispatchEvent(new win.Event(type,{bubbles:true}));}catch{}
     }
   }
 
-  function brandedSourceIsComplete(html=''){
-    const source=String(html||'');
-    return source.includes('<table')&&source.includes('</table>')&&source.includes(SHOP_BANNER_URL);
+  function setComposePlainText(editor,value){
+    if(!editor)return false;
+    const text=String(value||'');
+    try{
+      editor.focus();
+      editor.textContent='';
+      text.split('\n').forEach((line,index)=>{
+        if(index)editor.appendChild(editor.ownerDocument.createElement('br'));
+        editor.appendChild(editor.ownerDocument.createTextNode(line));
+      });
+      dispatchComposeEditorInput(editor);
+    }catch{return false;}
+    return normalizeComposeText(editor.innerText||editor.textContent||'')===normalizeComposeText(text);
   }
 
-  function setSourceEditorHtml(element,html){
-    if(!element||!brandedSourceIsComplete(html))return false;
-    const value=String(html||'');
-    const tag=String(element.tagName||'').toLowerCase();
-    if(tag==='textarea'||tag==='input')setNativeValue(element,value);
-    else{
-      try{element.focus();element.textContent=value;}catch{return false;}
-      dispatchEditorEvents(element);
-    }
-    const current=editorText(element);
-    return current.includes('<table')&&current.includes(SHOP_BANNER_URL);
-  }
-
-  function setPlainEditorText(element,text){
-    if(!element)return false;
-    const value=String(text||''),tag=String(element.tagName||'').toLowerCase();
-    if(tag==='textarea'||tag==='input'){
-      setNativeValue(element,value);
-      return editorText(element)===value;
-    }
-    try{element.focus();element.textContent=value;}catch{return false;}
-    dispatchEditorEvents(element);
-    return String(element.innerText||element.textContent||'')===value;
+  function setComposeRichHtml(editor,html){
+    const value=String(html||'').trim();
+    if(!editor||!value.includes('<table')||!value.includes(SHOP_BANNER_URL))return false;
+    try{
+      editor.focus();
+      editor.innerHTML=value;
+      dispatchComposeEditorInput(editor);
+    }catch{return false;}
+    return richComposerHasBranding(value,editor);
   }
 
   const sleepMs=ms=>new Promise(resolve=>setTimeout(resolve,ms));
@@ -776,78 +715,26 @@
       const markers=[...new Set([...doc.querySelectorAll('strong')]
         .map(el=>normalizeComposeText(el.textContent||''))
         .filter(text=>text.length>=3&&text.length<=160))]
-        .slice(0,12);
-      const requiresBanner=[...doc.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||'').includes(SHOP_BANNER_URL));
+        .slice(0,10);
+      const requiresBanner=[...doc.querySelectorAll('img')]
+        .some(img=>String(img.getAttribute('src')||'').includes(SHOP_BANNER_URL));
       return {markers,requiresBanner};
     }catch{
       return {markers:[],requiresBanner:String(expectedHtml||'').includes(SHOP_BANNER_URL)};
     }
   }
 
-  function matchingBrandedTable(expectedHtml=''){
-    const rich=findComposeRichEditorBody();
-    if(!rich)return null;
+  function richComposerHasBranding(expectedHtml='',editor=findComposeEditor()){
+    if(!editor)return false;
     const signature=brandedSourceSignature(expectedHtml);
-    const tables=rich.matches?.('table')?[rich]:[...(rich.querySelectorAll?.('table')||[])];
-    return tables.find(table=>{
-      const text=normalizeComposeText(table.innerText||table.textContent||'');
-      if(signature.markers.length&&!signature.markers.every(marker=>text.includes(marker)))return false;
-      if(signature.requiresBanner){
-        const hasBanner=[...table.querySelectorAll('img')].some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL));
-        if(!hasBanner)return false;
-      }
-      return signature.markers.length>0||signature.requiresBanner;
-    })||null;
-  }
-
-  function richComposerHasBranding(expectedHtml=''){
-    return Boolean(matchingBrandedTable(expectedHtml));
-  }
-
-  async function waitForSourceEditor(before=new Set(),timeoutMs=4000,allowFreshAnonymous=false,stillCurrent=null){
-    let source=null;const deadline=Date.now()+timeoutMs;
-    while(Date.now()<deadline&&!source){
-      if(stillCurrent&&!stillCurrent())return null;
-      source=likelyTornSourceEditor(before,allowFreshAnonymous);
-      if(!source)await sleepMs(60);
+    const text=normalizeComposeText(editor.innerText||editor.textContent||'');
+    if(signature.markers.length&&!signature.markers.every(marker=>text.includes(marker)))return false;
+    if(signature.requiresBanner){
+      const hasBanner=[...editor.querySelectorAll('img')]
+        .some(img=>String(img.getAttribute('src')||img.src||'').includes(SHOP_BANNER_URL));
+      if(!hasBanner)return false;
     }
-    return stillCurrent&&!stillCurrent()?null:source;
-  }
-
-  async function waitForRichBranding(expectedHtml='',timeoutMs=1800,stillCurrent=null){
-    const deadline=Date.now()+timeoutMs;
-    while(Date.now()<deadline){
-      if(stillCurrent&&!stillCurrent())return false;
-      if(richComposerHasBranding(expectedHtml))return true;
-      await sleepMs(60);
-    }
-    return (!stillCurrent||stillCurrent())&&richComposerHasBranding(expectedHtml);
-  }
-
-  async function injectHtmlThroughTornCodeEditor(htmlValue,stillCurrent=null){
-    const html=String(htmlValue||'').replace(/>\s+</g,'><').trim();
-    if(!brandedSourceIsComplete(html))return false;
-    if(stillCurrent&&!stillCurrent())return false;
-
-    const toggle=findTornCodeEditorToggle();
-    if(!toggle)return false;
-
-    let source=likelyTornSourceEditor(new Set(),false);
-    if(!source){
-      const before=new Set(sourceEditorCandidates());
-      if(stillCurrent&&!stillCurrent())return false;
-      try{toggle.click();}catch{return false;}
-      source=await waitForSourceEditor(before,5000,true,stillCurrent);
-    }
-
-    if(!source||(stillCurrent&&!stillCurrent()))return false;
-    if(!setSourceEditorHtml(source,html))return false;
-
-    await sleepMs(180);
-    if(stillCurrent&&!stillCurrent())return false;
-    const toggleBack=findTornCodeEditorToggle()||toggle;
-    try{toggleBack.click();}catch{return false;}
-    return waitForRichBranding(html,3000,stillCurrent);
+    return Boolean(editor.querySelector('table'))&&(signature.markers.length>0||signature.requiresBanner);
   }
 
   function composeFormattingNotice(text,kind='waiting'){
@@ -879,130 +766,95 @@
     const payload=composePayloadForCurrentPage();
     if(!payload||(!payload.subject&&!payload.body&&!payload.bodyHtml))return;
 
-    const requiresBranding=Boolean(payload.bodyHtml);
-    const hasBody=requiresBranding||Boolean(payload.body);
-    const bridgeDeadline=Number(payload.createdAt||Date.now())+COMPOSE_BRIDGE_TTL_MS;
-    let fillAttempts=0;
-
     const stillCurrent=()=>generation===composeFillGeneration&&
       location.pathname.includes('messages.php')&&location.hash.includes('compose')&&
       (!payload.playerId||getComposeXid()===String(payload.playerId||''));
 
-    const fail=(message='Formatting is not ready yet. Do not send this draft. Reopen it from MM_Customers to retry.')=>{
-      clearMatchingPendingCompose(payload);
-      statusText=requiresBranding?'Branded formatting is not ready. Draft was NOT downgraded to plain text.':'Message preparation failed.';
-      if(requiresBranding)composeFormattingNotice(message,'error');
-      else clearComposeFormattingNotice();
-    };
+    const deadline=Math.min(
+      Number(payload.createdAt||Date.now())+COMPOSE_BRIDGE_TTL_MS,
+      Date.now()+COMPOSE_READY_TIMEOUT_MS
+    );
 
-    // Phase 1 is intentionally passive. Do not inspect/toggle the rich editor
-    // while Torn is still building the Messages SPA. This avoids competing with
-    // the page load that previously left only the XID-resolved username visible.
-    let subject=null,recipient=null;
-    while(stillCurrent()&&Date.now()<bridgeDeadline){
-      subject=findComposeSubjectInput();
-      if(subject){
-        recipient=findComposeRecipientInput(subject);
-        if((!payload.playerId)||recipientMatchesPayload(payload,recipient))break;
+    let stableEditor=null,stableSince=0;
+    composeFormattingNotice('Waiting for Torn mail composer…');
+
+    while(stillCurrent()&&Date.now()<deadline){
+      const subject=findComposeSubjectInput();
+      const recipient=findComposeRecipientInput();
+      const editor=findComposeEditor();
+      const send=findComposeSendButton();
+      const recipientOK=(!payload.playerId)||recipientMatchesPayload(payload,recipient);
+
+      if(subject&&recipientOK&&editor&&send){
+        if(editor!==stableEditor){
+          stableEditor=editor;
+          stableSince=Date.now();
+        }else if(Date.now()-stableSince>=COMPOSE_EDITOR_SETTLE_MS){
+          break;
+        }
+      }else{
+        stableEditor=null;
+        stableSince=0;
       }
-      statusText=subject?'Waiting for Torn to resolve the intended recipient…':'Waiting for Torn compose form…';
-      composeFormattingNotice('Waiting for Torn to finish loading the compose form…');
-      await sleepMs(COMPOSE_FORM_POLL_MS);
+      await sleepMs(COMPOSE_READY_POLL_MS);
     }
 
     if(!stillCurrent()){clearComposeFormattingNotice();return;}
-    if(!subject||((payload.playerId)&&!recipientMatchesPayload(payload,recipient))){
-      fail('Torn compose form did not finish loading in time. No message content was inserted.');
+
+    let subject=findComposeSubjectInput();
+    let recipient=findComposeRecipientInput();
+    let editor=findComposeEditor();
+    if(!subject||!editor||!findComposeSendButton()||((payload.playerId)&&!recipientMatchesPayload(payload,recipient))){
+      clearMatchingPendingCompose(payload);
+      statusText='Torn mail composer did not become ready. No prepared content was inserted.';
+      composeFormattingNotice('Torn mail composer did not become ready. Nothing was inserted.','error');
       return;
     }
 
-    // Subject is independent of the editor. Apply it as soon as Torn exposes
-    // the real Subject control so a slow editor can never leave username-only.
-    if(payload.subject){
-      setNativeValue(subject,payload.subject);
-      await sleepMs(40);
-      if(String(subject.value||'').trim()!==String(payload.subject||'').trim()){
-        fail('Torn rejected the prepared Subject. No message content was inserted.');
+    for(let attempt=1;attempt<=COMPOSE_MAX_FILL_ATTEMPTS&&stillCurrent();attempt++){
+      if(payload.subject)setNativeValue(subject,payload.subject);
+      const subjectOK=!payload.subject||String(subject.value||'').trim()===String(payload.subject||'').trim();
+
+      let bodyOK=true;
+      if(payload.bodyHtml)bodyOK=setComposeRichHtml(editor,payload.bodyHtml);
+      else if(payload.body)bodyOK=setComposePlainText(editor,payload.body);
+
+      await sleepMs(COMPOSE_POST_FILL_VERIFY_MS);
+      if(!stillCurrent()){clearComposeFormattingNotice();return;}
+
+      subject=findComposeSubjectInput();
+      recipient=findComposeRecipientInput();
+      editor=findComposeEditor();
+      const recipientOK=(!payload.playerId)||recipientMatchesPayload(payload,recipient);
+      const verifySubjectOK=!payload.subject||(Boolean(subject)&&String(subject.value||'').trim()===String(payload.subject||'').trim());
+      const verifyBodyOK=payload.bodyHtml
+        ? richComposerHasBranding(payload.bodyHtml,editor)
+        : payload.body
+          ? Boolean(editor)&&normalizeComposeText(editor.innerText||editor.textContent||'')===normalizeComposeText(payload.body)
+          : true;
+
+      if(subjectOK&&recipientOK&&verifySubjectOK&&verifyBodyOK){
+        clearMatchingPendingCompose(payload);
+        clearComposeFormattingNotice();
+        statusText=payload.bodyHtml
+          ? 'Message prepared in Torn TinyMCE with recipient + subject + branded body verified. Send remains manual.'
+          : 'Message prepared in Torn composer with recipient + subject verified. Send remains manual.';
         return;
       }
-    }
 
-    if(!hasBody){
-      clearMatchingPendingCompose(payload);
-      clearComposeFormattingNotice();
-      statusText='Message subject prepared with recipient verified. Send remains manual.';
-      return;
-    }
-
-    // Phase 2 begins only after Name + Subject are live. At this point it is
-    // safe to inspect the editor toolbar/source mode without slowing page mount.
-    const editorDeadline=Date.now()+COMPOSE_EDITOR_READY_TIMEOUT_MS;
-    let readyKey='',readySince=0;
-    while(stillCurrent()&&Date.now()<editorDeadline&&fillAttempts<COMPOSE_MAX_FORMAT_ATTEMPTS){
-      const currentSubject=findComposeSubjectInput();
-      const currentRecipient=findComposeRecipientInput(currentSubject);
-      const recipientOK=(!payload.playerId)||recipientMatchesPayload(payload,currentRecipient);
-      const toggle=requiresBranding?findTornCodeEditorToggle():null;
-      const rich=findComposeRichEditorBody();
-      const plain=findComposeBodyInput(currentSubject);
-      const editorReady=requiresBranding?Boolean(toggle):Boolean(plain||rich);
-
-      if(!currentSubject||!recipientOK||!editorReady){
-        readyKey='';readySince=0;
-        statusText=!currentSubject?'Waiting for Torn compose form…':!recipientOK?'Waiting for Torn recipient…':'Waiting for Torn message editor…';
-        composeFormattingNotice('Subject is ready. Waiting for Torn message editor…');
-        await sleepMs(COMPOSE_EDITOR_POLL_MS);
-        continue;
-      }
-
-      const surfaceKey=[getComposeXid(),String(currentRecipient?.value||currentRecipient?.textContent||''),Boolean(toggle),Boolean(rich||plain)].join('|');
-      if(surfaceKey!==readyKey){
-        readyKey=surfaceKey;readySince=Date.now();
-        await sleepMs(COMPOSE_SURFACE_STABLE_MS);
-        continue;
-      }
-      if(Date.now()-readySince<COMPOSE_SURFACE_STABLE_MS){
-        await sleepMs(Math.max(40,COMPOSE_SURFACE_STABLE_MS-(Date.now()-readySince)));
-        continue;
-      }
-
-      fillAttempts++;
-      let bodyOK=false;
-      if(requiresBranding){
-        bodyOK=await injectHtmlThroughTornCodeEditor(payload.bodyHtml,stillCurrent);
-      }else{
-        const body=findComposeBodyInput(currentSubject)||findComposeRichEditorBody();
-        bodyOK=Boolean(body)&&setPlainEditorText(body,payload.body);
-      }
-
-      if(bodyOK){
-        await sleepMs(COMPOSE_POST_FILL_VERIFY_MS);
-        if(!stillCurrent()){clearComposeFormattingNotice();return;}
-        const verifySubject=findComposeSubjectInput();
-        const verifyRecipient=findComposeRecipientInput(verifySubject);
-        const verifyRecipientOK=(!payload.playerId)||recipientMatchesPayload(payload,verifyRecipient);
-        const verifySubjectOK=!payload.subject||(Boolean(verifySubject)&&String(verifySubject.value||'').trim()===String(payload.subject||'').trim());
-        const verifyBodyOK=requiresBranding?richComposerHasBranding(payload.bodyHtml):bodyOK;
-        if(verifyRecipientOK&&verifySubjectOK&&verifyBodyOK){
-          clearMatchingPendingCompose(payload);
-          clearComposeFormattingNotice();
-          statusText=requiresBranding
-            ? 'Message prepared in Torn composer with recipient + subject + branded body verified. Send remains manual.'
-            : 'Message prepared in Torn composer with recipient + subject verified. Send remains manual.';
-          return;
-        }
-      }
-
-      readyKey='';readySince=0;
-      if(fillAttempts<COMPOSE_MAX_FORMAT_ATTEMPTS){
-        statusText=requiresBranding?'Torn editor was not ready; retrying formatting.':'Torn editor changed while preparing the message; retrying.';
-        composeFormattingNotice(requiresBranding?'Subject is ready. Retrying branded message formatting…':'Retrying message body…');
-        await sleepMs(500);
+      if(attempt<COMPOSE_MAX_FILL_ATTEMPTS){
+        composeFormattingNotice('Torn replaced part of the draft while initializing; retrying once stable…');
+        await sleepMs(COMPOSE_EDITOR_SETTLE_MS);
+        subject=findComposeSubjectInput();
+        recipient=findComposeRecipientInput();
+        editor=findComposeEditor();
+        if(!subject||!editor||((payload.playerId)&&!recipientMatchesPayload(payload,recipient)))break;
       }
     }
 
-    if(stillCurrent())fail();
-    else clearComposeFormattingNotice();
+    clearMatchingPendingCompose(payload);
+    statusText='Torn rejected or replaced the prepared message. Customer state was not changed.';
+    composeFormattingNotice('Prepared message could not be verified. Do not send this draft.','error');
   }
 
   function normalizedDeliveryText(value){
