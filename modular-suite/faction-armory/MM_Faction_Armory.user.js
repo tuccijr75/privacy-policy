@@ -333,7 +333,7 @@
   }
 
   function factionLeadershipFromResponse(data,rosterRows=[]){
-    const root=data?.basic??data?.faction??data||{};
+    const root=(data?.basic??data?.faction??data)||{};
     const leaderId=asId(root?.leader_id??root?.leaderId);
     const coLeaderId=asId(root?.co_leader_id??root?.coLeaderId);
     const byId=new Map((rosterRows||[]).map(row=>[asId(row.memberId),row]));
