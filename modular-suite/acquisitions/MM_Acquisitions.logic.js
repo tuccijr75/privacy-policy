@@ -123,6 +123,7 @@
       const itemMarketBuy = itemMarketFresh ? Number(snap?.itemMarket?.lowest || 0) : 0;
       const aggregateBuy = Number(base.lowestPrice || 0);
       const discoveryBuy = itemMarketBuy || aggregateBuy;
+      const discoverySource = itemMarketBuy > 0 ? 'Item Market' : (aggregateBuy > 0 ? 'Bazaar aggregate' : 'Unknown');
       const bazaarAverage = Number(base.bazaarAverage || 0);
       const marketPrice = Number(base.marketPrice || snap?.itemMarket?.median || snap?.itemMarket?.third || 0);
 
@@ -232,6 +233,7 @@
         listingQty:Number(live?.quantity||0),sellerId:String(live?.sellerId||''),
         sellerName:String(live?.sellerName||''),listingVerified:Boolean(live?.source==='Bazaar'&&live?.sellerId),
         purchaseReady:Boolean(live&&priceQualified),purchaseSource:String(live?.source||'Research'),
+        discoverySource,
         purchaseAgeSeconds:Number(live?.ageSeconds??Infinity),recommendedQty,sellThrough3dPct,
         conversionSource:personalDemandQualified?'PERSONAL SALES':'MARKET PROXY',
         expectedProfit3d,expectedProfitPerDay,personalDemandDaily:personalDaily,personalDemandQualified
@@ -303,6 +305,7 @@
         name:String(targetRow?.name||base?.itemName||catalog?.name||('Item '+id)),
         itemType:String(catalog?.type||''),
         targetBuy,buyPrice,bazaarAverage,marketPrice,sellerCount,
+        buySource:buyPrice>0?'Bazaar observed':'Unknown',
         bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,targetDiscountPct,
         confidence,liquidity,score,history,
         personalSold7d:sales7,personalSold30d:sales30,
