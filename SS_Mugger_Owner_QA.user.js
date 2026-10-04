@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.0-rc.1-qa.1
+// @version      1.1.0-rc.2-qa.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
 // @match        https://www.torn.com/*
+// @include      https://www.torn.com/*
 // @run-at       document-idle
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -18,6 +19,35 @@
 
 (() => {
   'use strict';
+
+  const BOOT_PROBE_ID = 'ss-mugger-boot-probe';
+  function showBootProbe(label = 'SSQ', isError = false) {
+    const mount = () => {
+      const host = document.body || document.documentElement;
+      if (!host) return;
+      let probe = document.getElementById(BOOT_PROBE_ID);
+      if (!probe) {
+        probe = document.createElement('div');
+        probe.id = BOOT_PROBE_ID;
+        probe.setAttribute('aria-label', 'SS_Mugger QA boot marker');
+        Object.assign(probe.style, {
+          position:'fixed', right:'10px', bottom:'132px', zIndex:'2147483647',
+          padding:'5px 7px', borderRadius:'7px', font:'700 11px Arial,sans-serif',
+          color:'#fff', background:'#365f73', border:'1px solid #8aa9b8',
+          boxShadow:'0 2px 8px rgba(0,0,0,.55)', pointerEvents:'none'
+        });
+        host.appendChild(probe);
+      }
+      probe.textContent = label;
+      probe.style.background = isError ? '#8d2d2d' : '#365f73';
+      probe.title = isError ? 'SS_Mugger encountered a startup error' : 'SS_Mugger QA script injected';
+    };
+    if (document.documentElement) mount();
+    else document.addEventListener('DOMContentLoaded', mount, {once:true});
+  }
+  showBootProbe('SSQ');
+  window.addEventListener('error', () => showBootProbe('SSQ ERR', true));
+  window.addEventListener('unhandledrejection', () => showBootProbe('SSQ ERR', true));
 
   const asInt = (value, fallback = 0) => {
   const n = Number(value);
@@ -593,7 +623,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.0-rc.1-qa.1';
+  const VERSION = '1.1.0-rc.2-qa.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
@@ -1562,14 +1592,14 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
   const STYLE = `
     #mm-mug-signal-launcher{width:38px;height:38px;border-radius:7px;border:1px solid #555;background:linear-gradient(#3b3f44,#24272a);color:#f1f1f1;font:700 13px Arial;cursor:pointer;box-shadow:0 2px 7px #0008;z-index:2147483000;position:relative;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-    #mm-mug-signal-launcher[data-fallback="1"]{position:fixed;right:max(8px,env(safe-area-inset-right));top:84px}
+    #mm-mug-signal-launcher[data-fallback="1"]{position:fixed;right:max(8px,env(safe-area-inset-right));top:84px;display:flex!important;align-items:center;justify-content:center;pointer-events:auto!important}
     #mm-mug-signal-launcher.hot{box-shadow:0 0 0 2px #b33,0 0 14px #c33a;animation:mmms-pulse 1.5s ease-in-out infinite}@keyframes mmms-pulse{50%{transform:scale(1.04)}}
     #mm-mug-signal-launcher .mm-badge{position:absolute;right:-5px;top:-6px;min-width:16px;height:16px;padding:0 3px;border-radius:9px;background:#b62828;color:#fff;font:700 10px/16px Arial;text-align:center}
     #mm-mug-signals-panel{position:fixed;right:12px;top:130px;width:min(510px,calc(100vw - 24px));max-height:72vh;overflow:auto;background:#17191c;color:#ddd;border:1px solid #4c5056;border-radius:8px;box-shadow:0 8px 30px #000a;z-index:2147482999;font:12px/1.35 Arial,sans-serif;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
     #mm-mug-signals-panel[hidden]{display:none!important}.mmms-head{position:sticky;top:0;background:#22262a;border-bottom:1px solid #3c4045;padding:9px 10px;display:flex;gap:8px;align-items:center;z-index:2}.mmms-title{font-weight:700;font-size:14px;flex:1}.mmms-dot{width:8px;height:8px;border-radius:50%;background:#50a450}.mmms-dot.pause{background:#b28b3b}.mmms-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 10px}.mmms-stat{background:#202327;border:1px solid #34383d;border-radius:5px;padding:6px}.mmms-stat b{display:block;font-size:14px;color:#fff}.mmms-actions{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 9px}.mmms-btn{border:1px solid #555;background:#2c3035;color:#eee;border-radius:4px;padding:5px 8px;cursor:pointer;font:12px Arial;touch-action:manipulation;-webkit-tap-highlight-color:transparent}.mmms-btn:hover{background:#393e44}.mmms-btn.danger{border-color:#744}.mmms-section{border-top:1px solid #333;padding:9px 10px}.mmms-section h3{font-size:12px;margin:0 0 7px;color:#f3f3f3}.mmms-card{border:1px solid #3b4046;background:#202327;border-radius:5px;padding:7px;margin:0 0 6px}.mmms-card.high{border-left:3px solid #4da35a}.mmms-card.medium{border-left:3px solid #b68b39}.mmms-card.stale{opacity:.55;border-left-color:#666}.mmms-row{display:flex;gap:8px;align-items:center}.mmms-grow{flex:1;min-width:0}.mmms-name{font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmms-muted{color:#9da3a9;font-size:11px}.mmms-value{font-size:14px;font-weight:700;color:#f5f5f5}.mmms-tag{display:inline-block;border:1px solid #4a4e54;border-radius:10px;padding:1px 6px;margin-right:4px;color:#bbb;font-size:10px}.mmms-empty{color:#8f969d;padding:6px 0}.mmms-settings{display:grid;grid-template-columns:145px 1fr;gap:7px;align-items:center}.mmms-input{width:100%;box-sizing:border-box;background:#101214;color:#eee;border:1px solid #4a4e54;border-radius:4px;padding:5px}.mmms-small{font-size:10px;color:#8f969d}.mmms-watch{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;border-bottom:1px solid #2d3034;padding:5px 0}.mmms-watch:last-child{border-bottom:0}
     @media (max-width:640px),(pointer:coarse){
       #mm-mug-signal-launcher{width:44px;height:44px;font-size:12px}
-      #mm-mug-signal-launcher[data-fallback="1"]{top:auto;right:max(10px,env(safe-area-inset-right));bottom:calc(72px + env(safe-area-inset-bottom))}
+      #mm-mug-signal-launcher[data-fallback="1"]{top:auto;right:max(10px,env(safe-area-inset-right));bottom:calc(124px + env(safe-area-inset-bottom))}
       #mm-mug-signals-panel{left:max(6px,env(safe-area-inset-left));right:max(6px,env(safe-area-inset-right));top:auto;bottom:calc(6px + env(safe-area-inset-bottom));width:auto;max-height:82vh;max-height:82dvh;border-radius:10px;font-size:13px}
       .mmms-head{padding:10px}.mmms-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:8px}.mmms-actions{padding-left:8px;padding-right:8px}.mmms-btn{min-height:40px;padding:8px 10px;font-size:13px}.mmms-settings{grid-template-columns:1fr;gap:4px}.mmms-settings label{margin-top:4px;color:#b8bdc3}.mmms-input{min-height:40px;font-size:16px;padding:8px}.mmms-row{align-items:flex-start}.mmms-value{white-space:nowrap}.mmms-card{padding:9px}.mmms-tag{margin-bottom:4px;padding:3px 7px;font-size:11px}.mmms-watch{grid-template-columns:minmax(0,1fr) auto}.mmms-section{padding:9px 8px}
     }
@@ -1597,13 +1627,15 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       launcher.addEventListener('click', () => { panelOpen = !panelOpen; render(); });
     }
     const dock = document.querySelector('#mm-torn-module-dock');
+    const host = document.body || document.documentElement;
     if (dock) {
       if (launcher.parentElement !== dock) dock.insertBefore(launcher, dock.firstChild || null);
       delete launcher.dataset.fallback;
-    } else if (launcher.parentElement !== document.body) {
-      document.body.appendChild(launcher);
+    } else if (host && launcher.parentElement !== host) {
+      host.appendChild(launcher);
       launcher.dataset.fallback = '1';
     } else launcher.dataset.fallback = '1';
+    if (launcher.isConnected) document.getElementById(BOOT_PROBE_ID)?.remove();
   }
 
   function ensurePanel() {
