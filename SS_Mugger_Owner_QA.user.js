@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.0.0-qa.1
+// @version      1.1.0-rc.1-qa.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -593,10 +593,18 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.0.0-qa.1';
+  const VERSION = '1.1.0-rc.1-qa.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
+  const PDA_API_KEY = '###PDA-APIKEY###';
+  const PDA_API_KEY_SENTINEL = ['###', 'PDA-APIKEY', '###'].join('');
+  const PDA_INJECTED_API_KEY = PDA_API_KEY && PDA_API_KEY !== PDA_API_KEY_SENTINEL ? String(PDA_API_KEY).trim() : '';
+  const PLATFORM = Object.freeze({
+    pda: Boolean(PDA_INJECTED_API_KEY || window.flutter_inappwebview || typeof window.PDA_httpGet === 'function'),
+    mobile: Boolean(window.matchMedia?.('(max-width: 700px)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '')),
+    touch: Boolean(navigator.maxTouchPoints > 0 || 'ontouchstart' in window)
+  });
   const STORE = {
     key: `${PREFIX}:api_key`,
     watches: `${PREFIX}:watches`,
@@ -647,17 +655,45 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     return `${Math.floor(s / 86400)}d`;
   };
   const esc = (text) => String(text ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
+  const cloneValue = (value) => {
+    try { return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value)); }
+    catch { return value; }
+  };
+  function storageGet(key, fallback = '') {
+    try {
+      if (typeof GM_getValue === 'function') return GM_getValue(key, fallback);
+    } catch {}
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw === null) return fallback;
+      if (raw.startsWith('GMV2_')) {
+        const decoded = raw.slice(5);
+        return decoded === 'undefined' ? fallback : JSON.parse(decoded);
+      }
+      return raw;
+    } catch { return fallback; }
+  }
+  function storageSet(key, value) {
+    try {
+      if (typeof GM_setValue === 'function') { GM_setValue(key, value); return true; }
+    } catch {}
+    try {
+      const encoded = JSON.stringify(value);
+      if (encoded === undefined) localStorage.removeItem(key);
+      else localStorage.setItem(key, 'GMV2_' + encoded);
+      return true;
+    } catch { return false; }
+  }
   function readJson(key, fallback) {
     try {
-      const raw = GM_getValue(key, '');
-      return raw ? JSON.parse(raw) : structuredClone(fallback);
+      const raw = storageGet(key, '');
+      return raw ? JSON.parse(raw) : cloneValue(fallback);
     } catch {
-      return structuredClone(fallback);
+      return cloneValue(fallback);
     }
   }
   function writeJson(key, value) {
-    GM_setValue(key, JSON.stringify(value));
+    storageSet(key, JSON.stringify(value));
   }
 
   let settings = {...DEFAULTS, ...readJson(STORE.settings, {})};
@@ -667,7 +703,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   let errors = readJson(STORE.errors, []);
   let discovery = readJson(STORE.discovery, {nextBazaarAt:0,nextAuctionAt:0,nextCandidateAt:0,categoryIndex:0,owner:null});
   let seenAuctions = readJson(STORE.seenAuctions, []);
-  let apiKey = String(GM_getValue(STORE.key, '') || '').trim();
+  let apiKey = String(storageGet(STORE.key, '') || PDA_INJECTED_API_KEY || '').trim();
   let ownerBattleStats = null;
   let ownerBattleStatsStatus = 'not-loaded';
   let ownerBattleStatsAttempted = false;
@@ -902,26 +938,41 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     cleanRecentCalls();
     return recentCalls.length < Math.max(10, Math.min(90, Number(settings.requestBudgetPerMinute) || 45));
   }
+  function parseApiResponse(response) {
+    const status = Number(response?.status ?? 200);
+    const json = JSON.parse(response?.responseText || response?.response || '{}');
+    if (status < 200 || status >= 300) throw new Error(`HTTP ${status}`);
+    if (json?.error) throw new Error(`Torn API ${json.error.code ?? ''}: ${json.error.error || json.error.message || 'error'}`);
+    return json;
+  }
+  async function pdaHttpGet(url, headers) {
+    if (typeof window.PDA_httpGet === 'function') return window.PDA_httpGet(url, headers || {});
+    const bridge = window.flutter_inappwebview;
+    if (bridge?.callHandler) return bridge.callHandler('PDA_httpGet', url, headers || {});
+    throw new Error('TornPDA HTTP bridge unavailable.');
+  }
   function gmRequest(url) {
     if (!apiKey) return Promise.reject(new Error('API key is not configured.'));
     if (!budgetAvailable()) return Promise.reject(new Error('Local API request budget reached; scheduler will retry.'));
     recentCalls.push(Date.now());
-    return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        method: 'GET', url, timeout: 15_000,
-        headers: {'Accept': 'application/json'},
-        onload: (response) => {
-          try {
-            const json = JSON.parse(response.responseText || '{}');
-            if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status}`);
-            if (json?.error) throw new Error(`Torn API ${json.error.code ?? ''}: ${json.error.error || json.error.message || 'error'}`);
-            resolve(json);
-          } catch (error) { reject(error); }
-        },
-        onerror: () => reject(new Error('Network error contacting Torn API.')),
-        ontimeout: () => reject(new Error('Torn API request timed out.'))
+    const headers = {'Accept': 'application/json'};
+    if (typeof GM_xmlhttpRequest === 'function') {
+      return new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: 'GET', url, timeout: 15_000, headers,
+          onload: (response) => { try { resolve(parseApiResponse(response)); } catch (error) { reject(error); } },
+          onerror: () => reject(new Error('Network error contacting Torn API.')),
+          ontimeout: () => reject(new Error('Torn API request timed out.'))
+        });
       });
-    });
+    }
+    if (PLATFORM.pda) {
+      return Promise.race([
+        pdaHttpGet(url, headers).then(parseApiResponse),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('TornPDA API request timed out.')), 15_000))
+      ]);
+    }
+    return Promise.reject(new Error('No supported cross-origin request adapter is available.'));
   }
   const withKey = (url) => `${url}${url.includes('?') ? '&' : '?'}key=${encodeURIComponent(apiKey)}`;
   const apiV2 = (path) => gmRequest(withKey(`https://api.torn.com/v2/${path}`));
@@ -1280,9 +1331,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       await applyTargetMugProtection(candidate);
       candidates = rankCandidates(candidates);
       saveCandidates();
-      if (settings.notifications && candidate.attackableNow) {
-        try { GM_notification({title:`${APP}: ${candidate.mugEstimate ? money(candidate.mugEstimate.planningAmount) + ' est. mug' : money(candidate.grossValue) + ' exposure'}`, text:`${candidate.sellerName} · ${money(candidate.grossValue)} probable exposure · ${candidate.signalCount || 1} signal${candidate.signalCount === 1 ? '' : 's'}`, timeout:9000}); } catch {}
-      }
+      notifyCandidate(candidate);
       render();
     } catch (error) {
       logError(`profile:${watch.sellerId}`, error);
@@ -1424,7 +1473,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       if (openAttackAfter) {
         if (candidate.stale) return alert(`${APP}: target acted after the sale signal; candidate marked stale.`);
         if (!candidate.attackableNow) return alert(`${APP}: target status is ${candidate.statusState || 'not attackable'}. Candidate retained, attack page not opened.`);
-        window.open(attackUrl(candidate.sellerId), '_blank', 'noopener');
+        openTornUrl(attackUrl(candidate.sellerId));
       }
     } catch (error) {
       logError(`candidate-check:${candidate.sellerId}`, error);
@@ -1491,14 +1540,39 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
   function attackUrl(id) { return `https://www.torn.com/loader.php?sid=attack&user2ID=${encodeURIComponent(id)}`; }
   function profileUrl(id) { return `https://www.torn.com/profiles.php?XID=${encodeURIComponent(id)}`; }
+  function openTornUrl(url) {
+    if (PLATFORM.pda || PLATFORM.mobile) { location.href = url; return; }
+    try {
+      const opened = window.open(url, '_blank', 'noopener');
+      if (opened) return;
+    } catch {}
+    location.href = url;
+  }
+  function notifyCandidate(candidate) {
+    if (!settings.notifications || !candidate?.attackableNow) return;
+    const title = `${APP}: ${candidate.mugEstimate ? money(candidate.mugEstimate.planningAmount) + ' est. mug' : money(candidate.grossValue) + ' exposure'}`;
+    const text = `${candidate.sellerName} · ${money(candidate.grossValue)} probable exposure · ${candidate.signalCount || 1} signal${candidate.signalCount === 1 ? '' : 's'}`;
+    // TornPDA's GM_notification compatibility layer is a blocking confirm dialog, so rely on the in-page badge there.
+    if (PLATFORM.pda) {
+      try { if (document.visibilityState === 'visible' && navigator.vibrate) navigator.vibrate(80); } catch {}
+      return;
+    }
+    try { if (typeof GM_notification === 'function') GM_notification({title, text, timeout:9000}); } catch {}
+  }
 
   const STYLE = `
-    #mm-mug-signal-launcher{width:38px;height:38px;border-radius:7px;border:1px solid #555;background:linear-gradient(#3b3f44,#24272a);color:#f1f1f1;font:700 13px Arial;cursor:pointer;box-shadow:0 2px 7px #0008;z-index:2147483000;position:relative}
-    #mm-mug-signal-launcher[data-fallback="1"]{position:fixed;right:8px;top:84px}
+    #mm-mug-signal-launcher{width:38px;height:38px;border-radius:7px;border:1px solid #555;background:linear-gradient(#3b3f44,#24272a);color:#f1f1f1;font:700 13px Arial;cursor:pointer;box-shadow:0 2px 7px #0008;z-index:2147483000;position:relative;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+    #mm-mug-signal-launcher[data-fallback="1"]{position:fixed;right:max(8px,env(safe-area-inset-right));top:84px}
     #mm-mug-signal-launcher.hot{box-shadow:0 0 0 2px #b33,0 0 14px #c33a;animation:mmms-pulse 1.5s ease-in-out infinite}@keyframes mmms-pulse{50%{transform:scale(1.04)}}
     #mm-mug-signal-launcher .mm-badge{position:absolute;right:-5px;top:-6px;min-width:16px;height:16px;padding:0 3px;border-radius:9px;background:#b62828;color:#fff;font:700 10px/16px Arial;text-align:center}
-    #mm-mug-signals-panel{position:fixed;right:12px;top:130px;width:min(510px,calc(100vw - 24px));max-height:72vh;overflow:auto;background:#17191c;color:#ddd;border:1px solid #4c5056;border-radius:8px;box-shadow:0 8px 30px #000a;z-index:2147482999;font:12px/1.35 Arial,sans-serif}
-    #mm-mug-signals-panel[hidden]{display:none!important}.mmms-head{position:sticky;top:0;background:#22262a;border-bottom:1px solid #3c4045;padding:9px 10px;display:flex;gap:8px;align-items:center;z-index:2}.mmms-title{font-weight:700;font-size:14px;flex:1}.mmms-dot{width:8px;height:8px;border-radius:50%;background:#50a450}.mmms-dot.pause{background:#b28b3b}.mmms-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 10px}.mmms-stat{background:#202327;border:1px solid #34383d;border-radius:5px;padding:6px}.mmms-stat b{display:block;font-size:14px;color:#fff}.mmms-actions{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 9px}.mmms-btn{border:1px solid #555;background:#2c3035;color:#eee;border-radius:4px;padding:5px 8px;cursor:pointer;font:12px Arial}.mmms-btn:hover{background:#393e44}.mmms-btn.danger{border-color:#744}.mmms-section{border-top:1px solid #333;padding:9px 10px}.mmms-section h3{font-size:12px;margin:0 0 7px;color:#f3f3f3}.mmms-card{border:1px solid #3b4046;background:#202327;border-radius:5px;padding:7px;margin:0 0 6px}.mmms-card.high{border-left:3px solid #4da35a}.mmms-card.medium{border-left:3px solid #b68b39}.mmms-card.stale{opacity:.55;border-left-color:#666}.mmms-row{display:flex;gap:8px;align-items:center}.mmms-grow{flex:1;min-width:0}.mmms-name{font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmms-muted{color:#9da3a9;font-size:11px}.mmms-value{font-size:14px;font-weight:700;color:#f5f5f5}.mmms-tag{display:inline-block;border:1px solid #4a4e54;border-radius:10px;padding:1px 6px;margin-right:4px;color:#bbb;font-size:10px}.mmms-empty{color:#8f969d;padding:6px 0}.mmms-settings{display:grid;grid-template-columns:145px 1fr;gap:7px;align-items:center}.mmms-input{width:100%;box-sizing:border-box;background:#101214;color:#eee;border:1px solid #4a4e54;border-radius:4px;padding:5px}.mmms-small{font-size:10px;color:#8f969d}.mmms-watch{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;border-bottom:1px solid #2d3034;padding:5px 0}.mmms-watch:last-child{border-bottom:0}
+    #mm-mug-signals-panel{position:fixed;right:12px;top:130px;width:min(510px,calc(100vw - 24px));max-height:72vh;overflow:auto;background:#17191c;color:#ddd;border:1px solid #4c5056;border-radius:8px;box-shadow:0 8px 30px #000a;z-index:2147482999;font:12px/1.35 Arial,sans-serif;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+    #mm-mug-signals-panel[hidden]{display:none!important}.mmms-head{position:sticky;top:0;background:#22262a;border-bottom:1px solid #3c4045;padding:9px 10px;display:flex;gap:8px;align-items:center;z-index:2}.mmms-title{font-weight:700;font-size:14px;flex:1}.mmms-dot{width:8px;height:8px;border-radius:50%;background:#50a450}.mmms-dot.pause{background:#b28b3b}.mmms-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 10px}.mmms-stat{background:#202327;border:1px solid #34383d;border-radius:5px;padding:6px}.mmms-stat b{display:block;font-size:14px;color:#fff}.mmms-actions{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 9px}.mmms-btn{border:1px solid #555;background:#2c3035;color:#eee;border-radius:4px;padding:5px 8px;cursor:pointer;font:12px Arial;touch-action:manipulation;-webkit-tap-highlight-color:transparent}.mmms-btn:hover{background:#393e44}.mmms-btn.danger{border-color:#744}.mmms-section{border-top:1px solid #333;padding:9px 10px}.mmms-section h3{font-size:12px;margin:0 0 7px;color:#f3f3f3}.mmms-card{border:1px solid #3b4046;background:#202327;border-radius:5px;padding:7px;margin:0 0 6px}.mmms-card.high{border-left:3px solid #4da35a}.mmms-card.medium{border-left:3px solid #b68b39}.mmms-card.stale{opacity:.55;border-left-color:#666}.mmms-row{display:flex;gap:8px;align-items:center}.mmms-grow{flex:1;min-width:0}.mmms-name{font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmms-muted{color:#9da3a9;font-size:11px}.mmms-value{font-size:14px;font-weight:700;color:#f5f5f5}.mmms-tag{display:inline-block;border:1px solid #4a4e54;border-radius:10px;padding:1px 6px;margin-right:4px;color:#bbb;font-size:10px}.mmms-empty{color:#8f969d;padding:6px 0}.mmms-settings{display:grid;grid-template-columns:145px 1fr;gap:7px;align-items:center}.mmms-input{width:100%;box-sizing:border-box;background:#101214;color:#eee;border:1px solid #4a4e54;border-radius:4px;padding:5px}.mmms-small{font-size:10px;color:#8f969d}.mmms-watch{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;border-bottom:1px solid #2d3034;padding:5px 0}.mmms-watch:last-child{border-bottom:0}
+    @media (max-width:640px),(pointer:coarse){
+      #mm-mug-signal-launcher{width:44px;height:44px;font-size:12px}
+      #mm-mug-signal-launcher[data-fallback="1"]{top:auto;right:max(10px,env(safe-area-inset-right));bottom:calc(72px + env(safe-area-inset-bottom))}
+      #mm-mug-signals-panel{left:max(6px,env(safe-area-inset-left));right:max(6px,env(safe-area-inset-right));top:auto;bottom:calc(6px + env(safe-area-inset-bottom));width:auto;max-height:82vh;max-height:82dvh;border-radius:10px;font-size:13px}
+      .mmms-head{padding:10px}.mmms-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:8px}.mmms-actions{padding-left:8px;padding-right:8px}.mmms-btn{min-height:40px;padding:8px 10px;font-size:13px}.mmms-settings{grid-template-columns:1fr;gap:4px}.mmms-settings label{margin-top:4px;color:#b8bdc3}.mmms-input{min-height:40px;font-size:16px;padding:8px}.mmms-row{align-items:flex-start}.mmms-value{white-space:nowrap}.mmms-card{padding:9px}.mmms-tag{margin-bottom:4px;padding:3px 7px;font-size:11px}.mmms-watch{grid-template-columns:minmax(0,1fr) auto}.mmms-section{padding:9px 8px}
+    }
   `;
 
   let launcher = null;
@@ -1549,7 +1623,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       if (action === 'clear-candidates') { candidates = []; saveCandidates(); render(); }
       if (action === 'clear-inactive') clearInactive();
       if (action === 'remove-watch') removeWatch(button.dataset.id);
-      if (action === 'profile') window.open(profileUrl(button.dataset.id), '_blank', 'noopener');
+      if (action === 'profile') openTornUrl(profileUrl(button.dataset.id));
       if (action === 'attack') { const c = candidates.find((x)=>x.id === button.dataset.candidate); if (c) await refreshCandidate(c, true); }
       if (action === 'save-settings') savePanelSettings();
       if (action === 'apply-filters') {
@@ -1611,7 +1685,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       const ownerLabel = licenseState.ownerId ? `${esc(licenseState.ownerName || 'Player')} [${esc(licenseState.ownerId)}]` : 'unverified';
       panel.innerHTML = `<div class="mmms-head"><span class="mmms-dot pause"></span><span class="mmms-title">${APP} <span class="mmms-muted">${VERSION}</span></span><button class="mmms-btn" data-action="close">Close</button></div>
         <div class="mmms-section"><h3>Exclusive license</h3><div class="mmms-muted">Licensed only to ${LICENSED_USER_NAME} [${LICENSED_USER_ID}]. Current API owner: ${ownerLabel}. ${licenseState.status === 'denied' ? 'This installation is disabled.' : 'Enter the licensed user API key and press Test key.'}</div></div>
-        <div class="mmms-section"><h3>API</h3><div class="mmms-settings"><label>API key</label><input id="mmms-key" class="mmms-input" type="password" autocomplete="off" value="${esc(apiKey)}" placeholder="Torn API key"></div><div class="mmms-actions" style="padding-top:8px"><button class="mmms-btn" data-action="test-key">Test key</button></div></div>`;
+        <div class="mmms-section"><h3>API</h3><div class="mmms-settings"><label>API key</label><input id="mmms-key" class="mmms-input" type="password" autocomplete="off" value="${PLATFORM.pda && PDA_INJECTED_API_KEY ? '' : esc(apiKey)}" placeholder="${PLATFORM.pda && PDA_INJECTED_API_KEY ? 'TornPDA API key auto-detected' : 'Torn API key'}"></div><div class="mmms-actions" style="padding-top:8px"><button class="mmms-btn" data-action="test-key">Test key</button></div></div>`;
       return;
     }
     const visibleCandidates = displayCandidates();
@@ -1635,7 +1709,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         ${visibleCandidates.length ? visibleCandidates.map(candidateHtml).join('') : '<div class="mmms-empty">No targets match the current payout / win filters.</div>'}<button class="mmms-btn" data-action="clear-candidates">Clear candidates</button></div>
       <div class="mmms-section"><h3>Watchlist</h3>${watches.length ? watches.slice().sort((a,b)=>(b.active-a.active)||(b.lastSeenAt-a.lastSeenAt)).slice(0,120).map(watchHtml).join('') : '<div class="mmms-empty">Browse Item Market or a Bazaar while this tab is focused, or add a Bazaar player ID below.</div>'}<button class="mmms-btn" data-action="clear-inactive">Remove inactive listings</button></div>
       <div class="mmms-section"><h3>Settings</h3><div class="mmms-settings">
-        <label>API key</label><input id="mmms-key" class="mmms-input" type="password" autocomplete="off" value="${esc(apiKey)}" placeholder="Torn API key">
+        <label>API key</label><input id="mmms-key" class="mmms-input" type="password" autocomplete="off" value="${PLATFORM.pda && PDA_INJECTED_API_KEY ? '' : esc(apiKey)}" placeholder="${PLATFORM.pda && PDA_INJECTED_API_KEY ? 'TornPDA API key auto-detected' : 'Torn API key'}">
         <label>Min gross sale</label><input id="mmms-min" class="mmms-input" type="number" min="0" step="100000" value="${Number(settings.minGrossValue)||0}">
         <label>Item Market poll</label><input id="mmms-market-poll" class="mmms-input" type="number" min="15" max="600" value="${Number(settings.marketPollSeconds)||30}">
         <label>Points Market poll</label><input id="mmms-points-poll" class="mmms-input" type="number" min="15" max="600" value="${Number(settings.pointsPollSeconds)||20}">
@@ -1661,7 +1735,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
 
   function savePanelSettings() {
-    const key = String(document.getElementById('mmms-key')?.value || '').trim();
+    const typedKey = String(document.getElementById('mmms-key')?.value || '').trim();
+    const key = typedKey || PDA_INJECTED_API_KEY || apiKey;
     if (key !== apiKey) {
       ownerBattleStats = null; ownerBattleStatsStatus = 'not-loaded'; ownerBattleStatsAttempted = false;
       ownerMugProfile = {...ownerMugProfile,status:'not-loaded',refreshedAt:0}; ownerMugProfileNextAt = 0;
@@ -1669,7 +1744,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       discovery.owner = null; saveDiscovery();
     }
     apiKey = key;
-    GM_setValue(STORE.key, apiKey);
+    if (typedKey || !PDA_INJECTED_API_KEY) storageSet(STORE.key, apiKey);
     settings.minGrossValue = Math.max(0, Number(document.getElementById('mmms-min')?.value) || 0);
     settings.marketPollSeconds = Math.max(15, Math.min(600, Number(document.getElementById('mmms-market-poll')?.value) || 30));
     settings.pointsPollSeconds = Math.max(15, Math.min(600, Number(document.getElementById('mmms-points-poll')?.value) || 20));
@@ -1697,9 +1772,10 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   async function testApiKey() {
     const keyField = document.getElementById('mmms-key');
     if (keyField) {
-      const key = String(keyField.value || '').trim();
+      const typedKey = String(keyField.value || '').trim();
+      const key = typedKey || PDA_INJECTED_API_KEY || apiKey;
       if (key !== apiKey) {
-        apiKey = key; GM_setValue(STORE.key, apiKey);
+        apiKey = key; if (typedKey || !PDA_INJECTED_API_KEY) storageSet(STORE.key, apiKey);
         ownerBattleStats = null; ownerBattleStatsStatus = 'not-loaded'; ownerBattleStatsAttempted = false;
         ownerMugProfile = {...ownerMugProfile,status:'not-loaded',refreshedAt:0}; ownerMugProfileNextAt = 0;
         licenseState = {status:apiKey ? 'pending':'needs-key',checkedAt:0,ownerId:'',ownerName:''};
@@ -1734,7 +1810,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     const payload = {
       app: APP, version: VERSION, licensedUser:{id:LICENSED_USER_ID,name:LICENSED_USER_NAME}, licenseStatus:licenseState.status, exportedAt: new Date().toISOString(), url: location.href,
       focused: focused(), route: {itemMarket: isItemMarket(), pointsMarket: isPointsMarket(), bazaar: isBazaar(), itemId: currentItemId()},
-      settings: {...settings}, apiKeyConfigured: Boolean(apiKey), apiUsageLastMinute: recentCalls.length, combatModelStatus: ownerBattleStatsStatus, mugModel: {status:ownerMugProfile.status, masterfulLevel:ownerMugProfile.masterfulLevel, masterfulBonusPercent:ownerMugProfile.masterfulBonusPercent, detectedPlunderPercent:ownerMugProfile.detectedPlunderPercent, effectivePlunderPercent:ownerMugProfile.effectivePlunderPercent, otherBonusPercent:ownerMugProfile.otherBonusPercent, awards:ownerMugProfile.awards, refreshedAt:ownerMugProfile.refreshedAt},
+      platform: PLATFORM, settings: {...settings}, apiKeyConfigured: Boolean(apiKey), apiKeySource: PDA_INJECTED_API_KEY && apiKey === PDA_INJECTED_API_KEY ? 'tornpda' : (apiKey ? 'stored/manual' : 'none'), apiUsageLastMinute: recentCalls.length, combatModelStatus: ownerBattleStatsStatus, mugModel: {status:ownerMugProfile.status, masterfulLevel:ownerMugProfile.masterfulLevel, masterfulBonusPercent:ownerMugProfile.masterfulBonusPercent, detectedPlunderPercent:ownerMugProfile.detectedPlunderPercent, effectivePlunderPercent:ownerMugProfile.effectivePlunderPercent, otherBonusPercent:ownerMugProfile.otherBonusPercent, awards:ownerMugProfile.awards, refreshedAt:ownerMugProfile.refreshedAt},
       watches, candidates, discovery: {...discovery, owner: discovery.owner ? {...discovery.owner} : null}, seenAuctionCount: seenAuctions.length, rejections: rejections.slice(-50), errors: errors.slice(-50)
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
@@ -1746,9 +1822,11 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
 
   try {
-    GM_registerMenuCommand('SS_Mugger: Open', () => { panelOpen = true; render(); });
-    GM_registerMenuCommand('SS_Mugger: Capture current page', () => { captureActivePage(); render(); });
-    GM_registerMenuCommand('SS_Mugger: Export diagnostics', exportDiagnostics);
+    if (typeof GM_registerMenuCommand === 'function') {
+      GM_registerMenuCommand('SS_Mugger: Open', () => { panelOpen = true; render(); });
+      GM_registerMenuCommand('SS_Mugger: Capture current page', () => { captureActivePage(); render(); });
+      GM_registerMenuCommand('SS_Mugger: Export diagnostics', exportDiagnostics);
+    }
   } catch {}
 
   setInterval(() => {
@@ -1764,6 +1842,10 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   setInterval(schedulerTick, 1200);
   document.addEventListener('visibilitychange', () => { if (licensed() && document.visibilityState === 'visible') captureActivePage(); });
   window.addEventListener('focus', () => { if (licensed()) captureActivePage(); });
+  window.addEventListener('orientationchange', () => setTimeout(render, 120));
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => { if (panelOpen) render(); }, {passive:true});
+  }
   window.addEventListener('pagehide', () => { saveWatches(); saveCandidates(); });
 
   render();
