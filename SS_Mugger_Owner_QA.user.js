@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.10.1
+// @version      1.1.11.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -22,7 +22,7 @@
 
   const RUNTIME_GUARD = '__SS_MUGGER_RUNTIME_ACTIVE__';
   if (window[RUNTIME_GUARD]) return;
-  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.10'};
+  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.11'};
 
   const BOOT_PROBE_ID = 'ss-mugger-boot-probe';
   function showBootProbe(label = 'SSQ', isError = false) {
@@ -627,7 +627,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.10.1';
+  const VERSION = '1.1.11.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
@@ -883,7 +883,10 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       const mugTotal = mugReturnEstimate(g.gross, modifiers).planningAmount;
       const mugPerHour = Math.round(mugTotal/windowHours);
       const salesPerHour = g.signals.length/windowHours;
-      const score = confidence + Math.log10(turnoverPerHour+1)*24 + Math.log10(mugPerHour+1)*20 + Math.min(35,salesPerHour*9);
+      if (g.signals.length < 3 || salesPerHour < 1) continue;
+      const moneyScore = Math.max(0, Math.min(100, (Math.log10(turnoverPerHour + 1) - 6) * 25));
+      const velocityScore = Math.max(0, Math.min(100, salesPerHour * 10));
+      const score = confidence * 0.25 + moneyScore * 0.40 + velocityScore * 0.35;
       result.push({...g,confidence,turnoverPerHour,mugPerHour,salesPerHour,score,lastScanAt:Number(itemScans[g.itemId]||0)});
     }
     return result.sort((a,b)=>b.score-a.score || b.turnoverPerHour-a.turnoverPerHour).slice(0,Math.max(4,Math.min(30,Number(settings.hotItemLimit)||12)));
