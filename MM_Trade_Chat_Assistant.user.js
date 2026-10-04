@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.2.0-alpha.4
+// @version      0.2.0-alpha.5
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -26,8 +26,14 @@
   const PLAYER_ID = '4325346';
   const PLAYER_NAME = 'Manic-Mike';
   const CONTACT_LABEL = PLAYER_NAME + ' [' + PLAYER_ID + ']';
-  const SERVICE_THREAD = 'https://www.torn.com/forums.php?p=threads&t=16608018';
+  const FORUM_THREAD_ID = '16608018';
+  const SERVICE_THREAD = 'https://www.torn.com/forums.php?p=threads&f=67&t=' + FORUM_THREAD_ID + '&b=0&a=0';
+  const FORUM_INDEX = 'https://www.torn.com/forums.php?p=forums&f=67&b=0&a=0';
   const FORUM_ROUTE_KEY = 'mmTradeChatAssistantForumRouteV1';
+  const FORUM_BUMP_PREP_KEY = 'mmTradeChatAssistantForumBumpPrepV1';
+  const FORUM_STATUS_KEY = 'mmTradeChatAssistantForumStatusV1';
+  const FORUM_CHECK_MS = 5 * 60 * 1000;
+  const FORUM_BUMP_TEXT = 'Bump';
   const core = globalThis.MMTornCore;
 
   const MODES = Object.freeze({
@@ -64,6 +70,23 @@
   let sessionId = 0;
   let sessionFilled = false;
   let submitArmed = false;
+  let forumStatus = loadForumStatus();
+  let forumCheckPromise = null;
+
+  function loadForumStatus() {
+    const saved = GM_getValue(FORUM_STATUS_KEY, null);
+    const src = saved && typeof saved === 'object' ? saved : {};
+    return {
+      needsBump: src.needsBump === true,
+      lastCheckedAt: Number.isFinite(src.lastCheckedAt) ? src.lastCheckedAt : 0,
+      lastSeenPage1At: Number.isFinite(src.lastSeenPage1At) ? src.lastSeenPage1At : 0,
+    };
+  }
+
+  function saveForumStatus() {
+    GM_setValue(FORUM_STATUS_KEY, forumStatus);
+    renderForumStatus();
+  }
 
   function loadState() {
     const saved = GM_getValue(STATE_KEY, null);
@@ -262,9 +285,144 @@
     if (control) control.click();
   }
 
+  function isServiceThreadPage() {
+    return location.pathname.endsWith('/forums.php') && location.href.includes('t=' + FORUM_THREAD_ID);
+  }
+
+  function extractForumThreadIds(doc) {
+    const ids = new Set();
+    const links = doc.querySelectorAll('a[href*="forums.php"]');
+    links.forEach((link) => {
+      const href = link.getAttribute('href') || '';
+      if (!/(?:[?&#]|&)f=67(?:[&#]|&|$)/.test(href)) return;
+      const match = href.match(/(?:[?&#]|&)t=(\d+)/);
+      if (match) ids.add(match[1]);
+    });
+    return ids;
+  }
+
+  async function checkForumBumpStatus(force) {
+    const now = Date.now();
+    if (!force && forumStatus.lastCheckedAt && now - forumStatus.lastCheckedAt < FORUM_CHECK_MS) {
+      return forumStatus.needsBump;
+    }
+    if (forumCheckPromise) return forumCheckPromise;
+
+    forumCheckPromise = (async () => {
+      try {
+        const response = await fetch(FORUM_INDEX, {
+          credentials: 'include',
+          cache: 'no-store',
+          headers: { Accept: 'text/html' },
+        });
+        if (!response.ok) throw new Error('Forum index returned HTTP ' + response.status);
+
+        const html = await response.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const ids = extractForumThreadIds(doc);
+        if (ids.size < 10) throw new Error('Forum index did not expose a complete first page.');
+
+        const onPageOne = ids.has(FORUM_THREAD_ID);
+        forumStatus = {
+          needsBump: !onPageOne,
+          lastCheckedAt: Date.now(),
+          lastSeenPage1At: onPageOne ? Date.now() : forumStatus.lastSeenPage1At,
+        };
+        saveForumStatus();
+        return forumStatus.needsBump;
+      } catch {
+        forumStatus.lastCheckedAt = Date.now();
+        saveForumStatus();
+        return forumStatus.needsBump;
+      } finally {
+        forumCheckPromise = null;
+      }
+    })();
+
+    return forumCheckPromise;
+  }
+
   function openServiceThread() {
     GM_setValue(FORUM_ROUTE_KEY, true);
+    GM_setValue(FORUM_BUMP_PREP_KEY, forumStatus.needsBump === true);
     location.assign(SERVICE_THREAD);
+  }
+
+  function findForumReplyEditor() {
+    const selectors = [
+      'textarea[placeholder*="Type your message here"]',
+      '[contenteditable="true"][data-placeholder*="Type your message here"]',
+      '[contenteditable="true"][aria-label*="message"]',
+      '[role="textbox"][contenteditable="true"]',
+    ];
+    const candidates = Array.from(document.querySelectorAll(selectors.join(','))).filter((el) => {
+      return el instanceof HTMLElement && isVisible(el) && !(el.closest && el.closest('#chatRoot'));
+    });
+
+    return candidates.find((el) => {
+      const label = [
+        el.getAttribute('placeholder'),
+        el.getAttribute('data-placeholder'),
+        el.getAttribute('aria-label'),
+      ].filter(Boolean).join(' ').toLowerCase();
+      return /type your message here|reply|message/.test(label) || candidates.length === 1;
+    }) || null;
+  }
+
+  function forumEditorHasText(editor) {
+    if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
+      return Boolean(editor.value.trim());
+    }
+    return Boolean(String(editor.textContent || '').trim());
+  }
+
+  function setForumEditorText(editor, text) {
+    if (!(editor instanceof HTMLElement) || forumEditorHasText(editor)) return false;
+
+    editor.focus({ preventScroll: true });
+    if (editor instanceof HTMLTextAreaElement || editor instanceof HTMLInputElement) {
+      const proto = editor instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (setter) setter.call(editor, text);
+      else editor.value = text;
+      editor.dispatchEvent(new Event('input', { bubbles: true }));
+      editor.dispatchEvent(new Event('change', { bubbles: true }));
+      return editor.value === text;
+    }
+
+    editor.textContent = text;
+    editor.dispatchEvent(new InputEvent('input', {
+      bubbles: true,
+      inputType: 'insertText',
+      data: text,
+    }));
+    return String(editor.textContent || '').trim() === text;
+  }
+
+  function prepareForumBumpAfterRoute() {
+    if (!GM_getValue(FORUM_BUMP_PREP_KEY, false) || !isServiceThreadPage()) return;
+
+    const deadline = Date.now() + 10000;
+    const attempt = () => {
+      const editor = findForumReplyEditor();
+      if (editor) {
+        if (!forumEditorHasText(editor)) {
+          setForumEditorText(editor, FORUM_BUMP_TEXT);
+          editor.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+        GM_setValue(FORUM_BUMP_PREP_KEY, false);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        GM_setValue(FORUM_BUMP_PREP_KEY, false);
+        return;
+      }
+      setTimeout(attempt, 250);
+    };
+
+    setTimeout(attempt, 300);
   }
 
   function restoreTradeAfterForumRoute() {
@@ -486,6 +644,8 @@
       '[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-timer{position:relative;z-index:1;color:#f1f3f4;font:700 9.5px/1 Arial,sans-serif;letter-spacing:-.25px;text-shadow:0 1px 2px #000,0 0 3px #000;pointer-events:none}',
       '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-due="1"] .mmta-launch-timer{color:#ffd66d}',
       '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-due="1"] .mmta-launch-bell{opacity:.42}',
+      '@keyframes mmtaForumPulse{0%,100%{box-shadow:0 0 5px rgba(225,58,58,.4)}50%{box-shadow:0 0 14px rgba(255,65,65,.95)}}',
+      '[data-mm-dock-id="' + MODULE_ID + '"][data-mm-forum-bump="1"]{outline:1px solid #d83d3d;animation:mmtaForumPulse 1.2s ease-in-out infinite}',
       '#' + APP_ID + '{display:none;position:fixed;z-index:2147483646;width:min(390px,calc(100vw - 24px));max-height:calc(100vh - 88px);overflow:hidden;color:#eee;background:#111;border:1px solid #8b6a2f;border-radius:8px;box-shadow:0 12px 35px #000b;font:12px/1.35 Arial,sans-serif}',
       '#' + APP_ID + ' *{box-sizing:border-box}',
       '#' + APP_ID + ' .mmta-head{height:40px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px 0 10px;background:#151515;border-bottom:1px solid #6f5426}',
@@ -501,6 +661,7 @@
       '#' + APP_ID + ' .mmta-actions{display:grid;grid-template-columns:1fr 1fr;gap:5px}',
       '#' + APP_ID + ' .mmta-actions button:first-child{border-color:#9a7418}',
       '#' + APP_ID + ' .mmta-actions [data-act="forum"]{grid-column:1/-1}',
+      '#' + APP_ID + ' .mmta-actions [data-act="forum"][data-mm-bump="1"]{border-color:#e44848;color:#ffd4d4;animation:mmtaForumPulse 1.2s ease-in-out infinite}',
       '#' + APP_ID + ' .mmta-note{margin-top:7px;color:#8fd59a}',
       '@media(max-width:620px){[data-mm-dock-id="' + MODULE_ID + '"] .mmta-launch-timer{font-size:9px}#' + APP_ID + '{width:calc(100vw - 8px);max-height:calc(100vh - 62px)}#' + APP_ID + ' .mmta-body{max-height:calc(100vh - 106px)}}',
     ].join('\n');
@@ -524,6 +685,19 @@
     const timer = button.querySelector('[data-mm-trade-timer]');
     if (timer) timer.textContent = formatCountdown();
     button.dataset.mmDue = state.enabled && isPostingDue() ? '1' : '0';
+    button.dataset.mmForumBump = forumStatus.needsBump ? '1' : '0';
+  }
+
+  function renderForumStatus() {
+    const forumButton = panel && panel.querySelector('[data-act="forum"]');
+    if (forumButton) {
+      forumButton.dataset.mmBump = forumStatus.needsBump ? '1' : '0';
+      forumButton.textContent = forumStatus.needsBump ? 'Forum Bump Needed' : 'Open Forum Thread';
+      forumButton.title = forumStatus.needsBump
+        ? 'Thread is no longer on page 1. Opens the thread and prepares a manual Bump reply.'
+        : 'Thread is currently on page 1.';
+    }
+    renderLauncher();
   }
 
   function createLauncher() {
@@ -655,6 +829,7 @@
     if (chars) chars.textContent = codePointLength(message) + '/' + TRADE_LIMIT + ' chars';
     if (mode) mode.value = state.mode;
     if (toggle) toggle.textContent = state.enabled ? 'Pause' : 'Resume';
+    renderForumStatus();
   }
 
   function closePanel() {
@@ -679,6 +854,7 @@
 
     const openedSessionId = sessionId;
     setTimeout(() => preparePostingSession(openedSessionId), 0);
+    checkForumBumpStatus(false);
   }
 
   function togglePanel() {
@@ -700,6 +876,8 @@
     createLauncher();
     render();
     restoreTradeAfterForumRoute();
+    prepareForumBumpAfterRoute();
+    setTimeout(() => checkForumBumpStatus(true), 1200);
 
     document.addEventListener('keydown', handleComposerKeydown, true);
     document.addEventListener('click', handleTradeClick, true);
@@ -707,6 +885,7 @@
     window.addEventListener('resize', () => requestAnimationFrame(positionPanelDefault), { passive: true });
 
     setInterval(render, TICK_MS);
+    setInterval(() => checkForumBumpStatus(false), FORUM_CHECK_MS);
   }
 
   if (document.readyState === 'loading') {
