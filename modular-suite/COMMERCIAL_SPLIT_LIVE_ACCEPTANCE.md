@@ -1700,4 +1700,20 @@ Next live action:
 - live install URL is now commit-pinned to current branch head dd90732a5e98c46b13ed9d2e4152057c0741e835;
 - independent fetch verified that immutable URL contains alpha.12 and does not contain alpha.11 version metadata;
 - restore canonical modular-branch update/download URLs only after live acceptance and before merge.
+### alpha.12 desktop acceptance — phase 3 — 2026-10-04
+
+Observed directly after immutable alpha.12 install:
+- PASS: live panel reports `v8.0.0-alpha.12 · PROFIT / RANKED / TRAVEL`;
+- PASS: existing shared Acquisitions dock launcher remains the only launcher;
+- PASS: desktop screenshot shows the panel stopping above the bottom Torn/MM control row without overlap;
+- PASS: automatic normal-opportunity refresh completed successfully after install;
+- PASS: Weav3r freshness advanced from ~21m stale cache to ~1m; Item Market advanced to ~8s;
+- PASS: full customer pricelist universe remained 125 evaluated;
+- PASS: refreshed full-universe labels changed from stale to GOOD (20 visible rows sampled), confirming freshness re-evaluation;
+- live scan after refresh showed 84 customer items with positive gross spread; 0 met the active ROI/profit rules at that instant;
+- Ranked cache remains old (~23m) because Ranked tab has not yet been refreshed under alpha.12.
+
+Manual boundary for next phase:
+- Opera connector can inspect but cannot press the page's userscript controls;
+- owner must open `Ranked` and press `Refresh Ranked` once, then leave the panel open for inspection.
 
