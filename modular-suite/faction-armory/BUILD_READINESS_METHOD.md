@@ -382,7 +382,7 @@ The stable baseline catalog remains 18 items and continues to choose the readine
 - Pants; and
 - Boots.
 
-For each member and slot, the alternatives list is filtered against that member's active readiness floor. An option is shown only when its normal-stat score meets or exceeds the floor. The option list therefore answers **what else can satisfy this member's need**, rather than treating one named target as the only acceptable item.
+For each member and slot, the alternatives list is filtered against that member's active readiness floor. An option is shown only when its **minimum normal-roll** score meets or exceeds the floor; the average score is used for comparison/ranking after it qualifies. The option list therefore answers **what else can safely satisfy this member's need**, rather than treating one named target as the only acceptable item.
 
 The Build view groups qualifying alternatives by acquisition cost:
 
