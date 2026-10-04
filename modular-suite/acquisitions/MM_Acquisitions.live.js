@@ -302,10 +302,12 @@
       const syncedAt=nowIso();
       await core.updateDomainState('market',draft=>{
         const proc=draft.procurement || (draft.procurement={});
-        proc.catalog=proc.catalog&&typeof proc.catalog==='object'?proc.catalog:{};
+        const previous=proc.catalog&&typeof proc.catalog==='object'?proc.catalog:{};
+        const next={};
         for(const row of rows){
-          proc.catalog[row.id]={...(proc.catalog[row.id]||{}),...row,catalogUpdatedAt:syncedAt};
+          next[row.id]={...(previous[row.id]||{}),...row,catalogUpdatedAt:syncedAt,catalogSource:'Torn API v2'};
         }
+        proc.catalog=next;
         proc.catalogLastSyncAt=syncedAt;
         proc.catalogItemCount=rows.length;
         proc.catalogBuyableCount=rows.filter(row=>row.buyable).length;
