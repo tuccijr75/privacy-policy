@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.19
+// @version      8.0.0-alpha.20
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.19';
+  const VERSION='8.0.0-alpha.20';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -323,6 +323,10 @@
       .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
+  function couponRedeemUrl(){
+    return 'https://www.torn.com/messages.php#/p=compose&XID='+encodeURIComponent(OWNER_ID);
+  }
+
   function brandedMessageHtml({customerName,greeting='',centerText='',rightText='',columns=[],footerTitle='',footerLines=[],couponCode=''}){
     const safeName=escapeMessageHtml(customerName||'Customer');
     const headerColors=['#f2c94c','#53c7ff','#ff9f43'];
@@ -333,11 +337,12 @@
     }).join('');
     const footer=(footerLines||[]).map(line=>'<span style="color:#f3f3f3;">'+escapeMessageHtml(line)+'</span><br>').join('');
     const safeCoupon=String(couponCode||'').trim();
-    const couponHref=safeCoupon?'https://www.torn.com/messages.php#/p=compose&XID='+encodeURIComponent(OWNER_ID)+'&subject='+encodeURIComponent('Coupon Code '+safeCoupon):'';
+    const couponHref=safeCoupon?couponRedeemUrl():'';
     const couponActionRow=safeCoupon
       ? '<tr><td colspan="3" bgcolor="#102614" align="center" style="padding:14px;text-align:center;border-top:2px solid #53d769;border-bottom:1px solid #2f6d39;">'+
-        '<a href="'+couponHref+'" style="display:inline-block;background:#53d769;color:#071b0b;font-weight:bold;font-size:16px;text-decoration:none;padding:11px 18px;border:1px solid #8bf09a;border-radius:4px;">SEND MY COUPON CODE — '+escapeMessageHtml(safeCoupon)+'</a><br>'+
-        '<span style="display:inline-block;margin-top:7px;color:#d7f7dc;font-size:12px;">Opens a message to '+escapeMessageHtml(OWNER_NAME)+' with your coupon code in the subject. Review it, then press Send.</span></td></tr>'
+        '<strong style="display:block;color:#d7f7dc;font-size:15px;margin-bottom:8px;">YOUR COUPON CODE: '+escapeMessageHtml(safeCoupon)+'</strong>'+
+        '<a href="'+couponHref+'" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#53d769;color:#071b0b;font-weight:bold;font-size:16px;text-decoration:none;padding:11px 18px;border:1px solid #8bf09a;border-radius:4px;">OPEN MESSAGE TO '+escapeMessageHtml(OWNER_NAME)+'</a><br>'+
+        '<span style="display:inline-block;margin-top:7px;color:#d7f7dc;font-size:12px;">Copy the coupon code above, open the message, paste the code into the Subject or message body, then press Send. Torn only guarantees the recipient from this link.</span></td></tr>'
       : '';
     return '<table width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:900px;border-collapse:collapse;background-color:#0d0d0d;color:#f2f2f2;font-family:Arial,Helvetica,sans-serif;">'+
       '<tr><td colspan="3" bgcolor="#000000" align="center" style="padding:0;text-align:center;"><img src="'+SHOP_BANNER_URL+'" alt="'+escapeMessageHtml(SHOP_NAME)+'" width="900" style="display:block;width:100%;max-width:900px;height:auto;border:0;"></td></tr>'+
@@ -354,7 +359,7 @@
     const top=(greeting?greeting+'\n\n':'')+customerName+' | '+centerText+' | '+rightText;
     const colText=columns.map(col=>col.title+'\n'+(col.lines||[]).map(line=>'• '+line).join('\n')).join('\n\n');
     const footer=footerTitle?'\n\n'+footerTitle+'\n'+(footerLines||[]).map(line=>'• '+line).join('\n'):'';
-    const couponLine=couponCode?'\n\nSEND MY COUPON CODE — '+couponCode+'\nhttps://www.torn.com/messages.php#/p=compose&XID='+OWNER_ID+'&subject='+encodeURIComponent('Coupon Code '+couponCode):'';
+    const couponLine=couponCode?'\n\nYOUR COUPON CODE: '+couponCode+'\nCopy the code above, open this message link, paste the code into the Subject or message body, then press Send:\n'+couponRedeemUrl():'';
     return top+'\n\n'+colText+couponLine+'\n\n★ ★ ★ ADD ME TO FAVORITES ★ ★ ★\n'+FAVORITE_CTA+footer;
   }
 
