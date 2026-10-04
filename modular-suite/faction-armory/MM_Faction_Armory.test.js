@@ -428,6 +428,10 @@ assert(userSourceValue.includes('Send Data Reminder'),'missing-data member must 
 assert(userSourceValue.includes('REMINDER_SENT_KEY'),'reminder sent state must be stored per member');
 assert(userSourceValue.includes("kind:'member-data-reminder'"),'reminder compose must be tracked separately');
 assert(userSourceValue.includes('verifyArmorySend'),'reminder must wait for Torn send confirmation before hiding');
+assert(userSourceValue.includes('armoryDeliveryFingerprint'),'send confirmation must support transcript evidence');
+assert(userSourceValue.includes('armorySentConfirmationTexts'),'send confirmation must support fresh Torn success UI evidence');
+assert(!userSourceValue.includes('const leftCompose='),'leaving Compose alone must not count as successful delivery');
+assert(userSourceValue.includes('fingerprintBaselineCount'),'send detector must compare post-send transcript against a pre-send baseline');
 assert(userSourceValue.includes('Message Faction Leader'),'Acquire must expose leader-message output');
 assert(userSourceValue.includes('function leaderAcquisitionReport'),'leader acquisition report must be generated from live Armory state');
 assert(userSourceValue.includes('ESTIMATED TOTAL ACQUISITION COST'),'leader report must contain total low/high acquisition cost');
