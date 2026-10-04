@@ -161,7 +161,8 @@ const warMinimums=logic.minimumProposal({
   memberReadiness:{roster:twentyRoster},
   snapshots:[],
   events:[]
-},{mode:'war',participants:20});
+},{mode:'war',participants:5});
+assert.strictEqual(warMinimums.participants,20,'war planning must derive participants from the current roster, not a caller assumption');
 const warPrimary=warMinimums.proposals.find(x=>x.slot==='primary');
 assert(warPrimary);
 assert.strictEqual(warPrimary.recommendedMin,22,'20 unknown participants require full primary coverage plus two spares');
@@ -203,7 +204,8 @@ assert.strictEqual(logic.equipmentSlot({name:'Qsz-92',type:'Weapon',subType:'SMG
 const acquisition=logic.acquisitionPlan({
   ...factionInventory,
   memberReadiness:{...factionInventory.memberReadiness,roster:twentyRoster}
-},{mode:'war',participants:20});
+},{mode:'war',participants:3});
+assert.strictEqual(acquisition.participants,20,'acquisition participant count must equal the live roster size');
 assert(acquisition.list.some(row=>row.category==='equipment'),'acquisition plan must contain named equipment requirements');
 assert(acquisition.list.some(row=>row.category==='provisions'),'acquisition plan must contain provision requirements');
 
@@ -239,6 +241,46 @@ assert.strictEqual(ownedBuild.items.find(x=>x.slot==='secondary').route,'OWNED',
 const budgetPlan=logic.acquisitionPlan(ownedFactionInventory,{mode:'war',participants:1,procurementMode:'budget',budgetCap:15000000});
 assert(budgetPlan.fundedEstimatedValue<=15000000,'known acquisition spend must respect budget cap');
 assert(!budgetPlan.list.some(row=>/BT MP9|Qsz-92/.test(row.item)&&String(row.reasons||'').includes('Owned Secondary secondary')),'owned adequate secondary must not be purchased again');
+
+const publicEstimate=logic.estimateBalancedBattleStats(
+  {memberId:'400',level:31},
+  {rank:'Professional',level:31,ageDays:2500,crimesTotal:25000,networth:600000000}
+);
+assert(publicEstimate&&publicEstimate.total>0,'public profile data should create a balanced planning estimate');
+assert.strictEqual(publicEstimate.stats.strength,publicEstimate.stats.defense);
+assert.strictEqual(publicEstimate.stats.speed,publicEstimate.stats.dexterity);
+assert.strictEqual(publicEstimate.confidence,'MEDIUM');
+
+const estimatedFaction={
+  current:{
+    'weapons|bt':{
+      category:'weapons',itemId:'bt',name:'BT MP9',type:'Secondary',
+      availableCount:0,loanedCount:1,amountOwned:1,
+      loans:[{memberId:'400',memberName:'Estimated Member',amount:1,uids:[]}]
+    }
+  },
+  memberReadiness:{
+    roster:{'400':{memberId:'400',memberName:'Estimated Member',level:31,daysInFaction:90}},
+    profiles:{'400':{
+      publicIntel:{rank:'Professional',level:31,ageDays:2500,crimesTotal:25000,networth:600000000,fetchedAt:new Date().toISOString()},
+      equipment:{summary:'',items:[]}
+    }},
+    settings:{staleHours:72}
+  },
+  snapshots:[],events:[]
+};
+const estimatedRows=logic.memberRows(estimatedFaction,[],{procurementMode:'budget'});
+assert.strictEqual(estimatedRows[0].statsEstimated,true,'member without private battlestats should use a public balanced estimate');
+assert.strictEqual(estimatedRows[0].readinessStatus,'ESTIMATED — NEEDS DATA','estimated members must never be promoted as verified-ready automatically');
+assert(estimatedRows[0].loanItems.some(item=>item.name==='BT MP9'),'faction armory loans must be available as member equipment evidence');
+const estimatedBuild=estimatedRows[0].buildAssessment;
+assert.strictEqual(estimatedBuild.items.find(item=>item.slot==='secondary').route,'LOANED','adequate faction loan should satisfy estimated member secondary planning before acquisition');
+const estimatedPlan=logic.acquisitionPlan(estimatedFaction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+assert.strictEqual(estimatedPlan.participants,1);
+assert(!estimatedPlan.assignments.some(row=>row.memberId==='400'&&row.slot==='secondary'&&row.route==='ACQUIRE'),'loaned adequate secondary must not be re-acquired for an estimated member');
+
+const approvedPlan=logic.acquisitionPlan(readyFaction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+assert(!approvedPlan.assignments.some(row=>row.memberId==='150'),'approved WAR READY member must not generate individual acquisition assignments');
 
 const unknownInventoryFaction={
   current:{},
@@ -282,7 +324,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.18';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.19';"));
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -291,7 +333,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.18';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.19';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -299,7 +341,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.18';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.19';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -359,7 +401,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.18';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.19';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.2'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
@@ -372,4 +414,18 @@ assert(userSourceValue.includes('Reopen Review'));
 assert(userSourceValue.includes("row.buildAssessment||logic.compareMemberBuild"));
 assert(userSourceValue.includes("'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO'"));
 assert(userSourceValue.includes("'Baseline Pass':build.warReady?'YES':'NO'"));
+assert(!userSourceValue.includes('WAR_PARTICIPANTS'),'fixed war-participant assumptions must be removed');
+assert(userSourceValue.includes('days_in_faction'),'faction roster parser must retain Torn days_in_faction');
+assert(userSourceValue.includes("apiRequest('/faction/basic',key)"),'faction leader must be resolved from Torn faction basic');
+assert(userSourceValue.includes("'/user/'+encodeURIComponent(id)+'/profile'"),'missing private stats must use Torn public profile data');
+assert(userSourceValue.includes("'/user/'+encodeURIComponent(id)+'/personalstats?cat=popular'"),'public crimes/networth/activity data must enrich estimates when available');
+assert(userSourceValue.includes('Send Data Reminder'),'missing-data member must have a reminder action');
+assert(userSourceValue.includes('REMINDER_SENT_KEY'),'reminder sent state must be stored per member');
+assert(userSourceValue.includes("kind:'member-data-reminder'"),'reminder compose must be tracked separately');
+assert(userSourceValue.includes('verifyArmorySend'),'reminder must wait for Torn send confirmation before hiding');
+assert(userSourceValue.includes('Message Faction Leader'),'Acquire must expose leader-message output');
+assert(userSourceValue.includes('function leaderAcquisitionReport'),'leader acquisition report must be generated from live Armory state');
+assert(userSourceValue.includes('ESTIMATED TOTAL ACQUISITION COST'),'leader report must contain total low/high acquisition cost');
+assert(userSourceValue.includes('PRICE RANGE'),'Acquire rows must expose low/high price estimates');
+assert(userSourceValue.includes('#mce_0'),'Armory messaging must use the shared current Torn TinyMCE compose contract');
 console.log('MM Faction Armory acquisition handoff regression: PASS');
