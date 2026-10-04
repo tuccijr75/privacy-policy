@@ -13,6 +13,7 @@ assert.strictEqual(proc.acquisitions.length,1);
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
 assert(userSource.includes('// @version      8.0.0-alpha.8.1'));
+assert(userSource.includes('MM_Torn_Core.js?v=8.0.0-alpha.9'));
 assert(userSource.includes('async function autoRefreshAcquisitions'));
 assert(userSource.includes('AUTO_REFRESH_MS=60_000'));
 assert(userSource.includes('PURCHASE_STALE_MS=120_000'));
