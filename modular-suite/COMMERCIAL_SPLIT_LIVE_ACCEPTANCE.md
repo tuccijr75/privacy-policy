@@ -1517,3 +1517,38 @@ Promotion blockers:
 
 Do not send a customer-ready claim or stable install link before those live gates pass.
 
+## MM_Acquisitions alpha.10 — complete item catalog + direct price finder — 2026-10-04
+
+Owner directive:
+- all Torn buyable items must be categorized, itemized, selectable and filterable;
+- a specific item must be findable by selecting it or entering its name/ID;
+- selected-item lookup must compare current available purchase sources rather than relying only on ranked opportunity candidates.
+
+Implementation:
+- authoritative catalog source is Torn API v2 `/torn/items?cat=All&sort=ASC`;
+- catalog normalizer supports current v2 array responses plus object-map compatibility;
+- stores item ID, name, type/category, subtype, market/buy/sell reference values, circulation, image and shop metadata;
+- catalog refresh atomically replaces stale catalog rows while preserving matching per-item local fields;
+- new **Items** tab provides text/ID search, category filter, buyability/source filter, sorting and 75-row pagination;
+- item rows are directly selectable through **Find Price**;
+- typed exact ID/name or unique partial match can launch price lookup; ambiguous matches reduce the catalog list for manual selection;
+- price lookup compares Bazaar, Item Market, Torn shop metadata and overseas evidence, sorted lowest price first;
+- **Use Best Source** re-verifies/routs player-market sources while keeping purchases manual;
+- Torn-shop and overseas recommendations remain manual handoffs;
+- catalog is refreshed on demand and automatically when missing/stale after 24 hours;
+- item-catalog controls use responsive auto-fit layout.
+
+Verification:
+- Acquisitions user/live/logic/purchase files and all three regression test files compile;
+- Torn catalog array/object normalization fixtures PASS;
+- shop cost/stock normalization PASS;
+- atomic catalog replacement/counting PASS;
+- specific-item source comparison fixture PASS with Torn Shop $150 ranked ahead of Item Market $200;
+- best-source routing fixture PASS with `shop-recommended`;
+- prior ranking/travel regression coverage remains unchanged.
+
+Status:
+- merged alpha.9 remains the base;
+- alpha.10 is ready for branch merge into `crm-v8-modular-suite`;
+- production/customer-ready promotion still requires live desktop/mobile/TornPDA acceptance.
+
