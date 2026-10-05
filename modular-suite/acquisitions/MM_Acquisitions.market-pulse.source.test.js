@@ -51,8 +51,8 @@ for(const re of [
 
 assert(!/globalThis\.__MM_PDA_API_KEY|window\.__MM_PDA_API_KEY/.test(pda),'PDA injected API key must remain lexical');
 assert(pda.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"),'PDA lexical key placeholder must remain present');
-assert(desktop.includes('Movement = quantity disappearing'),'desktop must explain Pulse movement semantics');
-assert(desktop.includes('not a confirmed player sale'),'desktop must not present Pulse as confirmed sales');
+assert(desktop.includes('Market activity:'),'desktop must explain market activity in plain language');
+assert(desktop.includes('not a confirmed individual sale'),'desktop must not present market activity as confirmed sales');
 assert(desktop.includes('Official Torn API finished Auction House records'),'desktop must expose official verified-sales evidence');
 assert(desktop.includes('href="#mm-acq-verified-sales"'),'verified-sales evidence must be directly reachable in-panel');
 assert(desktop.includes("let activeView='home'"),'desktop must start on the guided Home workflow');
