@@ -77,9 +77,10 @@ function replaceSellerLeads(state,leads,now) {
 }
 function loadOpenSellerTargets(state) {
   if(state.worker) throw new Error('Stop the Bazaar worker before loading discovered sellers.');
+  const before=new Set(state.targets);
   const discovered=state.sellerLeads.filter(x=>x.isOpen).map(x=>x.sellerId);
   state.targets=[...new Set([...discovered,...state.targets])].slice(0,LIMIT.targets);
-  return discovered.length;
+  return discovered.filter(id=>!before.has(id)).length;
 }
 const validItemId = value => Number.isSafeInteger(value) && value > 0 && value <= 999999999;
 function itemMarketUrl(itemId,name='') {
@@ -494,7 +495,8 @@ function normalizeDollarSellers(data) {
 
 async function discoverDollarSellers({gm,key}) {
   const sellers=normalizeDollarSellers(await apiRequest(gm,'market/bazaar',key));
-  return {sellers:sellers.slice(0,25),open:sellers.filter(x=>x.isOpen).length,total:sellers.length};
+  const selected=sellers.slice(0,25);
+  return {sellers:selected,open:selected.filter(x=>x.isOpen).length,total:sellers.length};
 }
 
 function normalizeCatalog(data) {
