@@ -1883,4 +1883,27 @@ Next live gate:
 4. verify live exit does not use the $30M Torn catalog reference;
 5. test Use Best Source routing without completing a purchase;
 6. then continue Ranked and Travel acceptance.
+### alpha.15 desktop acceptance — selected-item source consistency PASS — 2026-10-05
+
+Observed directly in the authenticated Torn desktop tab with Beretta 92FS deep comparison open:
+- PASS: panel reports `v8.0.0-alpha.15 · PROFIT / RANKED / TRAVEL`;
+- PASS: selected-item card reports `Price comparison ready for Beretta 92FS. Lowest available source is listed first.`;
+- PASS: best source is now `Bazaar aggregate` at $444,444, matching the live global Bazaar observation;
+- PASS: Bazaar aggregate shows 62 bazaars and average $478,032;
+- PASS: Item Market remains a separate source at $513,995;
+- PASS: live exit is $488,295 (`Live snapshot`), in the same market range as Bazaar / Item Market evidence;
+- PASS: Bazaar aggregate economics show +$43,851 / 9.9% ROI;
+- PASS: Item Market economics show -$25,700 / -5.0% ROI;
+- PASS: Torn catalog value is explicitly labeled `reference only; not used as live exit` and is not driving ROI;
+- PASS: aggregate Bazaar evidence warns that seller is re-resolved before routing;
+- PASS: catalog row below independently agrees with the same source data: Bazaar low $444,444 / avg $478,032 / 62 bazaars / Item Market $513,995;
+- PASS: final purchase remains manual.
+
+Remaining selected-item live gate:
+- `Use Best Source` routing still needs one owner click to confirm Bazaar aggregate re-resolution/verification and safe fallback behavior without completing a purchase.
+
+Next module gates:
+1. Ranked tab: separate Bazaar / Item Market / Auction counts + alpha.13 bid semantics + AH history;
+2. Travel tab: Compare Bazaar / Market handoff;
+3. narrow/mobile and TornPDA.
 
