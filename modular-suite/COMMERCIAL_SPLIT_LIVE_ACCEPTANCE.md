@@ -2318,4 +2318,33 @@ Verification:
 Next live gate:
 - install alpha.19-pda.6 and repeat one `Verify & Buy` on a qualified deal;
 - expected: Bazaar verification failure may be skipped, Item Market fallback should open when valid, and no purchase is completed automatically.
+### TornPDA alpha.19-pda.6 live failure — duplicate Item Market GET root cause / alpha.20-pda.7
+
+Owner iOS screenshots on `8.0.0-alpha.19-pda.6`:
+- first screenshot: `Live verification unavailable for Item Market. No purchase route...` while Item Market showed `0s ago`; 
+- second screenshot moments later: Weav3r auto-refresh completed and Item Market still showed `0s ago`;
+- this proves general Torn API / Item Market networking is healthy and isolates the failure to the per-click verification sequence.
+
+Root cause confirmed against current TornPDA source:
+- `PDA_httpGet` de-duplicates an identical URL fired within 2 seconds and returns without a second network response;
+- `procurementSourceOptions()` refreshed Item Market, then `routeProcurementRequest()` immediately refreshed the exact same Item Market URL again;
+- `acquire()` likewise refreshed Item Market near the start of one Verify & Buy click and then refreshed it again when processing the Item Market candidate;
+- on TornPDA the second identical request can therefore resolve without a response and appear as an Item Market verification failure even though the first request succeeded moments earlier.
+
+alpha.20 / pda.7 root correction:
+- added a 2.5-second just-verified Item Market reuse window;
+- a source-comparison click marks the Item Market candidate with its verification timestamp and reuses that exact verified snapshot for routing;
+- Deals `acquire()` stores the first verified Item Market snapshot and does not issue a second same-click request;
+- when a current snapshot already exists from an immediately preceding auto-refresh, verification can reuse it instead of colliding with TornPDA's 2-second duplicate-request guard;
+- source verification remains live/current: the reuse window is only 2.5 seconds and final purchases remain manual.
+
+Regression:
+- test transport succeeds on the first `/market/{id}/itemmarket` request and deliberately throws `duplicate TornPDA GET suppressed` on any second request;
+- PASS: `routeProcurementRequest()` routes to Item Market with exactly one Item Market GET;
+- PASS: Deals `acquire()` routes to Item Market with exactly one Item Market GET;
+- PASS: `alpha.20-pda.7` simulated under immutable TornPDA GM helpers reaches `ui-ready` and creates the launcher.
+
+Next live gate:
+- install alpha.20-pda.7, reload TornPDA, and run one Verify & Buy on an Item Market-qualified deal;
+- expected: exact Item Market route opens without the `Live verification unavailable for Item Market` warning and no purchase is completed automatically.
 
