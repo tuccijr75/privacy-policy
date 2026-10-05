@@ -64,7 +64,7 @@ def metadata(version: str) -> str:
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
 // @version      {version}
-// @description  TornPDA-compatible bundled MM Acquisitions build. Market Pulse, profit, ranked weapons, travel procurement, manual final purchase.
+// @description  Easy TornPDA buying workflow: find items, compare Bazaar, Item Market and travel prices, then open a source and buy manually.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
