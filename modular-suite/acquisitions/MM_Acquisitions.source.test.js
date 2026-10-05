@@ -214,5 +214,62 @@ const live=sandbox.globalThis.MMTornAcquisitionsLive;assert(live);
   assert(fallbackRoute.verificationWarnings.some(row=>row.source==='Bazaar'&&row.message.includes('PDA bazaar request failed')));
   assert(fallbackNavigations.some(url=>url.includes('sid=ItemMarket')&&url.includes('itemID=999')));
 
+  // TornPDA de-duplicates identical PDA_httpGet URLs fired within 2 seconds by
+  // resolving the duplicate without a response. A single click must therefore
+  // never refresh the same Item Market endpoint twice.
+  db={
+    businessRules:{maxListingAgeSec:180},
+    marketIntel:{
+      settings:{bazaarExitHaircutPct:0},
+      marketplace:{
+        '1001':{itemId:'1001',itemName:'Single GET Item',marketPrice:1100,bazaarAverage:0,lowestPrice:0,totalBazaars:0}
+      },
+      details:{},traders:{}
+    },
+    procurement:{
+      catalog:{'1001':{id:'1001',name:'Single GET Item',type:'Other',marketPrice:1100,shops:[]}},
+      marketSnapshots:{}
+    },
+    travelIntel:{rows:[]}
+  };
+  let itemMarketCalls=0;
+  const singleGetNavigations=[];
+  const singleGetTornRequest=async path=>{
+    if(String(path).includes('/market/1001/itemmarket')){
+      itemMarketCalls++;
+      if(itemMarketCalls>1) throw new Error('duplicate TornPDA GET suppressed');
+      return {itemmarket:{listings:[{price:1000,quantity:10}]}};
+    }
+    throw new Error('unexpected single-get Torn path '+path);
+  };
+  const singleGetService=live.createService({
+    core,
+    logic:{rankCachedOpportunities:()=>[{id:'1001',name:'Single GET Item',itemType:'Other',maxBuyPrice:1200}]},
+    hasTornKey:()=>true,
+    navigate:url=>singleGetNavigations.push(url),
+    bazaarRequest:async()=>({bazaar_is_open:true,bazaar_timestamp:Math.floor(Date.now()/1000),bazaar:[]}),
+    weavRequest:async path=>{
+      if(path==='/marketplace/1001') return {item_name:'Single GET Item',market_price:1100,bazaar_average:0,listings:[]};
+      if(path==='/marketplace/1001/traders') return {item_name:'Single GET Item',traders:[]};
+      throw new Error('unexpected single-get Weav path '+path);
+    },
+    tornRequest:singleGetTornRequest
+  });
+  const routedSingle=await singleGetService.routeProcurementRequest({itemId:'1001',itemName:'Single GET Item',preferredSource:'Item Market'});
+  assert.strictEqual(routedSingle.routed,true,'source routing should use the just-verified Item Market snapshot');
+  assert.strictEqual(routedSingle.source,'Item Market');
+  assert.strictEqual(itemMarketCalls,1,'routeProcurementRequest must make only one Item Market verification GET');
+
+  // Reset only the market snapshot/call counter to verify the Deals acquire path
+  // follows the same one-request rule.
+  db.procurement.marketSnapshots={};
+  itemMarketCalls=0;
+  singleGetNavigations.length=0;
+  const acquiredSingle=await singleGetService.acquire('1001');
+  assert.strictEqual(acquiredSingle.routed,true,'Deals acquire should use its first verified Item Market snapshot');
+  assert.strictEqual(acquiredSingle.source,'Item Market');
+  assert.strictEqual(itemMarketCalls,1,'acquire must make only one Item Market verification GET');
+  assert(singleGetNavigations.some(url=>url.includes('sid=ItemMarket')&&url.includes('itemID=1001')));
+
   console.log('MM_Acquisitions selected-source consistency regression: PASS');
 })().catch(error=>{console.error(error);process.exitCode=1;});
