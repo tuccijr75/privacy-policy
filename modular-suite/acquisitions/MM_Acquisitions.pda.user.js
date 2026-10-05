@@ -4541,12 +4541,22 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const pricelistProfitable=pricelistScan.filter(r=>r.profitable).length;
     const pricelistQualified=pricelistScan.filter(r=>r.qualifies).length;
     const research=rows.filter(r=>!r.purchaseReady).slice(0,8);
+    const pulseMovers=pulse?.rankPulseItems?.(state)?.slice(0,12)||[];
 
     return armoryRequestHtml()+card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
         '<div><b>Profit Opportunities</b><div style="font-size:10px;color:#888;">ROI + sell-through + profit velocity. Purchase routing always re-verifies first.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-reload" style="'+button()+'">Reload Cache</button><button id="mm-acq-sync-purchases" '+(busy?'disabled':'')+' style="'+button()+'">Sync Purchases</button><button id="mm-acq-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Opportunities</button></div>'+
       '</div>'
+    )+
+    card('<b>Market Pulse Movers</b>'+
+      '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Proven high-money movers are always listed before emerging/large-exposure candidates. Movement means observed seller-independent market outflow, not attributed player sales.</div>'+
+      (pulseMovers.length?pulseMovers.map((r,i)=>
+        '<div style="border-top:1px solid #303030;padding:7px 0;font-size:10px;">'+
+          '<b>#'+(i+1)+' '+esc(r.itemName||('Item '+r.itemId))+'</b> · '+(r.tier==='proven'?'<b style="color:#9fe3a8;">HOT / PROVEN</b>':r.tier==='candidate'?'<b style="color:#ffd18a;">EMERGING CANDIDATE</b>':'OBSERVED')+
+          '<div style="color:#888;">Floor '+money(r.floorPrice||0)+' · depth '+Number(r.marketDepth||0).toLocaleString()+' · events/hr '+Number(r.observedEventsPerHour||0).toFixed(2)+' · units/hr '+Number(r.observedUnitsPerHour||0).toFixed(2)+' · turnover/hr '+money(r.turnoverPerHour||0)+' · liquidity '+Number(r.liquidityScore||0).toFixed(0)+'/100 · confidence '+Number(r.confidencePct||0).toFixed(0)+'% · trend '+Number(r.trendPct||0).toFixed(1)+'% · '+esc(r.freshness?.label||'UNKNOWN')+'</div>'+
+        '</div>'
+      ).join(''):'<div style="font-size:10px;color:#888;">Collecting Market Pulse history. Candidates can appear from current market exposure before enough repeated movement exists for proven status.</div>')
     )+
     card('<b>Pricelist Universe Scan · '+pricelistScan.length.toLocaleString()+' evaluated</b>'+
       '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Every positively priced item on the configured TornW3B pricelist is screened from the global Bazaar observation feed before deeper Bazaar + Item Market verification. '+pricelistProfitable.toLocaleString()+' currently show positive gross spread; '+pricelistQualified.toLocaleString()+' meet active ROI/profit rules. Pricelist buy rate is a benchmark, not a resale exit.</div>'+
