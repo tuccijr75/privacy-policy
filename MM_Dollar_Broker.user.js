@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.16
-// @description  Discovers Torn Bazaar-directory sellers, scans them in one background tab for exact $1 stock, and leaves every purchase manual.
+// @version      0.1.0-rc.17
+// @description  Discovers Torn Bazaar-directory sellers, verifies enabled native $1 Buy controls in one background tab, and leaves every purchase manual.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -28,7 +28,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.16';
+const VERSION = '0.1.0-rc.17';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
@@ -68,7 +68,7 @@ function exactPrice(text) {
   return Number.isSafeInteger(n) ? n : null;
 }
 const fingerprint = (target, item) => JSON.stringify([target, item.listingId || item.itemId || item.name, 1]);
-function emptyState() { return {schema:SCHEMA, version:VERSION, revision:0, targets:[], worker:null, sellerScan:null, events:[], seen:[], sellerLeads:[], marketLeads:[], discoveryCursor:0, lastSellerDiscovery:0, lastDiscovery:0, lastDetection:0}; }
+function emptyState() { return {schema:SCHEMA, version:VERSION, bazaarVerification:1, revision:0, targets:[], worker:null, sellerScan:null, events:[], seen:[], sellerLeads:[], marketLeads:[], discoveryCursor:0, lastSellerDiscovery:0, lastDiscovery:0, lastDetection:0}; }
 function clearDiscoveryResults(state) {
   state.worker=null;
   state.sellerScan=null;
@@ -135,7 +135,7 @@ function validSellerScan(scan) {
      scan.sellerIds.length>LIMIT.sellers || scan.sellerIds.some(id=>!validId(id)) ||
      !Number.isInteger(scan.index) || scan.index<0 || scan.index>=scan.sellerIds.length ||
      !Number.isInteger(scan.scanned) || scan.scanned<0 || scan.scanned>scan.sellerIds.length ||
-     !Number.isInteger(scan.found) || scan.found<0 || !finite(scan.startedAt) || !finite(scan.heartbeat) ||
+     !Number.isInteger(scan.found) || scan.found<0 || !Number.isInteger(scan.observed) || scan.observed<0 || !Number.isInteger(scan.unverified) || scan.unverified<0 || !Number.isInteger(scan.unavailable) || scan.unavailable<0 || scan.found+scan.unverified+scan.unavailable>scan.observed || !finite(scan.startedAt) || !finite(scan.heartbeat) ||
      !finite(scan.completedAt) || !textField(scan.error,240) || !Array.isArray(scan.errors) ||
      scan.errors.length>scan.sellerIds.length || scan.errors.some(e=>!e || !validId(e.sellerId) || !textField(e.error,240) || !finite(e.at))) return false;
   if(scan.phase==='complete') return scan.targetId===null && scan.scanned===scan.sellerIds.length;
@@ -149,7 +149,7 @@ function beginSellerScan(state,ownerTabId,scanId,now) {
   if(!sellerIds.length) throw new Error('No open dollar-sale Bazaars were returned by Torn.');
   state.events=[];state.seen=[];state.lastDetection=0;
   state.sellerScan={id:scanId,ownerTabId,scannerTabId:'',phase:'launching',sellerIds,index:0,targetId:sellerIds[0],
-    scanned:0,found:0,startedAt:now,heartbeat:now,completedAt:0,error:'',errors:[]};
+    scanned:0,found:0,observed:0,unverified:0,unavailable:0,startedAt:now,heartbeat:now,completedAt:0,error:'',errors:[]};
   return bazaarScanUrl(sellerIds[0],scanId);
 }
 function claimSellerScan(state,tabId,scanId,url,now) {
@@ -163,14 +163,14 @@ function claimSellerScan(state,tabId,scanId,url,now) {
 function appendObservedEvents(state,snapshot,workerId,documentId,now) {
   const newEvents=[];
   for(const item of snapshot.items) {
-    if(item.price!==1 || item.available!==true || !Number.isSafeInteger(item.quantity) || item.quantity<1) continue;
+    if(item.price!==1 || item.buyState!=='buyable' || item.available!==true || !Number.isSafeInteger(item.quantity) || item.quantity<1) continue;
     const fp=fingerprint(snapshot.targetId,item);
     if(state.seen.includes(fp)) continue;
     if(state.seen.length>=LIMIT.seen || state.events.length>=LIMIT.events) throw new Error('Dollar-sale result ledger reached its safety bound. This Bazaar was skipped instead of truncating results.');
     const event={schema:SCHEMA,id:`${workerId}:${now}:${state.seen.length}`,fingerprint:fp,targetId:snapshot.targetId,
       seller:snapshot.seller,item:{name:item.name,itemId:item.itemId||'',listingId:item.listingId||'',quantity:item.quantity},price:1,
       url:bazaarUrl(snapshot.targetId),detectedAt:snapshot.at,expiresAt:snapshot.at+LIMIT.fresh,workerId,documentId,
-      validity:'observed-available',acknowledged:false};
+      validity:'verified-buyable',verification:'native-buy-enabled',acknowledged:false};
     if(!validEvent(event)) throw new Error('Listing contract failed validation.');
     state.seen.push(fp);state.events.unshift(event);newEvents.push(event);state.lastDetection=snapshot.at;
   }
@@ -190,6 +190,10 @@ function recordSellerScanSnapshot(state,tabId,scanId,snapshot,now) {
   if(!scan || scan.id!==scanId || scan.phase!=='scanning' || scan.scannerTabId!==tabId) throw new Error('Seller scan ownership changed.');
   if(snapshot.targetId!==scan.targetId || now<snapshot.at || now-snapshot.at>15000) throw new Error('Seller scan snapshot is stale or for the wrong Bazaar.');
   if(!snapshot.ok) throw new Error(snapshot.error||'Bazaar inspection failed.');
+  const dollarItems=snapshot.items.filter(item=>item.price===1&&Number.isSafeInteger(item.quantity)&&item.quantity>0);
+  scan.observed+=dollarItems.length;
+  scan.unverified+=dollarItems.filter(item=>item.buyState==='unverified').length;
+  scan.unavailable+=dollarItems.filter(item=>item.buyState==='unavailable').length;
   const added=appendObservedEvents(state,snapshot,'scan:'+scan.id,snapshot.documentId,now);
   scan.found+=added.length;
   return {...advanceSellerScan(scan,now),added:added.length};
@@ -275,13 +279,31 @@ function validEvent(e) {
   return !!e && e.schema === SCHEMA && validId(e.targetId) && textField(e.id,400) && textField(e.fingerprint,400) &&
     textField(e.seller) && textField(e.item?.name) && e.item.name.length > 0 && textField(e.item.itemId,80) && textField(e.item.listingId,80) && Number.isSafeInteger(e.item.quantity) && e.item.quantity>0 &&
     e.price === 1 && e.url === bazaarUrl(e.targetId) && validEventTtl(e) &&
-    textField(e.workerId,80) && textField(e.documentId,80) && e.validity === 'observed-available' && typeof e.acknowledged === 'boolean';
+    textField(e.workerId,80) && textField(e.documentId,80) && e.validity === 'verified-buyable' && e.verification === 'native-buy-enabled' && typeof e.acknowledged === 'boolean';
 }
 function readState(raw) {
   if (raw == null) return emptyState();
   if (raw.schema !== SCHEMA) throw new Error('Storage schema is unsupported. Update all Broker tabs; existing data was preserved.');
   const copy=structuredClone(raw);
+  if(copy.bazaarVerification===undefined) {
+    copy.bazaarVerification=1;
+    copy.events=[];
+    copy.seen=[];
+    copy.lastDetection=0;
+    if(copy.sellerScan) {
+      const legacyFound=Number.isInteger(copy.sellerScan.found)&&copy.sellerScan.found>=0?copy.sellerScan.found:0;
+      copy.sellerScan.observed=legacyFound;
+      copy.sellerScan.unverified=legacyFound;
+      copy.sellerScan.unavailable=0;
+      copy.sellerScan.found=0;
+    }
+  }
   if(copy.sellerScan===undefined) copy.sellerScan=null;
+  if(copy.sellerScan) {
+    if(copy.sellerScan.observed===undefined) copy.sellerScan.observed=copy.sellerScan.found||0;
+    if(copy.sellerScan.unverified===undefined) copy.sellerScan.unverified=0;
+    if(copy.sellerScan.unavailable===undefined) copy.sellerScan.unavailable=0;
+  }
   if(Array.isArray(copy.events)) for(const event of copy.events) if(event?.item && event.item.quantity===undefined) event.item.quantity=1;
   if(copy.sellerLeads===undefined) copy.sellerLeads=[];
   if(copy.marketLeads===undefined) copy.marketLeads=[];
@@ -289,7 +311,7 @@ function readState(raw) {
   if(copy.lastSellerDiscovery===undefined) copy.lastSellerDiscovery=0;
   if(copy.lastDiscovery===undefined) copy.lastDiscovery=0;
   const w = copy.worker;
-  if (!Number.isSafeInteger(copy.revision) || copy.revision < 0 || !Array.isArray(copy.targets) || copy.targets.length > LIMIT.targets || copy.targets.some(x=>!validId(x)) ||
+  if (copy.bazaarVerification!==1 || !Number.isSafeInteger(copy.revision) || copy.revision < 0 || !Array.isArray(copy.targets) || copy.targets.length > LIMIT.targets || copy.targets.some(x=>!validId(x)) ||
       !Array.isArray(copy.events) || copy.events.length > LIMIT.events || copy.events.some(e=>!validEvent(e)) ||
       !Array.isArray(copy.seen) || copy.seen.length > LIMIT.seen || copy.seen.some(x=>!textField(x,400)) ||
       !Array.isArray(copy.sellerLeads) || copy.sellerLeads.length>LIMIT.sellers || copy.sellerLeads.some(x=>!validSellerLead(x)) ||
@@ -338,14 +360,14 @@ function recordSnapshot(s, identity, snapshot, now) {
   w.lastScan=now;
   const newEvents=[];
   for (const item of snapshot.items) {
-    if (item.price !== 1 || item.available !== true) continue;
+    if (item.price !== 1 || item.buyState!=='buyable' || item.available !== true) continue;
     const fp=fingerprint(snapshot.targetId,item);
     if (s.seen.includes(fp)) continue;
     if (s.seen.length >= LIMIT.seen) { w.phase='error'; w.error='Duplicate ledger is full. No new alerts will be recorded; see diagnostics.'; break; }
     const event={schema:SCHEMA, id:`${identity.workerId}:${now}:${s.seen.length}`, fingerprint:fp, targetId:snapshot.targetId,
       seller:snapshot.seller, item:{name:item.name,itemId:item.itemId||'',listingId:item.listingId||'',quantity:item.quantity||1}, price:1,
       url:bazaarUrl(snapshot.targetId), detectedAt:snapshot.at, expiresAt:snapshot.at+LIMIT.fresh, workerId:identity.workerId,
-      documentId:identity.documentId, validity:'observed-available', acknowledged:false};
+      documentId:identity.documentId, validity:'verified-buyable', verification:'native-buy-enabled', acknowledged:false};
     if (!validEvent(event)) { w.phase='error'; w.error='Listing contract failed validation.'; continue; }
     s.seen.push(fp); s.events.unshift(event); newEvents.push(event); s.lastDetection=snapshot.at;
   }
@@ -391,6 +413,55 @@ const SELECTOR = Object.freeze({
 });
 
 const cleanText=value=>String(value??'').replace(/\s+/g,' ').trim();
+
+function parseNativeBuyLabel(label) {
+  const text=cleanText(label);
+  let match=/^Buy item (.+), \$([0-9][0-9,]*), ([1-9][0-9,]*) in total\.?$/i.exec(text);
+  if(match) {
+    const price=Number(match[2].replaceAll(',',''));
+    const amount=Number(match[3].replaceAll(',',''));
+    if(Number.isSafeInteger(price)&&price>=1&&Number.isSafeInteger(amount)&&amount>=1) {
+      return {kind:'detailed',name:match[1].trim().slice(0,180),price,amount};
+    }
+  }
+  match=/^Buy(?: item)?\s*[:\-]?\s*(.+)$/i.exec(text);
+  if(match && match[1].trim()) return {kind:'named',name:match[1].trim().slice(0,180),price:null,amount:null};
+  if(/^Buy$/i.test(text)) return {kind:'generic',name:'',price:null,amount:null};
+  return null;
+}
+
+function enabledControl(control) {
+  if(!control) return false;
+  if(control.disabled===true || control.hasAttribute?.('disabled') || control.getAttribute?.('aria-disabled')==='true') return false;
+  try { if(control.matches?.(':disabled')) return false; } catch {}
+  return true;
+}
+
+function sameItemName(a,b) {
+  const normalize=v=>cleanText(v).toLocaleLowerCase();
+  return !!normalize(a) && normalize(a)===normalize(b);
+}
+
+function scanBuyState(card,win,item) {
+  const controls=[...card.querySelectorAll('button,[role="button"]')]
+    .filter(control=>displayed(control,win))
+    .map(control=>{
+      const label=cleanText(control.getAttribute('aria-label')||control.getAttribute('title')||control.textContent);
+      return {control,label,parsed:parseNativeBuyLabel(label)};
+    })
+    .filter(x=>x.parsed);
+  if(!controls.length) return {buyState:'unverified',buyReason:'No native Torn Buy control was recognized.'};
+
+  const matches=controls.filter(({parsed})=>{
+    if(parsed.kind==='detailed') return parsed.price===item.price && sameItemName(parsed.name,item.name);
+    if(parsed.kind==='named') return sameItemName(parsed.name,item.name);
+    return controls.length===1;
+  });
+  if(!matches.length) return {buyState:'unverified',buyReason:'Native Buy control did not match this item and price.'};
+
+  if(matches.some(({control})=>enabledControl(control))) return {buyState:'buyable',buyReason:'Enabled native Torn Buy control verified.'};
+  return {buyState:'unavailable',buyReason:'Matching native Torn Buy control is disabled.'};
+}
 
 function displayed(element, win) {
   if (!element?.isConnected) return false;
@@ -511,10 +582,12 @@ function parseLegacyCard(card, win, viewportOnly=true) {
   const amount=cleanText(amountNode.textContent);
   const match=/^(?:x\s*)?([1-9]\d{0,8})(?:\s*(?:available|in stock|in total))?$/i.exec(amount);
   if(!match) return null;
-  return {
+  const item={
     name,itemId:card.getAttribute('data-item-id')||'',listingId:card.getAttribute('data-listing-id')||'',
-    price,quantity:Number(match[1]),available:true
+    price,quantity:Number(match[1])
   };
+  const buy=scanBuyState(card,win,item);
+  return {...item,...buy,available:buy.buyState==='buyable'};
 }
 
 function parseSemanticCard(card, win, viewportOnly=true) {
@@ -526,7 +599,9 @@ function parseSemanticCard(card, win, viewportOnly=true) {
   if(price===null || !Number.isSafeInteger(quantity) || quantity<1) return null;
   const listingId=card.getAttribute('data-listing-id')||'';
   if(listingId.length>80) return null;
-  return {name:identity.name,itemId:identity.itemId,listingId,price,quantity,available:true};
+  const item={name:identity.name,itemId:identity.itemId,listingId,price,quantity};
+  const buy=scanBuyState(card,win,item);
+  return {...item,...buy,available:buy.buyState==='buyable'};
 }
 
 
@@ -620,7 +695,9 @@ function parseScanLegacyCard(card, win) {
   const amount=cleanText(amountNode.textContent);
   const match=/^(?:x\s*)?([1-9]\d{0,8})(?:\s*(?:available|in stock|in total))?$/i.exec(amount);
   if(!match) return null;
-  return {name,itemId:card.getAttribute('data-item-id')||'',listingId:card.getAttribute('data-listing-id')||'',price,quantity:Number(match[1]),available:true};
+  const item={name,itemId:card.getAttribute('data-item-id')||'',listingId:card.getAttribute('data-listing-id')||'',price,quantity:Number(match[1])};
+  const buy=scanBuyState(card,win,item);
+  return {...item,...buy,available:buy.buyState==='buyable'};
 }
 
 function parseScanSemanticCard(card, win) {
@@ -632,7 +709,9 @@ function parseScanSemanticCard(card, win) {
   if(price===null || !Number.isSafeInteger(quantity) || quantity<1) return null;
   const listingId=card.getAttribute('data-listing-id')||'';
   if(listingId.length>80) return null;
-  return {name:identity.name,itemId:identity.itemId,listingId,price,quantity,available:true};
+  const item={name:identity.name,itemId:identity.itemId,listingId,price,quantity};
+  const buy=scanBuyState(card,win,item);
+  return {...item,...buy,available:buy.buyState==='buyable'};
 }
 
 function inspectBazaarForScan(doc, win, context) {
@@ -674,7 +753,7 @@ function inspectBazaarForScan(doc, win, context) {
     const item=semantic.length?parseScanSemanticCard(card,win):parseScanLegacyCard(card,win);
     if(!item){unsupported++;continue;}
     inspected++;
-    if(item.price===1 && item.available===true && item.quantity>0) result.items.push(item);
+    if(item.price===1 && item.quantity>0) result.items.push(item);
   }
   if(unsupported) return fail('A Bazaar listing has unsupported markup; this seller was skipped rather than partially recorded.');
   if(!inspected) return fail('No complete Bazaar listing cards were recognized.');
@@ -919,15 +998,6 @@ function visible(element,win) {
   return r.width>0&&r.height>0&&r.bottom>0&&r.right>0&&r.top<win.innerHeight&&r.left<win.innerWidth;
 }
 
-function parseBuyLabel(label) {
-  const match=/^Buy item (.+), \$([0-9][0-9,]*), ([1-9][0-9,]*) in total\.$/i.exec(clean(label));
-  if(!match) return null;
-  const price=Number(match[2].replaceAll(',',''));
-  const amount=Number(match[3].replaceAll(',',''));
-  if(!Number.isSafeInteger(price)||price<1||!Number.isSafeInteger(amount)||amount<1) return null;
-  return {name:match[1].trim().slice(0,180),price,amount};
-}
-
 function inspectItemMarket(doc,win,{trusted,itemId,at}) {
   const result={ok:false,itemId:Number(itemId)||0,buyable:false,quantity:0,lowestPrice:null,name:'',at,error:''};
   const fail=error=>({...result,error});
@@ -941,8 +1011,8 @@ function inspectItemMarket(doc,win,{trusted,itemId,at}) {
 
   const parsed=[];
   for(const button of buttons) {
-    const details=parseBuyLabel(button.getAttribute('aria-label'));
-    if(!details) continue;
+    const details=parseNativeBuyLabel(button.getAttribute('aria-label'));
+    if(!details || details.kind!=='detailed') continue;
     parsed.push({...details,enabled:!button.disabled&&button.getAttribute('aria-disabled')!=='true'});
   }
   if(!parsed.length) return fail('Visible Torn Buy controls use unsupported markup.');
@@ -990,12 +1060,12 @@ function makeUI(doc) {
   panel.innerHTML=`<header id="header"><div><small>MM TORN SYSTEMS</small><strong>DOLLAR BROKER</strong></div><button type="button" id="minimize" aria-label="Minimize Broker">−</button></header>
     <div class="body">
       <div class="status"><span class="dot"></span><span id="status" role="status">Ready</span></div>
-      <div id="mode" class="muted">Official directory discovery · one background Bazaar scanner tab · manual purchase only</div>
+      <div id="mode" class="muted">Official directory discovery · native Buy-control verification · one background scanner tab · manual purchase only</div>
       <p id="notice" role="status"></p>
       <div class="row"><button id="find-deals" class="primary" type="button">Find & Scan Dollar Sellers</button><button id="refresh-scan" type="button">Refresh / Start Over</button><button id="clear-results" type="button">Clear Results</button><button id="reset-scan" type="button">Reset after closing tab</button></div>
       <div id="discovery-progress" class="muted"></div>
       <h2>DISCOVERED BAZAARS <span class="count" id="seller-count"></span></h2><div id="seller-leads" aria-live="polite"></div>
-      <h2>FOUND $1 SALES <span class="count" id="count"></span></h2><div id="events" aria-live="polite"></div>
+      <h2>BUYABLE $1 SALES <span class="count" id="count"></span></h2><div id="events" aria-live="polite"></div>
       <div class="row"><button id="verify-market" type="button">Verify visible Item Market</button></div>
       <h2>ITEM MARKET DEALS <span class="count" id="market-count"></span></h2><div id="market-leads" aria-live="polite"></div>
 
@@ -1034,7 +1104,7 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
   const scanStale=sellerScanIsStale(scan,now);
   const mine=w?.tabId===identity.tabId&&w?.documentId===identity.documentId;
   const totalBadge=actionable.length+fresh.length;
-  const status=session.discoveryBusy?'Loading dollar-sale directory':scanStale?'Stale scanner — reset required':scanActive?`Scanning Bazaars ${scan.scanned}/${scan.sellerIds.length}`:scan?.phase==='complete'?`${scan.found} $1 sale${scan.found===1?'':'s'} found`:actionable.length?`${actionable.length} buyable now`:h.label;
+  const status=session.discoveryBusy?'Loading dollar-sale directory':scanStale?'Stale scanner — reset required':scanActive?`Scanning Bazaars ${scan.scanned}/${scan.sellerIds.length}`:scan?.phase==='complete'?`${scan.found} verified buyable $1 sale${scan.found===1?'':'s'}`:actionable.length?`${actionable.length} buyable now`:h.label;
   if(ui.launcher){
     const mode=h.kind==='warning'?'warning':totalBadge?'deal':session.discoveryBusy?'active':h.kind;
     ui.launcher.dataset.mmDollarState=mode;
@@ -1047,7 +1117,7 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
   }
   ui.el('status').textContent=status;
   ui.el('notice').textContent=localError||scan?.error||w?.error||'';
-  ui.el('discovery-progress').textContent=session.discoveryProgress||(scanActive?`Background scan ${scan.scanned}/${scan.sellerIds.length} · ${scan.found} $1 sale${scan.found===1?'':'s'} collected${scan.errors.length?` · ${scan.errors.length} store error${scan.errors.length===1?'':'s'}`:''}`:`${state.sellerLeads.length} directory seller${state.sellerLeads.length===1?'':'s'} · ${state.marketLeads.length} item lead${state.marketLeads.length===1?'':'s'} · deep-scan cursor ${state.discoveryCursor}`);
+  ui.el('discovery-progress').textContent=session.discoveryProgress||(scanActive?`Background scan ${scan.scanned}/${scan.sellerIds.length} · ${scan.observed} exact-$1 observed · ${scan.found} BUYABLE NOW · ${scan.unverified} unverified · ${scan.unavailable} unavailable${scan.errors.length?` · ${scan.errors.length} store error${scan.errors.length===1?'':'s'}`:''}`:scan?`Last Bazaar scan: ${scan.observed} exact-$1 observed · ${scan.found} BUYABLE NOW · ${scan.unverified} unverified · ${scan.unavailable} unavailable${scan.errors.length?` · ${scan.errors.length} store error${scan.errors.length===1?'':'s'}`:''}`:`${state.sellerLeads.length} directory seller${state.sellerLeads.length===1?'':'s'} · ${state.marketLeads.length} item lead${state.marketLeads.length===1?'':'s'} · deep-scan cursor ${state.discoveryCursor}`);
   const hasResettableResults=!!scan||!!w||state.sellerLeads.length>0||state.events.length>0||state.marketLeads.length>0||state.discoveryCursor>0||state.lastSellerDiscovery>0||state.lastDiscovery>0||state.lastDetection>0;
   ui.el('find-deals').disabled=!!localError||session.discoveryBusy||scanActive||!session.apiConfigured;
   ui.el('refresh-scan').disabled=!!localError||session.discoveryBusy||scanActive||!session.apiConfigured;
@@ -1108,23 +1178,24 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
   }
   ui.el('market-count').textContent=`${actionable.length} buyable · ${state.marketLeads.filter(x=>x.status==='lead').length} verify`;
 
-  ui.el('count').textContent=`${state.events.length} found · ${fresh.length} fresh`;
+  ui.el('count').textContent=`${state.events.length} verified buyable · ${fresh.length} fresh`;
   const eventKey=state.events.map(e=>`${e.id}:${e.item.quantity}:${e.acknowledged}:${e.expiresAt>now}`).join('|');
   if(ui.eventKey!==eventKey){
     ui.eventKey=eventKey;ui.el('events').replaceChildren();
     for(const e of state.events){
       const card=document.createElement('article');card.dataset.status=e.expiresAt<=now?'stale':'lead';
       const name=document.createElement('b');name.textContent=`$1 · ${e.item.name} · qty ${e.item.quantity}`;
+      const tag=document.createElement('span');tag.className='tag '+(e.expiresAt<=now?'gone':'');tag.textContent=e.expiresAt<=now?'RECHECK':'BUYABLE NOW';
       const seller=document.createElement('div');seller.textContent=`${e.seller} [${e.targetId}]`;
       const timing=document.createElement('div');timing.className='muted';timing.textContent=`Observed ${new Date(e.detectedAt).toLocaleTimeString()}${e.expiresAt<=now?' · recheck before purchase':''}`;
       const actions=document.createElement('div');actions.className='row';
       const link=document.createElement('a');link.className='action';link.textContent='Open Bazaar';link.href=e.url;link.dataset.route=e.id;
       const ack=document.createElement('button');ack.type='button';ack.textContent=e.acknowledged?'Acknowledged':'Acknowledge';ack.disabled=e.acknowledged;ack.dataset.ack=e.id;
-      actions.append(link,ack);card.append(name,seller,timing,actions);ui.el('events').append(card);
+      actions.append(link,ack);card.append(name,tag,seller,timing,actions);ui.el('events').append(card);
     }
-    if(!state.events.length){const p=document.createElement('div');p.className='muted';p.textContent=scanActive?'Scanning Bazaars…':'No $1 Bazaar sales found in the latest scan.';ui.el('events').append(p);}
+    if(!state.events.length){const p=document.createElement('div');p.className='muted';p.textContent=scanActive?'Scanning and verifying native Torn Buy controls…':'No verified-buyable $1 Bazaar sales found in the latest scan.';ui.el('events').append(p);}
   }
-  ui.el('diagnostics').textContent=JSON.stringify({script:VERSION,schema:state.schema,revision:state.revision,sellerLeads:state.sellerLeads.length,openDollarSellers:state.sellerLeads.filter(x=>x.isOpen).length,lastSellerDiscovery:state.lastSellerDiscovery||null,sellerScan:scan?{phase:scan.phase,scanned:scan.scanned,total:scan.sellerIds.length,found:scan.found,errors:scan.errors.length,target:scan.targetId}:null,marketLeads:state.marketLeads.length,actionableMarket:actionable.length,discoveryCursor:state.discoveryCursor,lastDiscovery:state.lastDiscovery||null,workerId:w?.id||null,phase:w?.phase||'stopped',target:w?.targetId||null,targetCount:state.targets.length,lastDetection:state.lastDetection||null,events:state.events.length,duplicateLedger:`${state.seen.length}/${LIMIT.seen}`,apiConfigured:!!session.apiConfigured,discoveryBusy:!!session.discoveryBusy,window:ui.panel.hidden?'minimized':'open',error:localError||scan?.error||w?.error||null},null,2);
+  ui.el('diagnostics').textContent=JSON.stringify({script:VERSION,schema:state.schema,revision:state.revision,sellerLeads:state.sellerLeads.length,openDollarSellers:state.sellerLeads.filter(x=>x.isOpen).length,lastSellerDiscovery:state.lastSellerDiscovery||null,sellerScan:scan?{phase:scan.phase,scanned:scan.scanned,total:scan.sellerIds.length,observedDollar:scan.observed,buyableNow:scan.found,unverified:scan.unverified,unavailable:scan.unavailable,errors:scan.errors.length,target:scan.targetId}:null,marketLeads:state.marketLeads.length,actionableMarket:actionable.length,discoveryCursor:state.discoveryCursor,lastDiscovery:state.lastDiscovery||null,workerId:w?.id||null,phase:w?.phase||'stopped',target:w?.targetId||null,targetCount:state.targets.length,lastDetection:state.lastDetection||null,events:state.events.length,duplicateLedger:`${state.seen.length}/${LIMIT.seen}`,apiConfigured:!!session.apiConfigured,discoveryBusy:!!session.discoveryBusy,window:ui.panel.hidden?'minimized':'open',error:localError||scan?.error||w?.error||null},null,2);
 }
 
 // ---- runtime ----
@@ -1146,7 +1217,8 @@ async function collectBazaarSnapshot(doc,win,targetId,documentId,initialUrl) {
       for(const item of snapshot.items) {
         const key=item.listingId||item.itemId||item.name;
         const previous=collected.get(key);
-        if(!previous || item.quantity>previous.quantity) collected.set(key,item);
+        const rank={unverified:0,unavailable:1,buyable:2};
+        if(!previous || (rank[item.buyState]??-1)>(rank[previous.buyState]??-1) || ((rank[item.buyState]??-1)===(rank[previous.buyState]??-1) && item.quantity>previous.quantity)) collected.set(key,item);
       }
     } else lastError=snapshot.error||lastError;
 
