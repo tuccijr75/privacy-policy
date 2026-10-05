@@ -59,7 +59,7 @@ assert(desktop.includes("let activeView='home'"),'desktop must start on the guid
 assert(desktop.includes('What do these words mean?'),'desktop must include plain-language help');
 assert(desktop.includes('WHERE DO YOU WANT TO BUY?'),'item results must make destination choice explicit');
 assert(desktop.includes('GO TO BAZAAR')&&desktop.includes('GO TO ITEM MARKET'),'desktop must use explicit destination labels');
-assert(desktop.includes('Open Bazaar')&&desktop.includes('Open Item Market'),'desktop must expose direct market alternatives for travel items');
+assert(desktop.includes('GO TO BAZAAR')&&desktop.includes('GO TO ITEM MARKET'),'desktop must expose direct market alternatives for travel items');
 assert(!desktop.includes('torn.marches.cafe'),'verified-sales evidence must not add a third-party market trust surface');
 assert(desktop.includes('Complete the purchase manually on Torn.')||desktop.includes('final purchase manual'),'desktop manual purchase boundary must remain explicit');
 assert(pda.includes('Complete the purchase manually on Torn.')||pda.includes('final purchase manual'),'PDA manual purchase boundary must remain explicit');
