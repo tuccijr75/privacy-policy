@@ -15,7 +15,7 @@ for(const [name,source] of [
   ['desktop',desktop],['pda',pda],['pulse',pulse],['logic',logic],['live',live],['ranked',ranked]
 ])assert.doesNotThrow(()=>new vm.Script(source,{filename:name+'.js'}),name+' must parse');
 
-assert(desktop.includes('// @version      8.0.0-alpha.22'));
+assert(desktop.includes('// @version      8.0.0-alpha.23'));
 const requireLines=desktop.split(/\r?\n/).filter(line=>line.startsWith('// @require'));
 assert.strictEqual(requireLines.length,6,'desktop dependency count');
 assert(requireLines.some(line=>line.includes('/MM_Acquisitions.market-pulse.js')),'desktop must require Market Pulse');
@@ -25,7 +25,7 @@ for(const line of requireLines){
   assert(match,'MM-owned desktop dependencies must use immutable full-SHA jsDelivr URLs');
 }
 
-assert(pda.includes('// @version      8.0.0-alpha.22-pda.9'));
+assert(pda.includes('// @version      8.0.0-alpha.23-pda.10'));
 const pdaHeader=pda.slice(0,pda.indexOf('// ==/UserScript=='));
 assert(!pdaHeader.includes('@require'),'PDA metadata must contain no @require');
 for(const token of [
@@ -41,7 +41,7 @@ for(let i=1;i<sectionOrder.length;i++)assert(sectionOrder[i]>sectionOrder[i-1],'
 
 assert(builder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(builder.includes('"MMTornMarketPulse"'));
-assert(builder.includes('default=9'));
+assert(builder.includes('default=10'));
 assert(builder.includes('MM_Acquisitions.market-pulse.js'));
 
 for(const re of [
@@ -55,11 +55,14 @@ assert(desktop.includes('Movement = quantity disappearing'),'desktop must explai
 assert(desktop.includes('not a confirmed player sale'),'desktop must not present Pulse as confirmed sales');
 assert(desktop.includes('Official Torn API finished Auction House records'),'desktop must expose official verified-sales evidence');
 assert(desktop.includes('href="#mm-acq-verified-sales"'),'verified-sales evidence must be directly reachable in-panel');
+assert(desktop.includes("let activeView='home'"),'desktop must start on the guided Home workflow');
+assert(desktop.includes('What do these words mean?'),'desktop must include plain-language help');
+assert(desktop.includes('Open Bazaar')&&desktop.includes('Open Item Market'),'desktop must expose direct market alternatives for travel items');
 assert(!desktop.includes('torn.marches.cafe'),'verified-sales evidence must not add a third-party market trust surface');
 assert(desktop.includes('Complete the purchase manually on Torn.')||desktop.includes('final purchase manual'),'desktop manual purchase boundary must remain explicit');
 assert(pda.includes('Complete the purchase manually on Torn.')||pda.includes('final purchase manual'),'PDA manual purchase boundary must remain explicit');
-assert(acceptance.includes('8.0.0-alpha.22'),'acceptance sheet must match desktop candidate');
-assert(acceptance.includes('8.0.0-alpha.22-pda.9'),'acceptance sheet must match PDA candidate');
+assert(acceptance.includes('8.0.0-alpha.23'),'acceptance sheet must match desktop candidate');
+assert(acceptance.includes('8.0.0-alpha.23-pda.10'),'acceptance sheet must match PDA candidate');
 assert(acceptance.includes('Verified Sales'),'acceptance sheet must cover official completed-sale evidence');
 assert(acceptance.includes('Cross-tab ownership'),'acceptance sheet must cover one-engine lease behavior');
 assert(acceptance.includes('manual-action boundary'),'acceptance sheet must preserve manual final actions');
