@@ -80,6 +80,40 @@ assert(!userSource.includes("id:'ranked-acquisitions'"));
 assert(userSource.includes('Verify & Buy and final purchase remain manual'));
 console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS');
 
+const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
+new Function(pdaSource);
+const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
+assert(pdaSource.includes('// @version      8.0.0-alpha.18-pda.5'));
+assert(!pdaHeader.includes('@require'));
+assert(!pdaSource.includes('globalThis.GM_getValue=function'));
+assert(pdaSource.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
+assert(!pdaSource.includes('__MM_PDA_API_KEY__'));
+assert(pdaSource.includes("const apiKey=()=>{const saved=String(GM_getValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(__MM_PDA_API_KEY||'').trim();"));
+assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='boot'"));
+assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='adapter'"));
+assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='ui-ready'"));
+assert(pdaSource.includes("if(core?.registerDockLauncher&&!globalThis.__MM_TORN_PDA__)"));
+assert(pdaSource.includes('position:fixed;right:10px;bottom:86px;'));
+assert(pdaSource.includes('async function pdaSharedGet'));
+assert(pdaSource.includes("typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.get==='function'"));
+assert(pdaSource.includes('await PDA_storage.set(String(key),value)'));
+assert(pdaSource.includes('const maybeReturn=async count=>'));
+assert(pdaSource.includes('const feed=await loadTravelFeed();'));
+assert(pdaSource.includes('const feed=await writeTravelFeed(rows,Date.now());'));
+assert(pdaSource.includes('await beginTravelCapture();'));
+
+const pdaAdapterSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.adapter.js','utf8');
+assert(!pdaAdapterSource.includes('globalThis.GM_getValue=function'));
+assert(!pdaAdapterSource.includes('__MM_PDA_API_KEY__'));
+assert(pdaAdapterSource.includes("typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.get==='function'"));
+
+const pdaBuilder=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
+assert(pdaBuilder.includes('def replace_once('));
+assert(pdaBuilder.includes('default=5'));
+assert(pdaBuilder.includes('PDA cross-origin Travel storage'));
+assert(pdaBuilder.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
+
+
 const liveSource=fs.readFileSync(__dirname+'/MM_Acquisitions.live.js','utf8');
 new Function(liveSource);
 assert(liveSource.includes('function resolveProcurementItemId'));
