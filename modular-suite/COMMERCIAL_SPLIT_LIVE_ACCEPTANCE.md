@@ -1816,4 +1816,25 @@ Remaining alpha.14 desktop live gates:
 3. Travel tab: `Compare Bazaar / Market` handoff;
 4. representative Analyze AH tests;
 5. narrow/mobile and TornPDA.
+### alpha.14 desktop acceptance — Items / Bazaar pass — 2026-10-05
+
+Observed directly in the authenticated Torn desktop tab with Items open:
+- PASS: panel reports `v8.0.0-alpha.14 · PROFIT / RANKED / TRAVEL`;
+- PASS: complete Torn catalog remains 1,500 items / 960 default Buyable matches over 13 pages;
+- PASS: item search by name/ID is exposed and usable;
+- PASS: category filter contains the full Torn category set including Weapon, Armor, Drug, Flower, Plushie, Supply Pack and others;
+- PASS: availability/source filter explicitly exposes `Bazaar observed`, `Item Market checked`, `Customer pricelist`, `Torn shop source`, Buyable and All catalog;
+- PASS: item rows explicitly display Bazaar low, Bazaar average and bazaar count;
+- PASS: selected rows that already have Item Market evidence display Item Market price separately from Bazaar values;
+- PASS: customer pricelist benchmark appears separately from Bazaar / Item Market values where applicable;
+- PASS: representative examples show the three-source separation correctly:
+  - Assless Chaps: Bazaar low/avg/count + Item Market price;
+  - Baseball Jacket: Bazaar low/avg/count + Item Market price;
+  - Beretta 92FS: Bazaar low/avg/count + Item Market price;
+  - Big Box of Chocolate Bars: Bazaar + Item Market + customer pricelist in one row;
+- PASS: every visible item retains an explicit `Find Price` control for deeper on-demand verification;
+- PASS: Bazaar freshness and Item Market freshness remain separate in the source strip.
+
+Remaining Items live gate:
+- one manual selected-item `Find Price` action is still required to inspect the deep source-comparison card (Bazaar / Item Market / Torn Shop / Overseas) and routing without purchase.
 
