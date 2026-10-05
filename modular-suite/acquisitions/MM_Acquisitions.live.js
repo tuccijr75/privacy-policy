@@ -4,10 +4,12 @@
   const API_BASE = 'https://api.torn.com/v2';
   const WEAV_BASE = 'https://weav3r.dev/api';
   const ITEM_MARKET_FEE_RATE = 0.05;
+  const ITEM_MARKET_RECENT_REUSE_MS = 2500;
   const MARKET_HISTORY_MAX = 240;
   const INTEL_HISTORY_MAX = 120;
   const VERIFY_MAX_AGE_SEC = 120;
   const VERIFY_SELLERS = 4;
+  const marketPulse = globalThis.MMTornMarketPulse;
 
   const asId = value => String(value ?? '').trim();
   const nowIso = () => new Date().toISOString();
@@ -25,7 +27,9 @@
       marketPrice:Number(row?.market_price || 0),
       bazaarAverage:Number(row?.bazaar_average || 0),
       lowestPrice:Number(row?.lowest_price || 0),
-      totalBazaars:Number(row?.total_bazaars || 0)
+      totalBazaars:Number(row?.total_bazaars || 0),
+      lowestSource:Number(row?.lowest_price || 0)>0?'Bazaar':'Unknown',
+      bazaarSource:'TornW3B Bazaar observations'
     };
   }
 
@@ -91,6 +95,8 @@
     if(!Array.isArray(rows))return [];
     return rows.map(row=>{
       const value=row?.value&&typeof row.value==='object'?row.value:{};
+      const details=row?.details&&typeof row.details==='object'?row.details:{};
+      const baseStats=details?.stats&&typeof details.stats==='object'?details.stats:{};
       let shopRows=value.shops ?? row?.shops ?? [];
       if(!Array.isArray(shopRows)&&shopRows&&typeof shopRows==='object')shopRows=Object.values(shopRows);
       const shops=(Array.isArray(shopRows)?shopRows:[]).map(normalizeCatalogShop);
@@ -103,13 +109,113 @@
         id,name,
         type:String(row?.type ?? row?.category ?? 'Other').trim()||'Other',
         subType:String(row?.sub_type ?? row?.subtype ?? '').trim(),
+        weaponCategory:String(details?.category ?? row?.weapon_category ?? '').trim(),
+        baseStats:{
+          damage:Math.max(0,Number(baseStats?.damage||0)||0),
+          accuracy:Math.max(0,Number(baseStats?.accuracy||0)||0),
+          armor:Math.max(0,Number(baseStats?.armor||0)||0)
+        },
         image:String(row?.image ?? ''),
         marketPrice,buyPrice,sellPrice,
         circulation:Math.max(0,Number(row?.circulation ?? 0)||0),
+        isTradable:row?.is_tradable!==false&&row?.tradable!==false,
         shops,
         buyable:Boolean(marketPrice>0||buyPrice>0||shops.some(shop=>Number(shop.price||0)>0))
       };
     }).filter(row=>/^\d+$/.test(row.id)&&row.name);
+  }
+
+  function normalizePricelistRows(data) {
+    const rows=Array.isArray(data)?data:(Array.isArray(data?.items)?data.items:[]);
+    return rows.map(row=>({
+      itemId:asId(row?.itemId??row?.itemID??row?.item_id),
+      name:String(row?.name??row?.itemName??'').trim(),
+      buyPrice:Math.max(0,Number(row?.buyPrice??row?.price??0)||0),
+      bulkThreshold:Math.max(0,Number(row?.bulkThreshold??0)||0),
+      bulkBuyPrice:Math.max(0,Number(row?.bulkBuyPrice??0)||0)
+    })).filter(row=>row.itemId&&row.name);
+  }
+
+  function normalizeRankedBonuses(value) {
+    let rows=value;
+    if(!Array.isArray(rows)&&rows&&typeof rows==='object')rows=Object.values(rows);
+    if(!Array.isArray(rows))rows=[];
+    return rows.map(row=>({
+      title:String(row?.title??row?.bonus??row?.name??'').trim(),
+      value:Number(row?.value??row?.percentage??row?.percent??0)||0,
+      description:String(row?.description??'')
+    })).filter(row=>row.title);
+  }
+
+  function canonicalRankedSource(value) {
+    const raw=String(value||'').trim().toLowerCase();
+    if(raw==='bazaar')return 'Bazaar';
+    if(raw==='market'||raw==='item market'||raw==='item-market'||raw==='item_market')return 'Item Market';
+    if(raw==='auction'||raw==='auction house'||raw==='auction-house')return 'Auction';
+    return String(value||'Market').trim()||'Market';
+  }
+
+  function normalizeRankedListing(row,{source='',itemId='',itemName='',subType='',weaponCategory=''}={}) {
+    const item=row?.item&&typeof row.item==='object'?row.item:{};
+    const details=row?.item_details&&typeof row.item_details==='object'?row.item_details:
+      (item?.details&&typeof item.details==='object'?item.details:{});
+    const stats=details?.stats&&typeof details.stats==='object'?details.stats:
+      (row?.stats&&typeof row.stats==='object'?row.stats:{});
+    const seller=row?.seller&&typeof row.seller==='object'?row.seller:{};
+    return {
+      uid:asId(row?.uid??details?.uid),
+      itemId:asId(row?.itemId??row?.item_id??item?.id??itemId),
+      itemName:String(row?.itemName??row?.item_name??item?.name??itemName??'').trim(),
+      weaponType:String(row?.weaponType??row?.weapon_type??details?.category??weaponCategory??'').trim(),
+      subType:String(row?.subType??row?.sub_type??item?.sub_type??subType??'').trim(),
+      rarity:String(row?.rarity??details?.rarity??'').trim().toLowerCase(),
+      damage:Number(row?.damage??stats?.damage??0)||0,
+      accuracy:Number(row?.accuracy??stats?.accuracy??0)||0,
+      quality:Number(row?.quality??stats?.quality??0)||0,
+      bonuses:normalizeRankedBonuses(row?.bonuses??details?.bonuses),
+      price:Math.max(0,Number(row?.price??row?.cost??row?.listing_price??0)||0),
+      quantity:Math.max(1,Number(row?.quantity??row?.amount??1)||1),
+      sellerId:asId(row?.playerId??row?.player_id??seller?.id??seller?.user_id),
+      sellerName:String(row?.playerName??row?.player_name??seller?.name??''),
+      source:canonicalRankedSource(row?.source??source??''),
+      lastUpdated:String(row?.lastUpdated??row?.lastUpdatedUnix??row?.last_updated??''),
+      endsAt:Number(row?.endsAtUnix??row?.ends_at??0)||0,
+      bids:Math.max(0,Number(row?.bids??0)||0),
+      url:String(row?.url??row?.listingUrl??'')
+    };
+  }
+
+  function normalizeAuctionHistoryRows(data,{itemId='',itemName='',subType='',weaponCategory=''}={}) {
+    let rows=data?.auctionhouse??data?.auction_house??data?.listings??data?.auctions??[];
+    if(!Array.isArray(rows)&&rows&&typeof rows==='object')rows=Object.values(rows);
+    if(!Array.isArray(rows))rows=[];
+    return rows.map(row=>{
+      const item=row?.item&&typeof row.item==='object'?row.item:{};
+      const details=item?.details&&typeof item.details==='object'?item.details:{};
+      const stats=details?.stats&&typeof details.stats==='object'?details.stats:{};
+      return {
+        id:asId(row?.id??row?.auction_id),
+        timestamp:Number(row?.timestamp??row?.ended_at??0)||0,
+        price:Math.max(0,Number(row?.price??row?.final_price??0)||0),
+        bids:Math.max(0,Number(row?.bids??0)||0),
+        itemId:asId(item?.id??row?.item_id??itemId),
+        itemName:String(item?.name??row?.item_name??itemName??'').trim(),
+        weaponType:String(details?.category??row?.weapon_type??weaponCategory??'').trim(),
+        subType:String(item?.sub_type??row?.sub_type??subType??'').trim(),
+        rarity:String(details?.rarity??row?.rarity??'').trim().toLowerCase(),
+        uid:asId(details?.uid??row?.uid),
+        damage:Number(stats?.damage??row?.damage??0)||0,
+        accuracy:Number(stats?.accuracy??row?.accuracy??0)||0,
+        quality:Number(stats?.quality??row?.quality??0)||0,
+        bonuses:normalizeRankedBonuses(details?.bonuses??row?.bonuses)
+      };
+    }).filter(row=>row.price>0&&row.itemId);
+  }
+
+  function apiNextUrl(data) {
+    const next=data?._metadata?.links?.next??data?.metadata?.links?.next??data?._metadata?.next??data?.pagination?.next??null;
+    if(typeof next!=='string'||!next.trim())return '';
+    try{return new URL(next,API_BASE+'/').toString();}catch{return '';}
   }
 
   function marketMetrics(rows) {
@@ -294,6 +400,99 @@
     const hasTornKey=typeof deps.hasTornKey === 'function' ? deps.hasTornKey : ()=>true;
     const navigate=typeof deps.navigate === 'function' ? deps.navigate : url=>{ location.href=url; };
 
+    async function refreshPricelist(userId='4054377') {
+      const id=asId(userId);
+      if(!/^\d+$/.test(id))throw new Error('Invalid TornW3B pricelist user ID.');
+      const data=await deps.weavRequest('/pricelist/'+encodeURIComponent(id));
+      const rows=normalizePricelistRows(data);
+      if(!rows.length)throw new Error('TornW3B pricelist returned no readable rows.');
+      const at=nowIso();
+      const items={};
+      let bbRate=0,priced=0;
+      for(const row of rows){
+        if(row.itemId==='-3'){bbRate=row.buyPrice;continue;}
+        if(!/^\d+$/.test(row.itemId)||!(row.buyPrice>0))continue;
+        items[row.itemId]=row;
+        priced++;
+      }
+      await core.updateDomainState('market',draft=>{
+        const proc=draft.procurement || (draft.procurement={});
+        proc.pricelist={userId:id,items,bunkerBuckRate:bbRate,pricedCount:priced,lastSyncAt:at,source:'TornW3B Pricelist API'};
+        return draft;
+      });
+      return {state:await core.readLegacyState(),rows,priced,bbRate};
+    }
+
+    async function refreshRankedLive({pagesPerType=2,auctionPages=4,limit=100}={}) {
+      const types=['primary','secondary','melee'];
+      const market=[];
+      for(const weaponType of types){
+        for(let page=1;page<=Math.max(1,Number(pagesPerType)||1);page++){
+          const data=await deps.weavRequest('/ranked-weapons',{
+            tab:'weapons',weaponType,sortField:'price',sortOrder:'asc',page,limit:Math.min(100,Math.max(1,Number(limit)||100))
+          });
+          const rows=Array.isArray(data?.weapons)?data.weapons:[];
+          market.push(...rows.map(row=>normalizeRankedListing(row,{source:row?.source||'market'})));
+          if(rows.length<limit)break;
+        }
+      }
+      const auction=[];
+      for(let page=1;page<=Math.max(1,Number(auctionPages)||1);page++){
+        const data=await deps.weavRequest('/auction/listings',{
+          tab:'weapons',source:'auction',sortField:'endsAt',sortOrder:'asc',page,limit:Math.min(100,Math.max(1,Number(limit)||100))
+        });
+        const rows=Array.isArray(data?.items)?data.items:[];
+        auction.push(...rows.map(row=>normalizeRankedListing(row,{source:'Auction'})));
+        if(!data?.hasMore||rows.length<limit)break;
+      }
+      const dedupe=rows=>[...new Map(rows.filter(row=>row.uid&&row.price>0).map(row=>[row.source+'|'+row.uid,row])).values()];
+      const liveMarket=dedupe(market),liveAuction=dedupe(auction),at=nowIso();
+      await core.updateDomainState('market',draft=>{
+        const proc=draft.procurement || (draft.procurement={});
+        const ranked=proc.ranked&&typeof proc.ranked==='object'?proc.ranked:(proc.ranked={});
+        ranked.liveMarket=liveMarket;
+        ranked.liveAuction=liveAuction;
+        ranked.lastLiveAt=at;
+        ranked.liveSource='TornW3B Bazaar + Item Market + Auction APIs';
+        return draft;
+      });
+      return {state:await core.readLegacyState(),market:liveMarket,auction:liveAuction,at};
+    }
+
+    async function refreshRankedHistory(itemId,{days=90,maxPages=8}={}) {
+      if(!hasTornKey())throw new Error('Save a Torn API key in MM Acquisitions first.');
+      const id=asId(itemId);
+      if(!/^\d+$/.test(id))throw new Error('Invalid ranked weapon item ID.');
+      const before=await core.readLegacyState();
+      const catalog=before?.procurement?.catalog?.[id]||{};
+      const from=Math.floor((Date.now()-Math.max(7,Number(days)||90)*86400000)/1000);
+      let url='/market/'+encodeURIComponent(id)+'/auctionhouse?limit=100&sort=DESC&from='+from;
+      const history=[];
+      const seen=new Set();
+      for(let page=0;page<Math.max(1,Number(maxPages)||1)&&url;page++){
+        const data=await deps.tornRequest(url);
+        for(const row of normalizeAuctionHistoryRows(data,{
+          itemId:id,itemName:catalog.name||'',subType:catalog.subType||'',weaponCategory:catalog.weaponCategory||''
+        })){
+          const key=row.id||[row.timestamp,row.uid,row.price].join('|');
+          if(seen.has(key))continue;
+          seen.add(key);history.push(row);
+        }
+        url=apiNextUrl(data);
+      }
+      history.sort((a,b)=>Number(b.timestamp||0)-Number(a.timestamp||0));
+      const at=nowIso();
+      await core.updateDomainState('market',draft=>{
+        const proc=draft.procurement || (draft.procurement={});
+        const ranked=proc.ranked&&typeof proc.ranked==='object'?proc.ranked:(proc.ranked={});
+        ranked.history=ranked.history&&typeof ranked.history==='object'?ranked.history:{};
+        ranked.history[id]={itemId:id,itemName:String(catalog.name||('Item '+id)),rows:history.slice(0,800),lastSyncAt:at,days:Math.max(7,Number(days)||90),source:'Torn API finished Auction House'};
+        ranked.lastHistoryAt=at;
+        return draft;
+      });
+      return {state:await core.readLegacyState(),rows:history,at};
+    }
+
     async function refreshItemCatalog() {
       if (!hasTornKey()) throw new Error('Save a Torn API key in MM Acquisitions first.');
       const data=await deps.tornRequest('/torn/items?cat=All&sort=ASC');
@@ -401,15 +600,24 @@
     }
 
     async function refreshItemMarket(itemId) {
-      if (!hasTornKey()) throw new Error('Save a Torn API key in Market Scout first.');
+      if (!hasTornKey()) throw new Error('Save a Torn API key in MM Acquisitions first.');
       const id=asId(itemId);
       if (!/^\d+$/.test(id)) throw new Error('Invalid item ID.');
       const data=await deps.tornRequest('/market/'+encodeURIComponent(id)+'/itemmarket?limit=25');
       const itemRows=genericMarketListings(data);
       const before=await core.readLegacyState();
-      const bazaarRows=freshOrganicListings(before,id).slice(0,25).map(row=>({
-        price:Number(row.price||0),quantity:Math.max(1,Number(row.quantity||1))
-      }));
+      const pulseSnapshot=marketPulse?.normalizeTornItemMarket?.(
+        id,
+        String(before?.procurement?.catalog?.[id]?.name||before?.marketIntel?.marketplace?.[id]?.itemName||('Item '+id)),
+        data,
+        {fetchedAt:Date.now()}
+      )||null;
+      const aggregateBazaarLow=Math.max(0,Number(before?.marketIntel?.marketplace?.[id]?.lowestPrice||0));
+      const bazaarRows=freshOrganicListings(before,id)
+        .filter(row=>!(aggregateBazaarLow>0)||Number(row.price||0)<=aggregateBazaarLow*1.35)
+        .slice(0,25).map(row=>({
+          price:Number(row.price||0),quantity:Math.max(1,Number(row.quantity||1))
+        }));
       if (!itemRows.length && !bazaarRows.length) throw new Error('No trusted live market listings returned.');
       const itemMarket=marketMetrics(itemRows);
       const bazaar=marketMetrics(bazaarRows);
@@ -418,6 +626,7 @@
         itemId:id,itemMarket,bazaar,realisticExit,
         sources:{itemMarket:itemRows.length?'Torn API Item Market':null,bazaar:bazaarRows.length?'TornW3B fresh seller observations':null},
         totalDepth3Pct:Number(itemMarket.depth3Pct||0)+Number(bazaar.depth3Pct||0),
+        pulseSnapshot,
         fetchedAt:nowIso()
       };
       await core.updateDomainState('market',draft=>{
@@ -426,13 +635,34 @@
         proc.marketSnapshots[id]=snapshot;
         pushMarketHistory(proc,id,snapshot);
         proc.lastItemMarketAt=snapshot.fetchedAt;
+        if(pulseSnapshot&&marketPulse?.applySnapshotToDraft){
+          marketPulse.applySnapshotToDraft(draft,pulseSnapshot,{recordRequest:true});
+        }
         return draft;
       });
       return snapshot;
     }
 
+    function recentItemMarketSnapshot(state,itemId,maxAgeMs=ITEM_MARKET_RECENT_REUSE_MS) {
+      const id=asId(itemId);
+      const snap=state?.procurement?.marketSnapshots?.[id]||null;
+      const fetchedAt=snap?.fetchedAt?Date.parse(snap.fetchedAt):0;
+      const ageMs=fetchedAt?Math.max(0,Date.now()-fetchedAt):Infinity;
+      const price=Math.max(0,Number(snap?.itemMarket?.lowest||0));
+      return price>0&&ageMs<=Math.max(0,Number(maxAgeMs||0))?snap:null;
+    }
+
+    async function verifyItemMarket(itemId,{allowRecentMs=ITEM_MARKET_RECENT_REUSE_MS}={}) {
+      const id=asId(itemId);
+      const before=await core.readLegacyState();
+      const recent=recentItemMarketSnapshot(before,id,allowRecentMs);
+      if(recent) return {snapshot:recent,reusedRecent:true};
+      const snapshot=await refreshItemMarket(id);
+      return {snapshot,reusedRecent:false};
+    }
+
     async function verifyBazaar(itemId,sellerId,expectedPrice=0) {
-      if (!hasTornKey()) throw new Error('Save a Torn API key in Market Scout first.');
+      if (!hasTornKey()) throw new Error('Save a Torn API key in MM Acquisitions first.');
       const id=asId(itemId),seller=asId(sellerId);
       if (!/^\d+$/.test(id)||!/^\d+$/.test(seller)) return {verified:false,reason:'invalid-id'};
       const data=await deps.bazaarRequest(seller);
@@ -490,7 +720,7 @@
         travel.lastSyncAt=new Date(at).toISOString();
         travel.source='TornW3B Travel Stock';
         travel.diagnostics=Array.isArray(travel.diagnostics)?travel.diagnostics:[];
-        travel.diagnostics.unshift({at:nowIso(),text:'Market Scout Travel import: '+safeRows.length+' rows.'});
+        travel.diagnostics.unshift({at:nowIso(),text:'MM Acquisitions Travel import: '+safeRows.length+' rows.'});
         travel.diagnostics=travel.diagnostics.slice(0,30);
         recordTravelSnapshots(travel,safeRows,at);
         return draft;
@@ -536,22 +766,50 @@
       return '';
     }
 
+    function selectedItemExitEvidence(state,id) {
+      const snap=state?.procurement?.marketSnapshots?.[id]||{};
+      const intel=state?.marketIntel?.marketplace?.[id]||{};
+      const settings=state?.marketIntel?.settings||{};
+      const bazaarHaircut=Math.max(0,Math.min(25,Number(settings?.bazaarExitHaircutPct||0)))/100;
+      const bazaarExit=Math.floor(Number(intel?.bazaarAverage||0)*(1-bazaarHaircut));
+      const itemMarketAsk=Math.max(0,Number(snap?.itemMarket?.lowest||0));
+      const itemMarketNet=Math.floor(itemMarketAsk*(1-ITEM_MARKET_FEE_RATE));
+      const candidates=[
+        {route:'Bazaar',value:bazaarExit},
+        {route:'Item Market Net',value:itemMarketNet}
+      ].filter(row=>Number(row.value||0)>0).sort((a,b)=>b.value-a.value);
+      const best=candidates[0]||{route:'Unknown',value:0};
+      return {best,candidates};
+    }
+
     async function procurementSourceOptions(itemId,itemName='') {
       let state=await core.readLegacyState();
       const id=resolveProcurementItemId(state,itemId,itemName);
       if(!id) return {itemId:'',itemName:String(itemName||''),sources:[],state};
+      let itemMarketVerified=false;
       try { await enrichItem(id); } catch {}
-      try { await refreshItemMarket(id); } catch {}
+      try {
+        const verification=await verifyItemMarket(id);
+        itemMarketVerified=Boolean(verification?.snapshot);
+      } catch {}
       state=await core.readLegacyState();
 
       const catalog=state?.procurement?.catalog?.[id]||{};
-      const resolvedName=String(itemName||catalog.name||state?.marketIntel?.marketplace?.[id]?.itemName||('Item '+id));
+      const marketplace=state?.marketIntel?.marketplace?.[id]||{};
+      const resolvedName=String(itemName||catalog.name||marketplace?.itemName||('Item '+id));
       const maxAge=Math.max(30,Number(state?.businessRules?.maxListingAgeSec||180));
       const snap=state?.procurement?.marketSnapshots?.[id]||{};
       const snapAge=snap.fetchedAt?Math.max(0,(Date.now()-Date.parse(snap.fetchedAt))/1000):Infinity;
       const itemMarketPrice=snapAge<=maxAge?Number(snap?.itemMarket?.lowest||0):0;
+      const aggregateBazaarLow=Math.max(0,Number(marketplace?.lowestPrice||0));
       const bazaarRows=freshOrganicListings(state,id).slice(0,VERIFY_SELLERS);
-      const bestBazaar=bazaarRows[0]||null;
+      const namedBest=bazaarRows[0]||null;
+      const namedPrice=Math.max(0,Number(namedBest?.price||0));
+      const namedConsistent=Boolean(namedBest&&(
+        !(aggregateBazaarLow>0) ||
+        namedPrice<=aggregateBazaarLow*1.35
+      ));
+      const bestBazaar=namedConsistent?namedBest:null;
       const travelRows=(state?.travelIntel?.rows||[])
         .filter(row=>Number(row?.stock||0)>0&&(
           asId(row?.itemId)===id||
@@ -569,17 +827,42 @@
       }
       if(bestBazaar) sources.push({
         source:'Bazaar',price:Number(bestBazaar.price||0),quantity:Number(bestBazaar.quantity||0),
-        sellerId:asId(bestBazaar.sellerId),sellerName:String(bestBazaar.sellerName||'')
+        sellerId:asId(bestBazaar.sellerId),sellerName:String(bestBazaar.sellerName||''),
+        verifiedCandidate:true
+      });
+      if(aggregateBazaarLow>0&&(!bestBazaar||Number(bestBazaar.price||0)>aggregateBazaarLow*1.05)) sources.push({
+        source:'Bazaar aggregate',price:aggregateBazaarLow,quantity:0,
+        sellerId:'',sellerName:'',aggregateOnly:true,
+        bazaarAverage:Number(marketplace?.bazaarAverage||0),bazaarCount:Number(marketplace?.totalBazaars||0)
       });
       if(itemMarketPrice>0) sources.push({
-        source:'Item Market',price:itemMarketPrice,quantity:Number(snap?.itemMarket?.depth1Pct||1)
+        source:'Item Market',price:itemMarketPrice,quantity:Number(snap?.itemMarket?.depth1Pct||1),
+        liveVerified:itemMarketVerified,verifiedAt:String(snap?.fetchedAt||'')
       });
-      if(bestTravel&&Number(bestTravel.shopCost||0)>0) sources.push({
-        source:'Overseas',price:Number(bestTravel.shopCost||0),quantity:Number(bestTravel.stock||0),
-        country:String(bestTravel.country||''),profit:Number(bestTravel.profit||0)
+      if(bestTravel) sources.push({
+        source:'Overseas',
+        price:Math.max(0,Number(bestTravel.shopCost||0)),
+        quantity:Number(bestTravel.stock||0),
+        country:String(bestTravel.country||''),
+        profit:Number(bestTravel.profit||0),
+        sourceProfitPerHour:Number(bestTravel.sourceProfitPerHour||0),
+        priceKnown:Number(bestTravel.shopCost||0)>0,
+        travelEvidence:true
       });
-      sources.sort((a,b)=>Number(a.price||0)-Number(b.price||0));
-      return {itemId:id,itemName:resolvedName,sources,state};
+      sources.sort((a,b)=>{
+        const ap=Number(a.price||0),bp=Number(b.price||0);
+        const ak=ap>0,bk=bp>0;
+        if(ak!==bk)return ak?-1:1;
+        return ap-bp;
+      });
+      const exitEvidence=selectedItemExitEvidence(state,id);
+      return {
+        itemId:id,itemName:resolvedName,sources,state,
+        exitValue:Number(exitEvidence.best.value||0),
+        exitRoute:String(exitEvidence.best.route||'Unknown'),
+        exitCandidates:exitEvidence.candidates,
+        catalogReference:Number(catalog?.marketPrice||0)
+      };
     }
 
     async function routeProcurementRequest({itemId='',itemName='',preferredSource='Best'}={}) {
@@ -589,29 +872,83 @@
       const preferred=String(preferredSource||'Best').toLowerCase();
       const ordered=result.sources.filter(source=>preferred==='best'||String(source.source||'').toLowerCase()===preferred);
       if(!ordered.length) return {routed:false,reason:'preferred-source-unavailable',...result};
+      const verificationWarnings=[];
 
       for(const candidate of ordered) {
+        if(candidate.source==='Bazaar aggregate') {
+          try { await enrichItem(id); } catch(error) {
+            verificationWarnings.push({source:'Bazaar discovery',message:String(error?.message||error||'refresh failed')});
+          }
+          const refreshed=await core.readLegacyState();
+          const aggregate=Math.max(0,Number(refreshed?.marketIntel?.marketplace?.[id]?.lowestPrice||candidate.price||0));
+          const liveRows=freshOrganicListings(refreshed,id)
+            .filter(row=>Number(row?.price||0)>0&&(!(aggregate>0)||Number(row.price)<=aggregate*1.35))
+            .slice(0,VERIFY_SELLERS);
+          for(const row of liveRows){
+            let verify;
+            try{
+              verify=await verifyBazaar(id,row.sellerId,row.price);
+            }catch(error){
+              verificationWarnings.push({
+                source:'Bazaar',sellerId:asId(row.sellerId),
+                message:String(error?.message||error||'verification failed')
+              });
+              continue;
+            }
+            await persistBazaarResult(id,row.sellerId,verify);
+            if(!verify.verified)continue;
+            const url='https://www.torn.com/bazaar.php?userId='+encodeURIComponent(asId(row.sellerId));
+            navigate(url);
+            return {routed:true,source:'Bazaar',url,verified:verify,verificationWarnings,...result};
+          }
+          continue;
+        }
         if(candidate.source==='Bazaar') {
-          const verify=await verifyBazaar(id,candidate.sellerId,candidate.price);
+          let verify;
+          try{
+            verify=await verifyBazaar(id,candidate.sellerId,candidate.price);
+          }catch(error){
+            verificationWarnings.push({
+              source:'Bazaar',sellerId:asId(candidate.sellerId),
+              message:String(error?.message||error||'verification failed')
+            });
+            continue;
+          }
           await persistBazaarResult(id,candidate.sellerId,verify);
           if(!verify.verified) continue;
           const url='https://www.torn.com/bazaar.php?userId='+encodeURIComponent(asId(candidate.sellerId));
           navigate(url);
-          return {routed:true,source:'Bazaar',url,verified:verify,...result};
+          return {routed:true,source:'Bazaar',url,verified:verify,verificationWarnings,...result};
         }
         if(candidate.source==='Item Market') {
-          const fresh=await refreshItemMarket(id);
+          let fresh=null;
+          try{
+            const verifiedAt=candidate?.verifiedAt?Date.parse(candidate.verifiedAt):0;
+            const verifiedAgeMs=verifiedAt?Math.max(0,Date.now()-verifiedAt):Infinity;
+            if(candidate.liveVerified&&verifiedAgeMs<=ITEM_MARKET_RECENT_REUSE_MS){
+              fresh=(await core.readLegacyState())?.procurement?.marketSnapshots?.[id]||null;
+            }
+            if(!fresh){
+              const verification=await verifyItemMarket(id);
+              fresh=verification?.snapshot||null;
+            }
+          }catch(error){
+            verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'verification failed')});
+            continue;
+          }
           const livePrice=Number(fresh?.itemMarket?.lowest||0);
           if(!(livePrice>0)) continue;
           const catalog=(await core.readLegacyState())?.procurement?.catalog?.[id]||{};
           const url=itemMarketPurchaseUrl(id,result.itemName,catalog.type||'');
           navigate(url);
-          return {routed:true,source:'Item Market',url,price:livePrice,...result};
+          return {routed:true,source:'Item Market',url,price:livePrice,verificationWarnings,...result};
         }
         if(candidate.source==='Overseas') {
           return {
             routed:false,reason:'overseas-recommended',recommendedSource:'Overseas',
             country:String(candidate.country||''),price:Number(candidate.price||0),stock:Number(candidate.quantity||0),
+            profit:Number(candidate.profit||0),sourceProfitPerHour:Number(candidate.sourceProfitPerHour||0),
+            priceKnown:Boolean(candidate.priceKnown),verificationWarnings,
             ...result
           };
         }
@@ -619,22 +956,38 @@
           return {
             routed:false,reason:'shop-recommended',recommendedSource:'Torn Shop',
             shopName:String(candidate.shopName||'Torn shop'),country:String(candidate.country||''),
-            price:Number(candidate.price||0),stock:Number(candidate.quantity||0),
+            price:Number(candidate.price||0),stock:Number(candidate.quantity||0),verificationWarnings,
             ...result
           };
         }
       }
-      return {routed:false,reason:'source-verification-failed',...result};
+      return {
+        routed:false,
+        reason:verificationWarnings.length?'live-verification-unavailable':'source-verification-failed',
+        verificationWarnings,
+        ...result
+      };
     }
 
     async function acquire(itemId) {
       if (!hasTornKey()) return {routed:false,reason:'api-key-required'};
       const id=asId(itemId);
-      await enrichItem(id);
-      try { await refreshItemMarket(id); } catch {}
+      const verificationWarnings=[];
+      let verifiedItemMarketSnapshot=null;
+      try {
+        await enrichItem(id);
+      } catch(error) {
+        verificationWarnings.push({source:'Bazaar discovery',message:String(error?.message||error||'refresh failed')});
+      }
+      try {
+        const verification=await verifyItemMarket(id);
+        verifiedItemMarketSnapshot=verification?.snapshot||null;
+      } catch(error) {
+        verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'refresh failed')});
+      }
       let state=await core.readLegacyState();
       let opportunity=logic.rankCachedOpportunities(state).find(row=>asId(row.id)===id);
-      if (!opportunity) return {routed:false,reason:'no-qualified-opportunity'};
+      if (!opportunity) return {routed:false,reason:'no-qualified-opportunity',verificationWarnings};
 
       const maxBuy=Math.max(0,Number(opportunity.maxBuyPrice||0));
       const bazaarCandidates=freshOrganicListings(state,id)
@@ -651,16 +1004,34 @@
 
       for (const candidate of candidates) {
         if (candidate.source==='Bazaar') {
-          const result=await verifyBazaar(id,candidate.row.sellerId,candidate.row.price);
+          let result;
+          try{
+            result=await verifyBazaar(id,candidate.row.sellerId,candidate.row.price);
+          }catch(error){
+            verificationWarnings.push({
+              source:'Bazaar',sellerId:asId(candidate.row.sellerId),
+              message:String(error?.message||error||'verification failed')
+            });
+            continue;
+          }
           await persistBazaarResult(id,candidate.row.sellerId,result);
           if (!result.verified) continue;
           if (maxBuy>0&&Number(result.actualPrice||0)>maxBuy) continue;
           const url='https://www.torn.com/bazaar.php?userId='+encodeURIComponent(asId(candidate.row.sellerId));
           navigate(url);
-          return {routed:true,source:'Bazaar',url,verified:result};
+          return {routed:true,source:'Bazaar',url,verified:result,verificationWarnings};
         }
 
-        const fresh=await refreshItemMarket(id);
+        let fresh=verifiedItemMarketSnapshot;
+        if(!fresh){
+          try{
+            const verification=await verifyItemMarket(id);
+            fresh=verification?.snapshot||null;
+          }catch(error){
+            verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'verification failed')});
+            continue;
+          }
+        }
         const livePrice=Number(fresh?.itemMarket?.lowest||0);
         if (!(livePrice>0)||(maxBuy>0&&livePrice>maxBuy)) continue;
         state=await core.readLegacyState();
@@ -668,12 +1039,18 @@
         const catalog=state?.procurement?.catalog?.[id]||{};
         const url=itemMarketPurchaseUrl(id,opportunity.name,catalog.type||opportunity.itemType);
         navigate(url);
-        return {routed:true,source:'Item Market',url,price:livePrice};
+        return {routed:true,source:'Item Market',url,price:livePrice,verificationWarnings};
       }
-      return {routed:false,reason:'no-live-source-inside-ceiling',maxBuyPrice:maxBuy};
+      return {
+        routed:false,
+        reason:verificationWarnings.length?'live-verification-unavailable':'no-live-source-inside-ceiling',
+        maxBuyPrice:maxBuy,
+        verificationWarnings
+      };
     }
 
     return Object.freeze({
+      refreshPricelist,refreshRankedLive,refreshRankedHistory,
       refreshItemCatalog,refreshGlobal,enrichItem,refreshItemMarket,refreshOpportunities,
       verifyBazaar,acquire,procurementSourceOptions,routeProcurementRequest,itemMarketPurchaseUrl,importTravelRows
     });
@@ -682,7 +1059,9 @@
   Object.defineProperty(globalThis,'MMTornAcquisitionsLive',{
     value:Object.freeze({
       createService,normalizeMarketplaceItem,normalizeListing,normalizeTrader,
-      genericMarketListings,normalizeCatalogShop,normalizeTornCatalog,marketMetrics,bazaarSnapshotFreshness,itemMarketPurchaseUrl,
+      genericMarketListings,normalizeCatalogShop,normalizeTornCatalog,normalizePricelistRows,
+      normalizeRankedBonuses,canonicalRankedSource,normalizeRankedListing,normalizeAuctionHistoryRows,apiNextUrl,
+      marketMetrics,bazaarSnapshotFreshness,itemMarketPurchaseUrl,
       parseTravelNumber,parseTravelStockHtml,recordTravelSnapshots
     }),
     configurable:true,enumerable:false,writable:false

@@ -1552,3 +1552,822 @@ Status:
 - alpha.10 is ready for branch merge into `crm-v8-modular-suite`;
 - production/customer-ready promotion still requires live desktop/mobile/TornPDA acceptance.
 
+## MM_Acquisitions alpha.11 — customer pricelist profit + ranked weapon scout — 2026-10-04
+
+**Status:** STATIC / EXECUTABLE FIXTURE PASS; LIVE CUSTOMER ACCEPTANCE PENDING  
+**Branch:** `crm-v8-acquisitions-ranked-profit`  
+**Base:** `crm-v8-modular-suite@9af1c84f189141be77ef0d2c86d86513db5978ed`
+
+Owner directive:
+- build the 500M multi-item profit + ranked-weapon system inside the maintained MM_Acquisitions module;
+- preserve the established Acquisitions dock launcher/icon, size, placement, collision rules and movable panel behavior;
+- do not add new third-party dependencies beyond sources already used by MM_Acquisitions.
+
+Architecture:
+- no new launcher or dock module was created;
+- existing `id:'acquisitions'` and shared Core docking/collision behavior remain authoritative;
+- top navigation now wraps for narrow/mobile layouts;
+- dependencies remain Torn/Torn API plus the already-used TornW3B/Weav3r source;
+- Clairvoyant and other new external pricing/tracking services are not used.
+
+Customer pricelist universe:
+- configurable TornW3B pricelist user ID, defaulting to the customer-supplied `4054377`;
+- public pricelist feed supplies the priced-item universe and dynamic Bunker Bucks rate;
+- special set/BB rows are separated from positively priced normal Torn items;
+- every positively priced customer item is screened from the global market feed before deeper per-item verification calls;
+- current synthetic regression proves 125 priced items are evaluated in one pass;
+- dedicated Items filter exposes the full customer pricelist universe;
+- customer pricelist buy rate is treated as a buying benchmark, never as a resale exit;
+- live acquisition cost, market exit, gross profit, ROI, liquidity/confidence and seller evidence are kept distinct;
+- selected candidates route into existing direct source comparison and manual purchase workflow.
+
+Ranked weapon workflow:
+- filters: Primary / Secondary / Melee, live market vs auction, Yellow / Orange / Red, weapon name, bonus name and minimum ROI;
+- no ranked bonus is excluded;
+- default low-tier labels Achilles and Conserve affect labeling only, not eligibility;
+- BB floor uses official Torn Bunker Buck exchange values by weapon subtype, rarity and one/two bonuses;
+- current $/BB comes from the configured TornW3B pricelist;
+- live ranked Bazaar / Item Market opportunities use the existing TornW3B ranked-weapons API;
+- live Auction House opportunities use the existing TornW3B auction listings API;
+- completed Auction House sale history comes from official Torn API `/market/{id}/auctionhouse`;
+- completed-sale cohorts step from comparable bonus-roll band -> same bonus set -> same rarity -> same base item;
+- outlier-resistant auction median, p25/p75, trend, sample size and confidence are calculated locally;
+- historyless items have auction confidence 0 rather than fabricated confidence;
+- traffic uses completed AH sales over 7 / 30 / 90 days;
+- ranked rows expose ask, BB floor, AH median, fair value, expected profit, ROI, liquidity, confidence and investment score;
+- expired cached auctions are suppressed immediately by `endsAt`;
+- non-auction live listings older than the configured maximum age are suppressed;
+- broad ranked live refresh is bounded and stale after 5 minutes;
+- pricelist refresh is stale after 1 hour;
+- completed Torn AH history remains explicit/on-demand to protect API usage;
+- auction Open routes to the existing TornW3B live-auction view filtered by weapon/rarity/bonus rather than guessing a Torn internal route;
+- final purchases/bids remain manual.
+
+Verification completed:
+- 10 Acquisitions source/test JavaScript files compile in connector-side V8;
+- 125-item full-universe screen fixture PASS;
+- BB exchange fixtures PASS for Pistol, Rifle, Machine Gun and Heavy Artillery examples;
+- empty completed-sale history confidence = 0 PASS;
+- outlier-resistant AH median fixture PASS;
+- 7/30/90 AH traffic fixture PASS;
+- ranked catalog subtype/category/base-stat normalization PASS;
+- pricelist normalization and dynamic $/BB extraction PASS;
+- ranked live market + live auction persistence fixture PASS;
+- completed Torn AH history persistence fixture PASS;
+- same existing `acquisitions` dock launcher asserted; no ranked-specific launcher exists;
+- no Clairvoyant reference or other new third-party dependency exists in candidate source.
+
+Candidate install safety:
+- alpha.11 candidate `@updateURL` / `@downloadURL` and changed `@require` files intentionally point at `crm-v8-acquisitions-ranked-profit` so live acceptance cannot silently load alpha.10 dependencies;
+- **before merge**, these candidate URLs must be switched back to `crm-v8-modular-suite` and revalidated.
+- 2026-10-04 install-host correction: owner browser returned `ERR_SSL_PROTOCOL_ERROR` for `raw.githubusercontent.com`; alpha.11 candidate install/update and every userscript dependency URL were moved to `cdn.jsdelivr.net/gh/` while preserving the same branch/path isolation.
+- Browser verification reached Tampermonkey's Script Installation handoff from the jsDelivr `.user.js` URL; the prior SSL failure did not reproduce.
+
+Live acceptance blockers:
+1. install alpha.11 candidate on desktop and confirm existing Acquisitions dock placement/collision behavior is unchanged;
+2. Update Pricelist and confirm the real customer feed resolves the expected current priced-item count and BB rate;
+3. Refresh Opportunities and confirm the full customer universe scan is populated, ranked and selectable;
+4. verify a selected normal item rechecks current sources and routes without auto-purchase;
+5. Refresh Ranked and validate Primary / Secondary / Melee, source, rarity, weapon, bonus and ROI filters against live data;
+6. Analyze AH on representative low-tier and premium ranked weapons and validate BB floor, completed-sale cohort, traffic windows and confidence;
+7. confirm expired/stale ranked rows disappear as designed;
+8. confirm live-auction Open lands on the filtered TornW3B auction view and market rows route correctly;
+9. verify narrow-width/mobile layout and TornPDA runtime, including tab wrapping and input usability;
+10. confirm no dock overlap with Torn chat/footer icons or other MM modules;
+11. switch candidate metadata/require URLs back to the canonical modular branch and repeat static verification;
+12. explicit owner approval is required before merge/stable/customer delivery.
+
+Do not advertise alpha.11 as customer-ready or provide a stable customer install path until these live gates pass.
+### alpha.11 live desktop acceptance — phase 1 — 2026-10-04
+
+Observed directly in the authenticated Torn desktop tab with the candidate installed and panel open:
+
+PASS:
+- `MM_Acquisitions v8.0.0-alpha.11 · PROFIT / RANKED / TRAVEL` is live on Torn;
+- the existing shared `MM_Acquisitions` dock launcher is present inside `MM Torn module dock`; no second ranked launcher exists;
+- the existing Acquisitions panel is open and draggable through the shared Core panel handler;
+- Torn API key state reports `SAVED`;
+- automatic market watcher is active: status reported `Weav3r published a new market generation; Acquisitions updated automatically.`;
+- live freshness strip showed Weav3r ~1m, Item Market seconds old, Purchases ~3m with 207 lots, Pricelist under 1m, and `Weav auto-check WHILE OPEN`;
+- complete Torn catalog loaded: 1,500 catalog items;
+- default Buyable filter returned 960 matches over 13 pages;
+- item category selector is populated with Torn categories including Weapon, Armor, Drug, Flower, Plushie, Supply Pack and others;
+- item name/ID search field, category/source/sort selectors, Apply Filters, Find Best Price and per-row Find Price controls are present and exposed as usable form/button controls;
+- customer pricelist values are visibly joined to catalog rows (examples observed: Advent Calendar, African Violet, Afro Comb, Ambergris Lump, multiple candy/other items);
+- live TornW3B pricelist API independently verified 1,313 total catalog rows, exactly 125 positively priced normal Torn items, and Bunker Bucks rate $6,119,978/BB.
+
+Expected / pending:
+- source strip correctly showed `Ranked not synced` before the first explicit ranked refresh;
+- Ranked tab controls and live ranked/AH behavior still require interactive desktop acceptance;
+- dock collision geometry, narrow-width/mobile and TornPDA remain pending.
+
+Next live action:
+1. open the `Ranked` tab;
+2. press `Refresh Ranked`;
+3. inspect resulting counts/filters and representative rows;
+4. run `Analyze AH` on at least one low-tier BB-floor weapon and one premium weapon.
+### alpha.12 ranked live-row fix — 2026-10-04
+
+Live desktop phase 2 exposed a root-cause defect:
+- ranked feed refresh succeeded and persisted 300 market + 224 auction rows;
+- UI then showed 0 Primary matches despite current feed data containing fresh Primary market rows and future Primary auctions;
+- cause: `evaluateListing()` normalized ranked rows through `normalizedHistoryRow()`, which discarded live-only metadata (`source`, `lastUpdated`, `endsAt`, seller/routing fields);
+- freshness filtering therefore treated every evaluated row as source-less/non-auction with no observation time and removed it.
+
+Fix:
+- preserve source, lastUpdated, endsAt, sellerId, sellerName, quantity and URL through ranked normalization/valuation;
+- bump ranked logic cache key to alpha.2;
+- bump userscript/manifest candidate to `8.0.0-alpha.12` / suite alpha.51;
+- no freshness rule was bypassed or weakened.
+
+Verification:
+- current TornW3B Primary feed: 100 sampled rows, 53 fresh inside the 24h live-age limit;
+- current TornW3B auction sample: future rows include Primary weapons;
+- alpha.12 evaluation fixture preserved a live Primary Bazaar row (`9mm Uzi`) with source + lastUpdated;
+- alpha.12 evaluation fixture preserved a future Primary auction row (`Benelli M1 Tactical`) with source + endsAt;
+- static candidate still compiles and uses the same existing Acquisitions launcher.
+
+Next live action:
+1. install alpha.12 candidate;
+2. refresh Torn;
+3. open Ranked and Refresh Ranked;
+4. verify Primary now returns live rows before continuing AH valuation acceptance.
+### alpha.12 immutable install correction — 2026-10-04
+
+- owner reported the branch-based jsDelivr install URL still served alpha.11 due mutable-branch CDN caching;
+- candidate userscript metadata was changed to remove @updateURL/@downloadURL during live acceptance;
+- every @require dependency is pinned to immutable commit e4c035e5ee3fb06fdba7ee02c13c905cb0a771ed, which contains alpha.12 + ranked metadata fix;
+- live install URL is now commit-pinned to current branch head dd90732a5e98c46b13ed9d2e4152057c0741e835;
+- independent fetch verified that immutable URL contains alpha.12 and does not contain alpha.11 version metadata;
+- restore canonical modular-branch update/download URLs only after live acceptance and before merge.
+### alpha.12 desktop acceptance — phase 3 — 2026-10-04
+
+Observed directly after immutable alpha.12 install:
+- PASS: live panel reports `v8.0.0-alpha.12 · PROFIT / RANKED / TRAVEL`;
+- PASS: existing shared Acquisitions dock launcher remains the only launcher;
+- PASS: desktop screenshot shows the panel stopping above the bottom Torn/MM control row without overlap;
+- PASS: automatic normal-opportunity refresh completed successfully after install;
+- PASS: Weav3r freshness advanced from ~21m stale cache to ~1m; Item Market advanced to ~8s;
+- PASS: full customer pricelist universe remained 125 evaluated;
+- PASS: refreshed full-universe labels changed from stale to GOOD (20 visible rows sampled), confirming freshness re-evaluation;
+- live scan after refresh showed 84 customer items with positive gross spread; 0 met the active ROI/profit rules at that instant;
+- Ranked cache remains old (~23m) because Ranked tab has not yet been refreshed under alpha.12.
+
+Manual boundary for next phase:
+- Opera connector can inspect but cannot press the page's userscript controls;
+- owner must open `Ranked` and press `Refresh Ranked` once, then leave the panel open for inspection.
+### alpha.13 live auction semantics correction — 2026-10-04
+
+Live alpha.12 Ranked acceptance:
+- PASS: ranked refresh populated 300 market + 226 auction rows;
+- PASS: freshness filtering retained 174 live matches instead of the prior false zero;
+- PASS: all type/source/rarity/name/bonus/ROI controls rendered and are usable;
+- PASS: BB floor values rendered from the live $6,119,978/BB rate;
+- PASS: current live auctions carried bid counts and future end timestamps;
+- defect found: TornW3B auction `price` is the current bid, but the UI labeled it `Ask` and displayed `fair value - current bid` as realized Profit, producing misleading extreme ROI on $1/$2 bids.
+
+alpha.13 fix:
+- auction rows now label the value `Current bid`, never `Ask`;
+- auction rows show break-even ceiling when target ROI is 0;
+- when a ranked ROI target is set, auction rows show `Max bid @ X% ROI`;
+- auction rows show bid headroom to that ceiling, bid count, time remaining and an `UNDER BB FLOOR` marker when applicable;
+- auction ROI is explicitly labeled `Provisional ROI at current bid` because the final winning price can change;
+- market/Bazaar rows retain normal Ask / Profit / ROI semantics;
+- Ranked header explicitly warns that auction prices are current bids and not guaranteed purchase prices.
+
+Verification:
+- 10 Acquisitions source/test files compile;
+- alpha.13 static assertions cover current-bid wording, bid ceilings, provisional ROI, BB-floor marker and end-time rendering;
+- live current auction sanity check confirms an overpriced SIG 552 bid produces negative headroom and negative provisional ROI rather than a false profit recommendation.
+
+Next live gate:
+1. install alpha.13;
+2. refresh Ranked;
+3. inspect at least one under-BB auction and one overpriced auction;
+4. then run Analyze AH on one low-tier/BB weapon and one premium weapon.
+### alpha.14 module-wide Bazaar source model — 2026-10-04
+
+Owner live-testing observation:
+- Bazaar data existed in the backend but was not consistently visible or filterable as a first-class source across the Acquisitions module.
+
+Root cause audit:
+- Deals already had Bazaar purchase candidates and live Bazaar verification, but broad discovery/pricelist rows displayed generic `Cheapest seen` rather than identifying Bazaar;
+- selected Items already compared Bazaar and Item Market after deep refresh, but item browsing had no Bazaar-specific availability filter or Bazaar summary fields;
+- Ranked live feed contained distinct Bazaar and Item Market rows, but UI collapsed both under one `Market` filter;
+- Travel recommendations did not expose a direct cross-source comparison action even though procurement routing supported Bazaar;
+- Faction Armory already had explicit Bazaar / Item Market / Overseas source comparison and required no architectural replacement.
+
+alpha.14 changes:
+- TornW3B global marketplace `lowest_price` is explicitly modeled as Bazaar observation evidence and carries `lowestSource: Bazaar` plus source provenance;
+- 125-item customer universe labels buy-side discovery `Bazaar observed`, shows Bazaar low / Bazaar average / bazaar count, and deep Verify still compares Bazaar + Item Market;
+- Deals research rows expose `Bazaar aggregate` when that is the discovery source;
+- source freshness strip now reports Bazaar freshness separately from Item Market freshness;
+- Items browser adds `Bazaar observed` and `Item Market checked` filters and displays Bazaar low / average / bazaar count on each catalog row;
+- Ranked source normalization canonicalizes TornW3B `bazaar` -> `Bazaar`, `market` -> `Item Market`, and `auction` -> `Auction`;
+- Ranked source selector now has All sources / Bazaar / Item Market / Auction instead of collapsing Bazaar + Item Market into `Market`;
+- Ranked header/status reports separate Bazaar, Item Market and Auction counts;
+- Travel rows now provide `Compare Bazaar / Market`, opening the existing selected-item source comparison workflow;
+- no new feed or third-party dependency was added; the change exposes and correctly labels data already available through Torn/TornW3B.
+
+Live source evidence used during audit:
+- current sampled ranked feed: 126 Bazaar + 174 Item Market rows across Primary/Secondary/Melee;
+- TornW3B `/marketplace/206` returned named Bazaar sellers for Xanax, confirming per-item Bazaar observations;
+- global marketplace row for Xanax matched Bazaar-specific fields (`bazaar_average`, `total_bazaars`, `lowest_price`).
+
+Verification:
+- 10 Acquisitions JS/source-test files compile;
+- canonical ranked source fixture PASS: Bazaar / Item Market / Auction;
+- global marketplace Bazaar source fixture PASS;
+- customer pricelist scan reports `Bazaar observed` PASS;
+- Deals fallback discovery reports `Bazaar aggregate` PASS;
+- alpha.14 immutable candidate remains one Acquisitions launcher with auto-update disabled for live acceptance.
+
+Next live gate:
+1. install alpha.14;
+2. refresh Torn and confirm Bazaar freshness appears in source strip;
+3. Deals: confirm 125-item rows explicitly show Bazaar low/avg/count;
+4. Items: test Bazaar observed filter and selected-item Bazaar-vs-Item-Market comparison;
+5. Ranked: refresh and confirm separate Bazaar / Item Market / Auction counts and filters;
+6. Travel: test Compare Bazaar / Market on one overseas item;
+7. continue alpha.13 auction-bid semantics and AH history acceptance after source-model pass.
+### alpha.14 desktop acceptance — Deals / Bazaar pass — 2026-10-04
+
+Observed directly in the authenticated Torn desktop tab with alpha.14 open:
+- PASS: panel reports `v8.0.0-alpha.14 · PROFIT / RANKED / TRAVEL`;
+- PASS: existing MM_Acquisitions dock launcher remains the only Acquisitions launcher;
+- PASS: source strip exposes Bazaar freshness separately from Item Market (`Bazaar … (Weav3r)` vs `Item Market …`);
+- PASS: full customer universe remains 125 evaluated;
+- PASS: live scan currently shows positive-spread and rule-qualified counts updating independently;
+- PASS: customer-universe rows explicitly show `Bazaar observed`, Bazaar low, Bazaar average, bazaar count and source-specific best exit;
+- PASS: best-exit route visibly distinguishes Bazaar from `Item Market Net` where appropriate;
+- PASS: Rule-Qualified Deals currently include both explicit Bazaar and Item Market purchase sources;
+- PASS: `Verify` / `Verify & Buy` controls remain present and purchase submission stays manual;
+- PASS: purchase ledger remains live (209 lots observed during this pass);
+- PASS: desktop panel remains above the shared Torn/MM bottom control row without overlap.
+
+Representative live rows observed:
+- Edelweiss: Bazaar observed, Bazaar low / Bazaar avg / bazaar-count fields visible;
+- Bottle of Sake: Bazaar buy-side observation with best exit `Item Market Net`, proving acquisition source and exit source are not conflated;
+- Rule-qualified rows included Bazaar examples (e.g. Cattle Prod / Spooky Paper Weight) and an Item Market example (Paper Crown : Blue).
+
+Remaining alpha.14 desktop live gates:
+1. Items tab: Bazaar observed / Item Market checked filters and selected-item deep comparison;
+2. Ranked tab: separate Bazaar / Item Market / Auction counts and source filters, plus alpha.13 current-bid semantics;
+3. Travel tab: `Compare Bazaar / Market` handoff;
+4. representative Analyze AH tests;
+5. narrow/mobile and TornPDA.
+### alpha.14 desktop acceptance — Items / Bazaar pass — 2026-10-05
+
+Observed directly in the authenticated Torn desktop tab with Items open:
+- PASS: panel reports `v8.0.0-alpha.14 · PROFIT / RANKED / TRAVEL`;
+- PASS: complete Torn catalog remains 1,500 items / 960 default Buyable matches over 13 pages;
+- PASS: item search by name/ID is exposed and usable;
+- PASS: category filter contains the full Torn category set including Weapon, Armor, Drug, Flower, Plushie, Supply Pack and others;
+- PASS: availability/source filter explicitly exposes `Bazaar observed`, `Item Market checked`, `Customer pricelist`, `Torn shop source`, Buyable and All catalog;
+- PASS: item rows explicitly display Bazaar low, Bazaar average and bazaar count;
+- PASS: selected rows that already have Item Market evidence display Item Market price separately from Bazaar values;
+- PASS: customer pricelist benchmark appears separately from Bazaar / Item Market values where applicable;
+- PASS: representative examples show the three-source separation correctly:
+  - Assless Chaps: Bazaar low/avg/count + Item Market price;
+  - Baseball Jacket: Bazaar low/avg/count + Item Market price;
+  - Beretta 92FS: Bazaar low/avg/count + Item Market price;
+  - Big Box of Chocolate Bars: Bazaar + Item Market + customer pricelist in one row;
+- PASS: every visible item retains an explicit `Find Price` control for deeper on-demand verification;
+- PASS: Bazaar freshness and Item Market freshness remain separate in the source strip.
+
+Remaining Items live gate:
+- one manual selected-item `Find Price` action is still required to inspect the deep source-comparison card (Bazaar / Item Market / Torn Shop / Overseas) and routing without purchase.
+### alpha.15 selected-item source consistency fix — 2026-10-05
+
+Live alpha.14 Items acceptance exposed a root-cause pricing defect on Beretta 92FS:
+- aggregate catalog row correctly showed Bazaar low ~$444k / Bazaar avg ~$478k and Item Market ~$514k;
+- deep `Find Price` comparison instead surfaced a stale/incomplete named Bazaar listing at $30M;
+- deep economics also promoted the Torn catalog reference value ($30M) into `Market exit`, producing a false +$29M / 5,700%+ ROI on the ~$514k Item Market listing.
+
+Root causes:
+- selected-item UI used `max(snapshot exit, Bazaar average, marketplace price, Torn catalog market reference)`, allowing a static/stale catalog reference to override live market evidence;
+- per-item Bazaar fallback could retain a named listing grossly inconsistent with the current global Bazaar aggregate if enrichment failed or stale state survived;
+- refreshItemMarket could let that inconsistent Bazaar detail contaminate the live snapshot realistic-exit value.
+
+alpha.15 fixes:
+- Torn catalog market price remains visible only as `reference only; not used as live exit`;
+- selected-item economics use live exit evidence returned by the source-comparison service;
+- live exit candidates are limited to plausible live snapshot, Bazaar exit and Item Market net evidence;
+- snapshot exits grossly inconsistent with current Bazaar/Item Market references are rejected;
+- named Bazaar candidates >35% above the current global Bazaar low are rejected from best-source selection;
+- if no consistent named seller is available, the global Bazaar low is retained as `Bazaar aggregate` evidence;
+- `Bazaar aggregate` cannot route blindly: Use/Best re-enriches and resolves a concrete seller, then verifies that seller's Bazaar; if none resolves, routing falls through to the next verifiable source;
+- refreshItemMarket also rejects Bazaar detail rows grossly inconsistent with the current global Bazaar low.
+
+Regression fixture reproducing the live failure:
+- item: Beretta 92FS [17];
+- global Bazaar low $444,444 / avg $478,032 / Item Market $513,995;
+- Torn catalog reference intentionally set to $30,000,000;
+- stale named Bazaar fixture intentionally set to $30,000,000;
+- alpha.15 result: sources = Bazaar aggregate $444,444 + Item Market $513,995;
+- alpha.15 live exit = $488,295 from live snapshot evidence, not $30M;
+- catalog reference remains $30M but is excluded from ROI;
+- inconsistent $30M named Bazaar listing is removed;
+- Best routing attempts to resolve Bazaar aggregate, then safely falls through to verified Item Market when no concrete Bazaar seller resolves.
+
+Verification:
+- 11 Acquisitions JS/source-test files compile;
+- selected-source consistency executable regression PASS;
+- immutable candidate dependencies pinned to commit 58b6722c711b69c6fa34584d67780bfde9f2e55f;
+- auto-update/download remains disabled during live acceptance.
+
+Next live gate:
+1. install alpha.15;
+2. repeat Beretta 92FS Find Price;
+3. verify Bazaar aggregate / concrete Bazaar and Item Market values are in the same realistic price range;
+4. verify live exit does not use the $30M Torn catalog reference;
+5. test Use Best Source routing without completing a purchase;
+6. then continue Ranked and Travel acceptance.
+### alpha.15 desktop acceptance — selected-item source consistency PASS — 2026-10-05
+
+Observed directly in the authenticated Torn desktop tab with Beretta 92FS deep comparison open:
+- PASS: panel reports `v8.0.0-alpha.15 · PROFIT / RANKED / TRAVEL`;
+- PASS: selected-item card reports `Price comparison ready for Beretta 92FS. Lowest available source is listed first.`;
+- PASS: best source is now `Bazaar aggregate` at $444,444, matching the live global Bazaar observation;
+- PASS: Bazaar aggregate shows 62 bazaars and average $478,032;
+- PASS: Item Market remains a separate source at $513,995;
+- PASS: live exit is $488,295 (`Live snapshot`), in the same market range as Bazaar / Item Market evidence;
+- PASS: Bazaar aggregate economics show +$43,851 / 9.9% ROI;
+- PASS: Item Market economics show -$25,700 / -5.0% ROI;
+- PASS: Torn catalog value is explicitly labeled `reference only; not used as live exit` and is not driving ROI;
+- PASS: aggregate Bazaar evidence warns that seller is re-resolved before routing;
+- PASS: catalog row below independently agrees with the same source data: Bazaar low $444,444 / avg $478,032 / 62 bazaars / Item Market $513,995;
+- PASS: final purchase remains manual.
+
+Remaining selected-item live gate:
+- `Use Best Source` routing still needs one owner click to confirm Bazaar aggregate re-resolution/verification and safe fallback behavior without completing a purchase.
+
+Next module gates:
+1. Ranked tab: separate Bazaar / Item Market / Auction counts + alpha.13 bid semantics + AH history;
+2. Travel tab: Compare Bazaar / Market handoff;
+3. narrow/mobile and TornPDA.
+### alpha.15 Ranked live acceptance + alpha.16 auction-watch correction — 2026-10-05
+
+Live alpha.15 Ranked pass:
+- PASS: source split is explicit and populated: 132 Bazaar + 168 Item Market + 222 Auction;
+- PASS: 190 current matches rendered;
+- PASS: source filter exposes All sources / Bazaar / Item Market / Auction;
+- PASS: Primary / Secondary / Melee, rarity, weapon, bonus and ROI controls render correctly;
+- PASS: refreshed Bunker Buck rate is $5,967,000 per buck;
+- PASS: auction rows correctly show Current bid, bid count, time remaining, UNDER BB FLOOR, break-even ceiling/headroom and Provisional ROI at current bid;
+- PASS: completed-AH fields remain 0 until Analyze AH is run, so no fabricated AH confidence or traffic is displayed.
+
+Remaining defect found during the live pass:
+- auction rows were still sorted by the normal `investmentScore` formula;
+- a $1 current bid therefore inherited an ROI-driven score near 50 even with 0 AH samples, 0 confidence and 0 liquidity;
+- this caused early/current-bid auctions to dominate page 1 despite not being completed acquisition prices.
+
+alpha.16 root-cause correction:
+- immediately purchasable Bazaar / Item Market rows continue to use investment score;
+- Auction rows now use a separate `auctionWatchScore` for sorting;
+- auction watch score weights completed-AH confidence (35%), liquidity (25%), time-to-end urgency (25%) and discount to fair value (15%);
+- current bid ROI remains visible as provisional economics but no longer drives auction ranking directly;
+- Auction rows display watch score, urgency and bid-discount components instead of labeling the legacy purchase-style score as investment;
+- sorting now uses `sortScore`: auction watch score for auctions, investment score for Bazaar / Item Market.
+
+Regression:
+- 11 Acquisitions JS/source-test files compile;
+- 20-hour $1 auction with no AH history: legacy purchase-style score 50, corrected watch/sort score 19;
+- otherwise identical auction ending in ~30m: watch score 40, proving urgency affects watch order;
+- Bazaar fixture retains investment score as its sort score.
+
+Next live gate:
+1. install alpha.16;
+2. refresh Ranked;
+3. verify page 1 no longer consists primarily of long-running $1 auctions solely because of provisional ROI;
+4. then run Analyze AH on one low-tier/BB weapon and one premium weapon.
+### alpha.16 desktop acceptance — auction watch-score pass — 2026-10-05
+
+Observed directly in the authenticated Torn desktop tab with Ranked open:
+- PASS: panel reports `v8.0.0-alpha.16 · PROFIT / RANKED / TRAVEL`;
+- PASS: refreshed live sources remain split and populated: 132 Bazaar + 168 Item Market + 219 Auction;
+- PASS: current result set is 183 matches;
+- PASS: Auction rows display `watch`, `urgency` and `bid discount` components instead of the normal purchase investment score;
+- PASS: current-bid ROI remains explicitly provisional and no longer determines the displayed/sort score by itself;
+- PASS: representative page-1 rows show materially different watch components based on time remaining and current discount:
+  - Luger: current bid $1,000,001, ends ~4h22m, watch 35, urgency 82, bid discount 99;
+  - Flail: current bid $50,000,001, ends ~2h51m, watch 35, urgency 88, bid discount 84;
+  - Ithaca 37: current bid $1, ends ~6h07m, watch 34, urgency 74, bid discount 100;
+  - Raven MP25: current bid $13, ends ~5h35m, watch 34, urgency 77, bid discount 100;
+- PASS: long-running $1 bids no longer surface with a generic ~50 investment score solely because provisional ROI is huge;
+- PASS: no completed-AH history has been loaded yet, so confidence/liquidity remain 0 and are not fabricated;
+- PASS: desktop geometry/readability remains acceptable and the panel stays above the shared dock/footer without overlap.
+
+Remaining Ranked live gate:
+- run Analyze AH on one low-tier/BB-dominant weapon and one premium weapon to validate completed-sale cohort, median, confidence, traffic, liquidity and fairValue=max(BB floor, AH median).
+### alpha.16 Ranked completed-AH history live pass — Steyr AUG — 2026-10-05
+
+Owner ran Analyze AH on Steyr AUG. Observed directly in authenticated Torn desktop:
+- PASS: status reports `Auction history updated for Steyr AUG: 100 completed sales.`;
+- PASS: Ranked header now reports `AH history 1 weapon types`;
+- PASS: completed-sale traffic populated: 7/30/90d = 30/100/100;
+- PASS: liquidity populated to 100/100 from completed-sale volume;
+- PASS: BASE fallback cohort selected with n=95 and confidence 68% when more-specific bonus cohorts did not meet minimum samples;
+- PASS: AH median = $62,100,001;
+- PASS: yellow Steyr AUG variants use fair value $62,100,001 because AH median exceeds the 10-BB floor of $59,670,000;
+- PASS: orange two-bonus Steyr AUG uses fair value $268,515,000 because its 45-BB floor exceeds the same AH median;
+- PASS: valuation source labels reflect that ordering (`AH + BB FLOOR` vs `BB FLOOR + AH`);
+- PASS: auction watch scores rise materially after AH history supplies confidence/liquidity evidence;
+- PASS: current-bid ROI remains provisional and bid headroom is recalculated against the resulting fair value.
+
+Representative live rows:
+- Steyr AUG YELLOW / Powerful 19%: current bid $123,001; fair $62,100,001; BB floor $59,670,000; AH median $62,100,001; BASE n=95; confidence 68%; traffic 30/100/100; liquidity 100; watch 81.
+- Steyr AUG YELLOW / Disarm 3%: current bid $61,090,947; fair $62,100,001; provisional ROI 1.7%; watch 73; urgency 97; bid discount 2.
+- Steyr AUG ORANGE / Weaken 38% + Warlord 18%: current bid $1; fair $268,515,000; BB floor $268,515,000; AH median $62,100,001; confidence 68%; liquidity 100; watch 70.
+
+Interpretation:
+- completed-history ingestion, fallback cohorting, traffic/liquidity, confidence, and `fairValue=max(BB floor, AH median)` all pass live;
+- Steyr AUG is not the dedicated low-tier Conserve/Achilles acceptance case, so one low-tier weapon still remains to be analyzed.
+### alpha.16 Ranked low-tier completed-AH live pass — PKM Conserve — 2026-10-05
+
+Owner filtered `Conserve` and ran Analyze AH on PKM. Observed directly in authenticated Torn desktop:
+- PASS: status reports `Auction history updated for PKM: 100 completed sales.`;
+- PASS: Ranked header now reports `AH history 2 weapon types`;
+- PASS: Conserve filter returns 3 current matches;
+- PASS: PKM YELLOW / Conserve 25% is treated as a low-tier/BB-dominant weapon without excluding the bonus;
+- PASS: completed-sale traffic populated: 7/30/90d = 11/31/100;
+- PASS: liquidity populated to 100/100;
+- PASS: fallback cohort selected BASE n=90 with confidence 68% because a more-specific Conserve cohort did not meet the minimum comparable-sale threshold;
+- PASS: AH median = $86,500,001;
+- PASS: BB floor = 14 BB = $83,538,000 at $5,967,000/BB;
+- PASS: fair value = $86,500,001 because AH median exceeds BB floor;
+- PASS: valuation source displays `AH + BB FLOOR`;
+- PASS: current $1 bid remains explicitly provisional, with break-even ceiling/headroom based on fair value;
+- PASS: auction watch score rose to 74/100 after AH confidence/liquidity evidence loaded.
+
+Representative live row:
+- PKM · Primary · YELLOW · Auction · Conserve 25%; current bid $1; fair $86,500,001; BB 14 ($83,538,000); AH median $86,500,001; BASE n=90; confidence 68%; traffic 11/31/100; liquidity 100; watch 74.
+
+Result:
+- dedicated low-tier Conserve acceptance passes live;
+- no bonus is excluded from valuation;
+- low-tier/BB logic and completed-AH fallback ladder behave as designed;
+- Ranked desktop valuation gates are now complete except optional additional premium-specific cohort depth testing.
+### alpha.16 Travel stale-state desktop acceptance — 2026-10-05
+
+Observed directly in authenticated Torn desktop with Travel open:
+- PASS: panel reports `v8.0.0-alpha.16 · PROFIT / RANKED / TRAVEL`;
+- PASS: travel context is `Next-trip planning from Torn`;
+- PASS: travel freshness is `STALE` because both browser capture and shared travel state are ~1 day old;
+- PASS: stale/unknown travel data is explicitly blocked from recommendations;
+- PASS: UI displays `Refresh required. Stale/unknown travel data is not used for recommendations.`;
+- PASS: no travel recommendation rows are shown while stale;
+- PASS: `Update Travel` control is available;
+- PASS: Recovery tools remain available but collapsed;
+- PASS: purchases and travel remain manual.
+
+Remaining Travel live gate:
+- owner must click `Update Travel` to refresh the browser-captured TornW3B travel feed;
+- after refresh, verify FRESH/AGING state, trip-aware filtering, recommendation rows, and `Compare Bazaar / Market` handoff into Items.
+### alpha.16 Travel fresh-state desktop acceptance — 2026-10-05
+
+Observed directly in authenticated Torn desktop after `Update Travel`:
+- PASS: travel freshness changed from STALE to FRESH;
+- PASS: browser capture and shared travel state both updated to ~31s old;
+- PASS: context remains `Next-trip planning from Torn`;
+- PASS: stale-state suppression lifted only after fresh data arrived;
+- PASS: 20 profitable overseas recommendations rendered;
+- PASS: every visible travel row exposes `Compare Bazaar / Market`;
+- PASS: recommendation rows include country, live overseas stock, profit, and source profit/hour;
+- PASS: purchases and travel remain manual.
+
+Representative current rows:
+- #1 Pangolin Scales · China · stock 3,462 · profit $63,892 · source profit/hr $8,370;
+- #2 Meteorite Fragment · Argentina · stock 2,972 · profit $35,042 · source profit/hr $6,654;
+- #3 Tear Gas · Argentina · stock 3 · profit $34,374 · source profit/hr $6,527;
+- #4 Camel Plushie · UAE · stock 735 · profit $53,108 · source profit/hr $6,199;
+- #5 Panda Plushie · China · stock 1,099 · profit $46,510 · source profit/hr $6,093.
+
+Remaining Travel live gate:
+- click one `Compare Bazaar / Market` row and verify handoff into Items deep source comparison for that exact travel item;
+- verify no automatic purchase/travel occurs during the handoff.
+### alpha.16 Travel handoff live defect + alpha.17 fix — 2026-10-05
+
+Live Pangolin Scales handoff from Travel to Items:
+- PASS: exact item handoff resolved Pangolin Scales [1494];
+- PASS: Item Market $204,990 and concrete Bazaar $204,994 were compared independently;
+- PASS: catalog row simultaneously showed Bazaar low $204,000 / avg $204,998 / 59 bazaars / Item Market $204,990 / customer pricelist $200,237;
+- PASS: live exit remained ~$205,000 and catalog reference stayed reference-only;
+- DEFECT: the originating China travel opportunity disappeared from the deep comparison because TornW3B's current Travel Stock table exposes country / stock / profit / profit-hour but not a readable shop-cost column in the captured table.
+
+alpha.17 root-cause correction:
+- preserve the originating Overseas row whenever matching Travel evidence exists, even when `shopCost` is absent;
+- never fabricate an overseas purchase price;
+- price-less Overseas evidence sorts after priced Bazaar / Item Market / Torn Shop sources and cannot be labeled BEST;
+- Items deep comparison shows `Cost unavailable` plus country, stock, Travel profit, and profit/hour;
+- UI explicitly states `shop cost unavailable in current TornW3B table; preserved as travel evidence`;
+- explicit Overseas routing remains advisory/manual and returns country / stock / projected profit without auto-travel or purchase;
+- if a future/current travel feed supplies a real shop cost, the same source path uses that concrete price automatically.
+
+Regression using current Pangolin-style state:
+- Item Market $204,990;
+- Bazaar seller $204,994;
+- Overseas China stock 3,462 / projected profit $63,892 / $8,370 per hour / shop cost unavailable;
+- source order keeps comparable priced market sources first and Overseas evidence last;
+- 11 Acquisitions JS/source-test files compile.
+
+Next live gate:
+1. install alpha.17;
+2. refresh Torn;
+3. Travel -> Compare Bazaar / Market on Pangolin Scales;
+4. confirm Items card shows Item Market, Bazaar, and Overseas China evidence together;
+5. confirm Overseas displays Cost unavailable rather than $0 or an inferred/fabricated number;
+6. no purchase/travel action should occur without an explicit manual choice.
+### alpha.17 Travel source-preservation live pass + alpha.18 selected-item exit correction — 2026-10-05
+
+Live alpha.17 Pangolin Scales [1494] comparison:
+- PASS: originating Overseas · China evidence is preserved in Items;
+- PASS: Overseas shows Cost unavailable instead of $0 or an invented price;
+- PASS: Overseas row includes China, stock 3,462, Travel profit +$63,892, and $8,370/hr;
+- PASS: Item Market and Bazaar remain separate priced sources;
+- PASS: catalog reference remains explicitly reference-only.
+
+New defect exposed during the same live pass:
+- current Item Market / Bazaar were ~ $204k but selected-item `Live exit` displayed $275,420;
+- this produced a false ~34–35% ROI;
+- root cause: selected-item valuation still allowed cached/depth-derived `marketSnapshots.realisticExit` to compete with freshly refreshed source-specific exits.
+
+alpha.18 root-cause correction:
+- selected-item exit valuation no longer consumes `Live snapshot` / `realisticExit` as a pricing source;
+- Bazaar exit is derived from current Bazaar average with configured haircut;
+- Item Market exit is derived from the current refreshed Item Market lowest ask net of fee;
+- selected-item fair exit chooses only among those explicit source-specific exits;
+- depth-derived snapshot remains available for history/diagnostics but cannot inflate selected-item ROI.
+
+Regression reproducing the Pangolin failure:
+- derived snapshot intentionally reaches $275,420;
+- selected-item exit correctly resolves to Bazaar $204,985;
+- Overseas China evidence remains preserved with shop cost unavailable;
+- 11 Acquisitions JS/source-test files compile.
+
+Next live gate:
+1. install alpha.18;
+2. refresh Torn;
+3. repeat Travel -> Pangolin Scales -> Compare Bazaar / Market;
+4. confirm Overseas China evidence remains present;
+5. confirm selected-item exit stays in the live ~204k market range and no false 34%+ ROI appears.
+### alpha.18 Travel -> Items final desktop live pass — 2026-10-05
+
+Observed directly in authenticated Torn desktop after alpha.18 install and refreshed Travel -> Pangolin Scales comparison:
+- PASS: panel reports `v8.0.0-alpha.18 · PROFIT / RANKED / TRAVEL`;
+- PASS: exact item remains Pangolin Scales [1494];
+- PASS: selected-item exit no longer uses the inflated $275,420 derived snapshot;
+- PASS: current selected exit is $203,284 via Bazaar, consistent with current Bazaar avg $205,338 after configured exit haircut;
+- PASS: current priced acquisition sources are concrete Bazaar seller $205,492 (-YouKai-, qty 259) and Item Market $207,000 (qty 114);
+- PASS: displayed economics are now conservative/negative rather than the prior false +34–35% ROI: Bazaar profit -$2,208 / ROI -1.1%, Item Market profit -$3,716 / ROI -1.8%;
+- PASS: Overseas China evidence remains preserved with `Cost unavailable`, stock 3,292, Travel profit +$64,009, and $8,385/hr;
+- PASS: catalog row agrees with the refreshed market neighborhood: Bazaar low $205,000 / avg $205,338 / 57 bazaars / Item Market $207,000 / pricelist $200,237;
+- PASS: Torn catalog reference $204,384 remains explicitly reference-only and is not used as live exit;
+- PASS: no travel or purchase action occurred automatically.
+
+Result:
+- alpha.18 fixes the false selected-item ROI defect without regressing Travel source preservation;
+- Travel desktop stale-state, refresh, recommendation, exact-item handoff, source comparison, and manual-action gates are now PASS.
+
+Remaining commercial acceptance gates:
+- owner click `Use Best Source` once to confirm final source routing/verification remains manual and routes without completing a purchase;
+- narrow/mobile/TornPDA layout and interaction acceptance;
+- restore canonical stable modular branch/update/download URLs before production promotion and re-run broad smoke checks.
+### alpha.18 `Use Best Source` final-route live pass — Turtle Shell — 2026-10-05
+
+Owner selected Turtle Shell and manually invoked `Use Best Source`. Observed directly in authenticated Torn desktop:
+- PASS: Acquisitions routed to Torn Item Market for the exact item `Turtle Shell [1486]`;
+- PASS: destination URL contains `itemID=1486`, `itemName=Turtle Shell`, `itemType=Other`, price ascending;
+- PASS: Torn Item Market rendered Turtle Shell listings and native buy controls;
+- PASS: Acquisitions did not press a Torn BUY button, enter a purchase quantity, or complete a transaction;
+- PASS: final purchase remains a separate explicit owner action.
+
+Result:
+- final source routing / verification manual-action gate is PASS;
+- Travel + Items desktop commercial acceptance is now complete.
+
+Remaining acceptance before production promotion:
+- narrow/mobile/TornPDA layout and interaction acceptance;
+- restore canonical stable modular branch/update/download URLs;
+- broad production smoke/compile checks;
+- explicit owner approval before merging/promoting PR #25.
+### alpha.18 narrow/mobile/TornPDA preflight audit — 2026-10-05
+
+Static architecture audit completed before device acceptance:
+- PASS: panel width is viewport-bounded: `width:min(700px,calc(100vw - 24px))`;
+- PASS: panel height and content scrolling are viewport-bounded; internal content scrolls instead of forcing the Torn page;
+- PASS: panel defaults switch at <=620px to right 4px / top 54px;
+- PASS: filters/settings use responsive CSS grids with `auto-fit` and minimum column widths;
+- PASS: primary tab/action groups use wrapped flex layouts;
+- PASS: dock Core has an explicit <=620px launcher size reduction (38x38 / 21px SVG);
+- PASS: Core narrow-screen dock fallback moves the MM dock one row above Torn's native row when there is insufficient horizontal room;
+- PASS: panel and floating launcher positions are clamped again on window resize;
+- PASS: drag handling uses Pointer Events, so the same panel/launcher logic is touch-capable where the userscript runtime exposes pointer events;
+- PASS: Torn and Weav3r domains are covered by userscript metadata; no desktop-only DOM API is required by Acquisitions itself.
+
+Live boundary still required:
+- actual TornPDA/mobile userscript runtime must be exercised on-device because Opera desktop cannot emulate TornPDA's userscript bridge, viewport chrome, or touch-event integration;
+- verify launcher presence/no overlap, panel open/close/scroll, Items search, Travel comparison, Ranked filters, and that final buy/travel actions remain manual.
+### TornPDA dependency failure reproduced from owner screenshot — root-cause fix
+
+Observed on-device with desktop alpha.18 installed through TornPDA:
+- panel/launcher rendered, proving the main userscript loaded;
+- UI reported `MM Acquisitions dependencies did not load` and no shared CRM state;
+- TornPDA currently does not provide Tampermonkey-style `@require` loading for this architecture, so the five required MM modules were absent;
+- even after dependency bundling, the desktop Core's read-only legacy CRM IndexedDB contract would not be a valid standalone PDA storage architecture.
+
+Source-level correction:
+- added `MM_Acquisitions.pda.adapter.js`; 
+- added reproducible `build_pda_bundle.py`; 
+- generated `MM_Acquisitions.pda.user.js` as a self-contained TornPDA artifact with no `@require` metadata;
+- bundles Core, acquisition logic, live service, ranked logic, purchase ledger, and UI in dependency order;
+- PDA adapter replaces only Core state I/O while delegating dock/panel behavior to the canonical Core;
+- PDA state uses native `PDA_storage` when available, with localStorage only as a fallback;
+- PDA adapter uses TornPDA's injected API key placeholder when no explicit Acquisitions key is saved;
+- `GM_xmlhttpRequest` is bridged to `PDA_httpGet` only when TornPDA does not provide the GM function;
+- default PDA state is schema-compatible and isolated from the desktop CRM IndexedDB.
+
+Verification:
+- bundle syntax compile PASS;
+- metadata contains no `@require`; 
+- all five runtime dependency globals are present in the bundle;
+- mocked `PDA_storage` read/update persistence PASS;
+- mocked `PDA_httpGet` bridge PASS;
+- generated PDA artifact version: `8.0.0-alpha.18-pda.1`.
+
+Next live gate:
+- replace/disable the old desktop alpha.18 script in TornPDA;
+- install `MM_Acquisitions.pda.user.js` by direct remote URL;
+- verify the dependency/state errors are gone and continue mobile interaction acceptance.
+### TornPDA pda.1 launcher-hidden follow-up — pda.2
+
+Owner installed/enabled `MM_Acquisitions PDA`; TornPDA script manager showed the script active with API/network/native-storage badges, but no Acquisitions launcher was visible in the Torn browser.
+
+Root cause from PDA architecture + prior live evidence:
+- desktop alpha.18 with missing dependencies used Acquisitions' standalone fallback launcher; that fallback was visibly rendered in the first PDA test;
+- pda.1 successfully bundled Core, so `createLauncher()` switched to the shared desktop Core dock path;
+- the shared Core dock intentionally aligns against Torn desktop/footer geometry and uses a 6px viewport-bottom fallback;
+- TornPDA overlays native browser controls over the bottom of its webview, so a valid Core launcher can be placed underneath that native chrome and appear absent.
+
+pda.2 correction:
+- marks the runtime explicitly as TornPDA;
+- PDA build bypasses the shared desktop dock only for the Acquisitions launcher; desktop source/behavior remains unchanged;
+- reuses the standalone Acquisitions launcher path already proven visible on PDA;
+- lifts the PDA launcher to `bottom:86px; right:10px` so it sits above native TornPDA browser chrome;
+- fixes native state persistence to use TornPDA's lexical `PDA_storage` binding rather than looking for `window.PDA_storage`;
+- regenerated self-contained artifact version `8.0.0-alpha.18-pda.2`.
+
+Verification:
+- generated bundle syntax compile PASS under a simulated lexical `PDA_storage` binding;
+- PDA launcher bypass token present;
+- safe launcher offset present;
+- no `@require` dependency metadata introduced.
+
+Next live gate:
+- update TornPDA script to pda.2, reload the Torn browser, confirm Acquisitions launcher is visible above the PDA bottom controls, then open it and continue functional mobile acceptance.
+### TornPDA pda.2 still invisible — pda.3 boot-stage instrumentation
+
+Owner screenshot after pda.2 still showed no Acquisitions launcher in the TornPDA browser.
+
+Because pda.2 had already moved the launcher above native chrome, this means the script did not reach normal Acquisitions UI initialization on-device, or the installed source did not actually advance to pda.2.
+
+pda.3 adds an early, dependency-independent launcher before Core/logic initialization. It cannot be suppressed by a later Acquisitions module failure.
+
+Behavior:
+- if the bundle completes, the early launcher becomes the normal Acquisitions launcher via `__MM_ACQ_OPEN__`;
+- if a later module stops execution, tapping the launcher shows the last completed boot stage (`boot`, `core`, `adapter`, `logic`, `live`, `ranked`, or `ledger`);
+- if no launcher appears at all, the issue is outside Acquisitions runtime and points to TornPDA script injection/update state.
+
+Also corrected TornPDA API-key placeholder detection so source-wide `###PDA-APIKEY###` replacement no longer defeats the runtime key check.
+
+Artifact: `8.0.0-alpha.18-pda.3`.
+### TornPDA compatibility research + code audit — pda.5
+
+Owner pda.3 boot diagnostic stopped at `core`, proving:
+- TornPDA injected the self-contained userscript;
+- the early launcher ran;
+- bundled MM Torn Core completed;
+- execution failed inside the PDA adapter before the `adapter` checkpoint.
+
+Root cause confirmed against current TornPDA source:
+- TornPDA's built-in GM compatibility handler exposes `GM_getValue`, `GM_setValue`, `GM_deleteValue`, `GM_xmlhttpRequest`, etc. with `writable:false` and `configurable:false`;
+- pda.3/pda.4 adapter attempted `globalThis.GM_getValue = function(...)` in strict mode;
+- that assignment throws immediately on current TornPDA, exactly matching the observed `Stopped at: core` checkpoint;
+- TornPDA's current GM compatibility docs also state that `@require` is parsed/stored but automatic required-script loading remains TODO, validating the self-contained bundle architecture.
+
+Additional audit findings:
+- TornPDA replaces the literal `###PDA-APIKEY###` in the userscript source before execution; the PDA build should consume that lexical value directly rather than monkey-patching GM storage;
+- TornPDA binds `PDA_storage` lexically per installed script; it is asynchronous and survives browser cache clearing;
+- GM value helpers are localStorage-backed and therefore origin-scoped in the webview;
+- Acquisitions Travel capture crosses `www.torn.com` -> `weav3r.dev` -> `www.torn.com`; using GM/localStorage for `TRAVEL_FEED_KEY` / `TRAVEL_RETURN_KEY` is therefore invalid on PDA even if the rest of the app loads.
+
+pda.5 corrections:
+- removed all PDA attempts to overwrite immutable TornPDA GM helpers;
+- PDA API key now remains lexical inside TornPDA's per-script wrapper; it is not copied to a page-global variable;
+- explicit Acquisitions saved key still takes precedence; TornPDA's injected key is the fallback;
+- Travel cross-origin feed + return handoff now uses native per-script `PDA_storage` with async read/write/delete;
+- Travel feed keeps an in-memory cache for synchronous UI rendering after async load;
+- fallback live Travel collector is async-safe and persists the return URL before navigating to TornW3B;
+- PDA builder now fails hard when any source-transform anchor disappears instead of silently generating a partially-adapted build;
+- existing early boot-stage diagnostics remain.
+
+Verification:
+- exact current TornPDA behavior was simulated with non-writable/non-configurable GM globals;
+- pda.5 completed through `ui-ready` without mutating those GM properties;
+- mock runtime created the PDA launcher at the safe 86px bottom offset;
+- Core adapted successfully to `8.0.0-alpha.13-pda`; 
+- no API key was exposed through `window/globalThis`; 
+- generated bundle parses successfully with lexical `PDA_storage`; 
+- static regressions added to the existing Acquisitions purchase/source test file.
+
+Artifact: `MM_Acquisitions.pda.user.js` version `8.0.0-alpha.18-pda.5`.
+### TornPDA pda.5 live UI pass + alpha.19-pda.6 source-fallback correction — 2026-10-05
+
+Owner screenshot on iOS TornPDA with `8.0.0-alpha.18-pda.5`:
+- PASS: PDA launcher is visible above native browser chrome;
+- PASS: Acquisitions panel opens and fits the mobile viewport;
+- PASS: Deals / Items / Ranked / Travel / Settings tabs render without horizontal clipping;
+- PASS: previous dependency failure and shared-state failure are gone;
+- PASS: Torn key reports SAVED;
+- PASS: Item Market refreshed successfully (~4s old in screenshot);
+- PASS: purchase log sync succeeded (~29s old, HTTP 200);
+- PASS: cached market opportunities render and remain manual `Verify & Buy` actions;
+- BLOCKER: a manual live verification surfaced `Live verification failed: Network request failed.`.
+
+Network-path audit:
+- the failing flow refreshes Item Market successfully before seller-specific Bazaar verification;
+- seller-specific Bazaar verification uses Torn's legacy `user -> bazaar` selection because current API v2 exposes item-specialized Bazaar directories but not seller inventory/price verification;
+- one Bazaar provider/network failure was allowed to throw out of `acquire()` / `routeProcurementRequest()` and abort the whole route even when a freshly verified Item Market fallback existed.
+
+alpha.19 / pda.6 correction:
+- Bazaar discovery refresh failures are recorded as warnings instead of aborting the route;
+- individual seller Bazaar verification failures are isolated per seller and the next source is tried;
+- Item Market verification failures are isolated the same way;
+- a healthy Item Market source now remains routable after Bazaar verification network failure;
+- if every live source fails, the result is `live-verification-unavailable` with provider warnings and no purchase route is opened;
+- UI reports which provider(s) were unavailable instead of the generic top-level network exception;
+- generic network errors now preserve TornPDA status/error detail when supplied.
+
+Verification:
+- regression fixture intentionally throws `PDA bazaar request failed` while Item Market is live;
+- PASS: route falls through to Item Market and navigates to the exact item;
+- PASS: Bazaar failure is retained in `verificationWarnings`; 
+- PASS: alpha.19-pda.6 simulated under immutable TornPDA GM helpers reaches `ui-ready`; 
+- PASS: launcher remains at safe 86px PDA offset.
+
+Next live gate:
+- install alpha.19-pda.6 and repeat one `Verify & Buy` on a qualified deal;
+- expected: Bazaar verification failure may be skipped, Item Market fallback should open when valid, and no purchase is completed automatically.
+### TornPDA alpha.19-pda.6 live failure — duplicate Item Market GET root cause / alpha.20-pda.7
+
+Owner iOS screenshots on `8.0.0-alpha.19-pda.6`:
+- first screenshot: `Live verification unavailable for Item Market. No purchase route...` while Item Market showed `0s ago`; 
+- second screenshot moments later: Weav3r auto-refresh completed and Item Market still showed `0s ago`;
+- this proves general Torn API / Item Market networking is healthy and isolates the failure to the per-click verification sequence.
+
+Root cause confirmed against current TornPDA source:
+- `PDA_httpGet` de-duplicates an identical URL fired within 2 seconds and returns without a second network response;
+- `procurementSourceOptions()` refreshed Item Market, then `routeProcurementRequest()` immediately refreshed the exact same Item Market URL again;
+- `acquire()` likewise refreshed Item Market near the start of one Verify & Buy click and then refreshed it again when processing the Item Market candidate;
+- on TornPDA the second identical request can therefore resolve without a response and appear as an Item Market verification failure even though the first request succeeded moments earlier.
+
+alpha.20 / pda.7 root correction:
+- added a 2.5-second just-verified Item Market reuse window;
+- a source-comparison click marks the Item Market candidate with its verification timestamp and reuses that exact verified snapshot for routing;
+- Deals `acquire()` stores the first verified Item Market snapshot and does not issue a second same-click request;
+- when a current snapshot already exists from an immediately preceding auto-refresh, verification can reuse it instead of colliding with TornPDA's 2-second duplicate-request guard;
+- source verification remains live/current: the reuse window is only 2.5 seconds and final purchases remain manual.
+
+Regression:
+- test transport succeeds on the first `/market/{id}/itemmarket` request and deliberately throws `duplicate TornPDA GET suppressed` on any second request;
+- PASS: `routeProcurementRequest()` routes to Item Market with exactly one Item Market GET;
+- PASS: Deals `acquire()` routes to Item Market with exactly one Item Market GET;
+- PASS: `alpha.20-pda.7` simulated under immutable TornPDA GM helpers reaches `ui-ready` and creates the launcher.
+
+Next live gate:
+- install alpha.20-pda.7, reload TornPDA, and run one Verify & Buy on an Item Market-qualified deal;
+- expected: exact Item Market route opens without the `Live verification unavailable for Item Market` warning and no purchase is completed automatically.
+### alpha.20-pda.7 engineering closeout before live retest — 2026-10-05
+
+Repository reconciliation after the duplicate-GET correction:
+- desktop Acquisitions is `8.0.0-alpha.20`;
+- TornPDA artifact is `8.0.0-alpha.20-pda.7`;
+- desktop immutable dependency pin resolves to a commit containing the 2.5s Item Market reuse fix;
+- PDA bundle embeds the same corrected live service and remains self-contained with no `@require` metadata;
+- stale purchase-test expectation was corrected from pda.6 to pda.7;
+- suite manifest drift was corrected: Acquisitions now reports alpha.20 and suite manifest advances to alpha.60.
+
+Executable verification:
+- 9 Acquisitions/PDA JavaScript files parse successfully;
+- source-routing regression allows exactly one Item Market request and throws on any duplicate;
+- PASS: `routeProcurementRequest()` routes Item Market with one request;
+- PASS: Deals `acquire()` routes Item Market with one request;
+- PASS: current pda.7 simulated under immutable TornPDA GM helpers reaches `ui-ready`, creates the launcher, and keeps the 86px safe bottom offset;
+- PR #25 remains draft; no production promotion or merge performed.
+
+Live owner gate remains:
+- install alpha.20-pda.7;
+- press one qualified `Verify & Buy`;
+- confirm exact Item Market route opens without `Live verification unavailable for Item Market`;
+- do not complete a purchase.
+
