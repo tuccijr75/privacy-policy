@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.17.1
+// @version      1.1.18.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -22,7 +22,7 @@
 
   const RUNTIME_GUARD = '__SS_MUGGER_RUNTIME_ACTIVE__';
   if (window[RUNTIME_GUARD]) return;
-  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.17'};
+  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.18'};
 
   const BOOT_PROBE_ID = 'ss-mugger-boot-probe';
   function showBootProbe(label = 'SSQ', isError = false) {
@@ -664,7 +664,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.17.1';
+  const VERSION = '1.1.18.1';
   const PREFIX = 'mm_market_mug_signals_v2';
   const LEGACY_PREFIX = 'mm_market_mug_signals_v1';
   const SIGNAL_INTEGRITY_VERSION = 2;
@@ -839,6 +839,10 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
               requiresReanchor:false,
               reason:'hot_scan_intake'
             };
+            copy.active = true;
+            copy.baselineAttempts = 0;
+            copy.nextPollAt = 0;
+            copy.status = 'tracking:hot_scan_intake';
             copy.intakeState = 'tracking-sale';
           } else {
             copy.active = false;
@@ -1283,7 +1287,29 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       };
       const key = watchKey(candidateWatch);
       const existing = watches.find((watch)=>watchKey(watch) === key);
-      if (existing && Number(existing.hotScanObservedAt || 0) >= candidateWatch.hotScanObservedAt) continue;
+      if (existing && Number(existing.hotScanObservedAt || 0) >= candidateWatch.hotScanObservedAt) {
+        const sameSession = !candidateWatch.hotScanSessionId || !existing.hotScanSessionId
+          || String(existing.hotScanSessionId) === String(candidateWatch.hotScanSessionId);
+        const recoverableHotScanWatch = Boolean(
+          sameSession &&
+          existing.hotScan &&
+          existing.active === false &&
+          existing.intakeState === 'tracking-sale' &&
+          existing.baseline?.reason === 'hot_scan_intake'
+        );
+        if (!recoverableHotScanWatch) continue;
+        existing.active = true;
+        existing.baseline = candidateWatch.baseline;
+        existing.baselineAttempts = 0;
+        existing.nextPollAt = 0;
+        existing.status = 'tracking:hot_scan_intake';
+        existing.amount = candidateWatch.amount;
+        existing.hotRank = candidateWatch.hotRank;
+        existing.hotScanObservedAt = candidateWatch.hotScanObservedAt;
+        existing.lastSeenAt = nowSec();
+        ingested++;
+        continue;
+      }
       if (existing && existing.baseline?.ok && Number(existing.baseline.reportedAt || 0) > Number(candidateWatch.baseline.reportedAt || 0)) {
         candidateWatch.baseline = existing.baseline;
       }
