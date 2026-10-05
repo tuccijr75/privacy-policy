@@ -2151,4 +2151,21 @@ Remaining acceptance before production promotion:
 - restore canonical stable modular branch/update/download URLs;
 - broad production smoke/compile checks;
 - explicit owner approval before merging/promoting PR #25.
+### alpha.18 narrow/mobile/TornPDA preflight audit — 2026-10-05
+
+Static architecture audit completed before device acceptance:
+- PASS: panel width is viewport-bounded: `width:min(700px,calc(100vw - 24px))`;
+- PASS: panel height and content scrolling are viewport-bounded; internal content scrolls instead of forcing the Torn page;
+- PASS: panel defaults switch at <=620px to right 4px / top 54px;
+- PASS: filters/settings use responsive CSS grids with `auto-fit` and minimum column widths;
+- PASS: primary tab/action groups use wrapped flex layouts;
+- PASS: dock Core has an explicit <=620px launcher size reduction (38x38 / 21px SVG);
+- PASS: Core narrow-screen dock fallback moves the MM dock one row above Torn's native row when there is insufficient horizontal room;
+- PASS: panel and floating launcher positions are clamped again on window resize;
+- PASS: drag handling uses Pointer Events, so the same panel/launcher logic is touch-capable where the userscript runtime exposes pointer events;
+- PASS: Torn and Weav3r domains are covered by userscript metadata; no desktop-only DOM API is required by Acquisitions itself.
+
+Live boundary still required:
+- actual TornPDA/mobile userscript runtime must be exercised on-device because Opera desktop cannot emulate TornPDA's userscript bridge, viewport chrome, or touch-event integration;
+- verify launcher presence/no overlap, panel open/close/scroll, Items search, Travel comparison, Ranked filters, and that final buy/travel actions remain manual.
 
