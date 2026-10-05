@@ -2111,4 +2111,26 @@ Next live gate:
 3. repeat Travel -> Pangolin Scales -> Compare Bazaar / Market;
 4. confirm Overseas China evidence remains present;
 5. confirm selected-item exit stays in the live ~204k market range and no false 34%+ ROI appears.
+### alpha.18 Travel -> Items final desktop live pass — 2026-10-05
+
+Observed directly in authenticated Torn desktop after alpha.18 install and refreshed Travel -> Pangolin Scales comparison:
+- PASS: panel reports `v8.0.0-alpha.18 · PROFIT / RANKED / TRAVEL`;
+- PASS: exact item remains Pangolin Scales [1494];
+- PASS: selected-item exit no longer uses the inflated $275,420 derived snapshot;
+- PASS: current selected exit is $203,284 via Bazaar, consistent with current Bazaar avg $205,338 after configured exit haircut;
+- PASS: current priced acquisition sources are concrete Bazaar seller $205,492 (-YouKai-, qty 259) and Item Market $207,000 (qty 114);
+- PASS: displayed economics are now conservative/negative rather than the prior false +34–35% ROI: Bazaar profit -$2,208 / ROI -1.1%, Item Market profit -$3,716 / ROI -1.8%;
+- PASS: Overseas China evidence remains preserved with `Cost unavailable`, stock 3,292, Travel profit +$64,009, and $8,385/hr;
+- PASS: catalog row agrees with the refreshed market neighborhood: Bazaar low $205,000 / avg $205,338 / 57 bazaars / Item Market $207,000 / pricelist $200,237;
+- PASS: Torn catalog reference $204,384 remains explicitly reference-only and is not used as live exit;
+- PASS: no travel or purchase action occurred automatically.
+
+Result:
+- alpha.18 fixes the false selected-item ROI defect without regressing Travel source preservation;
+- Travel desktop stale-state, refresh, recommendation, exact-item handoff, source comparison, and manual-action gates are now PASS.
+
+Remaining commercial acceptance gates:
+- owner click `Use Best Source` once to confirm final source routing/verification remains manual and routes without completing a purchase;
+- narrow/mobile/TornPDA layout and interaction acceptance;
+- restore canonical stable modular branch/update/download URLs before production promotion and re-run broad smoke checks.
 
