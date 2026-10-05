@@ -2,6 +2,7 @@
   'use strict';
 
   const ITEM_MARKET_FEE_RATE = 0.05;
+  const marketPulse = globalThis.MMTornMarketPulse;
 
   const asId = value => String(value ?? '').trim();
 
@@ -84,6 +85,29 @@
     return (Array.isArray(listings) ? listings : [])
       .filter(x => !x?.sponsored && Number(x?.price||0) > 0 && Number(x?.quantity||0) > 0 && listingAgeSeconds(x, nowMs) <= maxAge)
       .sort((a,b)=>Number(a.price||0)-Number(b.price||0));
+  }
+
+  function pulseSignals(db,itemId,unitProfit=0,nowMs=Date.now()) {
+    const metrics=marketPulse?.pulseFor?.(db,asId(itemId),nowMs)||null;
+    const contribution=metrics?marketPulse?.contribution?.(metrics,unitProfit)||null:null;
+    return {metrics,contribution};
+  }
+
+  function pulseFields(db,itemId,unitProfit=0,nowMs=Date.now()) {
+    const {metrics,contribution}=pulseSignals(db,itemId,unitProfit,nowMs);
+    return {
+      pulseTier:String(metrics?.tier||'unknown'),
+      observedEventsPerHour:Number(metrics?.observedEventsPerHour||0),
+      observedUnitsPerHour:Number(metrics?.observedUnitsPerHour||0),
+      turnoverPerHour:Number(metrics?.turnoverPerHour||0),
+      pulseLiquidityScore:Number(metrics?.liquidityScore||0),
+      pulseConfidencePct:Number(metrics?.confidencePct||0),
+      pulseMarketDepth:Number(metrics?.marketDepth||0),
+      pulseTrendPct:Number(metrics?.trendPct||0),
+      pulseFreshness:metrics?.freshness||null,
+      marketPulseScore:contribution?Number(contribution.score||0):null,
+      profitVelocityPerHour:contribution?Number(contribution.velocityProfitPerHour||0):0
+    };
   }
 
   function rankCachedOpportunities(db, nowMs = Date.now()) {
@@ -219,16 +243,21 @@
       const profitVelocityScore = Math.min(100,Math.log10(1+expectedProfitPerDay)*18);
       const absoluteProfitScore = Math.min(100,Math.log10(1+Math.max(0,profit))*14);
       const volatilityPenalty = Math.min(25,Number(history.volatilityPct||0)*0.75);
-      const score = Math.max(0,Math.min(100,
+      const economicScore = Math.max(0,Math.min(100,
         roiScore*0.32+conversionScore*0.32+profitVelocityScore*0.18+absoluteProfitScore*0.10+sourceFreshness*0.08-volatilityPenalty
       ));
+      const pulse=pulseFields(db,id,profit,nowMs);
+      const score=pulse.marketPulseScore===null
+        ?economicScore
+        :Math.max(0,Math.min(100,economicScore*0.65+pulse.marketPulseScore*0.35));
 
       rows.push({
         id,
         name:String(base.itemName || db?.procurement?.catalog?.[id]?.name || ('Item '+id)),
         itemType:String(db?.procurement?.catalog?.[id]?.type || ''),
         buyPrice,maxBuyPrice,bazaarAverage,marketPrice,sellerCount,liveListingCount,traderExit,
-        bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,score,confidence,
+        bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,score,economicScore,confidence,
+        ...pulse,
         freshness:globalFresh,history,enriched:Boolean(detail),
         listingQty:Number(live?.quantity||0),sellerId:String(live?.sellerId||''),
         sellerName:String(live?.sellerName||''),listingVerified:Boolean(live?.source==='Bazaar'&&live?.sellerId),
@@ -297,9 +326,13 @@
       )));
       const profitScore=profit>0?Math.min(100,Math.log10(1+profit)*13):0;
       const roiScore=roiPct>0?Math.min(100,roiPct*2.5):0;
-      const score=Math.round(Math.max(0,Math.min(100,
+      const economicScore=Math.round(Math.max(0,Math.min(100,
         roiScore*.35+profitScore*.25+liquidity*.25+confidence*.15
       )));
+      const pulse=pulseFields(db,id,profit,nowMs);
+      const score=pulse.marketPulseScore===null
+        ?economicScore
+        :Math.round(Math.max(0,Math.min(100,economicScore*.70+pulse.marketPulseScore*.30)));
       rows.push({
         id,
         name:String(targetRow?.name||base?.itemName||catalog?.name||('Item '+id)),
@@ -307,7 +340,8 @@
         targetBuy,buyPrice,bazaarAverage,marketPrice,sellerCount,
         buySource:buyPrice>0?'Bazaar observed':'Unknown',
         bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,targetDiscountPct,
-        confidence,liquidity,score,history,
+        confidence,liquidity,score,economicScore,history,
+        ...pulse,
         personalSold7d:sales7,personalSold30d:sales30,
         freshness,
         hasMarketEvidence:Boolean(buyPrice>0&&exit.value>0),
@@ -327,11 +361,18 @@
     );
   }
 
-  function rankCachedTravel(db) {
+  function rankCachedTravel(db,nowMs=Date.now()) {
     return (Array.isArray(db?.travelIntel?.rows) ? db.travelIntel.rows : [])
       .filter(r => Number(r?.stock||0) > 0 && (Number(r?.sourceProfitPerHour||0) > 0 || Number(r?.profit||0) > 0))
-      .map(r => ({...r}))
+      .map(r => {
+        const pulse=pulseFields(db,r?.itemId,Math.max(0,Number(r?.profit||0)),nowMs);
+        const basePerHour=Math.max(0,Number(r?.sourceProfitPerHour||0));
+        const pulseUsable=pulse.marketPulseScore!==null&&pulse.pulseFreshness&&!pulse.pulseFreshness.stale;
+        const liquidityFactor=pulseUsable?0.50+Math.max(0,Math.min(100,pulse.pulseLiquidityScore))/200:1;
+        return {...r,...pulse,liquidityAdjustedProfitPerHour:basePerHour*liquidityFactor};
+      })
       .sort((a,b)=>
+        Number(b.liquidityAdjustedProfitPerHour||0)-Number(a.liquidityAdjustedProfitPerHour||0) ||
         Number(b.sourceProfitPerHour||0)-Number(a.sourceProfitPerHour||0) ||
         Number(b.profit||0)-Number(a.profit||0) ||
         Number(b.stock||0)-Number(a.stock||0)
@@ -342,6 +383,7 @@
     businessRules,
     freshnessInfo,
     salesItemMetrics,
+    pulseSignals,pulseFields,
     rankCachedOpportunities,
     rankPricelistUniverse,
     rankCachedTravel
