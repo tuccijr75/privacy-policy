@@ -2168,4 +2168,35 @@ Static architecture audit completed before device acceptance:
 Live boundary still required:
 - actual TornPDA/mobile userscript runtime must be exercised on-device because Opera desktop cannot emulate TornPDA's userscript bridge, viewport chrome, or touch-event integration;
 - verify launcher presence/no overlap, panel open/close/scroll, Items search, Travel comparison, Ranked filters, and that final buy/travel actions remain manual.
+### TornPDA dependency failure reproduced from owner screenshot — root-cause fix
+
+Observed on-device with desktop alpha.18 installed through TornPDA:
+- panel/launcher rendered, proving the main userscript loaded;
+- UI reported `MM Acquisitions dependencies did not load` and no shared CRM state;
+- TornPDA currently does not provide Tampermonkey-style `@require` loading for this architecture, so the five required MM modules were absent;
+- even after dependency bundling, the desktop Core's read-only legacy CRM IndexedDB contract would not be a valid standalone PDA storage architecture.
+
+Source-level correction:
+- added `MM_Acquisitions.pda.adapter.js`; 
+- added reproducible `build_pda_bundle.py`; 
+- generated `MM_Acquisitions.pda.user.js` as a self-contained TornPDA artifact with no `@require` metadata;
+- bundles Core, acquisition logic, live service, ranked logic, purchase ledger, and UI in dependency order;
+- PDA adapter replaces only Core state I/O while delegating dock/panel behavior to the canonical Core;
+- PDA state uses native `PDA_storage` when available, with localStorage only as a fallback;
+- PDA adapter uses TornPDA's injected API key placeholder when no explicit Acquisitions key is saved;
+- `GM_xmlhttpRequest` is bridged to `PDA_httpGet` only when TornPDA does not provide the GM function;
+- default PDA state is schema-compatible and isolated from the desktop CRM IndexedDB.
+
+Verification:
+- bundle syntax compile PASS;
+- metadata contains no `@require`; 
+- all five runtime dependency globals are present in the bundle;
+- mocked `PDA_storage` read/update persistence PASS;
+- mocked `PDA_httpGet` bridge PASS;
+- generated PDA artifact version: `8.0.0-alpha.18-pda.1`.
+
+Next live gate:
+- replace/disable the old desktop alpha.18 script in TornPDA;
+- install `MM_Acquisitions.pda.user.js` by direct remote URL;
+- verify the dependency/state errors are gone and continue mobile interaction acceptance.
 
