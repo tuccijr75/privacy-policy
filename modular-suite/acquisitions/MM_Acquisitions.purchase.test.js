@@ -12,7 +12,7 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.15'));
+assert(userSource.includes('// @version      8.0.0-alpha.16'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@58b6722c711b69c6fa34584d67780bfde9f2e55f/modular-suite/core/MM_Torn_Core.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@58b6722c711b69c6fa34584d67780bfde9f2e55f/modular-suite/acquisitions/MM_Acquisitions.logic.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@58b6722c711b69c6fa34584d67780bfde9f2e55f/modular-suite/acquisitions/MM_Acquisitions.live.js'));
@@ -44,6 +44,9 @@ assert(userSource.includes('Current bid <b>'));
 assert(userSource.includes('Break-even ceiling '));
 assert(userSource.includes('Max bid @ '));
 assert(userSource.includes('Provisional ROI at current bid'));
+assert(userSource.includes('auctions use watch score'));
+assert(userSource.includes("watch '+Number(row.auctionWatchScore||0)+'/100"));
+assert(userSource.includes("Number(b.sortScore||0)-Number(a.sortScore||0)"));
 assert(userSource.includes('UNDER BB FLOOR'));
 assert(userSource.includes('futureDuration(row.endsAt)'));
 assert(userSource.includes('Pricelist Universe'));
@@ -105,7 +108,7 @@ assert(liveSource.includes('Torn API finished Auction House'));
 
 const userSourceArmory=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceArmory);
-assert(userSourceArmory.includes('// @version      8.0.0-alpha.15'));
+assert(userSourceArmory.includes('// @version      8.0.0-alpha.16'));
 assert(userSourceArmory.includes('MM_Acquisitions.live.js'));
 assert(userSourceArmory.includes("type!=='armory-acquisition-request'"));
 assert(userSourceArmory.includes('Faction Armory request: '));
