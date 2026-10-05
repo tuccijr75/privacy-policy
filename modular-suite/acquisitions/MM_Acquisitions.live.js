@@ -733,6 +733,20 @@
       return '';
     }
 
+    function selectedItemExitEvidence(state,id) {
+      const snap=state?.procurement?.marketSnapshots?.[id]||{};
+      const intel=state?.marketIntel?.marketplace?.[id]||{};
+      const settings=state?.marketIntel?.settings||{};
+      const bazaarHaircut=Math.max(0,Math.min(25,Number(settings?.bazaarExitHaircutPct||0)))/100;
+      const candidates=[
+        {route:'Live snapshot',value:Number(snap?.realisticExit||0)},
+        {route:'Bazaar',value:Math.floor(Number(intel?.bazaarAverage||0)*(1-bazaarHaircut))},
+        {route:'Item Market Net',value:Math.floor(Number(intel?.marketPrice||0)*(1-ITEM_MARKET_FEE_RATE))}
+      ].filter(row=>Number(row.value||0)>0).sort((a,b)=>b.value-a.value);
+      const best=candidates[0]||{route:'Unknown',value:0};
+      return {best,candidates};
+    }
+
     async function procurementSourceOptions(itemId,itemName='') {
       let state=await core.readLegacyState();
       const id=resolveProcurementItemId(state,itemId,itemName);
@@ -742,13 +756,21 @@
       state=await core.readLegacyState();
 
       const catalog=state?.procurement?.catalog?.[id]||{};
-      const resolvedName=String(itemName||catalog.name||state?.marketIntel?.marketplace?.[id]?.itemName||('Item '+id));
+      const marketplace=state?.marketIntel?.marketplace?.[id]||{};
+      const resolvedName=String(itemName||catalog.name||marketplace?.itemName||('Item '+id));
       const maxAge=Math.max(30,Number(state?.businessRules?.maxListingAgeSec||180));
       const snap=state?.procurement?.marketSnapshots?.[id]||{};
       const snapAge=snap.fetchedAt?Math.max(0,(Date.now()-Date.parse(snap.fetchedAt))/1000):Infinity;
       const itemMarketPrice=snapAge<=maxAge?Number(snap?.itemMarket?.lowest||0):0;
+      const aggregateBazaarLow=Math.max(0,Number(marketplace?.lowestPrice||0));
       const bazaarRows=freshOrganicListings(state,id).slice(0,VERIFY_SELLERS);
-      const bestBazaar=bazaarRows[0]||null;
+      const namedBest=bazaarRows[0]||null;
+      const namedPrice=Math.max(0,Number(namedBest?.price||0));
+      const namedConsistent=Boolean(namedBest&&(
+        !(aggregateBazaarLow>0) ||
+        namedPrice<=aggregateBazaarLow*1.35
+      ));
+      const bestBazaar=namedConsistent?namedBest:null;
       const travelRows=(state?.travelIntel?.rows||[])
         .filter(row=>Number(row?.stock||0)>0&&(
           asId(row?.itemId)===id||
@@ -766,7 +788,13 @@
       }
       if(bestBazaar) sources.push({
         source:'Bazaar',price:Number(bestBazaar.price||0),quantity:Number(bestBazaar.quantity||0),
-        sellerId:asId(bestBazaar.sellerId),sellerName:String(bestBazaar.sellerName||'')
+        sellerId:asId(bestBazaar.sellerId),sellerName:String(bestBazaar.sellerName||''),
+        verifiedCandidate:true
+      });
+      if(aggregateBazaarLow>0&&(!bestBazaar||Number(bestBazaar.price||0)>aggregateBazaarLow*1.05)) sources.push({
+        source:'Bazaar aggregate',price:aggregateBazaarLow,quantity:0,
+        sellerId:'',sellerName:'',aggregateOnly:true,
+        bazaarAverage:Number(marketplace?.bazaarAverage||0),bazaarCount:Number(marketplace?.totalBazaars||0)
       });
       if(itemMarketPrice>0) sources.push({
         source:'Item Market',price:itemMarketPrice,quantity:Number(snap?.itemMarket?.depth1Pct||1)
@@ -776,7 +804,14 @@
         country:String(bestTravel.country||''),profit:Number(bestTravel.profit||0)
       });
       sources.sort((a,b)=>Number(a.price||0)-Number(b.price||0));
-      return {itemId:id,itemName:resolvedName,sources,state};
+      const exitEvidence=selectedItemExitEvidence(state,id);
+      return {
+        itemId:id,itemName:resolvedName,sources,state,
+        exitValue:Number(exitEvidence.best.value||0),
+        exitRoute:String(exitEvidence.best.route||'Unknown'),
+        exitCandidates:exitEvidence.candidates,
+        catalogReference:Number(catalog?.marketPrice||0)
+      };
     }
 
     async function routeProcurementRequest({itemId='',itemName='',preferredSource='Best'}={}) {
@@ -788,6 +823,23 @@
       if(!ordered.length) return {routed:false,reason:'preferred-source-unavailable',...result};
 
       for(const candidate of ordered) {
+        if(candidate.source==='Bazaar aggregate') {
+          try { await enrichItem(id); } catch {}
+          const refreshed=await core.readLegacyState();
+          const aggregate=Math.max(0,Number(refreshed?.marketIntel?.marketplace?.[id]?.lowestPrice||candidate.price||0));
+          const liveRows=freshOrganicListings(refreshed,id)
+            .filter(row=>Number(row?.price||0)>0&&(!(aggregate>0)||Number(row.price)<=aggregate*1.35))
+            .slice(0,VERIFY_SELLERS);
+          for(const row of liveRows){
+            const verify=await verifyBazaar(id,row.sellerId,row.price);
+            await persistBazaarResult(id,row.sellerId,verify);
+            if(!verify.verified)continue;
+            const url='https://www.torn.com/bazaar.php?userId='+encodeURIComponent(asId(row.sellerId));
+            navigate(url);
+            return {routed:true,source:'Bazaar',url,verified:verify,...result};
+          }
+          continue;
+        }
         if(candidate.source==='Bazaar') {
           const verify=await verifyBazaar(id,candidate.sellerId,candidate.price);
           await persistBazaarResult(id,candidate.sellerId,verify);
