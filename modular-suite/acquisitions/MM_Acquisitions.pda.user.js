@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.18-pda.1
+// @version      8.0.0-alpha.18-pda.2
 // @description  TornPDA-compatible bundled MM Acquisitions build. Profit, ranked weapons, travel procurement, manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -1146,6 +1146,7 @@
 
   const PDA_API_KEY_PLACEHOLDER='###PDA-APIKEY###';
   const PDA_GM_PREFIX='mm_acquisitions_pda_gm_v1:';
+  globalThis.__MM_TORN_PDA__=true;
 
   if(typeof globalThis.GM_getValue!=='function'){
     globalThis.GM_getValue=(key,def)=>{
@@ -1265,8 +1266,10 @@
   }
 
   async function nativeGet(){
-    if(typeof globalThis.PDA_storage!=='undefined'&&typeof globalThis.PDA_storage.get==='function'){
-      return await globalThis.PDA_storage.get(STORAGE_KEY,null);
+    // TornPDA binds PDA_storage as a lexical const around each userscript,
+    // not as window.PDA_storage. Refer to that injected binding directly.
+    if(typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.get==='function'){
+      return await PDA_storage.get(STORAGE_KEY,null);
     }
     try{
       const raw=localStorage.getItem(LOCAL_FALLBACK_KEY);
@@ -1275,8 +1278,8 @@
   }
 
   async function nativeSet(value){
-    if(typeof globalThis.PDA_storage!=='undefined'&&typeof globalThis.PDA_storage.set==='function'){
-      await globalThis.PDA_storage.set(STORAGE_KEY,value);
+    if(typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.set==='function'){
+      await PDA_storage.set(STORAGE_KEY,value);
       return;
     }
     localStorage.setItem(LOCAL_FALLBACK_KEY,JSON.stringify(value));
@@ -1328,7 +1331,7 @@
     return Object.freeze({
       coreVersion:String(original.version||'')+'-pda',
       platform:'tornpda',
-      storage:typeof globalThis.PDA_storage!=='undefined'?'PDA_storage':'localStorage-fallback',
+      storage:typeof PDA_storage!=='undefined'&&PDA_storage?'PDA_storage':'localStorage-fallback',
       validation:original.validateLegacyState(state),
       summary:original.summarizeState(state),
       freshness:original.freshnessSnapshot(state)
@@ -4311,7 +4314,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.18-pda.1 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.18-pda.2 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -4445,7 +4448,7 @@
 
   function createLauncher(){
     if(!document.body)return;
-    if(core?.registerDockLauncher){
+    if(core?.registerDockLauncher&&!globalThis.__MM_TORN_PDA__){
       const b=core.registerDockLauncher({
         id:'acquisitions',
         label:'MM_Acquisitions',
@@ -4464,7 +4467,7 @@
     const b=document.createElement('button');
     b.id=LAUNCHER_ID;
     b.textContent='Acquisitions';
-    b.style.cssText='position:fixed;right:52px;bottom:6px;z-index:2147483647;'+button(true);
+    b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;'+button(true);
     b.addEventListener('click',open);
     document.body.appendChild(b);
   }
