@@ -105,6 +105,9 @@
       pulseMarketDepth:Number(metrics?.marketDepth||0),
       pulseTrendPct:Number(metrics?.trendPct||0),
       pulseFreshness:metrics?.freshness||null,
+      pulseSourceTimestamp:Number(metrics?.sourceTimestamp||0),
+      pulseFetchedAt:Number(metrics?.fetchedAt||0),
+      pulseUpstreamCacheDelayMs:Number(metrics?.upstreamCacheDelayMs||0),
       marketPulseScore:contribution?Number(contribution.score||0):null,
       profitVelocityPerHour:contribution?Number(contribution.velocityProfitPerHour||0):0
     };
