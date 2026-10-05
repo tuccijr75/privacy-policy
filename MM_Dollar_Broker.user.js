@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.13
-// @description  Finds active dollar-sale Bazaars via Torn's official API, with deep Item Market scan and manual purchase verification.
+// @version      0.1.0-rc.14
+// @description  Discovers Torn Bazaar-directory sellers, scans them in one background tab for exact $1 stock, and leaves every purchase manual.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -18,6 +18,8 @@
 // @grant        GM.removeValueChangeListener
 // @grant        GM.getTab
 // @grant        GM.saveTab
+// @grant        GM.openInTab
+// @grant        window.close
 // @grant        GM.registerMenuCommand
 // @grant        GM.unregisterMenuCommand
 // @grant        GM.xmlHttpRequest
@@ -26,17 +28,31 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.13';
+const VERSION = '0.1.0-rc.14';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
-const LIMIT = Object.freeze({targets:100, events:50, seen:2000, leads:50, sellers:25, fresh:120000, marketFresh:30000, heartbeat:15000, stale:60000, navigation:30000});
+const LIMIT = Object.freeze({targets:250, events:5000, seen:20000, leads:50, sellers:1000, fresh:300000, marketFresh:30000, heartbeat:15000, stale:60000, navigation:30000, scanStale:120000});
 const phases = new Set(['ready','awaiting-inspection','inspecting','paused','navigating','error']);
 const validId = value => typeof value === 'string' && /^[1-9]\d{0,9}$/.test(value);
 const bazaarUrl = id => {
   if (!validId(id)) throw new Error('Invalid public player ID.');
   return `https://www.torn.com/bazaar.php?userId=${id}`;
 };
+const SCAN_PARAM='mmDollarScan';
+const validScanId=value=>typeof value==='string' && /^[A-Za-z0-9_-]{8,80}$/.test(value);
+function bazaarScanUrl(id,scanId) {
+  if(!validScanId(scanId)) throw new Error('Invalid seller scan ID.');
+  return bazaarUrl(id)+'&'+SCAN_PARAM+'='+encodeURIComponent(scanId);
+}
+function scanTokenAt(url) {
+  try {
+    const u=new URL(url);
+    if(u.origin!=='https://www.torn.com' || u.pathname!=='/bazaar.php') return null;
+    const token=u.searchParams.get(SCAN_PARAM);
+    return validScanId(token)?token:null;
+  } catch { return null; }
+}
 function targetAt(url) {
   try { const u = new URL(url); return u.origin === 'https://www.torn.com' && u.pathname === '/bazaar.php' && validId(u.searchParams.get('userId')) ? u.searchParams.get('userId') : null; } catch { return null; }
 }
@@ -52,11 +68,11 @@ function exactPrice(text) {
   return Number.isSafeInteger(n) ? n : null;
 }
 const fingerprint = (target, item) => JSON.stringify([target, item.listingId || item.itemId || item.name, 1]);
-function emptyState() { return {schema:SCHEMA, version:VERSION, revision:0, targets:[], worker:null, events:[], seen:[], sellerLeads:[], marketLeads:[], discoveryCursor:0, lastSellerDiscovery:0, lastDiscovery:0, lastDetection:0}; }
+function emptyState() { return {schema:SCHEMA, version:VERSION, revision:0, targets:[], worker:null, sellerScan:null, events:[], seen:[], sellerLeads:[], marketLeads:[], discoveryCursor:0, lastSellerDiscovery:0, lastDiscovery:0, lastDetection:0}; }
 function validSellerLead(lead) {
   return !!lead && textField(lead.id,80) && lead.id===`seller:${lead.sellerId}` && validId(lead.sellerId) &&
     textField(lead.name) && lead.name.length>0 && typeof lead.isOpen==='boolean' &&
-    Number.isSafeInteger(lead.dollarSales) && lead.dollarSales>=0 && finite(lead.observedAt) &&
+    (lead.dollarSales===null || (Number.isSafeInteger(lead.dollarSales) && lead.dollarSales>=0)) && finite(lead.observedAt) &&
     lead.url===bazaarUrl(lead.sellerId);
 }
 function replaceSellerLeads(state,leads,now) {
@@ -65,13 +81,14 @@ function replaceSellerLeads(state,leads,now) {
   for(const lead of leads) {
     const sellerId=String(lead?.sellerId??'');
     const name=typeof lead?.name==='string'?lead.name.trim().slice(0,180):'';
-    const dollarSales=Number(lead?.dollarSales);
+    const dollarSales=lead?.dollarSales===null||lead?.dollarSales===undefined?null:Number(lead.dollarSales);
     const isOpen=lead?.isOpen===true;
     const candidate={id:`seller:${sellerId}`,sellerId,name,isOpen,dollarSales,observedAt:now,url:bazaarUrl(sellerId)};
     if(!validSellerLead(candidate)) throw new Error('Dollar seller lead failed validation.');
     next.push(candidate);
   }
-  state.sellerLeads=next.slice(0,LIMIT.sellers);
+  if(next.length>LIMIT.sellers) throw new Error(`Torn returned more than ${LIMIT.sellers} directory sellers. Scan aborted instead of truncating results.`);
+  state.sellerLeads=next;
   state.lastSellerDiscovery=now;
   return state.sellerLeads;
 }
@@ -90,6 +107,93 @@ function loadOpenSellerTargets(state,now) {
   const discovered=state.sellerLeads.filter(x=>x.isOpen).map(x=>x.sellerId);
   state.targets=[...new Set([...discovered,...state.targets])].slice(0,LIMIT.targets);
   return discovered.filter(id=>!before.has(id)).length;
+}
+
+const sellerScanPhases=new Set(['launching','scanning','complete','error']);
+function sellerScanIsActive(scan) { return !!scan && (scan.phase==='launching'||scan.phase==='scanning'); }
+function sellerScanIsStale(scan,now) {
+  if(!sellerScanIsActive(scan)) return false;
+  return !finite(now) || now<scan.heartbeat || now-scan.heartbeat>LIMIT.scanStale;
+}
+function validSellerScan(scan) {
+  if(scan===null) return true;
+  if(!scan || !validScanId(scan.id) || !textField(scan.ownerTabId,80) || !textField(scan.scannerTabId,80) ||
+     !sellerScanPhases.has(scan.phase) || !Array.isArray(scan.sellerIds) || !scan.sellerIds.length ||
+     scan.sellerIds.length>LIMIT.sellers || scan.sellerIds.some(id=>!validId(id)) ||
+     !Number.isInteger(scan.index) || scan.index<0 || scan.index>=scan.sellerIds.length ||
+     !Number.isInteger(scan.scanned) || scan.scanned<0 || scan.scanned>scan.sellerIds.length ||
+     !Number.isInteger(scan.found) || scan.found<0 || !finite(scan.startedAt) || !finite(scan.heartbeat) ||
+     !finite(scan.completedAt) || !textField(scan.error,240) || !Array.isArray(scan.errors) ||
+     scan.errors.length>scan.sellerIds.length || scan.errors.some(e=>!e || !validId(e.sellerId) || !textField(e.error,240) || !finite(e.at))) return false;
+  if(scan.phase==='complete') return scan.targetId===null && scan.scanned===scan.sellerIds.length;
+  if(scan.phase==='error') return scan.targetId===null;
+  return validId(scan.targetId) && scan.targetId===scan.sellerIds[scan.index];
+}
+function beginSellerScan(state,ownerTabId,scanId,now) {
+  if(!textField(ownerTabId,80) || !validScanId(scanId) || !finite(now)) throw new Error('Seller scan identity is invalid.');
+  if(sellerScanIsActive(state.sellerScan) && !sellerScanIsStale(state.sellerScan,now)) throw new Error('A dollar Bazaar scan is already running.');
+  const sellerIds=[...new Set(state.sellerLeads.filter(x=>x.isOpen).map(x=>x.sellerId))];
+  if(!sellerIds.length) throw new Error('No open dollar-sale Bazaars were returned by Torn.');
+  state.events=[];state.seen=[];state.lastDetection=0;
+  state.sellerScan={id:scanId,ownerTabId,scannerTabId:'',phase:'launching',sellerIds,index:0,targetId:sellerIds[0],
+    scanned:0,found:0,startedAt:now,heartbeat:now,completedAt:0,error:'',errors:[]};
+  return bazaarScanUrl(sellerIds[0],scanId);
+}
+function claimSellerScan(state,tabId,scanId,url,now) {
+  const scan=state.sellerScan;
+  if(!scan || scan.id!==scanId || !sellerScanIsActive(scan)) return false;
+  if(scanTokenAt(url)!==scanId || targetAt(url)!==scan.targetId) return false;
+  if(scan.scannerTabId && scan.scannerTabId!==tabId && !sellerScanIsStale(scan,now)) throw new Error('Another live scanner tab owns this dollar scan.');
+  scan.scannerTabId=tabId;scan.phase='scanning';scan.heartbeat=now;scan.error='';
+  return true;
+}
+function appendObservedEvents(state,snapshot,workerId,documentId,now) {
+  const newEvents=[];
+  for(const item of snapshot.items) {
+    if(item.price!==1 || item.available!==true || !Number.isSafeInteger(item.quantity) || item.quantity<1) continue;
+    const fp=fingerprint(snapshot.targetId,item);
+    if(state.seen.includes(fp)) continue;
+    if(state.seen.length>=LIMIT.seen || state.events.length>=LIMIT.events) throw new Error('Dollar-sale result ledger reached its safety bound. This Bazaar was skipped instead of truncating results.');
+    const event={schema:SCHEMA,id:`${workerId}:${now}:${state.seen.length}`,fingerprint:fp,targetId:snapshot.targetId,
+      seller:snapshot.seller,item:{name:item.name,itemId:item.itemId||'',listingId:item.listingId||'',quantity:item.quantity},price:1,
+      url:bazaarUrl(snapshot.targetId),detectedAt:snapshot.at,expiresAt:snapshot.at+LIMIT.fresh,workerId,documentId,
+      validity:'observed-available',acknowledged:false};
+    if(!validEvent(event)) throw new Error('Listing contract failed validation.');
+    state.seen.push(fp);state.events.unshift(event);newEvents.push(event);state.lastDetection=snapshot.at;
+  }
+  return newEvents;
+}
+function advanceSellerScan(scan,now) {
+  scan.scanned++;scan.heartbeat=now;
+  if(scan.scanned>=scan.sellerIds.length) {
+    scan.phase='complete';scan.targetId=null;scan.completedAt=now;scan.error='';
+    return {done:true,url:null};
+  }
+  scan.index++;scan.targetId=scan.sellerIds[scan.index];scan.phase='scanning';scan.error='';
+  return {done:false,url:bazaarScanUrl(scan.targetId,scan.id)};
+}
+function recordSellerScanSnapshot(state,tabId,scanId,snapshot,now) {
+  const scan=state.sellerScan;
+  if(!scan || scan.id!==scanId || scan.phase!=='scanning' || scan.scannerTabId!==tabId) throw new Error('Seller scan ownership changed.');
+  if(snapshot.targetId!==scan.targetId || now<snapshot.at || now-snapshot.at>15000) throw new Error('Seller scan snapshot is stale or for the wrong Bazaar.');
+  if(!snapshot.ok) throw new Error(snapshot.error||'Bazaar inspection failed.');
+  const added=appendObservedEvents(state,snapshot,'scan:'+scan.id,snapshot.documentId,now);
+  scan.found+=added.length;
+  return {...advanceSellerScan(scan,now),added:added.length};
+}
+function skipSellerScanTarget(state,tabId,scanId,error,now) {
+  const scan=state.sellerScan;
+  if(!scan || scan.id!==scanId || scan.phase!=='scanning' || scan.scannerTabId!==tabId) throw new Error('Seller scan ownership changed.');
+  scan.errors.push({sellerId:scan.targetId,error:String(error||'Bazaar inspection failed.').slice(0,240),at:now});
+  scan.error=scan.errors.at(-1).error;
+  return advanceSellerScan(scan,now);
+}
+function failSellerScan(state,scanId,error,now) {
+  const scan=state.sellerScan;
+  if(!scan || scan.id!==scanId) return false;
+  scan.phase='error';scan.targetId=null;scan.heartbeat=now;scan.completedAt=now;
+  scan.error=String(error||'Dollar Bazaar scan failed.').slice(0,240);
+  return true;
 }
 const validItemId = value => Number.isSafeInteger(value) && value > 0 && value <= 999999999;
 function itemMarketUrl(itemId,name='') {
@@ -154,7 +258,7 @@ const finite = n => Number.isFinite(n) && n >= 0;
 const textField = (v, max = 180) => typeof v === 'string' && v.length <= max;
 function validEvent(e) {
   return !!e && e.schema === SCHEMA && validId(e.targetId) && textField(e.id,400) && textField(e.fingerprint,400) &&
-    textField(e.seller) && textField(e.item?.name) && e.item.name.length > 0 && textField(e.item.itemId,80) && textField(e.item.listingId,80) &&
+    textField(e.seller) && textField(e.item?.name) && e.item.name.length > 0 && textField(e.item.itemId,80) && textField(e.item.listingId,80) && Number.isSafeInteger(e.item.quantity) && e.item.quantity>0 &&
     e.price === 1 && e.url === bazaarUrl(e.targetId) && finite(e.detectedAt) && e.expiresAt === e.detectedAt + LIMIT.fresh &&
     textField(e.workerId,80) && textField(e.documentId,80) && e.validity === 'observed-available' && typeof e.acknowledged === 'boolean';
 }
@@ -162,6 +266,8 @@ function readState(raw) {
   if (raw == null) return emptyState();
   if (raw.schema !== SCHEMA) throw new Error('Storage schema is unsupported. Update all Broker tabs; existing data was preserved.');
   const copy=structuredClone(raw);
+  if(copy.sellerScan===undefined) copy.sellerScan=null;
+  if(Array.isArray(copy.events)) for(const event of copy.events) if(event?.item && event.item.quantity===undefined) event.item.quantity=1;
   if(copy.sellerLeads===undefined) copy.sellerLeads=[];
   if(copy.marketLeads===undefined) copy.marketLeads=[];
   if(copy.discoveryCursor===undefined) copy.discoveryCursor=0;
@@ -174,6 +280,7 @@ function readState(raw) {
       !Array.isArray(copy.sellerLeads) || copy.sellerLeads.length>LIMIT.sellers || copy.sellerLeads.some(x=>!validSellerLead(x)) ||
       !Array.isArray(copy.marketLeads) || copy.marketLeads.length>LIMIT.leads || copy.marketLeads.some(x=>!validMarketLead(x)) ||
       !Number.isSafeInteger(copy.discoveryCursor) || copy.discoveryCursor<0 || !finite(copy.lastSellerDiscovery) || !finite(copy.lastDiscovery) || !finite(copy.lastDetection) ||
+      !validSellerScan(copy.sellerScan) ||
       (w && (!textField(w.id,80) || !textField(w.tabId,80) || !textField(w.documentId,80) || !phases.has(w.phase) || !finite(w.heartbeat) ||
        !Number.isInteger(w.index) || w.index < -1 || w.index >= copy.targets.length || (w.targetId !== null && !validId(w.targetId)) ||
        !finite(w.lastScan) || !textField(w.error,240) || (w.navigation && (!validId(w.navigation.targetId) || !finite(w.navigation.at) || !textField(w.navigation.from,80)))))) {
@@ -221,7 +328,7 @@ function recordSnapshot(s, identity, snapshot, now) {
     if (s.seen.includes(fp)) continue;
     if (s.seen.length >= LIMIT.seen) { w.phase='error'; w.error='Duplicate ledger is full. No new alerts will be recorded; see diagnostics.'; break; }
     const event={schema:SCHEMA, id:`${identity.workerId}:${now}:${s.seen.length}`, fingerprint:fp, targetId:snapshot.targetId,
-      seller:snapshot.seller, item:{name:item.name,itemId:item.itemId||'',listingId:item.listingId||''}, price:1,
+      seller:snapshot.seller, item:{name:item.name,itemId:item.itemId||'',listingId:item.listingId||'',quantity:item.quantity||1}, price:1,
       url:bazaarUrl(snapshot.targetId), detectedAt:snapshot.at, expiresAt:snapshot.at+LIMIT.fresh, workerId:identity.workerId,
       documentId:identity.documentId, validity:'observed-available', acknowledged:false};
     if (!validEvent(event)) { w.phase='error'; w.error='Listing contract failed validation.'; continue; }
@@ -270,12 +377,17 @@ const SELECTOR = Object.freeze({
 
 const cleanText=value=>String(value??'').replace(/\s+/g,' ').trim();
 
-function visible(element, win, viewportOnly=false) {
+function displayed(element, win) {
   if (!element?.isConnected) return false;
   for (let e=element;e && e.nodeType===1;e=e.parentElement) {
     const style=win.getComputedStyle(e);
     if (e.hidden || e.getAttribute('aria-hidden')==='true' || style.display==='none' || style.visibility==='hidden' || Number(style.opacity)===0) return false;
   }
+  return true;
+}
+
+function visible(element, win, viewportOnly=false) {
+  if (!displayed(element,win)) return false;
   const r=element.getBoundingClientRect();
   if(!(r.width>0 && r.height>0)) return false;
   if(!viewportOnly) return true;
@@ -284,21 +396,21 @@ function visible(element, win, viewportOnly=false) {
   return points.every(([x,y])=>{const top=element.ownerDocument.elementFromPoint(x,y);return top && (top===element || element.contains(top) || top.contains(element));});
 }
 
-function textNodes(scope, win, predicate) {
+function textNodes(scope, win, predicate, viewportOnly=true) {
   const out=[];
   const walker=scope.ownerDocument.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
   let node;
   while((node=walker.nextNode())) {
     const value=cleanText(node.textContent);
     const parent=node.parentElement;
-    if(!value || !parent || !visible(parent,win,true)) continue;
+    if(!value || !parent || !visible(parent,win,viewportOnly)) continue;
     if(predicate(value,node,parent)) out.push({value,node,parent});
   }
   return out;
 }
 
-function currencyNodes(scope, win) {
-  return textNodes(scope,win,value=>exactPrice(value)!==null);
+function currencyNodes(scope, win, viewportOnly=true) {
+  return textNodes(scope,win,value=>exactPrice(value)!==null,viewportOnly);
 }
 
 function visibleText(scope, win) {
@@ -349,17 +461,17 @@ function itemIdentity(scope, win) {
   return one;
 }
 
-function semanticCards(root, win) {
+function semanticCards(root, win, viewportOnly=true) {
   const found=[];
   const used=new Set();
   const images=[...root.querySelectorAll('img[src*="/images/items/"]')].filter(img=>visible(img,win,false));
   for(const img of images) {
     let node=img.parentElement;
     for(let depth=0;node && node!==root && depth<10;depth++,node=node.parentElement) {
-      if(!(node instanceof HTMLElement) || !visible(node,win,true)) continue;
+      if(!(node instanceof HTMLElement) || !visible(node,win,viewportOnly)) continue;
       const identity=itemIdentity(node,win);
       if(!identity) continue;
-      const prices=currencyNodes(node,win);
+      const prices=currencyNodes(node,win,viewportOnly);
       const quantity=stockQuantity(node,win);
       // Once an item card exposes either a price or stock signal, treat it as a
       // candidate and let parseSemanticCard validate the complete contract.
@@ -373,14 +485,14 @@ function semanticCards(root, win) {
   return found;
 }
 
-function parseLegacyCard(card, win) {
+function parseLegacyCard(card, win, viewportOnly=true) {
   const names=card.querySelectorAll(SELECTOR.legacyName), prices=card.querySelectorAll(SELECTOR.legacyPrice);
-  if(names.length!==1 || prices.length!==1 || !visible(names[0],win,true) || !visible(prices[0],win,true)) return null;
+  if(names.length!==1 || prices.length!==1 || !visible(names[0],win,viewportOnly) || !visible(prices[0],win,viewportOnly)) return null;
   const name=cleanText(names[0].textContent);
   const priceText=[...prices[0].childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent).join('').trim();
   const price=exactPrice(priceText);
   const amountNode=card.querySelector(SELECTOR.legacyQuantity);
-  if(!name || name.length>180 || price===null || !visible(amountNode,win,true)) return null;
+  if(!name || name.length>180 || price===null || !visible(amountNode,win,viewportOnly)) return null;
   const amount=cleanText(amountNode.textContent);
   const match=/^(?:x\s*)?([1-9]\d{0,8})(?:\s*(?:available|in stock|in total))?$/i.exec(amount);
   if(!match) return null;
@@ -390,9 +502,9 @@ function parseLegacyCard(card, win) {
   };
 }
 
-function parseSemanticCard(card, win) {
+function parseSemanticCard(card, win, viewportOnly=true) {
   const identity=itemIdentity(card,win);
-  const prices=currencyNodes(card,win);
+  const prices=currencyNodes(card,win,viewportOnly);
   const quantity=stockQuantity(card,win);
   if(!identity || prices.length!==1 || quantity===null) return null;
   const price=exactPrice(prices[0].value);
@@ -402,21 +514,175 @@ function parseSemanticCard(card, win) {
   return {name:identity.name,itemId:identity.itemId,listingId,price,quantity,available:true};
 }
 
+
+function scanTextNodes(scope, win, predicate) {
+  const out=[];
+  const walker=scope.ownerDocument.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  let node;
+  while((node=walker.nextNode())) {
+    const value=cleanText(node.textContent);
+    const parent=node.parentElement;
+    if(!value || !parent || !displayed(parent,win)) continue;
+    if(predicate(value,node,parent)) out.push({value,node,parent});
+  }
+  return out;
+}
+
+const scanCurrencyNodes=(scope,win)=>scanTextNodes(scope,win,value=>exactPrice(value)!==null);
+
+function scanDocumentText(scope, win) {
+  const parts=[];
+  const walker=scope.ownerDocument.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+  let node;
+  while((node=walker.nextNode())) {
+    const parent=node.parentElement;
+    const value=cleanText(node.textContent);
+    if(value && parent && displayed(parent,win)) parts.push(value);
+  }
+  return cleanText(parts.join(' '));
+}
+
+function scanStockQuantity(scope, win) {
+  const text=scanDocumentText(scope,win);
+  const patterns=[
+    /(?:^|\s|\()([1-9]\d{0,8}(?:,\d{3})*)\s+in stock(?:\)|\s|$)/i,
+    /(?:^|\s|\()in stock\)?\s*([1-9]\d{0,8}(?:,\d{3})*)(?:\s|$)/i,
+  ];
+  for(const pattern of patterns) {
+    const match=pattern.exec(text);
+    if(match) return Number(match[1].replaceAll(',',''));
+  }
+  return null;
+}
+
+function scanItemIdentity(scope, win) {
+  const images=[...scope.querySelectorAll('img[src*="/images/items/"]')].filter(img=>displayed(img,win));
+  const byId=new Map();
+  for(const img of images) {
+    const match=String(img.currentSrc||img.src||'').match(/\/images\/items\/(\d+)\//);
+    if(!match) continue;
+    const name=cleanText(img.getAttribute('alt'));
+    const old=byId.get(match[1]);
+    if(!old || (!old.name && name)) byId.set(match[1],{itemId:match[1],name,img});
+  }
+  if(byId.size!==1) return null;
+  const one=[...byId.values()][0];
+  if(!one.name) {
+    const button=one.img.closest('button,[role="button"]');
+    one.name=cleanText(button?.getAttribute('aria-label')||button?.getAttribute('title')||button?.textContent);
+  }
+  if(!one.name || one.name.length>180) return null;
+  return one;
+}
+
+function scanSemanticCards(root, win) {
+  const found=[],used=new Set();
+  const images=[...root.querySelectorAll('img[src*="/images/items/"]')].filter(img=>displayed(img,win));
+  for(const img of images) {
+    let node=img.parentElement;
+    for(let depth=0;node && node!==root && depth<10;depth++,node=node.parentElement) {
+      if(!(node instanceof HTMLElement) || !displayed(node,win)) continue;
+      const identity=scanItemIdentity(node,win);
+      if(!identity) continue;
+      const prices=scanCurrencyNodes(node,win);
+      const quantity=scanStockQuantity(node,win);
+      if(prices.length===0 && quantity===null) continue;
+      if(!used.has(node)){used.add(node);found.push(node);}
+      break;
+    }
+  }
+  return found;
+}
+
+function parseScanLegacyCard(card, win) {
+  const names=card.querySelectorAll(SELECTOR.legacyName),prices=card.querySelectorAll(SELECTOR.legacyPrice);
+  if(names.length!==1 || prices.length!==1 || !displayed(names[0],win) || !displayed(prices[0],win)) return null;
+  const name=cleanText(names[0].textContent);
+  const priceText=[...prices[0].childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent).join('').trim();
+  const price=exactPrice(priceText);
+  const amountNode=card.querySelector(SELECTOR.legacyQuantity);
+  if(!name || name.length>180 || price===null || !displayed(amountNode,win)) return null;
+  const amount=cleanText(amountNode.textContent);
+  const match=/^(?:x\s*)?([1-9]\d{0,8})(?:\s*(?:available|in stock|in total))?$/i.exec(amount);
+  if(!match) return null;
+  return {name,itemId:card.getAttribute('data-item-id')||'',listingId:card.getAttribute('data-listing-id')||'',price,quantity:Number(match[1]),available:true};
+}
+
+function parseScanSemanticCard(card, win) {
+  const identity=scanItemIdentity(card,win);
+  const prices=scanCurrencyNodes(card,win);
+  const quantity=scanStockQuantity(card,win);
+  if(!identity || prices.length!==1 || quantity===null) return null;
+  const price=exactPrice(prices[0].value);
+  if(price===null || !Number.isSafeInteger(quantity) || quantity<1) return null;
+  const listingId=card.getAttribute('data-listing-id')||'';
+  if(listingId.length>80) return null;
+  return {name:identity.name,itemId:identity.itemId,listingId,price,quantity,available:true};
+}
+
+function inspectBazaarForScan(doc, win, context) {
+  const result={ok:false,items:[],seller:'',targetId:context.targetId,documentId:context.documentId,at:context.at,error:''};
+  const fail=error=>({...result,error});
+  if(doc.readyState==='loading') return fail('Bazaar document is still loading.');
+  if(!context.targetId || targetAt(win.location.href)!==context.targetId) return fail('Scanner target does not match the loaded Bazaar.');
+
+  const roots=doc.querySelectorAll(SELECTOR.root);
+  if(roots.length!==1 || !displayed(roots[0],win)) return fail('Bazaar is unavailable, loading, or its markup is unsupported.');
+  const root=roots[0];
+  if(root.matches(SELECTOR.loading) || [...root.querySelectorAll(SELECTOR.loading)].some(e=>displayed(e,win))) return fail('Bazaar is still rendering.');
+
+  const parseOwner=e=>{try{return {id:new URL(e.href,win.location.href).searchParams.get('XID'),name:cleanText(e.textContent)};}catch{return null;}};
+  let owners=[...root.querySelectorAll('a[href*="profiles.php?XID="]')]
+    .filter(e=>!e.closest('[data-testid="item"], [class*="description"], [data-testid="description"]') && displayed(e,win))
+    .map(parseOwner).filter(Boolean);
+  if(owners.length) {
+    if(owners.some(o=>o.id!==context.targetId)) return fail('Bazaar owner proof is ambiguous.');
+  } else {
+    owners=[...doc.querySelectorAll('a[href*="profiles.php?XID="]')]
+      .filter(e=>displayed(e,win)).map(parseOwner)
+      .filter(o=>o && o.id===context.targetId && /['’]s$/i.test(o.name));
+  }
+  if(!owners.length || owners.some(o=>o.id!==context.targetId)) return fail('Cannot prove the displayed Bazaar owner.');
+  result.seller=(owners[0].name||context.targetId).replace(/['’]s$/,'').slice(0,180);
+
+  const semantic=scanSemanticCards(root,win);
+  const legacy=semantic.length?[]:[...root.querySelectorAll(SELECTOR.legacyCard)].filter(card=>displayed(card,win));
+  const cards=semantic.length?semantic:legacy;
+  if(!cards.length) {
+    const body=cleanText(root.textContent);
+    if(/does not have a bazaar|no items/i.test(body)) return {...result,ok:true,inspected:0};
+    return fail('No complete Bazaar listing cards were recognized.');
+  }
+
+  let inspected=0,unsupported=0;
+  for(const card of cards) {
+    const item=semantic.length?parseScanSemanticCard(card,win):parseScanLegacyCard(card,win);
+    if(!item){unsupported++;continue;}
+    inspected++;
+    if(item.price===1 && item.available===true && item.quantity>0) result.items.push(item);
+  }
+  if(unsupported) return fail('A Bazaar listing has unsupported markup; this seller was skipped rather than partially recorded.');
+  if(!inspected) return fail('No complete Bazaar listing cards were recognized.');
+  return {...result,ok:true,inspected};
+}
+
 function inspectBazaar(doc, win, context) {
   const result={ok:false,items:[],seller:'',targetId:context.targetId,documentId:context.documentId,at:context.at,error:''};
   const fail=error=>({...result,error});
-  if (!context.trusted || doc.visibilityState!=='visible' || !doc.hasFocus()) return fail('Inspect from a deliberate click in the focused Bazaar tab.');
+  const background=context.background===true;
+  const viewportOnly=!background;
+  if (!background && (!context.trusted || doc.visibilityState!=='visible' || !doc.hasFocus())) return fail('Inspect from a deliberate click in the focused Bazaar tab.');
   if (doc.readyState!=='complete') return fail('Page is still loading. Inspect again after it finishes.');
   if (!context.targetId || targetAt(win.location.href)!==context.targetId || win.location.href!==context.initialUrl || targetAt(context.initialUrl)!==context.targetId) return fail('Target or document changed. Open the next target in this worker.');
 
   const roots=doc.querySelectorAll(SELECTOR.root);
-  if (roots.length!==1 || !visible(roots[0],win)) return fail('Bazaar is unavailable, loading, or its markup is unsupported.');
+  if (roots.length!==1 || !visible(roots[0],win,false)) return fail('Bazaar is unavailable, loading, or its markup is unsupported.');
   const root=roots[0];
   if (root.matches(SELECTOR.loading) || [...root.querySelectorAll(SELECTOR.loading)].some(e=>visible(e,win))) return fail('Bazaar is still rendering. Inspect again when ready.');
 
   const parseOwner=e=>{try{return {id:new URL(e.href,win.location.href).searchParams.get('XID'),name:cleanText(e.textContent)};}catch{return null;}};
   let owners=[...root.querySelectorAll('a[href*="profiles.php?XID="]')]
-    .filter(e=>!e.closest('[data-testid="item"], [class*="description"], [data-testid="description"]') && visible(e,win))
+    .filter(e=>!e.closest('[data-testid="item"], [class*="description"], [data-testid="description"]') && visible(e,win,viewportOnly))
     .map(parseOwner).filter(Boolean);
 
   if(owners.length) {
@@ -426,7 +692,7 @@ function inspectBazaar(doc, win, context) {
     // accept only a visible profile link for the exact URL target whose label has the
     // possessive Bazaar-owner form ("Name's"). This excludes the viewer's sidebar link.
     owners=[...doc.querySelectorAll('a[href*="profiles.php?XID="]')]
-      .filter(e=>visible(e,win))
+      .filter(e=>visible(e,win,viewportOnly))
       .map(parseOwner)
       .filter(o=>o && o.id===context.targetId && /['’]s$/i.test(o.name));
   }
@@ -434,35 +700,40 @@ function inspectBazaar(doc, win, context) {
   if (!owners.length || owners.some(o=>o.id!==context.targetId)) return fail('Cannot prove the displayed Bazaar owner. No alert issued.');
   result.seller=(owners[0].name || context.targetId).replace(/['’]s$/,'').slice(0,180);
 
-  const semantic=semanticCards(root,win);
+  const semantic=semanticCards(root,win,viewportOnly);
   const legacy=semantic.length
     ? []
-    : [...root.querySelectorAll(SELECTOR.legacyCard)].filter(card=>visible(card,win,true));
+    : [...root.querySelectorAll(SELECTOR.legacyCard)].filter(card=>visible(card,win,viewportOnly));
   const cards=semantic.length?semantic:legacy;
   if(!cards.length) {
     const body=cleanText(root.textContent);
     if(/does not have a bazaar|no items/i.test(body)) return {...result,ok:true,inspected:0};
-    return fail('No complete visible Bazaar listing cards were recognized. Torn markup may have changed.');
+    return fail('No complete Bazaar listing cards were recognized. Torn markup may have changed.');
   }
 
   let inspected=0,unsupported=0;
   for(const card of cards) {
-    if(!visible(card,win,true)) continue;
-    const item=semantic.length?parseSemanticCard(card,win):parseLegacyCard(card,win);
+    if(!visible(card,win,viewportOnly)) continue;
+    const item=semantic.length?parseSemanticCard(card,win,viewportOnly):parseLegacyCard(card,win,viewportOnly);
     if(!item) {unsupported++;continue;}
     inspected++;
     if(item.price===1 && item.available===true) result.items.push(item);
   }
 
-  if(unsupported) return fail('A visible Bazaar listing has unsupported markup. Inspection discarded; no partial alerts were issued.');
-  if(!inspected) return fail('No complete listing cards are visible. Scroll to a listing and inspect again.');
+  if(unsupported) return fail('A Bazaar listing has unsupported markup. Inspection discarded; no partial alerts were issued.');
+  if(!inspected) return fail('No complete Bazaar listing cards are available to inspect.');
   return {...result,ok:true,inspected};
 }
 
 // ---- market ----
 const API_KEY_KEY='mm-dollar-broker:api-key:v1';
 const PREF_KEY='mm-dollar-broker:discovery-prefs:v1';
-const DISCOVERY=Object.freeze({batch:50,gap:1250,minValue:1,maxBatch:50});
+const DISCOVERY=Object.freeze({batch:50,gap:1250,minValue:1,maxBatch:50,directoryGap:0});
+const BAZAAR_CATEGORIES=Object.freeze([
+  'Alcohol','Artifact','Booster','Candy','Car','Clothing','Collectible','Defensive','Drug','Energy Drink','Enhancer','Flower',
+  'Jewelry','Material','Medical','Melee','Other','Plushie','Primary','Secondary','Special','Supply Pack','Temporary','Tool'
+]);
+const WEEKLY_BAZAAR_FIELDS=Object.freeze(['busiest','most_popular','trending','top_grossing','bulk','advanced_item','bargain','dollar_sale']);
 
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const integer=(value,min=0)=>Number.isSafeInteger(Number(value))&&Number(value)>=min?Number(value):null;
@@ -492,23 +763,75 @@ function apiRequest(gm,path,key) {
   });
 }
 
-function normalizeDollarSellers(data) {
-  const rows=data?.bazaar?.dollar_sale;
-  if(!Array.isArray(rows)) throw new Error('Torn Bazaar directory response is unsupported.');
+function normalizeBazaarRows(rows,{dollar=false}={}) {
+  if(!Array.isArray(rows)) return [];
   return rows.map(row=>{
     const sellerId=integer(row?.id,1);
-    const dollarSales=integer(row?.dollar_sales,0);
     const name=typeof row?.name==='string'?row.name.trim():'';
-    if(!sellerId||dollarSales===null||!name||typeof row?.is_open!=='boolean') return null;
+    const dollarSales=dollar?integer(row?.dollar_sales,0):null;
+    if(!sellerId||!name||typeof row?.is_open!=='boolean'||(dollar&&dollarSales===null)) return null;
     return {sellerId:String(sellerId),name:name.slice(0,180),isOpen:row.is_open,dollarSales};
-  }).filter(Boolean)
-    .sort((a,b)=>Number(b.isOpen)-Number(a.isOpen)||b.dollarSales-a.dollarSales||Number(a.sellerId)-Number(b.sellerId));
+  }).filter(Boolean);
 }
 
-async function discoverDollarSellers({gm,key}) {
-  const sellers=normalizeDollarSellers(await apiRequest(gm,'market/bazaar',key));
-  const selected=sellers.slice(0,25);
-  return {sellers:selected,open:selected.filter(x=>x.isOpen).length,total:sellers.length};
+function mergeSellers(target,rows) {
+  for(const seller of rows) {
+    const old=target.get(seller.sellerId);
+    if(!old) { target.set(seller.sellerId,{...seller}); continue; }
+    old.isOpen=old.isOpen||seller.isOpen;
+    if(old.dollarSales===null && seller.dollarSales!==null) old.dollarSales=seller.dollarSales;
+    else if(old.dollarSales!==null && seller.dollarSales!==null) old.dollarSales=Math.max(old.dollarSales,seller.dollarSales);
+  }
+  return target;
+}
+
+function sortDirectorySellers(rows) {
+  return rows.sort((a,b)=>Number(b.isOpen)-Number(a.isOpen)||
+    Number(b.dollarSales!==null)-Number(a.dollarSales!==null)||
+    (b.dollarSales??-1)-(a.dollarSales??-1)||
+    Number(a.sellerId)-Number(b.sellerId));
+}
+
+function normalizeDollarSellers(data) {
+  const rows=data?.bazaar?.dollar_sale;
+  if(!Array.isArray(rows)) throw new Error('Torn Bazaar dollar-sale directory response is unsupported.');
+  return sortDirectorySellers(normalizeBazaarRows(rows,{dollar:true}));
+}
+
+function normalizeWeeklyDirectorySellers(data) {
+  const bazaar=data?.bazaar;
+  if(!bazaar || typeof bazaar!=='object') throw new Error('Torn Bazaar directory response is unsupported.');
+  const merged=new Map();
+  let recognized=0;
+  for(const field of WEEKLY_BAZAAR_FIELDS) {
+    if(!Array.isArray(bazaar[field])) continue;
+    recognized++;
+    mergeSellers(merged,normalizeBazaarRows(bazaar[field],{dollar:field==='dollar_sale'}));
+  }
+  if(!recognized) throw new Error('Torn Bazaar weekly directory response is unsupported.');
+  return sortDirectorySellers([...merged.values()]);
+}
+
+function normalizeSpecializedDirectorySellers(data) {
+  const rows=data?.bazaar?.specialized;
+  if(!Array.isArray(rows)) throw new Error('Torn specialized Bazaar directory response is unsupported.');
+  return sortDirectorySellers(normalizeBazaarRows(rows));
+}
+
+async function discoverDollarSellers({gm,key,onProgress=()=>{}}) {
+  const merged=new Map();
+  const weekly=normalizeWeeklyDirectorySellers(await apiRequest(gm,'market/bazaar',key));
+  mergeSellers(merged,weekly);
+  onProgress({phase:'directory',current:0,total:BAZAAR_CATEGORIES.length,sellers:merged.size,category:'Weekly'});
+  for(let i=0;i<BAZAAR_CATEGORIES.length;i++) {
+    const category=BAZAAR_CATEGORIES[i];
+    if(DISCOVERY.directoryGap>0 && (i||weekly.length)) await sleep(DISCOVERY.directoryGap);
+    const data=await apiRequest(gm,`market/bazaar?cat=${encodeURIComponent(category)}`,key);
+    mergeSellers(merged,normalizeSpecializedDirectorySellers(data));
+    onProgress({phase:'directory',current:i+1,total:BAZAAR_CATEGORIES.length,sellers:merged.size,category});
+  }
+  const sellers=sortDirectorySellers([...merged.values()]);
+  return {sellers,open:sellers.filter(x=>x.isOpen).length,total:sellers.length,requests:1+BAZAAR_CATEGORIES.length};
 }
 
 function normalizeCatalog(data) {
@@ -652,11 +975,12 @@ function makeUI(doc) {
   panel.innerHTML=`<header id="header"><div><small>MM TORN SYSTEMS</small><strong>DOLLAR BROKER</strong></div><button type="button" id="minimize" aria-label="Minimize Broker">−</button></header>
     <div class="body">
       <div class="status"><span class="dot"></span><span id="status" role="status">Ready</span></div>
-      <div id="mode" class="muted">Official market discovery · visible Torn verification · manual purchase</div>
+      <div id="mode" class="muted">Official directory discovery · one background Bazaar scanner tab · manual purchase only</div>
       <p id="notice" role="status"></p>
-      <div class="row"><button id="find-deals" class="primary" type="button">Find Dollar Sellers</button><button id="load-dollar-sellers" type="button">Load open sellers</button></div>
+      <div class="row"><button id="find-deals" class="primary" type="button">Find & Scan Dollar Sellers</button><button id="reset-scan" type="button">Reset after closing tab</button></div>
       <div id="discovery-progress" class="muted"></div>
-      <h2>HOT DOLLAR BAZAARS <span class="count" id="seller-count"></span></h2><div id="seller-leads" aria-live="polite"></div>
+      <h2>DISCOVERED BAZAARS <span class="count" id="seller-count"></span></h2><div id="seller-leads" aria-live="polite"></div>
+      <h2>FOUND $1 SALES <span class="count" id="count"></span></h2><div id="events" aria-live="polite"></div>
       <div class="row"><button id="verify-market" type="button">Verify visible Item Market</button></div>
       <h2>ITEM MARKET DEALS <span class="count" id="market-count"></span></h2><div id="market-leads" aria-live="polite"></div>
 
@@ -666,7 +990,7 @@ function makeUI(doc) {
         <label for="min-value">Minimum normal market value</label><input id="min-value" type="number" min="1" step="1000">
         <div class="row"><button id="save-api-key" type="button">Save key locally</button><button id="clear-api-key" type="button">Clear key</button></div>
         <div class="row"><button id="deep-scan" type="button">Deep Item Market scan</button></div>
-        <div class="muted">Find Dollar Sellers uses Torn's official Bazaar directory and its dollar-sale ranking to surface sellers with a history of $1 sales. Deep Item Market scan remains available as a slower secondary check of 50 item types per run.</div>
+        <div class="muted">Find & Scan sweeps Torn's weekly Bazaar panels plus every current specialized category, deduplicates the sellers, then reuses one background tab across every open Bazaar found. Torn's Directory is a showcase, not a complete registry of every Bazaar in the game. Deep Item Market scan remains a slower secondary check.</div>
       </details>
 
       <details><summary>Known Bazaar scanner (secondary)</summary>
@@ -675,7 +999,6 @@ function makeUI(doc) {
         <div class="row"><button id="next" type="button">Open next Bazaar</button><button id="inspect" type="button">Inspect visible listings</button></div>
         <label for="targets">Known seller IDs</label><textarea id="targets" placeholder="One ID per line, or comma-separated" maxlength="1400"></textarea>
         <div class="row"><button type="button" id="save-targets">Save sellers</button></div>
-        <h2>BAZAAR LEADS <span class="count" id="count"></span></h2><div id="events" aria-live="polite"></div>
       </details>
 
       <details><summary>Preferences</summary><label><input id="sound" type="checkbox"> Sound in this tab</label><span class="muted">Sound is only used for fresh verified/actionable observations after a user action.</span></details>
@@ -690,11 +1013,13 @@ function makeUI(doc) {
 }
 
 function renderUI(ui,state,identity,now,localError='',session={}) {
-  const h=health(state,now), fresh=unread(state,now), actionable=actionableMarketLeads(state,now), w=state.worker;
+  const h=health(state,now), fresh=unread(state,now), actionable=actionableMarketLeads(state,now), w=state.worker, scan=state.sellerScan;
   const staleWorker=workerIsStale(w,now);
+  const scanActive=scan && (scan.phase==='launching'||scan.phase==='scanning');
+  const scanStale=sellerScanIsStale(scan,now);
   const mine=w?.tabId===identity.tabId&&w?.documentId===identity.documentId;
   const totalBadge=actionable.length+fresh.length;
-  const status=session.discoveryBusy?'Scanning official market':actionable.length?`${actionable.length} buyable now`:h.label;
+  const status=session.discoveryBusy?'Loading dollar-sale directory':scanStale?'Stale scanner — reset required':scanActive?`Scanning Bazaars ${scan.scanned}/${scan.sellerIds.length}`:scan?.phase==='complete'?`${scan.found} $1 sale${scan.found===1?'':'s'} found`:actionable.length?`${actionable.length} buyable now`:h.label;
   if(ui.launcher){
     const mode=h.kind==='warning'?'warning':totalBadge?'deal':session.discoveryBusy?'active':h.kind;
     ui.launcher.dataset.mmDollarState=mode;
@@ -703,14 +1028,14 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
     const badge=ui.launcher.querySelector('[data-mm-dollar-badge]');
     if(badge){badge.hidden=!totalBadge;badge.textContent=String(totalBadge);}
     ui.launcher.style.boxShadow=totalBadge?'0 0 0 2px #738f45,0 0 10px #c7ee86':h.kind==='warning'?'0 0 0 1px #ffb855':'';
-    ui.setLauncherActive?.(h.kind==='active'||session.discoveryBusy||totalBadge>0);
+    ui.setLauncherActive?.(h.kind==='active'||session.discoveryBusy||scanActive||totalBadge>0);
   }
   ui.el('status').textContent=status;
-  ui.el('notice').textContent=localError||w?.error||'';
-  ui.el('discovery-progress').textContent=session.discoveryProgress||`${state.sellerLeads.length} dollar seller${state.sellerLeads.length===1?'':'s'} · ${state.marketLeads.length} item lead${state.marketLeads.length===1?'':'s'} · deep-scan cursor ${state.discoveryCursor}`;
-  ui.el('find-deals').disabled=!!localError||session.discoveryBusy||!session.apiConfigured;
-  ui.el('deep-scan').disabled=!!localError||session.discoveryBusy||!session.apiConfigured;
-  ui.el('load-dollar-sellers').disabled=!!localError|| (!!w&&!staleWorker) || !state.sellerLeads.some(x=>x.isOpen);
+  ui.el('notice').textContent=localError||scan?.error||w?.error||'';
+  ui.el('discovery-progress').textContent=session.discoveryProgress||(scanActive?`Background scan ${scan.scanned}/${scan.sellerIds.length} · ${scan.found} $1 sale${scan.found===1?'':'s'} collected${scan.errors.length?` · ${scan.errors.length} store error${scan.errors.length===1?'':'s'}`:''}`:`${state.sellerLeads.length} directory seller${state.sellerLeads.length===1?'':'s'} · ${state.marketLeads.length} item lead${state.marketLeads.length===1?'':'s'} · deep-scan cursor ${state.discoveryCursor}`);
+  ui.el('find-deals').disabled=!!localError||session.discoveryBusy||scanActive||!session.apiConfigured;
+  ui.el('reset-scan').disabled=!scanStale;
+  ui.el('deep-scan').disabled=!!localError||session.discoveryBusy||scanActive||!session.apiConfigured;
   ui.el('verify-market').disabled=!!localError||session.discoveryBusy||!session.currentMarketLead;
   ui.el('api-status').textContent=session.apiConfigured?'API key saved locally in Tampermonkey.':'No API key saved.';
   if(ui.shadow.activeElement!==ui.el('min-value'))ui.el('min-value').value=String(session.minValue||1);
@@ -731,7 +1056,7 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
       const card=document.createElement('article');card.dataset.status=lead.isOpen?'buyable':'gone';
       const name=document.createElement('b');name.textContent=`${lead.name} [${lead.sellerId}]`;
       const tag=document.createElement('span');tag.className='tag '+(lead.isOpen?'':'gone');tag.textContent=lead.isOpen?'BAZAAR OPEN':'CLOSED';
-      const info=document.createElement('div');info.textContent=`Weekly $1 sales: ${lead.dollarSales.toLocaleString()}`;
+      const info=document.createElement('div');info.textContent=lead.dollarSales===null?'Dollar-sale rank: not listed in weekly $1 panel':`Weekly $1 sales: ${lead.dollarSales.toLocaleString()}`;
       const timing=document.createElement('div');timing.className='muted';timing.textContent=`Directory checked ${age(lead.observedAt,now)}s ago`;
       const actions=document.createElement('div');actions.className='row';
       const link=document.createElement('a');link.className='action';link.textContent='Open Bazaar';link.href=lead.url;link.dataset.sellerRoute=lead.sellerId;
@@ -739,7 +1064,7 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
     }
     if(!state.sellerLeads.length){const p=document.createElement('div');p.className='muted';p.textContent='No dollar-seller directory results yet. Click Find Dollar Sellers.';ui.el('seller-leads').append(p);}
   }
-  ui.el('seller-count').textContent=`${state.sellerLeads.filter(x=>x.isOpen).length} open · ${state.sellerLeads.length} ranked`;
+  ui.el('seller-count').textContent=`${state.sellerLeads.filter(x=>x.isOpen).length} open · ${state.sellerLeads.length} unique directory sellers`;
 
   const marketKey=state.marketLeads.map(x=>`${x.id}:${x.status}:${x.verifiedAt}:${x.apiObservedAt}:${x.acknowledged}`).join('|')+`:${Math.floor(now/5000)}`;
   if(ui.marketKey!==marketKey){
@@ -765,23 +1090,23 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
   }
   ui.el('market-count').textContent=`${actionable.length} buyable · ${state.marketLeads.filter(x=>x.status==='lead').length} verify`;
 
-  ui.el('count').textContent=`${fresh.length} new`;
-  const eventKey=state.events.map(e=>`${e.id}:${e.acknowledged}:${e.expiresAt>now}`).join('|');
+  ui.el('count').textContent=`${state.events.length} found · ${fresh.length} fresh`;
+  const eventKey=state.events.map(e=>`${e.id}:${e.item.quantity}:${e.acknowledged}:${e.expiresAt>now}`).join('|');
   if(ui.eventKey!==eventKey){
     ui.eventKey=eventKey;ui.el('events').replaceChildren();
     for(const e of state.events){
       const card=document.createElement('article');card.dataset.status=e.expiresAt<=now?'stale':'lead';
-      const name=document.createElement('b');name.textContent=`$1 · ${e.item.name}`;
+      const name=document.createElement('b');name.textContent=`$1 · ${e.item.name} · qty ${e.item.quantity}`;
       const seller=document.createElement('div');seller.textContent=`${e.seller} [${e.targetId}]`;
-      const timing=document.createElement('div');timing.className='muted';timing.textContent=`Observed ${new Date(e.detectedAt).toLocaleTimeString()}${e.expiresAt<=now?' · stale':''}`;
+      const timing=document.createElement('div');timing.className='muted';timing.textContent=`Observed ${new Date(e.detectedAt).toLocaleTimeString()}${e.expiresAt<=now?' · recheck before purchase':''}`;
       const actions=document.createElement('div');actions.className='row';
       const link=document.createElement('a');link.className='action';link.textContent='Open Bazaar';link.href=e.url;link.dataset.route=e.id;
       const ack=document.createElement('button');ack.type='button';ack.textContent=e.acknowledged?'Acknowledged':'Acknowledge';ack.disabled=e.acknowledged;ack.dataset.ack=e.id;
       actions.append(link,ack);card.append(name,seller,timing,actions);ui.el('events').append(card);
     }
-    if(!state.events.length){const p=document.createElement('div');p.className='muted';p.textContent='No known-Bazaar observations.';ui.el('events').append(p);}
+    if(!state.events.length){const p=document.createElement('div');p.className='muted';p.textContent=scanActive?'Scanning Bazaars…':'No $1 Bazaar sales found in the latest scan.';ui.el('events').append(p);}
   }
-  ui.el('diagnostics').textContent=JSON.stringify({script:VERSION,schema:state.schema,revision:state.revision,sellerLeads:state.sellerLeads.length,openDollarSellers:state.sellerLeads.filter(x=>x.isOpen).length,lastSellerDiscovery:state.lastSellerDiscovery||null,marketLeads:state.marketLeads.length,actionableMarket:actionable.length,discoveryCursor:state.discoveryCursor,lastDiscovery:state.lastDiscovery||null,workerId:w?.id||null,phase:w?.phase||'stopped',target:w?.targetId||null,targetCount:state.targets.length,lastDetection:state.lastDetection||null,events:state.events.length,duplicateLedger:`${state.seen.length}/${LIMIT.seen}`,apiConfigured:!!session.apiConfigured,discoveryBusy:!!session.discoveryBusy,window:ui.panel.hidden?'minimized':'open',error:localError||w?.error||null},null,2);
+  ui.el('diagnostics').textContent=JSON.stringify({script:VERSION,schema:state.schema,revision:state.revision,sellerLeads:state.sellerLeads.length,openDollarSellers:state.sellerLeads.filter(x=>x.isOpen).length,lastSellerDiscovery:state.lastSellerDiscovery||null,sellerScan:scan?{phase:scan.phase,scanned:scan.scanned,total:scan.sellerIds.length,found:scan.found,errors:scan.errors.length,target:scan.targetId}:null,marketLeads:state.marketLeads.length,actionableMarket:actionable.length,discoveryCursor:state.discoveryCursor,lastDiscovery:state.lastDiscovery||null,workerId:w?.id||null,phase:w?.phase||'stopped',target:w?.targetId||null,targetCount:state.targets.length,lastDetection:state.lastDetection||null,events:state.events.length,duplicateLedger:`${state.seen.length}/${LIMIT.seen}`,apiConfigured:!!session.apiConfigured,discoveryBusy:!!session.discoveryBusy,window:ui.panel.hidden?'minimized':'open',error:localError||scan?.error||w?.error||null},null,2);
 }
 
 // ---- runtime ----
@@ -789,13 +1114,78 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
 const MODULE_ID='dollar-broker';
 const DOCK_ICON='<span style="position:relative;width:100%;height:100%;display:grid;place-items:center"><svg viewBox="0 0 26 26" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true" style="width:25px;height:25px"><path d="M4 4h11l7 7-11 11-7-7Z"/><circle cx="8" cy="8" r="1"/><path d="M16 9c-4-3-8 2-4 4s0 6-4 3m8-8-8 10"/></svg><span data-mm-dollar-badge hidden style="position:absolute;right:-7px;top:-7px;background:#d4f59e;border:1px solid #28341c;color:#172312;border-radius:9px;min-width:17px;padding:0 4px;font:bold 11px/16px system-ui;pointer-events:none">0</span></span>';
 
+const scanSleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+
+async function collectBazaarSnapshot(doc,win,targetId,documentId,initialUrl) {
+  const collected=new Map();
+  let seller='',lastError='',successful=false,lastHeight=-1,stableBottom=0;
+  const deadline=Date.now()+20000;
+  while(Date.now()<deadline) {
+    const at=Date.now();
+    const snapshot=inspectBazaarForScan(doc,win,{targetId,documentId,at});
+    if(snapshot.ok) {
+      successful=true;seller=snapshot.seller||seller;lastError='';
+      for(const item of snapshot.items) {
+        const key=item.listingId||item.itemId||item.name;
+        const previous=collected.get(key);
+        if(!previous || item.quantity>previous.quantity) collected.set(key,item);
+      }
+    } else lastError=snapshot.error||lastError;
+
+    const root=doc.querySelector('#bazaarRoot');
+    if(!root || doc.readyState!=='complete') {await scanSleep(350);continue;}
+    const de=doc.documentElement;
+    const height=Math.max(de.scrollHeight,doc.body?.scrollHeight||0);
+    const bottom=Math.max(0,height-win.innerHeight);
+    const y=Math.min(Math.max(0,win.scrollY||de.scrollTop||0),bottom);
+    if(bottom<=0 || y>=bottom-4) {
+      stableBottom=height===lastHeight?stableBottom+1:0;
+      if(successful && stableBottom>=2) break;
+    } else {
+      const step=Math.max(420,Math.floor(win.innerHeight*0.8));
+      win.scrollTo(0,Math.min(bottom,y+step));
+      stableBottom=0;
+    }
+    lastHeight=height;
+    await scanSleep(350);
+  }
+  if(!successful) throw new Error(lastError||'Bazaar did not become inspectable before the scan timeout.');
+  return {ok:true,items:[...collected.values()],seller,targetId,documentId,at:Date.now(),error:'',inspected:collected.size};
+}
+
+async function runSellerScannerTab(gm,win,doc,store,identity,scanId,initialUrl) {
+  try {
+    const claimed=await store.change(state=>claimSellerScan(state,identity.tabId,scanId,initialUrl,Date.now()));
+    if(!claimed.result) {try{win.close();}catch{} return {destroy(){}};}
+    const targetId=claimed.state.sellerScan.targetId;
+    let transition;
+    try {
+      const snapshot=await collectBazaarSnapshot(doc,win,targetId,identity.documentId,initialUrl);
+      transition=await store.change(state=>recordSellerScanSnapshot(state,identity.tabId,scanId,snapshot,Date.now()));
+    } catch(error) {
+      transition=await store.change(state=>skipSellerScanTarget(state,identity.tabId,scanId,error?.message||error,Date.now()));
+    }
+    if(transition.result.url) {
+      win.location.replace(transition.result.url);
+      return {destroy(){}};
+    }
+    await scanSleep(150);
+    win.close();
+    return {destroy(){}};
+  } catch(error) {
+    try {await store.change(state=>failSellerScan(state,scanId,error?.message||error,Date.now()));} catch {}
+    try { win.close(); } catch {}
+    return {destroy(){}};
+  }
+}
+
 async function boot(gm, win, doc) {
   const sharedCore=globalThis.MMTornCore;
   if(!sharedCore?.registerDockLauncher || !sharedCore?.makePanelDraggable) throw new Error('MM Torn Core dependency is unavailable.');
 
   const identity={tabId:'',documentId:win.crypto.randomUUID(),workerId:''};
   const store=new Store(gm,win.navigator.locks);
-  let state=emptyState(), error='', closed=false, busy=false, baseline=false, ticker=null, listener=null, sound=null;
+  let state=emptyState(), error='', closed=false, busy=false, baseline=false, ticker=null, listener=null, sound=null, scannerTab=null;
   let apiKey='', discoveryBusy=false, discoveryProgress='';
   let preferences={sound:false,minValue:DISCOVERY.minValue};
   let tabData;
@@ -810,6 +1200,8 @@ async function boot(gm, win, doc) {
   } catch {error='Storage initialization failed or has an unsupported schema. Existing data was preserved.';}
 
   const initialUrl=win.location.href;
+  const scanId=scanTokenAt(initialUrl);
+  if(scanId) return runSellerScannerTab(gm,win,doc,store,identity,scanId,initialUrl);
   const ui=makeUI(doc);
 
   const launcher=sharedCore.registerDockLauncher({
@@ -846,6 +1238,10 @@ async function boot(gm, win, doc) {
     try {validated=readState(next);} catch(e) {error=e.message;render();return;}
     if(validated.revision<state.revision) return;
     state=validated;
+    if(scannerTab && state.sellerScan?.ownerTabId===identity.tabId && ['complete','error'].includes(state.sellerScan.phase)) {
+      try {scannerTab.close?.();} catch {}
+      scannerTab=null;
+    }
     let chime=false;
     for(const e of unread(state,Date.now())) {
       if(!played.has(e.id) && baseline && audible && preferences.sound && active() && sound) chime=true;
@@ -897,20 +1293,44 @@ async function boot(gm, win, doc) {
 
   on(ui.el('find-deals'),'click',e=>act(e,async()=>{
     if(!apiKey) throw new Error('Save a Torn public API key first.');
+    if(typeof gm.openInTab!=='function') throw new Error('Tampermonkey background-tab permission is unavailable.');
+    if(sellerScanIsActive(state.sellerScan)) {
+      if(!sellerScanIsStale(state.sellerScan,Date.now())) throw new Error('A dollar Bazaar scan is already running.');
+      if(!scannerTab) throw new Error('A stale scanner may still be open. Close that extra Torn tab before starting another scan.');
+      try {scannerTab.close?.();} catch {}
+      const staleId=state.sellerScan.id;
+      scannerTab=null;
+      await change(s=>failSellerScan(s,staleId,'Stale scanner ownership was closed before restart.',Date.now()));
+    }
     discoveryBusy=true;discoveryProgress='Loading Torn dollar-sale Bazaar directory…';render();
     try {
-      const result=await discoverDollarSellers({gm,key:apiKey});
-      const at=Date.now();
-      await change(s=>replaceSellerLeads(s,result.sellers,at));
-      discoveryProgress=`Found ${result.open} open dollar-sale Bazaar${result.open===1?'':'s'} among ${result.total} ranked sellers.`;
+      const result=await discoverDollarSellers({gm,key:apiKey,onProgress:progress=>{
+        discoveryProgress=`Directory sweep ${progress.current}/${progress.total} categories · ${progress.sellers} unique seller${progress.sellers===1?'':'s'} found`;
+        render();
+      }});
+      const at=Date.now(),newScanId=win.crypto.randomUUID();
+      const prepared=await change(s=>{
+        replaceSellerLeads(s,result.sellers,at);
+        return beginSellerScan(s,identity.tabId,newScanId,at);
+      });
+      discoveryProgress=`Torn directory returned ${result.open} open dollar-sale Bazaar${result.open===1?'':'s'} among ${result.total} listed sellers · starting one background scanner tab.`;
+      try {
+        scannerTab=await gm.openInTab(prepared.result,{active:false,setParent:true});
+      } catch(openError) {
+        await change(s=>failSellerScan(s,newScanId,'Could not open the background scanner tab.',Date.now()));
+        throw openError;
+      }
     } finally {
       discoveryBusy=false;render();
     }
   }));
 
-  on(ui.el('load-dollar-sellers'),'click',e=>act(e,async()=>{
-    const result=await change(s=>loadOpenSellerTargets(s,Date.now()));
-    discoveryProgress=`Loaded ${result.result} open dollar-sale seller${result.result===1?'':'s'} into the Bazaar scanner.`;
+  on(ui.el('reset-scan'),'click',e=>act(e,async()=>{
+    const scan=state.sellerScan;
+    if(!sellerScanIsStale(scan,Date.now())) throw new Error('Only a stale background scan can be reset.');
+    if(scannerTab){try{scannerTab.close?.();}catch{} scannerTab=null;}
+    await change(s=>failSellerScan(s,scan.id,'Stale background scan reset. Start a new scan when the old extra tab is closed.',Date.now()));
+    discoveryProgress='Stale scan reset. Start Find & Scan again after confirming no old scanner tab remains.';
     render();
   }));
 
