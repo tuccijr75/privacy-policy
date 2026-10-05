@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.13.1
+// @version      1.1.14.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -22,7 +22,7 @@
 
   const RUNTIME_GUARD = '__SS_MUGGER_RUNTIME_ACTIVE__';
   if (window[RUNTIME_GUARD]) return;
-  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.13'};
+  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.14'};
 
   const BOOT_PROBE_ID = 'ss-mugger-boot-probe';
   function showBootProbe(label = 'SSQ', isError = false) {
@@ -627,7 +627,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.13.1';
+  const VERSION = '1.1.14.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
@@ -651,7 +651,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     itemSignals: `${PREFIX}:item_signals`,
     itemScans: `${PREFIX}:item_scans`,
     pendingScan: `${PREFIX}:pending_scan`,
-    scanSession: `${PREFIX}:scan_session`
+    scanSession: `${PREFIX}:scan_session`,
+    scanIntake: `${PREFIX}:scan_intake`
   };
   const DEFAULTS = Object.freeze({
     marketPollSeconds: 30,
@@ -795,7 +796,12 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   const saveItemSignals = () => writeJson(STORE.itemSignals, itemSignals.slice(-2500));
   const saveItemScans = () => writeJson(STORE.itemScans, itemScans);
   const savePendingScan = () => writeJson(STORE.pendingScan, pendingItemScan);
-  const saveScanSession = () => writeJson(STORE.scanSession, scanSession);
+  const saveScanSession = () => {
+    if (scanSession && typeof scanSession === 'object') scanSession.updatedAt = nowSec();
+    writeJson(STORE.scanSession, scanSession);
+  };
+  const readScanIntake = () => readJson(STORE.scanIntake, []);
+  const saveScanIntake = (records) => writeJson(STORE.scanIntake, (Array.isArray(records) ? records : []).slice(-2500));
   const saveSettings = () => writeJson(STORE.settings, settings);
 
   function logError(scope, error) {
@@ -916,6 +922,89 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     return result.sort((a,b)=>b.score-a.score || b.salesPerHour-a.salesPerHour || b.turnoverPerHour-a.turnoverPerHour).slice(0,Math.max(4,Math.min(30,Number(settings.hotItemLimit)||12)));
   }
   const SCAN_WORKER_NAME = 'ss_mugger_hot_scan_worker';
+  const SCAN_MESSAGE_TYPE = 'ss-mugger-hot-scan';
+
+  function isScanWorker() {
+    return window.name === SCAN_WORKER_NAME;
+  }
+
+  function scanDomUsable() {
+    return isScanWorker() || focused();
+  }
+
+  function syncScanSessionFromStorage() {
+    const stored = readJson(STORE.scanSession, null);
+    if (!stored || typeof stored !== 'object') return false;
+    const before = Number(scanSession?.updatedAt || scanSession?.completedAt || scanSession?.startedAt || 0);
+    const after = Number(stored?.updatedAt || stored?.completedAt || stored?.startedAt || 0);
+    scanSession = stored;
+    return after !== before;
+  }
+
+  function postScanMessage(kind, extra = {}) {
+    if (!isScanWorker()) return;
+    try {
+      window.opener?.postMessage({type:SCAN_MESSAGE_TYPE, kind, sessionId:String(scanSession?.id || ''), ...extra}, location.origin);
+    } catch {}
+  }
+
+  function appendHotScanIntake(records) {
+    const incoming = Array.isArray(records) ? records : [];
+    if (!incoming.length) return 0;
+    const cutoff = nowSec() - 21600;
+    const stored = readScanIntake().filter((row)=>Number(row?.observedAt || 0) >= cutoff);
+    const keys = new Set(stored.map((row)=>String(row?.key || '')));
+    let added = 0;
+    for (const row of incoming) {
+      const key = String(row?.key || '');
+      if (!key || keys.has(key)) continue;
+      keys.add(key);
+      stored.push(row);
+      added++;
+    }
+    if (added) saveScanIntake(stored);
+    return added;
+  }
+
+  function ingestHotScanIntake() {
+    if (isScanWorker()) return 0;
+    const records = readScanIntake();
+    let ingested = 0;
+    for (const row of records) {
+      if (!row || row.source !== 'itemmarket' || !/^\d+$/.test(String(row.sellerId || '')) || !/^\d+$/.test(String(row.itemId || ''))) continue;
+      const candidateWatch = {
+        source:'itemmarket',
+        sellerId:String(row.sellerId),
+        sellerName:String(row.sellerName || `Player ${row.sellerId}`),
+        itemId:String(row.itemId),
+        itemName:String(row.itemName || `Item ${row.itemId}`),
+        price:normalizeMoney(row.price),
+        amount:Math.max(1, asInt(row.amount, 1)),
+        uid:String(row.uid || ''),
+        observedUrl:String(row.observedUrl || '').slice(0,500),
+        hotScan:true,
+        hotRank:Math.max(0, asInt(row.hotRank, 0)),
+        hotScanSessionId:String(row.sessionId || ''),
+        hotScanObservedAt:Math.max(0, asInt(row.observedAt, 0)),
+        intakeState:'awaiting-sale',
+        baseline:null
+      };
+      const key = watchKey(candidateWatch);
+      const existing = watches.find((watch)=>watchKey(watch) === key);
+      if (existing && Number(existing.hotScanObservedAt || 0) >= candidateWatch.hotScanObservedAt) continue;
+      const watch = upsertWatch(candidateWatch);
+      if (!watch) continue;
+      watch.hotScan = true;
+      watch.hotRank = candidateWatch.hotRank;
+      watch.hotScanSessionId = candidateWatch.hotScanSessionId;
+      watch.hotScanObservedAt = candidateWatch.hotScanObservedAt;
+      watch.intakeState = watch.baseline?.ok ? 'tracking-sale' : 'awaiting-sale';
+      watch.nextPollAt = 0;
+      ingested++;
+    }
+    if (ingested) saveWatches();
+    return ingested;
+  }
 
   function itemPosUrl(itemId, itemName = '') {
     const name = String(itemName || '').trim();
@@ -926,11 +1015,19 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   function scanSessionProgress() {
     const queue = Array.isArray(scanSession?.queue) ? scanSession.queue : [];
     const scanned = new Set((Array.isArray(scanSession?.scanned) ? scanSession.scanned : []).map(String));
-    return {queue, scanned, done:queue.filter((item)=>scanned.has(String(item.itemId))).length, total:queue.length};
+    return {
+      queue,
+      scanned,
+      done:queue.filter((item)=>scanned.has(String(item.itemId))).length,
+      total:queue.length,
+      intakeCount:Math.max(0, asInt(scanSession?.intakeCount, 0))
+    };
   }
 
   function resetScanSession() {
-    scanSession = {active:false,queue:[],scanned:[],startedAt:0,completedAt:0};
+    scanSession = {id:'',active:false,queue:[],scanned:[],startedAt:0,completedAt:0,intakeCount:0,updatedAt:nowSec()};
+    pendingItemScan = null;
+    savePendingScan();
     saveScanSession();
     ensureScanWorkerBar();
     render(true);
@@ -941,11 +1038,14 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     if (scanSession?.active && existing.total) return existing;
     const movers = hotItems();
     scanSession = {
+      id:uid(),
       active:Boolean(movers.length),
       queue:movers.map((item,index)=>({itemId:String(item.itemId),itemName:String(item.itemName || `Item ${item.itemId}`),hotRank:index+1})),
       scanned:[],
       startedAt:nowSec(),
-      completedAt:0
+      completedAt:0,
+      intakeCount:0,
+      updatedAt:nowSec()
     };
     saveScanSession();
     return scanSessionProgress();
@@ -969,16 +1069,28 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     const id = String(item?.itemId || '');
     if (!/^\d+$/.test(id)) return false;
     const itemName = String(item?.itemName || `Item ${id}`);
-    pendingItemScan = {itemId:id,itemName,requestedAt:nowSec(),scanSession:Boolean(fromSession)};
+    pendingItemScan = {
+      itemId:id,
+      itemName,
+      requestedAt:nowSec(),
+      scanSession:Boolean(fromSession),
+      scanSessionId:fromSession ? String(scanSession?.id || '') : '',
+      hotRank:fromSession ? Math.max(0, asInt(item?.hotRank, 0)) : 0
+    };
     savePendingScan();
     const url = itemPosUrl(id, itemName);
-    if (PLATFORM.pda || PLATFORM.mobile || window.name === SCAN_WORKER_NAME) {
+    if (PLATFORM.pda || PLATFORM.mobile || isScanWorker()) {
       location.href = url;
       return true;
     }
     try {
       const worker = window.open(url, SCAN_WORKER_NAME);
-      if (worker) { try { worker.focus(); } catch {} return true; }
+      if (worker) {
+        try { worker.blur(); } catch {}
+        try { window.focus(); } catch {}
+        setTimeout(()=>{ try { window.focus(); } catch {} }, 80);
+        return true;
+      }
     } catch {}
     location.href = url;
     return true;
@@ -989,37 +1101,67 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
 
   function scanNextHotItem() {
-    const progress = ensureHotScanSession();
+    syncScanSessionFromStorage();
+    const progress = scanSession?.active ? scanSessionProgress() : ensureHotScanSession();
+    if (!progress.total) {
+      showScanToast(`${APP}: no Hot items are ready to scan yet.`);
+      render(true);
+      return false;
+    }
     const next = progress.queue.find((item)=>!progress.scanned.has(String(item.itemId)));
     if (!next) {
       scanSession.active = false;
       scanSession.completedAt = scanSession.completedAt || nowSec();
       saveScanSession();
-      showScanToast(`${APP}: Hot-item scan complete (${progress.done}/${progress.total}).`);
+      showScanToast(`${APP}: Hot scan already complete (${progress.done}/${progress.total}).`);
       ensureScanWorkerBar();
       render(true);
       return false;
     }
-    return openScanWorker(next, true);
+    const opened = openScanWorker(next, true);
+    if (opened && !isScanWorker()) showScanToast(`${APP}: Hot scan running in one background worker tab. You can keep using Torn here.`);
+    return opened;
   }
 
-  function markHotScanComplete(itemId) {
+  function finishHotScanWorker() {
+    const progress = scanSessionProgress();
+    scanSession.active = false;
+    scanSession.completedAt = scanSession.completedAt || nowSec();
+    saveScanSession();
+    postScanMessage('complete', {done:progress.done,total:progress.total,intakeCount:progress.intakeCount});
+    if (!PLATFORM.pda) {
+      try {
+        if (typeof GM_notification === 'function') GM_notification({
+          title:`${APP}: Hot scan complete`,
+          text:`${progress.done}/${progress.total} Hot items scanned · ${progress.intakeCount} listing observations stored. Targets will appear only after a sale signal.`,
+          timeout:7000
+        });
+      } catch {}
+    }
+    try { if (navigator.vibrate) navigator.vibrate([80,60,80]); } catch {}
+    ensureScanWorkerBar();
+    if (isScanWorker() && !PLATFORM.pda && !PLATFORM.mobile) setTimeout(()=>{ try { window.close(); } catch {} }, 700);
+  }
+
+  function markHotScanComplete(itemId, captured = 0) {
     if (!scanSession?.active) return;
     const id = String(itemId || '');
     if (!scanSession.queue?.some((item)=>String(item.itemId)===id)) return;
     const scanned = new Set((scanSession.scanned || []).map(String));
     scanned.add(id);
     scanSession.scanned = [...scanned];
-    const progress = scanSessionProgress();
-    if (progress.total && progress.done >= progress.total) {
-      scanSession.active = false;
-      scanSession.completedAt = nowSec();
-      showScanToast(`${APP}: Hot-item scan complete — ${progress.total} items scanned.`);
-      try { if (navigator.vibrate) navigator.vibrate([80,60,80]); } catch {}
-    } else {
-      showScanToast(`${APP}: scanned ${progress.done}/${progress.total}. Use Scan Next to continue.`);
-    }
+    scanSession.intakeCount = Math.max(0, asInt(scanSession.intakeCount, 0)) + Math.max(0, asInt(captured, 0));
     saveScanSession();
+    const progress = scanSessionProgress();
+    postScanMessage('progress', {done:progress.done,total:progress.total,intakeCount:progress.intakeCount});
+    if (progress.total && progress.done >= progress.total) {
+      finishHotScanWorker();
+      return;
+    }
+    const next = progress.queue.find((item)=>!progress.scanned.has(String(item.itemId)));
+    if (next) {
+      setTimeout(()=>openScanWorker(next, true), 550);
+    }
     ensureScanWorkerBar();
   }
 
@@ -1035,7 +1177,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
 
   function ensureScanWorkerBar() {
-    const shouldShow = isItemMarket() && (Boolean(scanSession?.active) || Boolean(scanSession?.completedAt));
+    const shouldShow = isScanWorker() && isItemMarket() && (Boolean(scanSession?.active) || Boolean(scanSession?.completedAt));
     let bar = document.getElementById('mmms-scan-worker-bar');
     if (!shouldShow) { bar?.remove(); return; }
     if (!bar) {
@@ -1045,7 +1187,6 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       bar.addEventListener('click',(event)=>{
         const button = event.target.closest('[data-scan-action]');
         if (!button) return;
-        if (button.dataset.scanAction === 'next') scanNextHotItem();
         if (button.dataset.scanAction === 'reset') resetScanSession();
         if (button.dataset.scanAction === 'close') { try { window.close(); } catch {} }
       });
@@ -1053,43 +1194,54 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     const progress = scanSessionProgress();
     const current = currentItemName() || `Item ${currentItemId() || '?'}`;
     if (scanSession.active) {
-      bar.innerHTML = `<b>SS_Mugger Scan</b><span>${esc(current)} · ${progress.done}/${progress.total} · ${verifiedTargetPool().length} verified targets</span><button data-scan-action="next">Scan Next</button><button data-scan-action="reset">Stop</button>`;
+      bar.innerHTML = `<b>SS_Mugger Intake</b><span>${esc(current)} · ${progress.done}/${progress.total} scanned · ${progress.intakeCount} listings stored</span><button data-scan-action="reset">Stop</button>`;
     } else {
-      bar.innerHTML = `<b>SS_Mugger Scan Complete</b><span>${progress.done}/${progress.total} Hot items scanned · ${verifiedTargetPool().length} verified targets</span><button data-scan-action="close">Close worker</button><button data-scan-action="reset">Reset</button>`;
+      bar.innerHTML = `<b>SS_Mugger Intake Complete</b><span>${progress.done}/${progress.total} Hot items scanned · ${progress.intakeCount} listings stored</span><button data-scan-action="close">Close</button>`;
     }
   }
 
   async function waitForItemMarketReady(itemId, timeoutMs = 8000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      if (!focused() || !isItemMarket() || String(currentItemId()) !== String(itemId)) return false;
+      if (!scanDomUsable() || !isItemMarket() || String(currentItemId()) !== String(itemId)) return false;
       const buyControls = [...document.querySelectorAll('button,[role="button"]')].filter((node)=>/\bBUY\b/i.test(String(node.textContent || node.getAttribute?.('aria-label') || '')));
       const sellerLinks = document.querySelectorAll('a[href*="profiles.php"][href*="XID="]');
       if (buyControls.length || sellerLinks.length) return true;
       await new Promise((resolve)=>setTimeout(resolve, 350));
     }
-    return focused() && isItemMarket() && String(currentItemId()) === String(itemId);
+    return scanDomUsable() && isItemMarket() && String(currentItemId()) === String(itemId);
   }
 
   async function runPendingItemScan() {
-    if (!pendingItemScan || !licensed() || !focused() || !isItemMarket()) return false;
+    if (!pendingItemScan || !licensed() || !scanDomUsable() || !isItemMarket()) return false;
     const itemId = currentItemId();
     if (!itemId || String(itemId) !== String(pendingItemScan.itemId)) return false;
     const request = {...pendingItemScan};
+    if (request.scanSession && isScanWorker()) {
+      try { window.opener?.focus(); } catch {}
+    }
     await waitForItemMarketReady(itemId);
-    if (!focused() || String(currentItemId()) !== String(itemId)) return false;
+    if (!scanDomUsable() || String(currentItemId()) !== String(itemId)) return false;
     const captured = captureItemMarketVisible();
     itemScans[itemId] = nowSec();
     saveItemScans();
     pendingItemScan = null;
     savePendingScan();
+
+    // Hot scans are intake-only. The normal user tab ingests these listing observations
+    // into watches and waits for a later API-observed sale before handleSignal() can
+    // evaluate or verify a target.
+    if (request.scanSession) {
+      markHotScanComplete(itemId, captured);
+      ensureScanWorkerBar();
+      return captured >= 0;
+    }
+
     const group = watches.filter((w)=>w.active && w.source==='itemmarket' && String(w.itemId)===String(itemId));
     for (const watch of group) watch.nextPollAt = 0;
     saveWatches();
     if (group.length && budgetAvailable()) { try { await pollMarketGroup(itemId, true); } catch {} }
-    if (budgetAvailable()) { try { await refreshCandidatesForItem(itemId); } catch {} }
     pruneItemSignals(true);
-    if (request.scanSession) markHotScanComplete(itemId);
     ensureScanWorkerBar();
     render();
     return captured >= 0;
@@ -1106,8 +1258,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
   function clearItemHistory() {
     itemSignals = []; itemScans = {}; pendingItemScan = null;
-    scanSession = {active:false,queue:[],scanned:[],startedAt:0,completedAt:0};
-    saveItemSignals(); saveItemScans(); savePendingScan(); saveScanSession();
+    scanSession = {id:'',active:false,queue:[],scanned:[],startedAt:0,completedAt:0,intakeCount:0,updatedAt:nowSec()};
+    saveItemSignals(); saveItemScans(); savePendingScan(); saveScanSession(); saveScanIntake([]);
     ensureScanWorkerBar();
     render(true);
   }
@@ -1233,11 +1385,13 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
 
   function captureItemMarketVisible() {
-    if (!focused() || !isItemMarket()) return 0;
+    if (!scanDomUsable() || !isItemMarket()) return 0;
     const itemId = currentItemId();
     if (!itemId) return 0;
     const itemName = currentItemName() || (String(pendingItemScan?.itemId || '') === String(itemId) ? String(pendingItemScan?.itemName || '') : '') || `Item ${itemId}`;
     const anchors = [...document.querySelectorAll('a[href*="profiles.php"][href*="XID="]')].filter(isVisible);
+    const hotScan = Boolean(pendingItemScan?.scanSession);
+    const intake = [];
     let added = 0;
     for (const anchor of anchors) {
       const sellerId = sellerIdFromHref(anchor.href);
@@ -1251,14 +1405,40 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       if (!price) continue;
       const amount = extractAmount(container);
       const uidValue = extractUid(container);
+      const sellerName = (anchor.textContent || `Player ${sellerId}`).trim().slice(0, 120);
+
+      if (hotScan) {
+        const sessionId = String(pendingItemScan?.scanSessionId || scanSession?.id || '');
+        const observedAt = nowSec();
+        intake.push({
+          key:[sessionId,itemId,sellerId,uidValue || '',price].join(':'),
+          sessionId,
+          hotRank:Math.max(0, asInt(pendingItemScan?.hotRank, 0)),
+          source:'itemmarket',
+          sellerId,
+          sellerName,
+          itemId,
+          itemName,
+          price,
+          amount,
+          uid:uidValue,
+          observedUrl:location.href.slice(0,500),
+          observedAt
+        });
+        continue;
+      }
+
       const before = watches.length;
       upsertWatch({
-        source: 'itemmarket', sellerId, sellerName: (anchor.textContent || `Player ${sellerId}`).trim().slice(0, 120),
-        itemId, itemName, price, amount, uid: uidValue,
-        observedUrl: location.href.slice(0, 500), baseline: null
+        source:'itemmarket', sellerId, sellerName,
+        itemId, itemName, price, amount, uid:uidValue,
+        observedUrl:location.href.slice(0,500), baseline:null
       });
       if (watches.length > before) added++;
     }
+
+    if (hotScan) return appendHotScanIntake(intake);
+
     if (added) {
       const group = watches.filter((w) => w.active && w.source === 'itemmarket' && w.itemId === itemId);
       for (const watch of group) watch.nextPollAt = 0;
@@ -1902,7 +2082,19 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
 
   async function schedulerTick() {
+    if (isScanWorker()) {
+      if (!apiKey) return;
+      if (!licensed() || nowSec() - Number(licenseState.checkedAt || 0) >= 1800) {
+        await verifyLicense(true);
+      }
+      if (pendingItemScan && licensed() && isItemMarket()) void runPendingItemScan();
+      return;
+    }
+
+    const scanChanged = syncScanSessionFromStorage();
+    const ingested = ingestHotScanIntake();
     trimState();
+    if ((scanChanged || ingested) && panelOpen) render(true);
     if (!apiKey) return;
     if (!licensed() || nowSec() - Number(licenseState.checkedAt || 0) >= 1800) {
       await verifyLicense(true);
@@ -2234,8 +2426,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         <div class="mmms-stat"><b>${scanSession?.active ? `${progress.done}/${progress.total}` : (scanSession?.completedAt ? 'DONE' : '—')}</b>scan progress</div>
         <div class="mmms-stat"><b>${paused ? 'PAUSED' : 'LIVE'}</b>engine</div>
       </div>
-      <div class="mmms-section mmms-scan-box"><h3>Hot-item scan</h3><div class="mmms-muted">Uses one reusable worker tab. Torn requires one manual Scan Next action for each page load; the focused page is captured automatically, API validation runs, and target state is saved immediately.</div>
-        <div class="mmms-actions" style="padding:8px 0 0"><button class="mmms-btn primary" data-action="scan-next">${scanSession?.active ? 'Scan Next Hot Item' : 'Start Hot Scan'}</button>${(scanSession?.active || scanSession?.completedAt) ? '<button class="mmms-btn" data-action="scan-reset">Reset Scan</button>' : ''}<button class="mmms-btn" data-action="tab" data-tab="targets">View Targets</button></div>
+      <div class="mmms-section mmms-scan-box"><h3>Hot-item scan</h3><div class="mmms-muted">Uses one reusable background worker tab. The worker intakes visible bazaar/listing observations only — it does not profile, score, or verify targets. It advances through the full Hot list automatically, returns focus to this tab, and closes itself after the final scan. Stored listings are monitored for a later sale; only then can the seller be evaluated and promoted to Targets.</div>
+        <div class="mmms-actions" style="padding:8px 0 0"><button class="mmms-btn primary" data-action="scan-next" ${scanSession?.active ? 'disabled' : ''}>${scanSession?.active ? 'Hot Scan Running' : 'Start Hot Scan'}</button>${(scanSession?.active || scanSession?.completedAt) ? '<button class="mmms-btn" data-action="scan-reset">Reset Scan</button>' : ''}<button class="mmms-btn" data-action="tab" data-tab="targets">View Targets</button></div>
       </div>
       <div class="mmms-actions"><button class="mmms-btn" data-action="refresh-hot">Refresh movers</button><button class="mmms-btn" data-action="pause">${paused ? 'Resume' : 'Pause'}</button><button class="mmms-btn" data-action="export">Diagnostics</button></div>
       <div class="mmms-section"><h3>High-money movers</h3><div class="mmms-muted" style="margin-bottom:7px">Ranked for both money flow and real sale velocity. Items must show repeat movement and clear the adaptive high-money floor.</div>
@@ -2442,6 +2634,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     itemScans = readJson(STORE.itemScans, itemScans);
     pendingItemScan = readJson(STORE.pendingScan, pendingItemScan);
     scanSession = readJson(STORE.scanSession, scanSession);
+    if (!isScanWorker()) ingestHotScanIntake();
   }
 
   function exportDiagnostics() {
@@ -2469,6 +2662,13 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
   setInterval(() => {
     attachLauncher();
+    if (isScanWorker()) {
+      syncScanSessionFromStorage();
+      pendingItemScan = readJson(STORE.pendingScan, pendingItemScan);
+      ensureScanWorkerBar();
+      if (pendingItemScan && licensed() && isItemMarket()) void runPendingItemScan();
+      return;
+    }
     if (focused()) ensureScanWorkerBar();
     if (settings.autoCapture && focused()) {
       const marker = `${location.href}|${document.body?.childElementCount || 0}`;
@@ -2493,11 +2693,38 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     if (licensed()) { captureActivePage(); if (pendingItemScan) void runPendingItemScan(); }
     if (panelOpen) render(true);
   });
+  window.addEventListener('message', (event) => {
+    if (event.origin !== location.origin || event.data?.type !== SCAN_MESSAGE_TYPE || isScanWorker()) return;
+    syncSharedState();
+    const progress = scanSessionProgress();
+    if (event.data.kind === 'progress') {
+      if (panelOpen) render(true);
+    } else if (event.data.kind === 'complete') {
+      showScanToast(`${APP}: Hot scan complete — ${progress.done}/${progress.total} items scanned, ${progress.intakeCount} listing observations stored. Waiting for sale signals.`);
+      render(true);
+    }
+  });
   window.addEventListener('orientationchange', () => setTimeout(render, 120));
-  window.addEventListener('pagehide', () => { saveWatches(); saveCandidates(); saveItemSignals(); saveItemScans(); savePendingScan(); saveScanSession(); });
+  window.addEventListener('pagehide', () => {
+    if (isScanWorker()) {
+      savePendingScan();
+      saveScanSession();
+      return;
+    }
+    saveWatches(); saveCandidates(); saveItemSignals(); saveItemScans();
+    if (!scanSession?.active) { savePendingScan(); saveScanSession(); }
+  });
   sanitizeWatches();
   seedItemSignalHistory();
-  setTimeout(() => { ensureScanWorkerBar(); if (pendingItemScan) void runPendingItemScan(); }, 1400);
+  setTimeout(() => {
+    if (isScanWorker()) {
+      try { window.opener?.focus(); } catch {}
+      syncScanSessionFromStorage();
+      pendingItemScan = readJson(STORE.pendingScan, pendingItemScan);
+    }
+    ensureScanWorkerBar();
+    if (pendingItemScan) void runPendingItemScan();
+  }, 1400);
 
   render();
 })();
