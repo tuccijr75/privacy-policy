@@ -9,6 +9,7 @@ const logic=read('MM_Acquisitions.logic.js');
 const live=read('MM_Acquisitions.live.js');
 const ranked=read('MM_Acquisitions.ranked.logic.js');
 const builder=read('build_pda_bundle.py');
+const acceptance=read('ACCEPTANCE.md');
 
 for(const [name,source] of [
   ['desktop',desktop],['pda',pda],['pulse',pulse],['logic',logic],['live',live],['ranked',ranked]
@@ -57,5 +58,11 @@ assert(desktop.includes('href="#mm-acq-verified-sales"'),'verified-sales evidenc
 assert(!desktop.includes('torn.marches.cafe'),'verified-sales evidence must not add a third-party market trust surface');
 assert(desktop.includes('Complete the purchase manually on Torn.')||desktop.includes('final purchase manual'),'desktop manual purchase boundary must remain explicit');
 assert(pda.includes('Complete the purchase manually on Torn.')||pda.includes('final purchase manual'),'PDA manual purchase boundary must remain explicit');
+assert(acceptance.includes('8.0.0-alpha.22'),'acceptance sheet must match desktop candidate');
+assert(acceptance.includes('8.0.0-alpha.22-pda.9'),'acceptance sheet must match PDA candidate');
+assert(acceptance.includes('Verified Sales'),'acceptance sheet must cover official completed-sale evidence');
+assert(acceptance.includes('Cross-tab ownership'),'acceptance sheet must cover one-engine lease behavior');
+assert(acceptance.includes('manual-action boundary'),'acceptance sheet must preserve manual final actions');
+assert(acceptance.includes('After Acquisitions Market Pulse is proven'),'downstream consumers must remain gated on proof');
 
 console.log('MM_Acquisitions Market Pulse source/PDA contract tests: PASS');
