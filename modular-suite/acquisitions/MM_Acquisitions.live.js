@@ -604,9 +604,12 @@
       const data=await deps.tornRequest('/market/'+encodeURIComponent(id)+'/itemmarket?limit=25');
       const itemRows=genericMarketListings(data);
       const before=await core.readLegacyState();
-      const bazaarRows=freshOrganicListings(before,id).slice(0,25).map(row=>({
-        price:Number(row.price||0),quantity:Math.max(1,Number(row.quantity||1))
-      }));
+      const aggregateBazaarLow=Math.max(0,Number(before?.marketIntel?.marketplace?.[id]?.lowestPrice||0));
+      const bazaarRows=freshOrganicListings(before,id)
+        .filter(row=>!(aggregateBazaarLow>0)||Number(row.price||0)<=aggregateBazaarLow*1.35)
+        .slice(0,25).map(row=>({
+          price:Number(row.price||0),quantity:Math.max(1,Number(row.quantity||1))
+        }));
       if (!itemRows.length && !bazaarRows.length) throw new Error('No trusted live market listings returned.');
       const itemMarket=marketMetrics(itemRows);
       const bazaar=marketMetrics(bazaarRows);
@@ -738,10 +741,15 @@
       const intel=state?.marketIntel?.marketplace?.[id]||{};
       const settings=state?.marketIntel?.settings||{};
       const bazaarHaircut=Math.max(0,Math.min(25,Number(settings?.bazaarExitHaircutPct||0)))/100;
+      const bazaarExit=Math.floor(Number(intel?.bazaarAverage||0)*(1-bazaarHaircut));
+      const itemMarketNet=Math.floor(Number(intel?.marketPrice||0)*(1-ITEM_MARKET_FEE_RATE));
+      const reference=Math.max(0,bazaarExit,itemMarketNet);
+      const snapshotExit=Math.max(0,Number(snap?.realisticExit||0));
+      const snapshotPlausible=snapshotExit>0&&(!(reference>0)||snapshotExit<=reference*1.5);
       const candidates=[
-        {route:'Live snapshot',value:Number(snap?.realisticExit||0)},
-        {route:'Bazaar',value:Math.floor(Number(intel?.bazaarAverage||0)*(1-bazaarHaircut))},
-        {route:'Item Market Net',value:Math.floor(Number(intel?.marketPrice||0)*(1-ITEM_MARKET_FEE_RATE))}
+        ...(snapshotPlausible?[{route:'Live snapshot',value:snapshotExit}]:[]),
+        {route:'Bazaar',value:bazaarExit},
+        {route:'Item Market Net',value:itemMarketNet}
       ].filter(row=>Number(row.value||0)>0).sort((a,b)=>b.value-a.value);
       const best=candidates[0]||{route:'Unknown',value:0};
       return {best,candidates};
