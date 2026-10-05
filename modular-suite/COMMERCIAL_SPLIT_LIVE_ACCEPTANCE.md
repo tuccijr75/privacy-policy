@@ -1790,4 +1790,30 @@ Next live gate:
 5. Ranked: refresh and confirm separate Bazaar / Item Market / Auction counts and filters;
 6. Travel: test Compare Bazaar / Market on one overseas item;
 7. continue alpha.13 auction-bid semantics and AH history acceptance after source-model pass.
+### alpha.14 desktop acceptance — Deals / Bazaar pass — 2026-10-04
+
+Observed directly in the authenticated Torn desktop tab with alpha.14 open:
+- PASS: panel reports `v8.0.0-alpha.14 · PROFIT / RANKED / TRAVEL`;
+- PASS: existing MM_Acquisitions dock launcher remains the only Acquisitions launcher;
+- PASS: source strip exposes Bazaar freshness separately from Item Market (`Bazaar … (Weav3r)` vs `Item Market …`);
+- PASS: full customer universe remains 125 evaluated;
+- PASS: live scan currently shows positive-spread and rule-qualified counts updating independently;
+- PASS: customer-universe rows explicitly show `Bazaar observed`, Bazaar low, Bazaar average, bazaar count and source-specific best exit;
+- PASS: best-exit route visibly distinguishes Bazaar from `Item Market Net` where appropriate;
+- PASS: Rule-Qualified Deals currently include both explicit Bazaar and Item Market purchase sources;
+- PASS: `Verify` / `Verify & Buy` controls remain present and purchase submission stays manual;
+- PASS: purchase ledger remains live (209 lots observed during this pass);
+- PASS: desktop panel remains above the shared Torn/MM bottom control row without overlap.
+
+Representative live rows observed:
+- Edelweiss: Bazaar observed, Bazaar low / Bazaar avg / bazaar-count fields visible;
+- Bottle of Sake: Bazaar buy-side observation with best exit `Item Market Net`, proving acquisition source and exit source are not conflated;
+- Rule-qualified rows included Bazaar examples (e.g. Cattle Prod / Spooky Paper Weight) and an Item Market example (Paper Crown : Blue).
+
+Remaining alpha.14 desktop live gates:
+1. Items tab: Bazaar observed / Item Market checked filters and selected-item deep comparison;
+2. Ranked tab: separate Bazaar / Item Market / Auction counts and source filters, plus alpha.13 current-bid semantics;
+3. Travel tab: `Compare Bazaar / Market` handoff;
+4. representative Analyze AH tests;
+5. narrow/mobile and TornPDA.
 
