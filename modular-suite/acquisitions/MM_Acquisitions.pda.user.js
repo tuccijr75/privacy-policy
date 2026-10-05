@@ -34,15 +34,11 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 4 4M9 7.5v6M6.8 9.2h4.4M6.8 11.8h4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
       b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;';
       b.addEventListener('click',()=>{
-        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){
-          globalThis.__MM_ACQ_OPEN__();
-          return;
-        }
+        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){globalThis.__MM_ACQ_OPEN__();return;}
         const stage=String(globalThis.__MM_ACQ_PDA_STAGE||'unknown');
         let d=document.getElementById('mm-acq-pda-boot-diagnostic');
         if(!d){
-          d=document.createElement('div');
-          d.id='mm-acq-pda-boot-diagnostic';
+          d=document.createElement('div');d.id='mm-acq-pda-boot-diagnostic';
           d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';
           document.body.appendChild(d);
         }
@@ -51,8 +47,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       document.body.appendChild(b);
     }
   }
-  if(document.body)ensureBootLauncher();
-  else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
+  if(document.body)ensureBootLauncher();else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
 })();
 
 
@@ -5114,7 +5109,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         source.sellerName?String(source.sellerName):'',
         Number(source.quantity||0)>0?'Available '+Number(source.quantity).toLocaleString():'',
         source.aggregateOnly&&Number(source.bazaarCount||0)>0?Number(source.bazaarCount).toLocaleString()+' bazaars':'',
-        source.aggregateOnly&&Number(source.bazaarAverage||0)>0?'Bazaar avg '+money(source.bazaarAverage):''
+        source.aggregateOnly&&Number(source.bazaarAverage||0)>0?'Bazaar avg '+money(source.bazaarAverage):'',
+        source.travelEvidence?'Travel profit '+(Number(source.profit||0)>=0?'+':'-')+money(Math.abs(Number(source.profit||0))):'',
+        source.travelEvidence&&Number(source.sourceProfitPerHour||0)?money(source.sourceProfitPerHour)+'/hr travel profit':''
       ].filter(Boolean);
       const note=source.aggregateOnly
         ?'Aggregate Bazaar evidence; a seller is re-verified before routing.'
