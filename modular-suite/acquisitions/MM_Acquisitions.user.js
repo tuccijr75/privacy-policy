@@ -1435,7 +1435,7 @@
       decision+
       '<div style="font-size:10px;color:#777;margin-bottom:3px;">'+esc(verifiedNote)+'</div>'+
       pulseLine({},itemSelection.id,bestProfit)+
-      verifiedSalesHtml(itemSelection.id)+
+      (verifiedSalesItemId===String(itemSelection.id)?verifiedSalesHtml(itemSelection.id):'')+
       '<div style="margin-top:7px;font-size:10px;color:#aaa;"><b>Available sources</b> · lowest usable source is listed first.</div>'+
       rows
     );
