@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.20-pda.7
-// @description  TornPDA-compatible bundled MM Acquisitions build. Profit, ranked weapons, travel procurement, manual final purchase.
+// @version      8.0.0-alpha.21-pda.8
+// @description  TornPDA-compatible bundled MM Acquisitions build. Market Pulse, profit, ranked weapons, travel procurement, manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
@@ -17,6 +17,8 @@
 
 
 const __MM_PDA_API_KEY='###PDA-APIKEY###';
+
+
 (() => {
   'use strict';
   globalThis.__MM_ACQ_PDA_STAGE='boot';
@@ -24,15 +26,35 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(!document.body)return;
     let b=document.getElementById('mm-acquisitions-launcher');
     if(!b){
-      b=document.createElement('button');b.id='mm-acquisitions-launcher';b.type='button';b.setAttribute('aria-label','MM_Acquisitions');b.title='MM_Acquisitions';
+      b=document.createElement('button');
+      b.id='mm-acquisitions-launcher';
+      b.type='button';
+      b.setAttribute('aria-label','MM_Acquisitions');
+      b.title='MM_Acquisitions';
       b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 4 4M9 7.5v6M6.8 9.2h4.4M6.8 11.8h4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
       b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;';
-      b.addEventListener('click',()=>{if(typeof globalThis.__MM_ACQ_OPEN__==='function'){globalThis.__MM_ACQ_OPEN__();return;}const stage=String(globalThis.__MM_ACQ_PDA_STAGE||'unknown');let d=document.getElementById('mm-acq-pda-boot-diagnostic');if(!d){d=document.createElement('div');d.id='mm-acq-pda-boot-diagnostic';d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';document.body.appendChild(d);}d.innerHTML='<b>MM_Acquisitions PDA boot diagnostic</b><div style="margin-top:6px;">Stopped at: <code>'+stage.replace(/[<>&]/g,'')+'</code></div><div style="margin-top:4px;color:#bbb;">Send a screenshot of this message.</div>';});
+      b.addEventListener('click',()=>{
+        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){
+          globalThis.__MM_ACQ_OPEN__();
+          return;
+        }
+        const stage=String(globalThis.__MM_ACQ_PDA_STAGE||'unknown');
+        let d=document.getElementById('mm-acq-pda-boot-diagnostic');
+        if(!d){
+          d=document.createElement('div');
+          d.id='mm-acq-pda-boot-diagnostic';
+          d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';
+          document.body.appendChild(d);
+        }
+        d.innerHTML='<b>MM_Acquisitions PDA boot diagnostic</b><div style="margin-top:6px;">Stopped at: <code>'+stage.replace(/[<>&]/g,'')+'</code></div><div style="margin-top:4px;color:#bbb;">Send a screenshot of this message.</div>';
+      });
       document.body.appendChild(b);
     }
   }
-  if(document.body)ensureBootLauncher();else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
+  if(document.body)ensureBootLauncher();
+  else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
 })();
+
 
 /* ===== MM Torn Core (bundled) ===== */
 
@@ -1366,12 +1388,575 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 ;globalThis.__MM_ACQ_PDA_STAGE='adapter';
 
 
+/* ===== Market Pulse engine (bundled) ===== */
+
+(() => {
+  'use strict';
+
+  const SCHEMA = 1;
+  const HISTORY_MAX = 96;
+  const REJECTION_MAX = 80;
+  const CACHE_MAX = 72;
+  const DEFAULT_WINDOW_MS = 3 * 60 * 60 * 1000;
+  const DEFAULT_TTL_MS = 45 * 60 * 1000;
+  const DEFAULT_REFRESH_MS = 90 * 1000;
+  const MIN_REFRESH_MS = 45 * 1000;
+  const MAX_REFRESH_MS = 15 * 60 * 1000;
+  const DEFAULT_BUDGET_PER_MINUTE = 45;
+  const DEFAULT_CANDIDATE_GROSS = 10_000_000;
+  const DEFAULT_PROVEN_TURNOVER = 5_000_000;
+  const RECENT_REUSE_MS = 2500;
+
+  const asId = value => String(value ?? '').trim();
+  const num = value => Number.isFinite(Number(value)) ? Number(value) : 0;
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, num(value)));
+  const iso = ms => new Date(Math.max(0, num(ms)) || Date.now()).toISOString();
+
+  function toEpochMs(value) {
+    const n = num(value);
+    if (!(n > 0)) return 0;
+    return n > 1e12 ? Math.round(n) : Math.round(n * 1000);
+  }
+
+  function durationMs(value) {
+    const n = Math.max(0, num(value));
+    if (!n) return 0;
+    return n > 100000 ? Math.round(n) : Math.round(n * 1000);
+  }
+
+  function marketRoot(payload) {
+    if (payload?.itemmarket && !Array.isArray(payload.itemmarket)) return payload.itemmarket;
+    if (payload?.item_market && !Array.isArray(payload.item_market)) return payload.item_market;
+    return payload || {};
+  }
+
+  function marketRows(payload) {
+    if (Array.isArray(payload)) return payload;
+    const root = marketRoot(payload);
+    if (Array.isArray(root)) return root;
+    for (const key of ['listings', 'itemmarket', 'item_market']) {
+      if (Array.isArray(root?.[key])) return root[key];
+    }
+    return [];
+  }
+
+  function compactBands(rows, limit = 12) {
+    const bands = new Map();
+    for (const row of rows) {
+      const price = Math.max(0, num(row?.price ?? row?.cost));
+      const quantity = Math.max(0, Math.round(num(row?.amount ?? row?.quantity ?? row?.qty)));
+      if (!(price > 0) || !(quantity > 0)) continue;
+      bands.set(price, (bands.get(price) || 0) + quantity);
+    }
+    return [...bands.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .slice(0, Math.max(1, Math.min(24, Math.round(num(limit) || 12))))
+      .map(([price, quantity]) => ({price, quantity}));
+  }
+
+  function normalizeTornItemMarket(itemId, itemName, payload, options = {}) {
+    const id = asId(itemId);
+    const fetchedAt = Math.max(0, num(options.fetchedAt) || Date.now());
+    const root = marketRoot(payload);
+    const rows = marketRows(payload).map(row => ({
+      price: Math.max(0, num(row?.price ?? row?.cost)),
+      quantity: Math.max(0, Math.round(num(row?.amount ?? row?.quantity ?? row?.qty)))
+    })).filter(row => row.price > 0 && row.quantity > 0).sort((a, b) => a.price - b.price);
+    const floorPrice = rows[0]?.price || 0;
+    const totalQty = rows.reduce((sum, row) => sum + row.quantity, 0);
+    const marketExposure = rows.reduce((sum, row) => sum + row.price * row.quantity, 0);
+    const peakListingExposure = rows.reduce((max, row) => Math.max(max, row.price * row.quantity), 0);
+    const sourceTimestamp = toEpochMs(root?.cache_timestamp ?? root?.timestamp ?? payload?.cache_timestamp ?? payload?.timestamp);
+    const upstreamCacheDelayMs = durationMs(root?.cache_delay ?? payload?.cache_delay);
+    return {
+      itemId: id,
+      itemName: String(itemName || ('Item ' + id)),
+      source: 'Torn API v2 Item Market',
+      sourceTimestamp,
+      fetchedAt,
+      upstreamCacheDelayMs,
+      floorPrice,
+      marketDepth: rows.length,
+      totalQty,
+      marketExposure,
+      peakListingExposure,
+      priceBands: compactBands(rows),
+      sampleLimit: rows.length
+    };
+  }
+
+  function validateSnapshot(snapshot) {
+    if (!snapshot || !/^\d+$/.test(asId(snapshot.itemId))) return {ok:false, reason:'invalid_item'};
+    const numeric = ['sourceTimestamp','fetchedAt','upstreamCacheDelayMs','floorPrice','marketDepth','totalQty','marketExposure','peakListingExposure'];
+    for (const key of numeric) {
+      const value = Number(snapshot[key] ?? 0);
+      if (!Number.isFinite(value) || value < 0) return {ok:false, reason:'invalid_' + key};
+    }
+    if (!(num(snapshot.floorPrice) > 0) || !(num(snapshot.marketDepth) > 0) || !(num(snapshot.totalQty) > 0)) {
+      return {ok:false, reason:'empty_market_snapshot'};
+    }
+    return {ok:true, reason:'ok'};
+  }
+
+  function diffSnapshots(previous, current, options = {}) {
+    const currentCheck = validateSnapshot(current);
+    if (!currentCheck.ok) return {event:null, rejected:true, reason:currentCheck.reason};
+    if (!previous) return {event:null, rejected:false, reason:'baseline'};
+    const previousCheck = validateSnapshot(previous);
+    if (!previousCheck.ok) return {event:null, rejected:true, reason:'previous_' + previousCheck.reason};
+
+    const prevSource = num(previous.sourceTimestamp);
+    const currSource = num(current.sourceTimestamp);
+    if (!prevSource || !currSource) return {event:null, rejected:false, reason:'source_timestamp_unavailable'};
+    if (currSource < prevSource) return {event:null, rejected:true, reason:'source_time_regression'};
+    if (currSource === prevSource) return {event:null, rejected:false, reason:'upstream_not_advanced'};
+
+    const maxGapMs = Math.max(5 * 60 * 1000, num(options.maxGapMs) || 30 * 60 * 1000);
+    const gapMs = currSource - prevSource;
+    if (gapMs > maxGapMs) return {event:null, rejected:true, reason:'observation_gap_too_large'};
+
+    const previousQty = Math.round(num(previous.totalQty));
+    const currentQty = Math.round(num(current.totalQty));
+    if (currentQty > previousQty) return {event:null, rejected:false, reason:'inventory_increase_not_movement'};
+    if (currentQty === previousQty) return {event:null, rejected:false, reason:'unchanged'};
+    const units = previousQty - currentQty;
+    if (!(units > 0) || units > previousQty) return {event:null, rejected:true, reason:'impossible_quantity_delta'};
+
+    const previousFloor = num(previous.floorPrice);
+    const currentFloor = num(current.floorPrice);
+    const referenceFloor = Math.max(1, Math.min(previousFloor || currentFloor, currentFloor || previousFloor));
+    const floorShift = previousFloor > 0 && currentFloor > 0 ? Math.abs(currentFloor - previousFloor) / previousFloor : 0;
+    if (floorShift > clamp(options.maxFloorShiftRatio ?? 0.65, 0.10, 2.0)) {
+      return {event:null, rejected:true, reason:'price_regime_shift'};
+    }
+
+    const hours = Math.max(1 / 60, gapMs / 3600000);
+    const turnover = Math.round(units * referenceFloor);
+    const depthChange = Math.abs(num(current.marketDepth) - num(previous.marketDepth));
+    const depthBase = Math.max(1, num(previous.marketDepth));
+    const depthConsistency = Math.max(0, 1 - Math.min(1, depthChange / depthBase));
+    const confidencePct = Math.round(clamp(52 + depthConsistency * 18 + (floorShift <= 0.10 ? 12 : 4), 0, 82));
+    return {
+      event: {
+        kind:'observed_outflow',
+        at:currSource,
+        previousAt:prevSource,
+        durationHours:hours,
+        units,
+        unitValue:referenceFloor,
+        turnover,
+        confidencePct
+      },
+      rejected:false,
+      reason:'observed_outflow'
+    };
+  }
+
+  function settingsOf(pulse) {
+    const raw = pulse?.settings || {};
+    return {
+      windowMs: clamp(raw.windowMs || DEFAULT_WINDOW_MS, 15 * 60 * 1000, 24 * 60 * 60 * 1000),
+      ttlMs: clamp(raw.ttlMs || DEFAULT_TTL_MS, 10 * 60 * 1000, 6 * 60 * 60 * 1000),
+      baseRefreshMs: clamp(raw.baseRefreshMs || DEFAULT_REFRESH_MS, MIN_REFRESH_MS, MAX_REFRESH_MS),
+      requestBudgetPerMinute: Math.round(clamp(raw.requestBudgetPerMinute || DEFAULT_BUDGET_PER_MINUTE, 10, 90)),
+      candidateMinGross: Math.max(1_000_000, num(raw.candidateMinGross) || DEFAULT_CANDIDATE_GROSS),
+      provenMinTurnover: Math.max(1_000_000, num(raw.provenMinTurnover) || DEFAULT_PROVEN_TURNOVER),
+      historyMax: Math.round(clamp(raw.historyMax || HISTORY_MAX, 12, HISTORY_MAX)),
+      cacheMax: Math.round(clamp(raw.cacheMax || CACHE_MAX, 12, CACHE_MAX))
+    };
+  }
+
+  function ensurePulse(draft) {
+    const marketIntel = draft.marketIntel || (draft.marketIntel = {});
+    const pulse = marketIntel.marketPulse && typeof marketIntel.marketPulse === 'object' ? marketIntel.marketPulse : {};
+    pulse.schema = SCHEMA;
+    pulse.updatedAt = Math.max(0, num(pulse.updatedAt));
+    pulse.items = pulse.items && typeof pulse.items === 'object' && !Array.isArray(pulse.items) ? pulse.items : {};
+    pulse.settings = {...settingsOf(pulse)};
+    pulse.scheduler = pulse.scheduler && typeof pulse.scheduler === 'object' ? pulse.scheduler : {};
+    pulse.scheduler.requestLog = Array.isArray(pulse.scheduler.requestLog) ? pulse.scheduler.requestLog.map(num).filter(v => v > 0).slice(-90) : [];
+    pulse.scheduler.lastRefreshAt = Math.max(0, num(pulse.scheduler.lastRefreshAt));
+    pulse.scheduler.lastErrorAt = Math.max(0, num(pulse.scheduler.lastErrorAt));
+    pulse.scheduler.lastError = String(pulse.scheduler.lastError || '').slice(0, 240);
+    pulse.rejections = Array.isArray(pulse.rejections) ? pulse.rejections.slice(-REJECTION_MAX) : [];
+    marketIntel.marketPulse = pulse;
+    return pulse;
+  }
+
+  function snapshotPoint(snapshot) {
+    return {
+      sourceTimestamp:num(snapshot.sourceTimestamp),
+      fetchedAt:num(snapshot.fetchedAt),
+      floorPrice:num(snapshot.floorPrice),
+      marketDepth:Math.round(num(snapshot.marketDepth)),
+      totalQty:Math.round(num(snapshot.totalQty)),
+      marketExposure:num(snapshot.marketExposure)
+    };
+  }
+
+  function freshness(snapshot, nowMs = Date.now(), ttlMs = DEFAULT_TTL_MS) {
+    const sourceAt = num(snapshot?.sourceTimestamp);
+    const fetchedAt = num(snapshot?.fetchedAt);
+    const sourceAgeMs = sourceAt ? Math.max(0, nowMs - sourceAt) : Infinity;
+    const fetchAgeMs = fetchedAt ? Math.max(0, nowMs - fetchedAt) : Infinity;
+    const stale = !fetchedAt || fetchAgeMs > ttlMs;
+    const label = stale ? 'STALE' : fetchAgeMs <= 60_000 ? 'FRESH' : fetchAgeMs <= 5 * 60_000 ? 'GOOD' : 'AGING';
+    return {sourceAgeMs, fetchAgeMs, stale, label};
+  }
+
+  function deriveItemMetrics(item, nowMs = Date.now(), settings = {}) {
+    const cfg = {...settingsOf({settings}), ...settings};
+    const events = (Array.isArray(item?.movementHistory) ? item.movementHistory : [])
+      .filter(row => num(row?.at) > 0 && nowMs - num(row.at) <= cfg.windowMs);
+    const snapshots = (Array.isArray(item?.snapshotHistory) ? item.snapshotHistory : [])
+      .filter(row => num(row?.fetchedAt) > 0 && nowMs - num(row.fetchedAt) <= cfg.windowMs);
+    const windowHours = Math.max(0.25, cfg.windowMs / 3600000);
+    const units = events.reduce((sum, row) => sum + Math.max(0, num(row.units)), 0);
+    const turnover = events.reduce((sum, row) => sum + Math.max(0, num(row.turnover)), 0);
+    const observedEventsPerHour = events.length / windowHours;
+    const observedUnitsPerHour = units / windowHours;
+    const turnoverPerHour = turnover / windowHours;
+    const latest = item?.lastSnapshot || snapshots[snapshots.length - 1] || {};
+    const first = snapshots[0] || {};
+    const trendPct = num(first.floorPrice) > 0 && num(latest.floorPrice) > 0
+      ? (num(latest.floorPrice) - num(first.floorPrice)) / num(first.floorPrice) * 100
+      : 0;
+    const depthScore = clamp(Math.log10(1 + Math.max(0, num(latest.totalQty))) * 25 + Math.log10(1 + Math.max(0, num(latest.marketDepth))) * 18, 0, 100);
+    const eventScore = clamp(observedEventsPerHour * 28, 0, 100);
+    const unitScore = clamp(Math.log10(1 + observedUnitsPerHour) * 32, 0, 100);
+    const turnoverScore = clamp((Math.log10(1 + turnoverPerHour) - 5) * 24, 0, 100);
+    const repeatConfidence = events.length === 0 ? 30 : events.length === 1 ? 52 : events.length === 2 ? 68 : Math.min(94, 72 + events.length * 4);
+    const eventConfidence = events.length ? events.reduce((sum, row) => sum + clamp(row.confidencePct, 0, 100), 0) / events.length : 30;
+    const fresh = freshness(latest, nowMs, cfg.ttlMs);
+    const freshnessScore = fresh.stale ? 0 : fresh.fetchAgeMs <= 60_000 ? 100 : clamp(100 - fresh.fetchAgeMs / cfg.ttlMs * 70, 20, 100);
+    const confidencePct = Math.round(clamp(repeatConfidence * .45 + eventConfidence * .35 + freshnessScore * .20, 0, 96));
+    const liquidityScore = Math.round(clamp(depthScore * .38 + eventScore * .22 + unitScore * .18 + turnoverScore * .14 + confidencePct * .08, 0, 100));
+    const marketExposure = Math.max(0, num(latest.marketExposure));
+    const largeSaleActivity = marketExposure >= cfg.candidateMinGross || events.some(row => num(row.turnover) >= cfg.candidateMinGross);
+    const proven = events.length >= 3 && turnoverPerHour >= cfg.provenMinTurnover && confidencePct >= 60;
+    const tier = proven ? 'proven' : (largeSaleActivity ? 'candidate' : 'observed');
+    return {
+      observedEventsPerHour,
+      observedUnitsPerHour,
+      turnoverPerHour,
+      liquidityScore,
+      confidencePct,
+      trendPct,
+      largeSaleActivity,
+      tier,
+      marketDepth:Math.round(num(latest.marketDepth)),
+      totalQty:Math.round(num(latest.totalQty)),
+      floorPrice:num(latest.floorPrice),
+      marketExposure,
+      freshness:fresh
+    };
+  }
+
+  function pruneCache(pulse, nowMs = Date.now()) {
+    const cfg = settingsOf(pulse);
+    const entries = Object.entries(pulse.items || {}).sort((a, b) => {
+      const aAt = Math.max(num(a[1]?.lastSnapshot?.fetchedAt), num(a[1]?.updatedAt));
+      const bAt = Math.max(num(b[1]?.lastSnapshot?.fetchedAt), num(b[1]?.updatedAt));
+      return bAt - aAt;
+    });
+    for (const [id] of entries.slice(cfg.cacheMax)) delete pulse.items[id];
+    for (const [id, item] of Object.entries(pulse.items)) {
+      const at = Math.max(num(item?.lastSnapshot?.fetchedAt), num(item?.updatedAt));
+      if (at && nowMs - at > cfg.ttlMs * 4 && item?.tier !== 'proven') delete pulse.items[id];
+    }
+  }
+
+  function effectiveRefreshMs(pulse, itemCount = 1, cacheDelayMs = 0) {
+    const cfg = settingsOf(pulse);
+    const budgetForPulse = Math.max(4, Math.floor(cfg.requestBudgetPerMinute * .55));
+    const budgetCycleMs = Math.ceil(Math.max(1, itemCount) / budgetForPulse * 60_000);
+    return clamp(Math.max(cfg.baseRefreshMs, budgetCycleMs, Math.max(0, num(cacheDelayMs))), MIN_REFRESH_MS, MAX_REFRESH_MS);
+  }
+
+  function applySnapshotToDraft(draft, snapshot, options = {}) {
+    const pulse = ensurePulse(draft);
+    const checked = validateSnapshot(snapshot);
+    const nowMs = Math.max(0, num(snapshot?.fetchedAt) || Date.now());
+    if (!checked.ok) {
+      pulse.rejections.push({at:nowMs, itemId:asId(snapshot?.itemId), reason:checked.reason});
+      pulse.rejections = pulse.rejections.slice(-REJECTION_MAX);
+      pulse.updatedAt = nowMs;
+      return {pulse, item:null, accepted:false, reason:checked.reason};
+    }
+
+    const id = asId(snapshot.itemId);
+    const existing = pulse.items[id] && typeof pulse.items[id] === 'object' ? pulse.items[id] : {};
+    const item = {
+      ...existing,
+      itemId:id,
+      itemName:String(snapshot.itemName || existing.itemName || ('Item ' + id)),
+      sources:{itemMarket:'Torn API v2 Item Market'},
+      snapshotHistory:Array.isArray(existing.snapshotHistory) ? existing.snapshotHistory : [],
+      movementHistory:Array.isArray(existing.movementHistory) ? existing.movementHistory : [],
+      rejections:Array.isArray(existing.rejections) ? existing.rejections : []
+    };
+
+    const diff = diffSnapshots(existing.lastSnapshot || null, snapshot, options);
+    if (diff.rejected) {
+      const rejection = {at:nowMs, itemId:id, reason:diff.reason};
+      item.rejections.push(rejection);
+      pulse.rejections.push(rejection);
+    } else if (diff.event) {
+      item.movementHistory.push(diff.event);
+    }
+
+    item.snapshotHistory.push(snapshotPoint(snapshot));
+    const cfg = settingsOf(pulse);
+    item.snapshotHistory = item.snapshotHistory.slice(-cfg.historyMax);
+    item.movementHistory = item.movementHistory.slice(-cfg.historyMax);
+    item.rejections = item.rejections.slice(-Math.min(REJECTION_MAX, cfg.historyMax));
+    item.lastSnapshot = {
+      ...snapshotPoint(snapshot),
+      upstreamCacheDelayMs:num(snapshot.upstreamCacheDelayMs),
+      marketExposure:num(snapshot.marketExposure),
+      peakListingExposure:num(snapshot.peakListingExposure),
+      priceBands:Array.isArray(snapshot.priceBands) ? snapshot.priceBands.slice(0, 12) : [],
+      source:String(snapshot.source || 'Torn API v2 Item Market')
+    };
+    const metrics = deriveItemMetrics(item, nowMs, cfg);
+    Object.assign(item, metrics, {
+      sourceTimestamp:num(snapshot.sourceTimestamp),
+      fetchedAt:nowMs,
+      upstreamCacheDelayMs:num(snapshot.upstreamCacheDelayMs),
+      updatedAt:nowMs,
+      nextRefreshAt:nowMs + effectiveRefreshMs(pulse, Math.max(1, Object.keys(pulse.items).length || 1), snapshot.upstreamCacheDelayMs)
+    });
+    pulse.items[id] = item;
+    if (options.recordRequest !== false) {
+      pulse.scheduler.requestLog.push(nowMs);
+      pulse.scheduler.requestLog = pulse.scheduler.requestLog.filter(at => nowMs - at <= 60_000).slice(-90);
+    }
+    pulse.scheduler.lastRefreshAt = nowMs;
+    pulse.scheduler.lastError = '';
+    pulse.scheduler.lastErrorAt = 0;
+    pulse.updatedAt = nowMs;
+    pulse.rejections = pulse.rejections.slice(-REJECTION_MAX);
+    pruneCache(pulse, nowMs);
+    return {pulse, item, accepted:true, reason:diff.reason};
+  }
+
+  function pulseFor(state, itemId, nowMs = Date.now()) {
+    const pulse = state?.marketIntel?.marketPulse;
+    const item = pulse?.items?.[asId(itemId)];
+    if (!item) return null;
+    const metrics = deriveItemMetrics(item, nowMs, settingsOf(pulse));
+    return {...item, ...metrics};
+  }
+
+  function rankPulseItems(state, nowMs = Date.now()) {
+    const pulse = state?.marketIntel?.marketPulse;
+    if (!pulse?.items) return [];
+    const weight = {proven:3, candidate:2, observed:1};
+    return Object.values(pulse.items).map(item => ({...item, ...deriveItemMetrics(item, nowMs, settingsOf(pulse))}))
+      .sort((a, b) =>
+        (weight[b.tier] || 0) - (weight[a.tier] || 0) ||
+        num(b.turnoverPerHour) - num(a.turnoverPerHour) ||
+        num(b.liquidityScore) - num(a.liquidityScore) ||
+        num(b.confidencePct) - num(a.confidencePct)
+      );
+  }
+
+  function contribution(metrics, unitProfit = 0) {
+    if (!metrics || metrics.freshness?.stale || num(metrics.confidencePct) < 30) return null;
+    const velocityProfit = Math.max(0, num(unitProfit)) * Math.max(0, num(metrics.observedUnitsPerHour));
+    const velocityScore = clamp((Math.log10(1 + velocityProfit) - 4) * 22, 0, 100);
+    const score = clamp(num(metrics.liquidityScore) * .45 + num(metrics.confidencePct) * .25 + velocityScore * .30, 0, 100);
+    return {score, velocityProfitPerHour:velocityProfit, velocityScore};
+  }
+
+  function trackedItemIds(state, limit = 36) {
+    const cap = Math.max(1, Math.min(CACHE_MAX, Math.round(num(limit) || 36)));
+    const ids = [];
+    const add = value => {
+      const id = asId(value);
+      if (/^\d+$/.test(id) && !ids.includes(id) && ids.length < cap) ids.push(id);
+    };
+    for (const row of rankPulseItems(state)) add(row.itemId);
+    const pricelist = Object.values(state?.procurement?.pricelist?.items || {}).sort((a,b) => num(b?.buyPrice) - num(a?.buyPrice));
+    for (const row of pricelist) add(row?.itemId ?? row?.id);
+    const market = Object.values(state?.marketIntel?.marketplace || {}).sort((a,b) => {
+      const ap = Math.max(num(a?.bazaarAverage), num(a?.marketPrice)) - num(a?.lowestPrice);
+      const bp = Math.max(num(b?.bazaarAverage), num(b?.marketPrice)) - num(b?.lowestPrice);
+      return bp - ap;
+    });
+    for (const row of market) add(row?.itemId);
+    for (const row of state?.procurement?.ranked?.liveMarket || []) add(row?.itemId);
+    for (const row of state?.travelIntel?.rows || []) add(row?.itemId);
+    return ids;
+  }
+
+  function budgetStatus(stateOrPulse, nowMs = Date.now()) {
+    const pulse = stateOrPulse?.marketIntel?.marketPulse || stateOrPulse || {};
+    const cfg = settingsOf(pulse);
+    const recent = (Array.isArray(pulse?.scheduler?.requestLog) ? pulse.scheduler.requestLog : []).map(num).filter(at => at > 0 && nowMs - at <= 60_000);
+    return {used:recent.length, limit:cfg.requestBudgetPerMinute, available:recent.length < cfg.requestBudgetPerMinute, recent};
+  }
+
+  function canAcquireLease(lease, ownerId, nowMs = Date.now()) {
+    const owner = String(ownerId || '');
+    if (!owner) return false;
+    if (!lease || !lease.owner) return true;
+    if (String(lease.owner) === owner) return true;
+    return num(lease.expiresAt) <= nowMs;
+  }
+
+  function nextDueItem(state, nowMs = Date.now()) {
+    const ids = trackedItemIds(state);
+    const pulse = state?.marketIntel?.marketPulse || {};
+    const rows = ids.map((id, index) => ({
+      id,
+      order:index,
+      dueAt:num(pulse?.items?.[id]?.nextRefreshAt)
+    })).filter(row => !row.dueAt || row.dueAt <= nowMs);
+    rows.sort((a,b) => a.dueAt - b.dueAt || a.order - b.order);
+    return rows[0]?.id || '';
+  }
+
+  function recentReusableSnapshot(state, itemId, nowMs = Date.now(), reuseMs = RECENT_REUSE_MS) {
+    const snap = state?.procurement?.marketSnapshots?.[asId(itemId)];
+    const fetchedAt = snap?.fetchedAt ? Date.parse(snap.fetchedAt) : 0;
+    if (!fetchedAt || nowMs - fetchedAt > Math.max(0, num(reuseMs))) return null;
+    const pulseSnapshot = snap?.pulseSnapshot;
+    return validateSnapshot(pulseSnapshot).ok ? pulseSnapshot : null;
+  }
+
+  function scheduleFailureToDraft(draft, itemId, error, nowMs = Date.now()) {
+    const pulse = ensurePulse(draft);
+    const id = asId(itemId);
+    const item = pulse.items[id] || (pulse.items[id] = {itemId:id,itemName:'Item ' + id,snapshotHistory:[],movementHistory:[],rejections:[]});
+    const prior = Math.max(MIN_REFRESH_MS, num(item.retryDelayMs) || MIN_REFRESH_MS);
+    item.retryDelayMs = Math.min(MAX_REFRESH_MS, prior * 2);
+    item.nextRefreshAt = nowMs + item.retryDelayMs;
+    pulse.scheduler.lastErrorAt = nowMs;
+    pulse.scheduler.lastError = String(error?.message || error || 'refresh_failed').slice(0, 240);
+    pulse.updatedAt = nowMs;
+    return pulse;
+  }
+
+  function sanitizedDiagnostics(state, lease = null, nowMs = Date.now()) {
+    const pulse = state?.marketIntel?.marketPulse || {};
+    const budget = budgetStatus(pulse, nowMs);
+    const ranked = rankPulseItems(state, nowMs);
+    return {
+      product:'MM_Acquisitions',
+      component:'Market Pulse',
+      schema:SCHEMA,
+      exportedAt:iso(nowMs),
+      source:'Torn API v2 Item Market',
+      updatedAt:num(pulse.updatedAt),
+      scheduler:{
+        owner:String(lease?.owner || ''),
+        leaseExpiresAt:num(lease?.expiresAt),
+        budgetUsed:budget.used,
+        budgetLimit:budget.limit,
+        lastRefreshAt:num(pulse?.scheduler?.lastRefreshAt),
+        lastErrorAt:num(pulse?.scheduler?.lastErrorAt),
+        lastError:String(pulse?.scheduler?.lastError || '')
+      },
+      cache:{itemCount:ranked.length, proven:ranked.filter(x=>x.tier==='proven').length, candidates:ranked.filter(x=>x.tier==='candidate').length},
+      rejectionCount:Array.isArray(pulse.rejections) ? pulse.rejections.length : 0,
+      rejectionReasons:(Array.isArray(pulse.rejections) ? pulse.rejections : []).reduce((out,row)=>{const key=String(row?.reason||'unknown');out[key]=(out[key]||0)+1;return out;},{}),
+      items:ranked.map(item=>({
+        itemId:item.itemId,itemName:item.itemName,tier:item.tier,
+        floorPrice:item.floorPrice,marketDepth:item.marketDepth,totalQty:item.totalQty,
+        observedEventsPerHour:item.observedEventsPerHour,observedUnitsPerHour:item.observedUnitsPerHour,
+        turnoverPerHour:item.turnoverPerHour,liquidityScore:item.liquidityScore,
+        confidencePct:item.confidencePct,trendPct:item.trendPct,
+        sourceTimestamp:item.sourceTimestamp,fetchedAt:item.fetchedAt,
+        upstreamCacheDelayMs:item.upstreamCacheDelayMs,
+        freshness:item.freshness
+      }))
+    };
+  }
+
+  function createEngine(deps = {}) {
+    const core = deps.core;
+    const refreshItemMarket = deps.refreshItemMarket;
+    const hasKey = typeof deps.hasKey === 'function' ? deps.hasKey : () => true;
+    const readLease = typeof deps.readLease === 'function' ? deps.readLease : () => null;
+    const writeLease = typeof deps.writeLease === 'function' ? deps.writeLease : () => {};
+    const ownerId = String(deps.ownerId || '');
+    const onState = typeof deps.onState === 'function' ? deps.onState : () => {};
+    const leaseMs = clamp(deps.leaseMs || 75_000, 30_000, 180_000);
+    if (!core || typeof core.readLegacyState !== 'function' || typeof core.updateDomainState !== 'function') throw new Error('Market Pulse core dependency is required.');
+    if (typeof refreshItemMarket !== 'function') throw new Error('Market Pulse refresh dependency is required.');
+
+    async function tick(options = {}) {
+      const nowMs = Date.now();
+      if (!hasKey()) return {skipped:'no-key'};
+      const currentLease = readLease();
+      if (!canAcquireLease(currentLease, ownerId, nowMs)) return {skipped:'lease-held', owner:currentLease?.owner || ''};
+      writeLease({owner:ownerId,updatedAt:nowMs,expiresAt:nowMs+leaseMs});
+
+      let state = await core.readLegacyState();
+      const budget = budgetStatus(state, nowMs);
+      if (!budget.available) return {skipped:'budget', budget};
+      const itemId = options.itemId ? asId(options.itemId) : nextDueItem(state, nowMs);
+      if (!/^\d+$/.test(itemId)) return {skipped:'nothing-due'};
+
+      const reused = recentReusableSnapshot(state, itemId, nowMs);
+      if (reused) {
+        await core.updateDomainState('market', draft => {
+          applySnapshotToDraft(draft, {...reused, fetchedAt:nowMs}, {recordRequest:false});
+          return draft;
+        });
+        state = await core.readLegacyState();
+        onState(state);
+        return {refreshed:true,itemId,reusedRecent:true,state};
+      }
+
+      try {
+        await refreshItemMarket(itemId);
+        state = await core.readLegacyState();
+        onState(state);
+        return {refreshed:true,itemId,reusedRecent:false,state};
+      } catch (error) {
+        await core.updateDomainState('market', draft => {
+          scheduleFailureToDraft(draft,itemId,error,nowMs);
+          return draft;
+        });
+        state = await core.readLegacyState();
+        onState(state);
+        return {refreshed:false,itemId,error:String(error?.message || error),state};
+      }
+    }
+
+    function release() {
+      const lease = readLease();
+      if (lease?.owner === ownerId) writeLease({...lease,expiresAt:0,releasedAt:Date.now()});
+    }
+
+    return Object.freeze({tick,release});
+  }
+
+  Object.defineProperty(globalThis,'MMTornMarketPulse',{
+    value:Object.freeze({
+      SCHEMA,HISTORY_MAX,REJECTION_MAX,CACHE_MAX,RECENT_REUSE_MS,
+      normalizeTornItemMarket,validateSnapshot,diffSnapshots,ensurePulse,applySnapshotToDraft,
+      deriveItemMetrics,pulseFor,rankPulseItems,contribution,trackedItemIds,
+      effectiveRefreshMs,budgetStatus,canAcquireLease,nextDueItem,recentReusableSnapshot,
+      scheduleFailureToDraft,sanitizedDiagnostics,createEngine
+    }),
+    configurable:true,enumerable:false,writable:false
+  });
+})();
+
+
+;globalThis.__MM_ACQ_PDA_STAGE='pulse';
+
+
 /* ===== Acquisitions logic (bundled) ===== */
 
 (() => {
   'use strict';
 
   const ITEM_MARKET_FEE_RATE = 0.05;
+  const marketPulse = globalThis.MMTornMarketPulse;
 
   const asId = value => String(value ?? '').trim();
 
@@ -1454,6 +2039,32 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     return (Array.isArray(listings) ? listings : [])
       .filter(x => !x?.sponsored && Number(x?.price||0) > 0 && Number(x?.quantity||0) > 0 && listingAgeSeconds(x, nowMs) <= maxAge)
       .sort((a,b)=>Number(a.price||0)-Number(b.price||0));
+  }
+
+  function pulseSignals(db,itemId,unitProfit=0,nowMs=Date.now()) {
+    const metrics=marketPulse?.pulseFor?.(db,asId(itemId),nowMs)||null;
+    const contribution=metrics?marketPulse?.contribution?.(metrics,unitProfit)||null:null;
+    return {metrics,contribution};
+  }
+
+  function pulseFields(db,itemId,unitProfit=0,nowMs=Date.now()) {
+    const {metrics,contribution}=pulseSignals(db,itemId,unitProfit,nowMs);
+    return {
+      pulseTier:String(metrics?.tier||'unknown'),
+      observedEventsPerHour:Number(metrics?.observedEventsPerHour||0),
+      observedUnitsPerHour:Number(metrics?.observedUnitsPerHour||0),
+      turnoverPerHour:Number(metrics?.turnoverPerHour||0),
+      pulseLiquidityScore:Number(metrics?.liquidityScore||0),
+      pulseConfidencePct:Number(metrics?.confidencePct||0),
+      pulseMarketDepth:Number(metrics?.marketDepth||0),
+      pulseTrendPct:Number(metrics?.trendPct||0),
+      pulseFreshness:metrics?.freshness||null,
+      pulseSourceTimestamp:Number(metrics?.sourceTimestamp||0),
+      pulseFetchedAt:Number(metrics?.fetchedAt||0),
+      pulseUpstreamCacheDelayMs:Number(metrics?.upstreamCacheDelayMs||0),
+      marketPulseScore:contribution?Number(contribution.score||0):null,
+      profitVelocityPerHour:contribution?Number(contribution.velocityProfitPerHour||0):0
+    };
   }
 
   function rankCachedOpportunities(db, nowMs = Date.now()) {
@@ -1589,16 +2200,21 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       const profitVelocityScore = Math.min(100,Math.log10(1+expectedProfitPerDay)*18);
       const absoluteProfitScore = Math.min(100,Math.log10(1+Math.max(0,profit))*14);
       const volatilityPenalty = Math.min(25,Number(history.volatilityPct||0)*0.75);
-      const score = Math.max(0,Math.min(100,
+      const economicScore = Math.max(0,Math.min(100,
         roiScore*0.32+conversionScore*0.32+profitVelocityScore*0.18+absoluteProfitScore*0.10+sourceFreshness*0.08-volatilityPenalty
       ));
+      const pulse=pulseFields(db,id,profit,nowMs);
+      const score=pulse.marketPulseScore===null
+        ?economicScore
+        :Math.max(0,Math.min(100,economicScore*0.65+pulse.marketPulseScore*0.35));
 
       rows.push({
         id,
         name:String(base.itemName || db?.procurement?.catalog?.[id]?.name || ('Item '+id)),
         itemType:String(db?.procurement?.catalog?.[id]?.type || ''),
         buyPrice,maxBuyPrice,bazaarAverage,marketPrice,sellerCount,liveListingCount,traderExit,
-        bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,score,confidence,
+        bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,score,economicScore,confidence,
+        ...pulse,
         freshness:globalFresh,history,enriched:Boolean(detail),
         listingQty:Number(live?.quantity||0),sellerId:String(live?.sellerId||''),
         sellerName:String(live?.sellerName||''),listingVerified:Boolean(live?.source==='Bazaar'&&live?.sellerId),
@@ -1667,9 +2283,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       )));
       const profitScore=profit>0?Math.min(100,Math.log10(1+profit)*13):0;
       const roiScore=roiPct>0?Math.min(100,roiPct*2.5):0;
-      const score=Math.round(Math.max(0,Math.min(100,
+      const economicScore=Math.round(Math.max(0,Math.min(100,
         roiScore*.35+profitScore*.25+liquidity*.25+confidence*.15
       )));
+      const pulse=pulseFields(db,id,profit,nowMs);
+      const score=pulse.marketPulseScore===null
+        ?economicScore
+        :Math.round(Math.max(0,Math.min(100,economicScore*.70+pulse.marketPulseScore*.30)));
       rows.push({
         id,
         name:String(targetRow?.name||base?.itemName||catalog?.name||('Item '+id)),
@@ -1677,7 +2297,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         targetBuy,buyPrice,bazaarAverage,marketPrice,sellerCount,
         buySource:buyPrice>0?'Bazaar observed':'Unknown',
         bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,targetDiscountPct,
-        confidence,liquidity,score,history,
+        confidence,liquidity,score,economicScore,history,
+        ...pulse,
         personalSold7d:sales7,personalSold30d:sales30,
         freshness,
         hasMarketEvidence:Boolean(buyPrice>0&&exit.value>0),
@@ -1697,11 +2318,18 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     );
   }
 
-  function rankCachedTravel(db) {
+  function rankCachedTravel(db,nowMs=Date.now()) {
     return (Array.isArray(db?.travelIntel?.rows) ? db.travelIntel.rows : [])
       .filter(r => Number(r?.stock||0) > 0 && (Number(r?.sourceProfitPerHour||0) > 0 || Number(r?.profit||0) > 0))
-      .map(r => ({...r}))
+      .map(r => {
+        const pulse=pulseFields(db,r?.itemId,Math.max(0,Number(r?.profit||0)),nowMs);
+        const basePerHour=Math.max(0,Number(r?.sourceProfitPerHour||0));
+        const pulseUsable=pulse.marketPulseScore!==null&&pulse.pulseFreshness&&!pulse.pulseFreshness.stale;
+        const liquidityFactor=pulseUsable?0.50+Math.max(0,Math.min(100,pulse.pulseLiquidityScore))/200:1;
+        return {...r,...pulse,liquidityAdjustedProfitPerHour:basePerHour*liquidityFactor};
+      })
       .sort((a,b)=>
+        Number(b.liquidityAdjustedProfitPerHour||0)-Number(a.liquidityAdjustedProfitPerHour||0) ||
         Number(b.sourceProfitPerHour||0)-Number(a.sourceProfitPerHour||0) ||
         Number(b.profit||0)-Number(a.profit||0) ||
         Number(b.stock||0)-Number(a.stock||0)
@@ -1712,6 +2340,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     businessRules,
     freshnessInfo,
     salesItemMetrics,
+    pulseSignals,pulseFields,
     rankCachedOpportunities,
     rankPricelistUniverse,
     rankCachedTravel
@@ -1739,6 +2368,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const INTEL_HISTORY_MAX = 120;
   const VERIFY_MAX_AGE_SEC = 120;
   const VERIFY_SELLERS = 4;
+  const marketPulse = globalThis.MMTornMarketPulse;
 
   const asId = value => String(value ?? '').trim();
   const nowIso = () => new Date().toISOString();
@@ -2329,12 +2959,18 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     }
 
     async function refreshItemMarket(itemId) {
-      if (!hasTornKey()) throw new Error('Save a Torn API key in Market Scout first.');
+      if (!hasTornKey()) throw new Error('Save a Torn API key in MM Acquisitions first.');
       const id=asId(itemId);
       if (!/^\d+$/.test(id)) throw new Error('Invalid item ID.');
       const data=await deps.tornRequest('/market/'+encodeURIComponent(id)+'/itemmarket?limit=25');
       const itemRows=genericMarketListings(data);
       const before=await core.readLegacyState();
+      const pulseSnapshot=marketPulse?.normalizeTornItemMarket?.(
+        id,
+        String(before?.procurement?.catalog?.[id]?.name||before?.marketIntel?.marketplace?.[id]?.itemName||('Item '+id)),
+        data,
+        {fetchedAt:Date.now()}
+      )||null;
       const aggregateBazaarLow=Math.max(0,Number(before?.marketIntel?.marketplace?.[id]?.lowestPrice||0));
       const bazaarRows=freshOrganicListings(before,id)
         .filter(row=>!(aggregateBazaarLow>0)||Number(row.price||0)<=aggregateBazaarLow*1.35)
@@ -2349,6 +2985,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         itemId:id,itemMarket,bazaar,realisticExit,
         sources:{itemMarket:itemRows.length?'Torn API Item Market':null,bazaar:bazaarRows.length?'TornW3B fresh seller observations':null},
         totalDepth3Pct:Number(itemMarket.depth3Pct||0)+Number(bazaar.depth3Pct||0),
+        pulseSnapshot,
         fetchedAt:nowIso()
       };
       await core.updateDomainState('market',draft=>{
@@ -2357,6 +2994,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         proc.marketSnapshots[id]=snapshot;
         pushMarketHistory(proc,id,snapshot);
         proc.lastItemMarketAt=snapshot.fetchedAt;
+        if(pulseSnapshot&&marketPulse?.applySnapshotToDraft){
+          marketPulse.applySnapshotToDraft(draft,pulseSnapshot,{recordRequest:true});
+        }
         return draft;
       });
       return snapshot;
@@ -2381,7 +3021,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     }
 
     async function verifyBazaar(itemId,sellerId,expectedPrice=0) {
-      if (!hasTornKey()) throw new Error('Save a Torn API key in Market Scout first.');
+      if (!hasTornKey()) throw new Error('Save a Torn API key in MM Acquisitions first.');
       const id=asId(itemId),seller=asId(sellerId);
       if (!/^\d+$/.test(id)||!/^\d+$/.test(seller)) return {verified:false,reason:'invalid-id'};
       const data=await deps.bazaarRequest(seller);
@@ -2439,7 +3079,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         travel.lastSyncAt=new Date(at).toISOString();
         travel.source='TornW3B Travel Stock';
         travel.diagnostics=Array.isArray(travel.diagnostics)?travel.diagnostics:[];
-        travel.diagnostics.unshift({at:nowIso(),text:'Market Scout Travel import: '+safeRows.length+' rows.'});
+        travel.diagnostics.unshift({at:nowIso(),text:'MM Acquisitions Travel import: '+safeRows.length+' rows.'});
         travel.diagnostics=travel.diagnostics.slice(0,30);
         recordTravelSnapshots(travel,safeRows,at);
         return draft;
@@ -2971,17 +3611,34 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const profit=fairValue>0&&ask>0?fairValue-ask:0;
     const roiPct=ask>0?profit/ask*100:0;
     const volume=salesVolume(history,row,num(settings.now)||Date.now());
-    const liquidity=Math.round(Math.max(0,Math.min(100,
+    const auctionHistoryLiquidityScore=Math.round(Math.max(0,Math.min(100,
       Math.log1p(volume.d30)*24+Math.log1p(volume.d90)*12
     )));
     const marginScore=fairValue>0?Math.max(0,Math.min(100,profit/fairValue*100)):0;
     const roiScore=Math.max(0,Math.min(100,roiPct));
     const confidence=historyValue.confidence;
+    const now=num(settings.now)||Date.now();
+    const pulse=settings?.pulseByItem?.[String(row.itemId)]||null;
+    const pulseFetchedAt=Math.max(0,num(pulse?.fetchedAt));
+    const pulseAgeMs=pulseFetchedAt?Math.max(0,now-pulseFetchedAt):Infinity;
+    const pulseTtlMs=Math.max(10*60*1000,num(settings.pulseTtlMs)||45*60*1000);
+    const pulseConfidencePct=Math.max(0,Math.min(100,num(pulse?.confidencePct)));
+    const pulseUsable=Boolean(pulse&&pulseAgeMs<=pulseTtlMs&&pulseConfidencePct>=30);
+    const pulseLiquidityScore=pulseUsable?Math.max(0,Math.min(100,num(pulse?.liquidityScore))):0;
+    const observedEventsPerHour=pulseUsable?Math.max(0,num(pulse?.observedEventsPerHour)):0;
+    const observedUnitsPerHour=pulseUsable?Math.max(0,num(pulse?.observedUnitsPerHour)):0;
+    const turnoverPerHour=pulseUsable?Math.max(0,num(pulse?.turnoverPerHour)):0;
+    const profitVelocityPerHour=pulseUsable?Math.max(0,profit)*observedUnitsPerHour:0;
+    const pulseVelocityScore=pulseUsable?Math.max(0,Math.min(100,(Math.log10(1+profitVelocityPerHour)-4)*22)):0;
+    const liquidity=Math.round(pulseUsable
+      ?Math.max(0,Math.min(100,auctionHistoryLiquidityScore*.58+pulseLiquidityScore*.42))
+      :auctionHistoryLiquidityScore);
     const isAuction=lower(row.source)==='auction';
     const investmentScore=Math.round(Math.max(0,Math.min(100,
-      roiScore*.40+liquidity*.30+confidence*.20+marginScore*.10
+      pulseUsable
+        ?roiScore*.34+liquidity*.27+confidence*.17+marginScore*.08+pulseVelocityScore*.14
+        :roiScore*.40+liquidity*.30+confidence*.20+marginScore*.10
     )));
-    const now=num(settings.now)||Date.now();
     const endMs=Math.max(0,num(row.endsAt))*1000;
     const hoursRemaining=endMs>now?(endMs-now)/3600000:0;
     const auctionUrgencyScore=isAuction&&endMs>now
@@ -3005,7 +3662,16 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     return {
       ...row,price:ask,bbUnits:units,bbRate,bbFloor,auctionValue,fairValue,profit,roiPct,
       volume7:volume.d7,volume30:volume.d30,volume90:volume.d90,
-      liquidityScore:liquidity,investmentScore,auctionWatchScore,auctionUrgencyScore,auctionDiscountScore,
+      liquidityScore:liquidity,auctionHistoryLiquidityScore,investmentScore,auctionWatchScore,auctionUrgencyScore,auctionDiscountScore,
+      pulseTier:pulseUsable?String(pulse?.tier||'observed'):'unknown',
+      pulseLiquidityScore,pulseConfidencePct:pulseUsable?pulseConfidencePct:0,
+      observedEventsPerHour,observedUnitsPerHour,turnoverPerHour,profitVelocityPerHour,
+      pulseMarketDepth:pulseUsable?Math.max(0,num(pulse?.marketDepth)):0,
+      pulseTrendPct:pulseUsable?num(pulse?.trendPct):0,
+      pulseFreshness:pulseUsable?(pulseAgeMs<=60_000?'FRESH':pulseAgeMs<=5*60_000?'GOOD':'AGING'):'UNKNOWN',
+      pulseSourceTimestamp:pulseUsable?Math.max(0,num(pulse?.sourceTimestamp)):0,
+      pulseFetchedAt:pulseUsable?pulseFetchedAt:0,
+      pulseUpstreamCacheDelayMs:pulseUsable?Math.max(0,num(pulse?.upstreamCacheDelayMs)):0,
       hoursRemaining,sortScore,isAuction,lowTier,valuationSource,
       history:historyValue
     };
@@ -3092,6 +3758,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const TRAVEL_FEED_KEY='mm_acquisitions_travel_feed_v1';
   const TRAVEL_RETURN_KEY='mm_acquisitions_travel_return_v1';
   const WEAV_WATCH_LEASE_KEY='mm_acquisitions_weav_watch_lease_v1';
+  const PULSE_LEASE_KEY='mm_acquisitions_market_pulse_lease_v1';
   const CHANNEL='mm_bazaar_crm_cross_tab_v1';
   const INSTANCE_ID='acq-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);
   const AUTO_REFRESH_MS=60_000;
@@ -3137,6 +3804,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   let rankedPage=0;
 
   const core=globalThis.MMTornCore;
+  const pulse=globalThis.MMTornMarketPulse;
   const logic=globalThis.MMTornAcquisitionsLogic;
   const live=globalThis.MMTornAcquisitionsLive;
   const rankedLogic=globalThis.MMTornRankedProfitLogic;
@@ -3168,6 +3836,31 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(sec<3600)return Math.floor(sec/60)+'m ago';
     if(sec<86400)return Math.floor(sec/3600)+'h ago';
     return Math.floor(sec/86400)+'d ago';
+  }
+
+  function pulseLine(row={},itemId='',unitProfit=0){
+    const p=(row&&row.pulseTier)?row:(logic?.pulseFields?.(state,itemId,unitProfit)||{});
+    const tier=String(p?.pulseTier||'unknown');
+    if(tier==='unknown')return '<div style="font-size:10px;color:#777;">Market Pulse · collecting seller-free Torn API movement evidence</div>';
+    const freshness=typeof p?.pulseFreshness==='string'?String(p.pulseFreshness):String(p?.pulseFreshness?.label||'UNKNOWN');
+    const sourceAt=Number(p?.pulseSourceTimestamp||0);
+    const fetchedAt=Number(p?.pulseFetchedAt||0);
+    const cacheDelaySec=Math.round(Math.max(0,Number(p?.pulseUpstreamCacheDelayMs||0))/1000);
+    const score=p?.marketPulseScore===null||p?.marketPulseScore===undefined?'':(' · pulse score '+Number(p.marketPulseScore||0).toFixed(0)+'/100');
+    const velocity=Number(p?.profitVelocityPerHour||0)>0?' · est profit velocity '+money(p.profitVelocityPerHour)+'/hr':'';
+    return '<div style="font-size:10px;color:#8fb9a1;">Market Pulse '+esc(tier.toUpperCase())+
+      ' · events/hr '+Number(p?.observedEventsPerHour||0).toFixed(2)+
+      ' · units/hr '+Number(p?.observedUnitsPerHour||0).toFixed(2)+
+      ' · turnover/hr '+money(p?.turnoverPerHour||0)+
+      ' · liquidity '+Number(p?.pulseLiquidityScore||0).toFixed(0)+'/100'+
+      ' · depth '+Number(p?.pulseMarketDepth||0).toLocaleString()+
+      ' · confidence '+Number(p?.pulseConfidencePct||0).toFixed(0)+'%'+
+      ' · trend '+Number(p?.pulseTrendPct||0).toFixed(1)+'%'+score+velocity+
+      ' · '+esc(freshness)+
+      ' · source '+(sourceAt?esc(age(new Date(sourceAt).toISOString())):'unknown')+
+      ' · fetched '+(fetchedAt?esc(age(new Date(fetchedAt).toISOString())):'unknown')+
+      (cacheDelaySec?' · upstream cache '+cacheDelaySec+'s':'')+
+      ' · Torn API</div>';
   }
 
   function futureDuration(unixSeconds){
@@ -3442,6 +4135,16 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     navigate
   });
 
+  const pulseEngine=core&&pulse&&service?pulse.createEngine({
+    core,
+    refreshItemMarket:itemId=>service.refreshItemMarket(itemId),
+    hasKey:()=>Boolean(apiKey()),
+    readLease:()=>GM_getValue(PULSE_LEASE_KEY,null),
+    writeLease:value=>GM_setValue(PULSE_LEASE_KEY,value),
+    ownerId:INSTANCE_ID,
+    onState:next=>{state=next;}
+  }):null;
+
   async function importTravelCapture({silent=false}={}){
     const feed=await loadTravelFeed();
     if(!feed?.rows?.length) {
@@ -3480,7 +4183,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   async function reloadCachedState(){
     loadError='';
-    if(!core||!logic||!live||!rankedLogic||!ledger||!service){
+    if(!core||!pulse||!logic||!live||!rankedLogic||!ledger||!service||!pulseEngine){
       loadError='MM Acquisitions dependencies did not load.';
       state=null;
       render();
@@ -3661,26 +4364,31 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   }
 
   async function autoRefreshAcquisitions({force=false}={}){
-    if(autoRefreshRunning||busy||watchRunning||document.visibilityState!=='visible')return;
+    if(autoRefreshRunning||busy||watchRunning||document.visibilityState!=='visible'||!core)return;
     const root=document.getElementById(ROOT_ID);
-    if(!root||root.style.display==='none')return;
+    const panelOpen=Boolean(root&&root.style.display!=='none');
     autoRefreshRunning=true;
     try{
       state=await core.readLegacyState();
-      try{await importTravelCapture({silent:true});}catch{}
-      if(apiKey())try{await refreshTravelContext({force:false,silent:true});}catch{}
-      const f=core.freshnessSnapshot(state||{});
-      const now=Date.now();
-      const purchaseAt=Date.parse(f.acquisitions||state?.procurement?.lastAcquisitionSyncAt||'')||0;
-      const itemMarketAt=Date.parse(f.itemMarket||'')||0;
-      if(apiKey()&&(force||!purchaseAt||now-purchaseAt>=PURCHASE_STALE_MS))await syncPurchases();
-      if(force||!itemMarketAt||now-itemMarketAt>=OPPORTUNITY_STALE_MS)await refreshOpportunities();
-      if(activeView==='ranked')await ensureRankedFresh();
-      else render();
+      if(panelOpen){
+        try{await importTravelCapture({silent:true});}catch{}
+        if(apiKey())try{await refreshTravelContext({force:false,silent:true});}catch{}
+        const f=core.freshnessSnapshot(state||{});
+        const now=Date.now();
+        const purchaseAt=Date.parse(f.acquisitions||state?.procurement?.lastAcquisitionSyncAt||'')||0;
+        const itemMarketAt=Date.parse(f.itemMarket||'')||0;
+        if(apiKey()&&(force||!purchaseAt||now-purchaseAt>=PURCHASE_STALE_MS))await syncPurchases();
+        if(force||!itemMarketAt||now-itemMarketAt>=OPPORTUNITY_STALE_MS)await refreshOpportunities();
+        if(activeView==='ranked')await ensureRankedFresh();
+      }
+      if(apiKey()&&pulseEngine){
+        const result=await pulseEngine.tick();
+        if(result?.state)state=result.state;
+      }
+      if(panelOpen)render();
     }catch(error){
       console.warn('[MM_Acquisitions] automatic refresh failed',error);
-      statusText='Auto-refresh warning: '+(error?.message||String(error));
-      render();
+      if(panelOpen){statusText='Auto-refresh warning: '+(error?.message||String(error));render();}
     }finally{autoRefreshRunning=false;}
   }
 
@@ -3694,12 +4402,46 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(autoRefreshTimer){clearInterval(autoRefreshTimer);autoRefreshTimer=null;}
   }
 
+  async function refreshMarketPulse(){
+    if(busy||autoRefreshRunning||!pulseEngine)return;
+    if(!apiKey()){statusText='Save a Torn API key in Settings before refreshing Market Pulse.';activeView='settings';render();return;}
+    busy=true;statusText='Refreshing one Market Pulse item from Torn API…';render();
+    try{
+      state=await core.readLegacyState();
+      const itemId=pulse.trackedItemIds(state,1)[0]||'';
+      if(!itemId){statusText='Market Pulse has no tracked acquisition item yet. Refresh Opportunities or Pricelist first.';return;}
+      const result=await pulseEngine.tick({itemId});
+      if(result?.state)state=result.state;
+      statusText=result?.refreshed
+        ?('Market Pulse refreshed item '+itemId+(result.reusedRecent?' from the just-verified 2.5s snapshot.':'.'))
+        :('Market Pulse did not refresh: '+String(result?.skipped||result?.error||'not due')+'.');
+    }catch(error){statusText='Market Pulse refresh failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function exportMarketPulseDiagnostics(){
+    if(!pulse||!state)return;
+    const diagnostics=pulse.sanitizedDiagnostics(state,GM_getValue(PULSE_LEASE_KEY,null));
+    const blob=new Blob([JSON.stringify(diagnostics,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download='MM_Acquisitions-Market-Pulse-'+Date.now()+'.json';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    statusText='Sanitized Market Pulse diagnostics exported.';render();
+  }
+
   function sourceStrip(){
     if(!state)return '';
     const f=core.freshnessSnapshot(state);
+    const pulseState=state?.marketIntel?.marketPulse||{};
+    const pulseItems=Object.values(pulseState.items||{});
+    const proven=pulseItems.filter(row=>String(row?.tier||'')==='proven').length;
+    const candidates=pulseItems.filter(row=>String(row?.tier||'')==='candidate').length;
+    const budget=pulse?.budgetStatus?.(state)||{used:0,limit:0};
+    const pulseAt=Number(pulseState.updatedAt||0);
     return '<div style="display:flex;gap:5px;flex-wrap:wrap;font-size:10px;color:#aaa;margin-bottom:7px;">'+
       '<span>Bazaar '+esc(age(f.weav3rGeneratedAt))+' <span style="color:#777;">(Weav3r)</span></span>'+
       '<span>· Item Market '+esc(age(f.itemMarket))+'</span>'+
+      '<span>· Market Pulse '+(pulseAt?esc(age(new Date(pulseAt).toISOString())):'not synced')+' <span style="color:#777;">(Torn API · '+proven+' proven / '+candidates+' candidates · budget '+Number(budget.used||0)+'/'+Number(budget.limit||0)+')</span></span>'+
       '<span>· Travel '+esc(age(f.travel))+'</span>'+
       '<span>· Pricelist '+esc(age(state?.procurement?.pricelist?.lastSyncAt))+'</span>'+
       '<span>· Ranked '+esc(age(state?.procurement?.ranked?.lastLiveAt))+'</span>'+
@@ -3812,7 +4554,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
           '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.freshness?.label||'UNKNOWN')+' · <b>'+esc(r.buySource||'Bazaar observed')+'</b>'+
           '<div>Bazaar low <b>'+money(r.buyPrice)+'</b> · Bazaar avg '+money(r.bazaarAverage||0)+' · Your buy rate '+money(r.targetBuy)+' · Best exit '+money(r.bestExit)+' ('+esc(r.bestExitRoute||'')+') · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
-          '<div style="color:#888;">Profit/unit '+(r.profit>=0?'+':'-')+money(Math.abs(r.profit||0))+' · liquidity '+Number(r.liquidity||0)+'/100 · confidence '+Number(r.confidence||0)+'% · bazaars '+Number(r.sellerCount||0)+'</div></div>'+
+          '<div style="color:#888;">Profit/unit '+(r.profit>=0?'+':'-')+money(Math.abs(r.profit||0))+' · liquidity '+Number(r.liquidity||0)+'/100 · confidence '+Number(r.confidence||0)+'% · bazaars '+Number(r.sellerCount||0)+'</div>'+pulseLine(r,r.id,r.profit)+'</div>'+
           '<button data-pricelist-verify="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(r.qualifies)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Verify</button>'+
         '</div>'
       ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">Pricelist rows are loaded, but current market evidence is unavailable. Refresh Opportunities.</div>')
@@ -3823,7 +4565,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
           '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.purchaseSource)+
           '<div>Buy <b>'+money(r.buyPrice)+'</b> · Max '+money(r.maxBuyPrice)+' · Exit '+money(r.bestExit)+' · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
-          '<div style="color:#888;">3d sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% ('+esc(r.conversionSource)+') · Confidence '+Number(r.confidence||0).toFixed(0)+'% · Live listings '+Number(r.liveListingCount||0)+' · Qty '+Number(r.recommendedQty||1)+' · Est. 3d profit '+money(r.expectedProfit3d||0)+'</div></div>'+
+          '<div style="color:#888;">3d sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% ('+esc(r.conversionSource)+') · Confidence '+Number(r.confidence||0).toFixed(0)+'% · Live listings '+Number(r.liveListingCount||0)+' · Qty '+Number(r.recommendedQty||1)+' · Est. 3d profit '+money(r.expectedProfit3d||0)+'</div>'+pulseLine(r,r.id,r.profit)+'</div>'+
           '<button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Verify & Buy</button>'+
         '</div>'
       ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No current cached opportunity meets the active business rules.</div>')
@@ -3832,7 +4574,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       '<div style="font-size:10px;color:#888;margin:4px 0;">These require fresher seller or Item Market evidence before routing.</div>'+
       (research.length?research.map(r=>
         '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:6px 0;font-size:10px;">'+
-          '<div><b>'+esc(r.name)+'</b> · '+esc(r.discoverySource||'Research')+' · ROI '+Number(r.roiPct||0).toFixed(1)+'% · Sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% · score '+Number(r.score||0).toFixed(0)+'</div>'+
+          '<div><b>'+esc(r.name)+'</b> · '+esc(r.discoverySource||'Research')+' · ROI '+Number(r.roiPct||0).toFixed(1)+'% · Sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% · score '+Number(r.score||0).toFixed(0)+pulseLine(r,r.id,r.profit)+'</div>'+
           '<button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'padding:4px 7px;">Find & Buy</button>'+
         '</div>'
       ).join(''):'<div style="font-size:10px;color:#888;margin-top:6px;">No additional leads.</div>')+
@@ -3876,7 +4618,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     )+
     card(rows.length?rows.map((r,i)=>
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;"><div><b>#'+(i+1)+' '+esc(r.itemName)+'</b> · '+esc(r.country)+
-      '<div>Overseas stock '+Number(r.stock||0).toLocaleString()+' · Profit '+money(r.profit||0)+' · Source profit/hr '+money(r.sourceProfitPerHour||0)+'</div></div>'+
+      '<div>Overseas stock '+Number(r.stock||0).toLocaleString()+' · Profit '+money(r.profit||0)+' · Source profit/hr '+money(r.sourceProfitPerHour||0)+' · Liquidity-adjusted '+money(r.liquidityAdjustedProfitPerHour||0)+'/hr</div>'+pulseLine(r,r.itemId,r.profit)+'</div>'+
       '<button data-travel-compare="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'white-space:nowrap;">Compare Bazaar / Market</button></div>'
     ).join(''):(stale
       ?'<div style="font-size:11px;color:#888;">No travel recommendations shown until data is refreshed.</div>'
@@ -4015,7 +4757,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         weaponType:String(row.weaponType||cat.weaponCategory||'')
       };
       const hist=Array.isArray(history?.[String(row.itemId)]?.rows)?history[String(row.itemId)].rows:[];
-      return rankedLogic.evaluateListing(candidate,hist,{...cfg,bbRate:cfg.bbRate});
+      return rankedLogic.evaluateListing(candidate,hist,{...cfg,bbRate:cfg.bbRate,pulseByItem:state?.marketIntel?.marketPulse?.items||{}});
     });
     const bonusQ=rankedBonus.trim().toLowerCase();
     const weaponQ=rankedWeapon.trim().toLowerCase();
@@ -4148,7 +4890,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
               '<div>'+esc(bonus)+'</div>'+
               priceLine+auctionLine+
               '<div style="color:#888;">'+esc(row.valuationSource)+' · BB '+Number(row.bbUnits||0)+' ('+money(row.bbFloor)+') · AH median '+money(row.auctionValue)+' · '+esc(row.history?.cohort||'BASE')+' n='+Number(row.history?.samples||0)+' · confidence '+Number(row.history?.confidence||0)+'%</div>'+
-              '<div style="color:#888;">Traffic 7/30/90d '+Number(row.volume7||0)+'/'+Number(row.volume30||0)+'/'+Number(row.volume90||0)+' · liquidity '+Number(row.liquidityScore||0)+'/100 · '+(isAuction?'watch '+Number(row.auctionWatchScore||0)+'/100 · urgency '+Number(row.auctionUrgencyScore||0)+'/100 · bid discount '+Number(row.auctionDiscountScore||0)+'/100':'investment '+Number(row.investmentScore||0)+'/100')+'</div>'+
+              '<div style="color:#888;">Traffic 7/30/90d '+Number(row.volume7||0)+'/'+Number(row.volume30||0)+'/'+Number(row.volume90||0)+' · liquidity '+Number(row.liquidityScore||0)+'/100 (AH '+Number(row.auctionHistoryLiquidityScore||0)+'/100) · '+(isAuction?'watch '+Number(row.auctionWatchScore||0)+'/100 · urgency '+Number(row.auctionUrgencyScore||0)+'/100 · bid discount '+Number(row.auctionDiscountScore||0)+'/100':'investment '+Number(row.investmentScore||0)+'/100')+'</div>'+pulseLine(row,row.itemId,row.profit)+
             '</div>'+
             '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
               '<button data-rw-history="'+esc(row.itemId)+'" '+(busy?'disabled':'')+' style="'+button(!historyLoaded)+(busy?'opacity:.5;':'')+'padding:5px 7px;">'+(historyLoaded?'Refresh AH':'Analyze AH')+'</button>'+
@@ -4359,7 +5101,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
           '<div style="font-size:10px;color:#888;">'+esc(itemSelection.type)+(itemSelection.subType?' · '+esc(itemSelection.subType):'')+' · Torn catalog reference '+money(itemSelection.marketPrice||0)+' (reference only; not used as live exit)</div>'+
         '</div>'+
         '<button data-item-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Use Best Source</button>'+
-      '</div>'+rows
+      '</div>'+pulseLine({},itemSelection.id,0)+rows
     );
   }
 
@@ -4423,6 +5165,11 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function settingsHtml(){
     const r=state?.businessRules||{};
+    const pulseState=state?.marketIntel?.marketPulse||{};
+    const pulseRows=Object.values(pulseState.items||{});
+    const pulseBudget=pulse?.budgetStatus?.(state)||{used:0,limit:0};
+    const pulseProven=pulseRows.filter(row=>String(row?.tier||'')==='proven').length;
+    const pulseCandidates=pulseRows.filter(row=>String(row?.tier||'')==='candidate').length;
     return card(
       '<b>MM Acquisitions Connection</b>'+
       '<div style="font-size:10px;color:#888;margin:4px 0 7px;">The API key is stored only in this userscript\'s Tampermonkey GM storage. It is not copied to shared IndexedDB/localStorage. Required scope: Torn Items catalog, User Basic, User Log purchase events used by the ledger, and market data needed for live verification.</div>'+
@@ -4432,6 +5179,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         '<button id="mm-acq-clear-key" style="'+button()+'">Clear</button>'+
       '</div>'+
       '<div style="font-size:10px;color:#888;margin-top:7px;">While Acquisitions is open and visible, stale purchase logs and opportunity data refresh automatically with guarded intervals. Weav3r generation is checked once per minute. Verify & Buy and final purchase remain manual.</div>'
+    )+
+    card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+        '<div><b>Market Pulse</b><div style="font-size:10px;color:#888;margin-top:4px;">Seller-free Torn API movement intelligence. One cross-tab engine lease, bounded cache/history, cache-delay-aware cadence and local request-budget governor. No seller-target, mug or attack model is retained.</div></div>'+
+        '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-pulse-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Pulse</button><button id="mm-acq-pulse-export" style="'+button()+'">Export Diagnostics</button></div>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:7px;">Source: Torn API v2 Item Market · cached items '+pulseRows.length+' · proven '+pulseProven+' · candidates '+pulseCandidates+' · request budget '+Number(pulseBudget.used||0)+'/'+Number(pulseBudget.limit||0)+' in the last minute · updated '+(Number(pulseState.updatedAt||0)?esc(age(new Date(Number(pulseState.updatedAt)).toISOString())):'not synced')+'.</div>'
     )+
     card(
       '<b>Shared Acquisition Rules</b>'+
@@ -4482,7 +5236,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.20-pda.7 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.21-pda.8 · PROFIT / RANKED / TRAVEL / PULSE</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -4518,6 +5272,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     root.querySelectorAll('#mm-acq-reload').forEach(b=>b.addEventListener('click',reloadCachedState));
     root.querySelector('#mm-acq-live-refresh')?.addEventListener('click',refreshOpportunities);
     root.querySelector('#mm-acq-sync-purchases')?.addEventListener('click',syncPurchases);
+    root.querySelector('#mm-acq-pulse-refresh')?.addEventListener('click',refreshMarketPulse);
+    root.querySelector('#mm-acq-pulse-export')?.addEventListener('click',exportMarketPulseDiagnostics);
     root.querySelector('#mm-acq-travel-update')?.addEventListener('click',updateTravelData);
     root.querySelector('#mm-acq-travel-import')?.addEventListener('click',()=>importTravelCapture({silent:false}).catch(error=>{
       statusText='Travel import failed: '+(error?.message||String(error));
@@ -4611,7 +5367,6 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(root)root.style.display='none';
     core?.setDockLauncherActive?.('acquisitions',false);
     stopWatcher();
-    stopAutoRefresh();
   }
 
   function createLauncher(){
@@ -4644,7 +5399,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     installTravelCollector();
     return;
   }
-  globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';function initializeAcquisitions(){createLauncher();installChannel();}
+  globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';function initializeAcquisitions(){createLauncher();installChannel();startAutoRefresh();}
+  window.addEventListener('pagehide',()=>{stopAutoRefresh();pulseEngine?.release?.();},{once:true});
   if(document.body)initializeAcquisitions();
   else window.addEventListener('DOMContentLoaded',initializeAcquisitions,{once:true});
 })();
