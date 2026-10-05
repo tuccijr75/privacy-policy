@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.16.1
+// @version      1.1.17.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -22,7 +22,7 @@
 
   const RUNTIME_GUARD = '__SS_MUGGER_RUNTIME_ACTIVE__';
   if (window[RUNTIME_GUARD]) return;
-  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.16'};
+  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.17'};
 
   const BOOT_PROBE_ID = 'ss-mugger-boot-probe';
   function showBootProbe(label = 'SSQ', isError = false) {
@@ -241,10 +241,18 @@ function establishMarketBaseline(snapshot, fingerprint) {
   const evidence = marketEvidence(snapshot, fingerprint);
   const observedAmount = Math.max(1, asInt(fingerprint?.amount, 1));
   if (evidence.mode === 'uid' && evidence.unique) {
-    return {ok: true, ...evidence, quantity: evidence.totalQty, reportedAt: snapshot.reportedAt, reason: 'unique_uid'};
+    return {
+      ok: true, ...evidence, quantity: evidence.totalQty,
+      anchorQuantity: evidence.totalQty, anchorReportedAt: snapshot.reportedAt,
+      reportedAt: snapshot.reportedAt, reason: 'unique_uid'
+    };
   }
   if (evidence.mode === 'price' && evidence.unique && evidence.totalQty === observedAmount) {
-    return {ok: true, ...evidence, quantity: evidence.totalQty, reportedAt: snapshot.reportedAt, reason: 'unique_price_and_amount'};
+    return {
+      ok: true, ...evidence, quantity: evidence.totalQty,
+      anchorQuantity: observedAmount, anchorReportedAt: snapshot.reportedAt,
+      reportedAt: snapshot.reportedAt, reason: 'unique_price_and_amount'
+    };
   }
   return {ok: false, ...evidence, quantity: evidence.totalQty, reportedAt: snapshot.reportedAt, reason: evidence.count > 1 ? 'ambiguous_api_listing' : 'api_baseline_not_found'};
 }
@@ -252,15 +260,43 @@ function establishMarketBaseline(snapshot, fingerprint) {
 function diffMarketBaseline(baseline, currentSnapshot, fingerprint) {
   if (!baseline?.ok || !currentSnapshot || currentSnapshot.reportedAt <= baseline.reportedAt) return {signal: null, baseline};
   const evidence = marketEvidence(currentSnapshot, fingerprint);
-  if (evidence.count > 1) {
-    return {signal: null, baseline: {...baseline, reportedAt: currentSnapshot.reportedAt, ambiguous: true}, state: 'ambiguous'};
-  }
-  const currentQty = evidence.totalQty;
   const previousQty = Math.max(0, asInt(baseline.quantity, 0));
-  if (currentQty >= previousQty) {
-    return {signal: null, baseline: {...baseline, quantity: currentQty, reportedAt: currentSnapshot.reportedAt, ambiguous: false}, state: 'unchanged'};
+  const anchorQuantity = Math.max(previousQty, asInt(baseline.anchorQuantity, previousQty));
+
+  // Item Market API rows do not identify the seller. Once the price-only evidence
+  // becomes ambiguous or the tracked quantity grows, we can no longer prove that
+  // the API row is still the seller observed in the page scan. Fail closed and
+  // require another seller-visible scan instead of silently adopting a new row.
+  if (evidence.count > 1) {
+    return {
+      signal: null,
+      baseline: {...baseline, ok:false, requiresReanchor:true, reportedAt:currentSnapshot.reportedAt, ambiguous:true, reason:'ambiguous_listing_requires_reanchor'},
+      state: 'reanchor-required'
+    };
   }
+
+  const currentQty = evidence.totalQty;
+  if (currentQty > previousQty) {
+    return {
+      signal: null,
+      baseline: {...baseline, ok:false, requiresReanchor:true, reportedAt:currentSnapshot.reportedAt, observedQuantity:currentQty, reason:'quantity_increase_requires_reanchor'},
+      state: 'reanchor-required'
+    };
+  }
+
+  if (currentQty === previousQty) {
+    return {signal: null, baseline: {...baseline, reportedAt: currentSnapshot.reportedAt, ambiguous: false}, state: 'unchanged'};
+  }
+
   const soldQty = previousQty - currentQty;
+  if (soldQty <= 0 || (anchorQuantity > 0 && soldQty > anchorQuantity)) {
+    return {
+      signal:null,
+      baseline:{...baseline, ok:false, requiresReanchor:true, reportedAt:currentSnapshot.reportedAt, reason:'invalid_quantity_delta_requires_reanchor'},
+      state:'reanchor-required'
+    };
+  }
+
   const signal = {
     source: 'itemmarket',
     itemId: String(fingerprint.itemId || ''),
@@ -269,6 +305,7 @@ function diffMarketBaseline(baseline, currentSnapshot, fingerprint) {
     soldQty,
     unitPrice: normalizeMoney(fingerprint.price),
     grossValue: soldQty * normalizeMoney(fingerprint.price),
+    anchorQuantity,
     previousReportedAt: baseline.reportedAt,
     reportedAt: currentSnapshot.reportedAt,
     confidence: fingerprint.uid ? 'high' : currentQty === 0 ? 'medium' : 'high',
@@ -627,8 +664,13 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.16.1';
-  const PREFIX = 'mm_market_mug_signals_v1';
+  const VERSION = '1.1.17.1';
+  const PREFIX = 'mm_market_mug_signals_v2';
+  const LEGACY_PREFIX = 'mm_market_mug_signals_v1';
+  const SIGNAL_INTEGRITY_VERSION = 2;
+  const ENGINE_LEASE_SECONDS = 8;
+  const MAX_BULK_SIGNAL_UNITS = 100_000;
+  const MAX_BULK_SIGNAL_GROSS = 100_000_000_000;
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
   const PDA_API_KEY = '###PDA-APIKEY###';
@@ -652,8 +694,21 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     itemScans: `${PREFIX}:item_scans`,
     pendingScan: `${PREFIX}:pending_scan`,
     scanSession: `${PREFIX}:scan_session`,
-    scanIntake: `${PREFIX}:scan_intake`
+    scanIntake: `${PREFIX}:scan_intake`,
+    signalIntegrity: `${PREFIX}:signal_integrity`,
+    engineLease: `${PREFIX}:engine_lease`,
+    migration: `${PREFIX}:migration`
   };
+  const LEGACY_STORE = Object.freeze({
+    key:`${LEGACY_PREFIX}:api_key`,
+    watches:`${LEGACY_PREFIX}:watches`,
+    settings:`${LEGACY_PREFIX}:settings`,
+    seenAuctions:`${LEGACY_PREFIX}:seen_auctions`,
+    itemScans:`${LEGACY_PREFIX}:item_scans`,
+    pendingScan:`${LEGACY_PREFIX}:pending_scan`,
+    scanSession:`${LEGACY_PREFIX}:scan_session`,
+    scanIntake:`${LEGACY_PREFIX}:scan_intake`
+  });
   const DEFAULTS = Object.freeze({
     marketPollSeconds: 30,
     pointsPollSeconds: 20,
@@ -747,6 +802,80 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     storageSet(key, JSON.stringify(value));
   }
 
+  function migrateLegacyV1Once() {
+    if (readJson(STORE.migration, null)?.complete) return;
+    const legacyKey = String(storageGet(LEGACY_STORE.key, '') || '').trim();
+    if (legacyKey) storageSet(STORE.key, legacyKey);
+
+    const legacySettings = readJson(LEGACY_STORE.settings, null);
+    if (legacySettings && typeof legacySettings === 'object') writeJson(STORE.settings, legacySettings);
+
+    const legacySession = readJson(LEGACY_STORE.scanSession, null);
+    const legacySessionId = String(legacySession?.id || '');
+    const legacyWatches = readJson(LEGACY_STORE.watches, []);
+    if (Array.isArray(legacyWatches) && legacyWatches.length) {
+      const migratedWatches = legacyWatches.map((watch) => {
+        if (!watch || typeof watch !== 'object') return null;
+        const copy = cloneValue(watch);
+        if (copy.source === 'itemmarket') {
+          const belongsToHotScan = Boolean(
+            copy.hotScan &&
+            copy.baseline?.reason === 'hot_scan_intake' &&
+            (!legacySessionId || !copy.hotScanSessionId || String(copy.hotScanSessionId) === legacySessionId)
+          );
+          if (belongsToHotScan) {
+            const anchorQuantity = Math.max(1, Number(copy.amount || 1) || 1);
+            const anchorReportedAt = Math.max(0, Number(copy.hotScanObservedAt || copy.baseline?.anchorReportedAt || copy.baseline?.reportedAt || 0) || 0);
+            copy.baseline = {
+              ...copy.baseline,
+              ok:true,
+              count:1,
+              totalQty:anchorQuantity,
+              quantity:anchorQuantity,
+              anchorQuantity,
+              anchorReportedAt,
+              reportedAt:anchorReportedAt,
+              ambiguous:false,
+              requiresReanchor:false,
+              reason:'hot_scan_intake'
+            };
+            copy.intakeState = 'tracking-sale';
+          } else {
+            copy.active = false;
+            copy.baseline = null;
+            copy.status = 'migration-reanchor-required';
+            copy.intakeState = 'reanchor-required';
+          }
+        }
+        return copy;
+      }).filter(Boolean);
+      writeJson(STORE.watches, migratedWatches);
+    }
+
+    for (const [legacyKeyName, currentKey] of [
+      [LEGACY_STORE.seenAuctions, STORE.seenAuctions],
+      [LEGACY_STORE.itemScans, STORE.itemScans],
+      [LEGACY_STORE.pendingScan, STORE.pendingScan],
+      [LEGACY_STORE.scanSession, STORE.scanSession],
+      [LEGACY_STORE.scanIntake, STORE.scanIntake]
+    ]) {
+      const value = storageGet(legacyKeyName, '');
+      if (value !== '' && value !== null && value !== undefined) storageSet(currentKey, value);
+    }
+
+    writeJson(STORE.signalIntegrity, {
+      version:SIGNAL_INTEGRITY_VERSION,
+      migratedAt:nowSec(),
+      legacyNamespace:LEGACY_PREFIX,
+      itemSignalHistoryReset:true,
+      candidatesReset:true,
+      reason:'v1_item_signal_history_failed_integrity_validation'
+    });
+    writeJson(STORE.migration, {complete:true, from:LEGACY_PREFIX, to:PREFIX, at:nowSec()});
+  }
+
+  migrateLegacyV1Once();
+
   let settings = {...DEFAULTS, ...readJson(STORE.settings, {})};
   let watches = readJson(STORE.watches, []);
   let candidates = readJson(STORE.candidates, []);
@@ -758,7 +887,11 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   let itemScans = readJson(STORE.itemScans, {});
   let pendingItemScan = readJson(STORE.pendingScan, null);
   let scanSession = readJson(STORE.scanSession, {active:false,queue:[],scanned:[],startedAt:0,completedAt:0});
+  let signalIntegrity = readJson(STORE.signalIntegrity, {version:SIGNAL_INTEGRITY_VERSION,removed:0,reasons:{},lastSanitizedAt:0});
   let apiKey = String(storageGet(STORE.key, '') || PDA_INJECTED_API_KEY || '').trim();
+  const TAB_ID = uid();
+  let engineLeaseOwned = false;
+  let lastEngineLeaseWriteAt = 0;
   let ownerBattleStats = null;
   let ownerBattleStatsStatus = 'not-loaded';
   let ownerBattleStatsAttempted = false;
@@ -802,7 +935,40 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   };
   const readScanIntake = () => readJson(STORE.scanIntake, []);
   const saveScanIntake = (records) => writeJson(STORE.scanIntake, (Array.isArray(records) ? records : []).slice(-2500));
+  const saveSignalIntegrity = () => writeJson(STORE.signalIntegrity, signalIntegrity);
   const saveSettings = () => writeJson(STORE.settings, settings);
+
+  function isEngineOwner() {
+    const lease = readJson(STORE.engineLease, null);
+    return Boolean(lease && lease.owner === TAB_ID && lease.version === VERSION && Number(lease.expiresAt || 0) > nowSec());
+  }
+
+  function acquireEngineLease(force = false) {
+    if (isScanWorker()) return false;
+    const now = nowSec();
+    const lease = readJson(STORE.engineLease, null);
+    const canTake = force || !lease || !lease.owner || Number(lease.expiresAt || 0) <= now || lease.owner === TAB_ID || lease.version !== VERSION;
+    if (!canTake) {
+      engineLeaseOwned = false;
+      return false;
+    }
+    const newlyOwned = !engineLeaseOwned || lease?.owner !== TAB_ID || lease?.version !== VERSION;
+    engineLeaseOwned = true;
+    if (newlyOwned || now - lastEngineLeaseWriteAt >= Math.max(2, Math.floor(ENGINE_LEASE_SECONDS / 2))) {
+      writeJson(STORE.engineLease, {owner:TAB_ID,version:VERSION,updatedAt:now,expiresAt:now+ENGINE_LEASE_SECONDS,url:location.href.slice(0,300)});
+      lastEngineLeaseWriteAt = now;
+    }
+    if (newlyOwned) syncSharedState();
+    return true;
+  }
+
+  function releaseEngineLease() {
+    const lease = readJson(STORE.engineLease, null);
+    if (lease?.owner === TAB_ID && lease?.version === VERSION) {
+      writeJson(STORE.engineLease, {...lease,expiresAt:0,releasedAt:nowSec()});
+    }
+    engineLeaseOwned = false;
+  }
 
   function logError(scope, error) {
     const message = String(error?.message || error || 'Unknown error').replace(apiKey, '[redacted]');
@@ -822,48 +988,163 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   function itemConfidenceWeight(level) {
     return level === 'high' ? 95 : level === 'medium' ? 70 : 35;
   }
+
+  function signalIntegrityReason(row) {
+    if (!row || typeof row !== 'object') return 'missing_signal';
+    const source = String(row.source || '');
+    const itemId = String(row.itemId || '');
+    if (source === 'pointsmarket') {
+      if (itemId !== 'points') return 'invalid_points_item_id';
+    } else if (!/^\d+$/.test(itemId)) {
+      return 'invalid_item_id';
+    }
+    const soldQty = Number(row.soldQty);
+    const grossValue = Number(row.grossValue);
+    if (!Number.isFinite(soldQty) || !Number.isInteger(soldQty) || soldQty <= 0) return 'invalid_sold_quantity';
+    if (!Number.isFinite(grossValue) || grossValue <= 0) return 'invalid_gross_value';
+    if (soldQty > MAX_BULK_SIGNAL_UNITS && grossValue > MAX_BULK_SIGNAL_GROSS) return 'implausible_bulk_signal';
+
+    if (source === 'auctionhouse' && soldQty !== 1) return 'auction_quantity_not_one';
+    if (source === 'itemmarket') {
+      if (Number(row.integrityVersion || 0) < SIGNAL_INTEGRITY_VERSION) return 'legacy_itemmarket_signal';
+      const anchorQuantity = Number(row.anchorQuantity);
+      if (!Number.isFinite(anchorQuantity) || anchorQuantity <= 0 || soldQty > anchorQuantity) return 'itemmarket_quantity_exceeds_anchor';
+    }
+
+    const unitPrice = Number(row.unitPrice);
+    if (Number.isFinite(unitPrice) && unitPrice > 0) {
+      const expectedGross = soldQty * unitPrice;
+      const tolerance = Math.max(1, Math.round(expectedGross * 0.01));
+      if (!Number.isFinite(expectedGross) || Math.abs(grossValue - expectedGross) > tolerance) return 'gross_quantity_price_mismatch';
+    }
+    return '';
+  }
+
+  function noteSignalIntegrityDrop(reason, row = null) {
+    const key = String(reason || 'unknown');
+    signalIntegrity = {
+      ...signalIntegrity,
+      version:SIGNAL_INTEGRITY_VERSION,
+      removed:Math.max(0, Number(signalIntegrity?.removed)||0) + 1,
+      reasons:{...(signalIntegrity?.reasons || {}), [key]:Math.max(0, Number(signalIntegrity?.reasons?.[key])||0) + 1},
+      lastSanitizedAt:nowSec(),
+      lastRejected:row ? {
+        source:String(row.source || ''),
+        itemId:String(row.itemId || ''),
+        sellerId:String(row.sellerId || ''),
+        soldQty:Number(row.soldQty)||0,
+        grossValue:Number(row.grossValue)||0,
+        reason:key,
+        at:nowSec()
+      } : signalIntegrity?.lastRejected || null
+    };
+  }
+
+  function normalizeSaleSignal(watch, signal) {
+    if (!signal) return null;
+    const source = String(signal.source || watch?.source || '');
+    const soldQty = Number(signal.soldQty);
+    const grossValue = Number(signal.grossValue);
+    const unitPrice = normalizeMoney(signal.unitPrice);
+    const anchorQuantity = source === 'itemmarket'
+      ? Math.max(0, asInt(signal.anchorQuantity ?? watch?.baseline?.anchorQuantity ?? watch?.amount, 0))
+      : Math.max(0, asInt(signal.anchorQuantity, 0));
+    const normalized = {
+      ...signal,
+      source,
+      sellerId:String(watch?.sellerId || signal.sellerId || ''),
+      soldQty,
+      grossValue,
+      unitPrice,
+      anchorQuantity,
+      integrityVersion:SIGNAL_INTEGRITY_VERSION
+    };
+    const reason = signalIntegrityReason(normalized);
+    if (reason) {
+      noteSignalIntegrityDrop(reason, normalized);
+      saveSignalIntegrity();
+      console.warn(`[${APP}] rejected sale signal (${reason})`, {
+        source, itemId:normalized.itemId, sellerId:normalized.sellerId, soldQty, grossValue
+      });
+      return null;
+    }
+    return normalized;
+  }
+
   function pruneItemSignals(force = false) {
     const now = nowSec();
     const every = Math.max(1, Number(settings.itemRefreshMinutes) || 10) * 60;
-    if (!force && now - lastItemMaintenanceAt < every) return;
+    if (!force && now - lastItemMaintenanceAt < every) return 0;
     lastItemMaintenanceAt = now;
     const windowSeconds = Math.max(15, Number(settings.itemMovementWindowMinutes) || 180) * 60;
     const cutoff = now - windowSeconds;
-    itemSignals = itemSignals.filter((x) => Number(x?.at || 0) >= cutoff && x?.confidence !== 'low');
+    let removed = 0;
+    const reasons = {};
+    itemSignals = itemSignals.filter((row) => {
+      let reason = '';
+      if (Number(row?.at || 0) < cutoff) reason = 'expired';
+      else if (row?.confidence === 'low') reason = 'low_confidence';
+      else reason = signalIntegrityReason(row);
+      if (!reason) return true;
+      removed++;
+      reasons[reason] = (reasons[reason] || 0) + 1;
+      return false;
+    });
+    if (removed) {
+      signalIntegrity = {
+        ...signalIntegrity,
+        version:SIGNAL_INTEGRITY_VERSION,
+        removed:Math.max(0, Number(signalIntegrity?.removed)||0) + removed,
+        reasons:{...(signalIntegrity?.reasons || {})},
+        lastSanitizedAt:now
+      };
+      for (const [reason,count] of Object.entries(reasons)) {
+        signalIntegrity.reasons[reason] = Math.max(0, Number(signalIntegrity.reasons[reason])||0) + count;
+      }
+      saveSignalIntegrity();
+    }
     saveItemSignals();
+    return removed;
   }
+
   function recordItemSignal(watch, signal) {
-    if (!signal) return;
+    if (!signal) return false;
     const itemId = String(signal.itemId || watch?.itemId || '');
-    if (!/^\d+$/.test(itemId)) return;
+    if (!/^\d+$/.test(itemId)) return false;
     const confidence = String(signal.confidence || 'medium');
-    if (confidence === 'low') return;
+    if (confidence === 'low') return false;
     const at = Math.max(0, Number(signal.reportedAt || nowSec()) || nowSec());
     const key = [signal.source || watch?.source || '', watch?.sellerId || signal.sellerId || '', itemId, at, signal.evidence || '', Number(signal.grossValue)||0].join(':');
-    if (itemSignals.some((x) => x.key === key)) return;
+    if (itemSignals.some((x) => x.key === key)) return false;
     itemSignals.push({
       key, itemId, itemName:String(signal.itemName || watch?.itemName || `Item ${itemId}`),
       source:String(signal.source || watch?.source || 'unknown'), sellerId:String(watch?.sellerId || signal.sellerId || ''),
-      grossValue:Math.max(0, Number(signal.grossValue)||0), soldQty:Math.max(1, Number(signal.soldQty)||1),
+      grossValue:Number(signal.grossValue), soldQty:Number(signal.soldQty), unitPrice:Number(signal.unitPrice)||0,
+      anchorQuantity:Math.max(0, Number(signal.anchorQuantity)||0), integrityVersion:SIGNAL_INTEGRITY_VERSION,
       confidence, at
     });
     pruneItemSignals(true);
     saveItemSignals();
+    return true;
   }
+
   function seedItemSignalHistory() {
     if (itemSignals.length) return;
     for (const candidate of candidates) {
+      if (Number(candidate?.signalIntegrityVersion || 0) < SIGNAL_INTEGRITY_VERSION) continue;
       if (!/^\d+$/.test(String(candidate?.itemId || ''))) continue;
       if (Number(candidate?.signalCount || 1) !== 1 || candidate?.confidence === 'low') continue;
       const at = Math.max(0, Number(candidate?.signalAt || 0));
       if (!at) continue;
-      itemSignals.push({
+      const row = {
         key:`seed:${candidate.sellerId || ''}:${candidate.itemId}:${at}`,
         itemId:String(candidate.itemId), itemName:String(candidate.itemName || `Item ${candidate.itemId}`),
         source:String(candidate.source || 'seed'), sellerId:String(candidate.sellerId || ''),
         grossValue:Math.max(0, Number(candidate.grossValue)||0), soldQty:Math.max(1, Number(candidate.soldQty)||1),
-        confidence:String(candidate.confidence || 'medium'), at
-      });
+        unitPrice:Math.max(0, Number(candidate.unitPrice)||0), anchorQuantity:Math.max(0, Number(candidate.anchorQuantity)||0),
+        integrityVersion:SIGNAL_INTEGRITY_VERSION, confidence:String(candidate.confidence || 'medium'), at
+      };
+      if (!signalIntegrityReason(row)) itemSignals.push(row);
     }
     pruneItemSignals(true);
     saveItemSignals();
@@ -994,6 +1275,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
           totalQty:Math.max(1, asInt(row.amount, 1)),
           unique:true,
           quantity:Math.max(1, asInt(row.amount, 1)),
+          anchorQuantity:Math.max(1, asInt(row.amount, 1)),
+          anchorReportedAt:Math.max(0, asInt(row.observedAt, 0)),
           reportedAt:Math.max(0, asInt(row.observedAt, 0)),
           reason:'hot_scan_intake'
         }
@@ -1053,7 +1336,16 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     scanSession = {
       id:uid(),
       active:Boolean(movers.length),
-      queue:movers.map((item,index)=>({itemId:String(item.itemId),itemName:String(item.itemName || `Item ${item.itemId}`),hotRank:index+1})),
+      queue:movers.map((item,index)=>({
+        itemId:String(item.itemId),
+        itemName:String(item.itemName || `Item ${item.itemId}`),
+        hotRank:index+1,
+        confidence:Math.max(0, Number(item.confidence)||0),
+        turnoverPerHour:Math.max(0, Number(item.turnoverPerHour)||0),
+        mugPerHour:Math.max(0, Number(item.mugPerHour)||0),
+        salesPerHour:Math.max(0, Number(item.salesPerHour)||0),
+        score:Math.max(0, Number(item.score)||0)
+      })),
       scanned:[],
       startedAt:nowSec(),
       completedAt:0,
@@ -1853,6 +2145,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
 
   async function handleSignal(watch, signal) {
+    signal = normalizeSaleSignal(watch, signal);
+    if (!signal) return;
     recordItemSignal(watch, signal);
     try {
       if (settings.combatScoring && !ownerBattleStatsAttempted && budgetAvailable()) await refreshOwnerBattleStats();
@@ -1885,6 +2179,9 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         candidate.source = candidate.sources.length > 1 ? 'multi-source' : candidate.sources[0];
         candidate.itemName = String(signal.itemName || candidate.itemName || `Item ${candidate.itemId}`);
         candidate.soldQty = Math.max(0, Number(candidate.soldQty)||0) + Math.max(0, Number(signal.soldQty)||0);
+        candidate.unitPrice = Number(signal.unitPrice) || Number(candidate.unitPrice) || 0;
+        candidate.anchorQuantity = Math.max(Number(candidate.anchorQuantity)||0, Number(signal.anchorQuantity)||0);
+        candidate.signalIntegrityVersion = SIGNAL_INTEGRITY_VERSION;
         candidate.signalAt = Math.max(Number(candidate.signalAt)||0, Number(signal.reportedAt)||0);
         candidate.previousReportedAt = Math.min(Number(candidate.previousReportedAt)||signal.previousReportedAt, Number(signal.previousReportedAt)||candidate.previousReportedAt);
         candidate.lastAction = gate.lastAction;
@@ -1901,7 +2198,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         candidate = {
           id: uid(), sellerId: watch.sellerId, sellerName: watch.sellerName || profile?.name || `Player ${watch.sellerId}`,
           source: signal.source, sources:[signal.source], signalCount:1, itemId: signal.itemId, itemName: signal.itemName, soldQty: signal.soldQty,
-          grossValue: signal.grossValue, unitPrice: signal.unitPrice, signalAt: signal.reportedAt,
+          grossValue: signal.grossValue, unitPrice: signal.unitPrice, anchorQuantity:signal.anchorQuantity,
+          signalIntegrityVersion:SIGNAL_INTEGRITY_VERSION, signalAt: signal.reportedAt,
           previousReportedAt: signal.previousReportedAt, lastAction: gate.lastAction, inactivitySeconds: gate.inactivitySeconds,
           confidence: gate.confidence, evidence: signal.evidence, profileStatus: String(profileStatus || '').slice(0, 160),
           statusState: gate.state, activityStatus: gate.activity, attackableNow: gate.attackableNow,
@@ -1949,6 +2247,11 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         const result = diffMarketBaseline(watch.baseline, snapshot, fp);
         watch.baseline = result.baseline;
         watch.status = result.state || 'tracking';
+        if (result.state === 'reanchor-required') {
+          watch.active = false;
+          watch.intakeState = 'reanchor-required';
+          continue;
+        }
         if (result.signal) {
           watch.intakeState = 'sale-detected';
           await handleSignal(watch, result.signal);
@@ -2106,6 +2409,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       return;
     }
 
+    if (!acquireEngineLease()) return;
     const scanChanged = syncScanSessionFromStorage();
     const ingested = ingestHotScanIntake();
     trimState();
@@ -2324,9 +2628,32 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
   function activeCount() { return watches.filter((w) => w.active).length; }
 
+  function recentScanHotItems() {
+    const queue = Array.isArray(scanSession?.queue) ? scanSession.queue : [];
+    if (!queue.length) return [];
+    const referenceAt = Math.max(0, Number(scanSession?.completedAt || scanSession?.startedAt || 0));
+    const ttl = Math.max(15, Number(settings.itemMovementWindowMinutes) || 180) * 60;
+    if (!referenceAt || nowSec() - referenceAt > ttl) return [];
+    const confidenceFloor = Math.max(40, Number(settings.minItemConfidence) || 60);
+    return queue.map((item,index)=>({
+      itemId:String(item.itemId || ''),
+      itemName:String(item.itemName || `Item ${item.itemId}`),
+      hotRank:Math.max(1, Number(item.hotRank)||index+1),
+      confidence:Math.max(confidenceFloor, Number(item.confidence)||0),
+      turnoverPerHour:Math.max(0, Number(item.turnoverPerHour)||0),
+      mugPerHour:Math.max(0, Number(item.mugPerHour)||0),
+      salesPerHour:Math.max(0, Number(item.salesPerHour)||0),
+      score:Math.max(0, Number(item.score)||0),
+      scanCohort:true
+    })).filter((item)=>/^\d+$/.test(item.itemId));
+  }
+
   function hotCandidatePool() {
     const movers = hotItems();
-    const hotByItem = new Map(movers.map((item, index) => [String(item.itemId), {...item, hotRank:index + 1}]));
+    const hotByItem = new Map(movers.map((item, index) => [String(item.itemId), {...item, hotRank:index + 1, scanCohort:false}]));
+    for (const item of recentScanHotItems()) {
+      if (!hotByItem.has(String(item.itemId))) hotByItem.set(String(item.itemId), item);
+    }
     return candidates
       .filter((candidate) => hotByItem.has(String(candidate?.itemId || '')))
       .map((candidate) => {
@@ -2339,7 +2666,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
           hotItemTurnoverPerHour: hot.turnoverPerHour,
           hotItemMugPerHour: hot.mugPerHour,
           hotItemSalesPerHour: hot.salesPerHour,
-          hotItemScore: hot.score
+          hotItemScore: hot.score,
+          hotFromScanCohort:Boolean(hot.scanCohort)
         };
       });
   }
@@ -2435,6 +2763,10 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   function hotTabHtml() {
     const movers = hotItems();
     const progress = scanSessionProgress();
+    const scanCohort = recentScanHotItems();
+    const rebuildNotice = !movers.length && scanCohort.length
+      ? `<div class="mmms-section"><div class="mmms-muted">Mover history was reset by the signal-integrity upgrade. The completed ${scanCohort.length}-item scan cohort remains eligible for first-sale verification while fresh movement history rebuilds.</div></div>`
+      : '';
     return `<div class="mmms-grid">
         <div class="mmms-stat"><b>${movers.length}</b>hot items</div>
         <div class="mmms-stat"><b>${readyCount()}</b>verified targets</div>
@@ -2445,6 +2777,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         <div class="mmms-actions" style="padding:8px 0 0"><button class="mmms-btn primary" data-action="scan-next" ${scanSession?.active ? 'disabled' : ''}>${scanSession?.active ? 'Hot Scan Running' : 'Start Hot Scan'}</button>${(scanSession?.active || scanSession?.completedAt) ? '<button class="mmms-btn" data-action="scan-reset">Reset Scan</button>' : ''}<button class="mmms-btn" data-action="tab" data-tab="targets">View Targets</button></div>
       </div>
       <div class="mmms-actions"><button class="mmms-btn" data-action="refresh-hot">Refresh movers</button><button class="mmms-btn" data-action="pause">${paused ? 'Resume' : 'Pause'}</button><button class="mmms-btn" data-action="export">Diagnostics</button></div>
+      ${rebuildNotice}
       <div class="mmms-section"><h3>High-money movers</h3><div class="mmms-muted" style="margin-bottom:7px">Ranked for both money flow and real sale velocity. Items must show repeat movement and clear the adaptive high-money floor.</div>
         ${movers.length ? movers.map(moverHtml).join('') : '<div class="mmms-empty">Building movement history. API sale signals populate automatically; focused Item Market scans improve seller coverage.</div>'}
       </div>`;
@@ -2649,7 +2982,9 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     itemScans = readJson(STORE.itemScans, itemScans);
     pendingItemScan = readJson(STORE.pendingScan, pendingItemScan);
     scanSession = readJson(STORE.scanSession, scanSession);
-    if (!isScanWorker()) ingestHotScanIntake();
+    signalIntegrity = readJson(STORE.signalIntegrity, signalIntegrity);
+    pruneItemSignals(true);
+    if (!isScanWorker() && isEngineOwner()) ingestHotScanIntake();
   }
 
   function exportDiagnostics() {
@@ -2657,7 +2992,11 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       app: APP, version: VERSION, licensedUser:{id:LICENSED_USER_ID,name:LICENSED_USER_NAME}, licenseStatus:licenseState.status, exportedAt: new Date().toISOString(), url: location.href,
       focused: focused(), route: {itemMarket: isItemMarket(), pointsMarket: isPointsMarket(), bazaar: isBazaar(), itemId: currentItemId()},
       platform: PLATFORM, settings: {...settings}, apiKeyConfigured: Boolean(apiKey), apiKeySource: PDA_INJECTED_API_KEY && apiKey === PDA_INJECTED_API_KEY ? 'tornpda' : (apiKey ? 'stored/manual' : 'none'), apiUsageLastMinute: recentCalls.length, combatModelStatus: ownerBattleStatsStatus, mugModel: {status:ownerMugProfile.status, masterfulLevel:ownerMugProfile.masterfulLevel, masterfulBonusPercent:ownerMugProfile.masterfulBonusPercent, detectedPlunderPercent:ownerMugProfile.detectedPlunderPercent, effectivePlunderPercent:ownerMugProfile.effectivePlunderPercent, otherBonusPercent:ownerMugProfile.otherBonusPercent, awards:ownerMugProfile.awards, refreshedAt:ownerMugProfile.refreshedAt},
-      watches, candidates, hotItems:hotItems(), verifiedTargets:verifiedTargetPool(), itemSignalCount:itemSignals.length, itemScans:{...itemScans}, pendingItemScan:pendingItemScan ? {...pendingItemScan} : null, scanSession:{...scanSession}, activeTab, discovery: {...discovery, owner: discovery.owner ? {...discovery.owner} : null}, seenAuctionCount: seenAuctions.length, rejections: rejections.slice(-50), errors: errors.slice(-50)
+      watches, candidates, hotItems:hotItems(), recentScanHotItems:recentScanHotItems(), verifiedTargets:verifiedTargetPool(),
+      itemSignalCount:itemSignals.length, itemSignals:itemSignals.slice(-200), signalIntegrity:{...signalIntegrity},
+      engineLease:readJson(STORE.engineLease, null), engineOwner:isEngineOwner(),
+      itemScans:{...itemScans}, pendingItemScan:pendingItemScan ? {...pendingItemScan} : null, scanSession:{...scanSession}, activeTab,
+      discovery: {...discovery, owner: discovery.owner ? {...discovery.owner} : null}, seenAuctionCount: seenAuctions.length, rejections: rejections.slice(-50), errors: errors.slice(-50)
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
@@ -2703,6 +3042,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     if (panelOpen) render(true);
   });
   window.addEventListener('focus', () => {
+    if (!isScanWorker()) acquireEngineLease(true);
     syncSharedState();
     ensureScanWorkerBar();
     if (licensed()) { captureActivePage(); if (pendingItemScan) void runPendingItemScan(); }
@@ -2726,10 +3066,14 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       saveScanSession();
       return;
     }
-    saveWatches(); saveCandidates(); saveItemSignals(); saveItemScans();
-    if (!scanSession?.active) { savePendingScan(); saveScanSession(); }
+    if (isEngineOwner()) {
+      saveWatches(); saveCandidates(); saveItemSignals(); saveItemScans();
+      if (!scanSession?.active) { savePendingScan(); saveScanSession(); }
+      releaseEngineLease();
+    }
   });
   sanitizeWatches();
+  pruneItemSignals(true);
   seedItemSignalHistory();
   setTimeout(() => {
     if (isScanWorker()) {
