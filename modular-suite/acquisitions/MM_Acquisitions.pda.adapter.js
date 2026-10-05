@@ -1,7 +1,6 @@
 (() => {
   'use strict';
 
-  const PDA_API_KEY_PLACEHOLDER='###PDA-APIKEY###';
   const PDA_GM_PREFIX='mm_acquisitions_pda_gm_v1:';
   globalThis.__MM_TORN_PDA__=true;
 
@@ -25,10 +24,8 @@
   }
 
   // TornPDA/GMforPDA exposes GM_* helpers as non-writable, non-configurable
-  // window properties. Never monkey-patch them. Keep the PDA-injected key in
-  // an MM-owned global and let the PDA-generated Acquisitions entrypoint choose
-  // it only when the script has no explicitly saved key.
-  globalThis.__MM_PDA_API_KEY__=String(PDA_API_KEY_PLACEHOLDER||'').trim();
+  // window properties. Never monkey-patch them. The PDA bundle keeps its
+  // injected API key in the outer TornPDA userscript closure instead of window.
 
   if(typeof globalThis.GM_xmlhttpRequest!=='function'&&typeof globalThis.PDA_httpGet==='function'){
     globalThis.GM_xmlhttpRequest=options=>{
