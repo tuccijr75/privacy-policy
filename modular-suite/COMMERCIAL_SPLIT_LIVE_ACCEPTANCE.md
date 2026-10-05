@@ -2133,4 +2133,22 @@ Remaining commercial acceptance gates:
 - owner click `Use Best Source` once to confirm final source routing/verification remains manual and routes without completing a purchase;
 - narrow/mobile/TornPDA layout and interaction acceptance;
 - restore canonical stable modular branch/update/download URLs before production promotion and re-run broad smoke checks.
+### alpha.18 `Use Best Source` final-route live pass — Turtle Shell — 2026-10-05
+
+Owner selected Turtle Shell and manually invoked `Use Best Source`. Observed directly in authenticated Torn desktop:
+- PASS: Acquisitions routed to Torn Item Market for the exact item `Turtle Shell [1486]`;
+- PASS: destination URL contains `itemID=1486`, `itemName=Turtle Shell`, `itemType=Other`, price ascending;
+- PASS: Torn Item Market rendered Turtle Shell listings and native buy controls;
+- PASS: Acquisitions did not press a Torn BUY button, enter a purchase quantity, or complete a transaction;
+- PASS: final purchase remains a separate explicit owner action.
+
+Result:
+- final source routing / verification manual-action gate is PASS;
+- Travel + Items desktop commercial acceptance is now complete.
+
+Remaining acceptance before production promotion:
+- narrow/mobile/TornPDA layout and interaction acceptance;
+- restore canonical stable modular branch/update/download URLs;
+- broad production smoke/compile checks;
+- explicit owner approval before merging/promoting PR #25.
 
