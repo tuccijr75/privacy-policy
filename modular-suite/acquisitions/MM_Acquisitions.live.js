@@ -869,8 +869,16 @@
       const result=await procurementSourceOptions(itemId,itemName);
       const id=result.itemId;
       if(!id) return {routed:false,reason:'item-id-unresolved',...result};
-      const preferred=String(preferredSource||'Best').toLowerCase();
-      const ordered=result.sources.filter(source=>preferred==='best'||String(source.source||'').toLowerCase()===preferred);
+      const preferred=String(preferredSource||'Best').trim().toLowerCase();
+      const sourceMatchesPreferred=source=>{
+        const name=String(source?.source||'').trim().toLowerCase();
+        if(preferred==='best')return true;
+        if(preferred==='bazaar')return name==='bazaar'||name==='bazaar aggregate';
+        if(preferred==='market'||preferred==='item market'||preferred==='item-market')return name==='item market';
+        if(preferred==='travel'||preferred==='overseas')return name==='overseas';
+        return name===preferred;
+      };
+      const ordered=result.sources.filter(sourceMatchesPreferred);
       if(!ordered.length) return {routed:false,reason:'preferred-source-unavailable',...result};
       const verificationWarnings=[];
 
