@@ -52,8 +52,9 @@ assert(!/globalThis\.__MM_PDA_API_KEY|window\.__MM_PDA_API_KEY/.test(pda),'PDA i
 assert(pda.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"),'PDA lexical key placeholder must remain present');
 assert(desktop.includes('Movement = quantity disappearing'),'desktop must explain Pulse movement semantics');
 assert(desktop.includes('not a confirmed player sale'),'desktop must not present Pulse as confirmed sales');
-assert(desktop.includes("const VERIFIED_SALES_URL='https://torn.marches.cafe/#/items/auction';"),'desktop must expose verified-sales evidence viewer');
-assert(!desktop.includes('// @connect      torn.marches.cafe'),'verified-sales viewer must not become a market data dependency');
+assert(desktop.includes('Official Torn API finished Auction House records'),'desktop must expose official verified-sales evidence');
+assert(desktop.includes('href="#mm-acq-verified-sales"'),'verified-sales evidence must be directly reachable in-panel');
+assert(!desktop.includes('torn.marches.cafe'),'verified-sales evidence must not add a third-party market trust surface');
 assert(desktop.includes('Complete the purchase manually on Torn.')||desktop.includes('final purchase manual'),'desktop manual purchase boundary must remain explicit');
 assert(pda.includes('Complete the purchase manually on Torn.')||pda.includes('final purchase manual'),'PDA manual purchase boundary must remain explicit');
 
