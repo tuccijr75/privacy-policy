@@ -742,12 +742,9 @@
       const settings=state?.marketIntel?.settings||{};
       const bazaarHaircut=Math.max(0,Math.min(25,Number(settings?.bazaarExitHaircutPct||0)))/100;
       const bazaarExit=Math.floor(Number(intel?.bazaarAverage||0)*(1-bazaarHaircut));
-      const itemMarketNet=Math.floor(Number(intel?.marketPrice||0)*(1-ITEM_MARKET_FEE_RATE));
-      const reference=Math.max(0,bazaarExit,itemMarketNet);
-      const snapshotExit=Math.max(0,Number(snap?.realisticExit||0));
-      const snapshotPlausible=snapshotExit>0&&(!(reference>0)||snapshotExit<=reference*1.5);
+      const itemMarketAsk=Math.max(0,Number(snap?.itemMarket?.lowest||0));
+      const itemMarketNet=Math.floor(itemMarketAsk*(1-ITEM_MARKET_FEE_RATE));
       const candidates=[
-        ...(snapshotPlausible?[{route:'Live snapshot',value:snapshotExit}]:[]),
         {route:'Bazaar',value:bazaarExit},
         {route:'Item Market Net',value:itemMarketNet}
       ].filter(row=>Number(row.value||0)>0).sort((a,b)=>b.value-a.value);
