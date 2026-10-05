@@ -182,9 +182,25 @@
     const marginScore=fairValue>0?Math.max(0,Math.min(100,profit/fairValue*100)):0;
     const roiScore=Math.max(0,Math.min(100,roiPct));
     const confidence=historyValue.confidence;
+    const isAuction=lower(row.source)==='auction';
     const investmentScore=Math.round(Math.max(0,Math.min(100,
       roiScore*.40+liquidity*.30+confidence*.20+marginScore*.10
     )));
+    const now=num(settings.now)||Date.now();
+    const endMs=Math.max(0,num(row.endsAt))*1000;
+    const hoursRemaining=endMs>now?(endMs-now)/3600000:0;
+    const auctionUrgencyScore=isAuction&&endMs>now
+      ?Math.round(Math.max(0,Math.min(100,(1-Math.min(1,hoursRemaining/24))*100)))
+      :0;
+    const auctionDiscountScore=isAuction&&fairValue>0&&ask>0
+      ?Math.round(Math.max(0,Math.min(100,(1-ask/fairValue)*100)))
+      :0;
+    const auctionWatchScore=isAuction
+      ?Math.round(Math.max(0,Math.min(100,
+        confidence*.35+liquidity*.25+auctionUrgencyScore*.25+auctionDiscountScore*.15
+      )))
+      :0;
+    const sortScore=isAuction?auctionWatchScore:investmentScore;
     const bonuses=normalizeBonuses(row.bonuses);
     const lowTier=(settings.lowTierBonuses||['Achilles','Conserve'])
       .map(lower).some(title=>bonuses.some(b=>lower(b.title)===title));
@@ -194,7 +210,8 @@
     return {
       ...row,price:ask,bbUnits:units,bbRate,bbFloor,auctionValue,fairValue,profit,roiPct,
       volume7:volume.d7,volume30:volume.d30,volume90:volume.d90,
-      liquidityScore:liquidity,investmentScore,lowTier,valuationSource,
+      liquidityScore:liquidity,investmentScore,auctionWatchScore,auctionUrgencyScore,auctionDiscountScore,
+      hoursRemaining,sortScore,isAuction,lowTier,valuationSource,
       history:historyValue
     };
   }
@@ -205,7 +222,7 @@
     return (listings||[])
       .map(row=>evaluateListing(row,history,settings))
       .filter(row=>row.price>0&&row.fairValue>0&&row.roiPct>=minRoi&&row.history.confidence>=minConfidence)
-      .sort((a,b)=>b.investmentScore-a.investmentScore||b.roiPct-a.roiPct||b.profit-a.profit);
+      .sort((a,b)=>b.sortScore-a.sortScore||b.history.confidence-a.history.confidence||b.liquidityScore-a.liquidityScore||b.roiPct-a.roiPct||b.profit-a.profit);
   }
 
   Object.defineProperty(globalThis,'MMTornRankedProfitLogic',{
