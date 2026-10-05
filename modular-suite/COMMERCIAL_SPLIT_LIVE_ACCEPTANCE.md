@@ -2225,4 +2225,20 @@ Verification:
 
 Next live gate:
 - update TornPDA script to pda.2, reload the Torn browser, confirm Acquisitions launcher is visible above the PDA bottom controls, then open it and continue functional mobile acceptance.
+### TornPDA pda.2 still invisible — pda.3 boot-stage instrumentation
+
+Owner screenshot after pda.2 still showed no Acquisitions launcher in the TornPDA browser.
+
+Because pda.2 had already moved the launcher above native chrome, this means the script did not reach normal Acquisitions UI initialization on-device, or the installed source did not actually advance to pda.2.
+
+pda.3 adds an early, dependency-independent launcher before Core/logic initialization. It cannot be suppressed by a later Acquisitions module failure.
+
+Behavior:
+- if the bundle completes, the early launcher becomes the normal Acquisitions launcher via `__MM_ACQ_OPEN__`;
+- if a later module stops execution, tapping the launcher shows the last completed boot stage (`boot`, `core`, `adapter`, `logic`, `live`, `ranked`, or `ledger`);
+- if no launcher appears at all, the issue is outside Acquisitions runtime and points to TornPDA script injection/update state.
+
+Also corrected TornPDA API-key placeholder detection so source-wide `###PDA-APIKEY###` replacement no longer defeats the runtime key check.
+
+Artifact: `8.0.0-alpha.18-pda.3`.
 
