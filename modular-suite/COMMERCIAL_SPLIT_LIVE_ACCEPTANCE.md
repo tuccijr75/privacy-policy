@@ -1906,4 +1906,39 @@ Next module gates:
 1. Ranked tab: separate Bazaar / Item Market / Auction counts + alpha.13 bid semantics + AH history;
 2. Travel tab: Compare Bazaar / Market handoff;
 3. narrow/mobile and TornPDA.
+### alpha.15 Ranked live acceptance + alpha.16 auction-watch correction — 2026-10-05
+
+Live alpha.15 Ranked pass:
+- PASS: source split is explicit and populated: 132 Bazaar + 168 Item Market + 222 Auction;
+- PASS: 190 current matches rendered;
+- PASS: source filter exposes All sources / Bazaar / Item Market / Auction;
+- PASS: Primary / Secondary / Melee, rarity, weapon, bonus and ROI controls render correctly;
+- PASS: refreshed Bunker Buck rate is $5,967,000 per buck;
+- PASS: auction rows correctly show Current bid, bid count, time remaining, UNDER BB FLOOR, break-even ceiling/headroom and Provisional ROI at current bid;
+- PASS: completed-AH fields remain 0 until Analyze AH is run, so no fabricated AH confidence or traffic is displayed.
+
+Remaining defect found during the live pass:
+- auction rows were still sorted by the normal `investmentScore` formula;
+- a $1 current bid therefore inherited an ROI-driven score near 50 even with 0 AH samples, 0 confidence and 0 liquidity;
+- this caused early/current-bid auctions to dominate page 1 despite not being completed acquisition prices.
+
+alpha.16 root-cause correction:
+- immediately purchasable Bazaar / Item Market rows continue to use investment score;
+- Auction rows now use a separate `auctionWatchScore` for sorting;
+- auction watch score weights completed-AH confidence (35%), liquidity (25%), time-to-end urgency (25%) and discount to fair value (15%);
+- current bid ROI remains visible as provisional economics but no longer drives auction ranking directly;
+- Auction rows display watch score, urgency and bid-discount components instead of labeling the legacy purchase-style score as investment;
+- sorting now uses `sortScore`: auction watch score for auctions, investment score for Bazaar / Item Market.
+
+Regression:
+- 11 Acquisitions JS/source-test files compile;
+- 20-hour $1 auction with no AH history: legacy purchase-style score 50, corrected watch/sort score 19;
+- otherwise identical auction ending in ~30m: watch score 40, proving urgency affects watch order;
+- Bazaar fixture retains investment score as its sort score.
+
+Next live gate:
+1. install alpha.16;
+2. refresh Ranked;
+3. verify page 1 no longer consists primarily of long-running $1 auctions solely because of provisional ROI;
+4. then run Analyze AH on one low-tier/BB weapon and one premium weapon.
 
