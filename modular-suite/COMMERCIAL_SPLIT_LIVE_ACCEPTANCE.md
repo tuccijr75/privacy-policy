@@ -1960,4 +1960,27 @@ Observed directly in the authenticated Torn desktop tab with Ranked open:
 
 Remaining Ranked live gate:
 - run Analyze AH on one low-tier/BB-dominant weapon and one premium weapon to validate completed-sale cohort, median, confidence, traffic, liquidity and fairValue=max(BB floor, AH median).
+### alpha.16 Ranked completed-AH history live pass — Steyr AUG — 2026-10-05
+
+Owner ran Analyze AH on Steyr AUG. Observed directly in authenticated Torn desktop:
+- PASS: status reports `Auction history updated for Steyr AUG: 100 completed sales.`;
+- PASS: Ranked header now reports `AH history 1 weapon types`;
+- PASS: completed-sale traffic populated: 7/30/90d = 30/100/100;
+- PASS: liquidity populated to 100/100 from completed-sale volume;
+- PASS: BASE fallback cohort selected with n=95 and confidence 68% when more-specific bonus cohorts did not meet minimum samples;
+- PASS: AH median = $62,100,001;
+- PASS: yellow Steyr AUG variants use fair value $62,100,001 because AH median exceeds the 10-BB floor of $59,670,000;
+- PASS: orange two-bonus Steyr AUG uses fair value $268,515,000 because its 45-BB floor exceeds the same AH median;
+- PASS: valuation source labels reflect that ordering (`AH + BB FLOOR` vs `BB FLOOR + AH`);
+- PASS: auction watch scores rise materially after AH history supplies confidence/liquidity evidence;
+- PASS: current-bid ROI remains provisional and bid headroom is recalculated against the resulting fair value.
+
+Representative live rows:
+- Steyr AUG YELLOW / Powerful 19%: current bid $123,001; fair $62,100,001; BB floor $59,670,000; AH median $62,100,001; BASE n=95; confidence 68%; traffic 30/100/100; liquidity 100; watch 81.
+- Steyr AUG YELLOW / Disarm 3%: current bid $61,090,947; fair $62,100,001; provisional ROI 1.7%; watch 73; urgency 97; bid discount 2.
+- Steyr AUG ORANGE / Weaken 38% + Warlord 18%: current bid $1; fair $268,515,000; BB floor $268,515,000; AH median $62,100,001; confidence 68%; liquidity 100; watch 70.
+
+Interpretation:
+- completed-history ingestion, fallback cohorting, traffic/liquidity, confidence, and `fairValue=max(BB floor, AH median)` all pass live;
+- Steyr AUG is not the dedicated low-tier Conserve/Achilles acceptance case, so one low-tier weapon still remains to be analyzed.
 
