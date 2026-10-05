@@ -14,7 +14,7 @@ for(const [name,source] of [
   ['desktop',desktop],['pda',pda],['pulse',pulse],['logic',logic],['live',live],['ranked',ranked]
 ])assert.doesNotThrow(()=>new vm.Script(source,{filename:name+'.js'}),name+' must parse');
 
-assert(desktop.includes('// @version      8.0.0-alpha.21'));
+assert(desktop.includes('// @version      8.0.0-alpha.22'));
 const requireLines=desktop.split(/\r?\n/).filter(line=>line.startsWith('// @require'));
 assert.strictEqual(requireLines.length,6,'desktop dependency count');
 assert(requireLines.some(line=>line.includes('/MM_Acquisitions.market-pulse.js')),'desktop must require Market Pulse');
@@ -24,7 +24,7 @@ for(const line of requireLines){
   assert(match,'MM-owned desktop dependencies must use immutable full-SHA jsDelivr URLs');
 }
 
-assert(pda.includes('// @version      8.0.0-alpha.21-pda.8'));
+assert(pda.includes('// @version      8.0.0-alpha.22-pda.9'));
 const pdaHeader=pda.slice(0,pda.indexOf('// ==/UserScript=='));
 assert(!pdaHeader.includes('@require'),'PDA metadata must contain no @require');
 for(const token of [
@@ -40,7 +40,7 @@ for(let i=1;i<sectionOrder.length;i++)assert(sectionOrder[i]>sectionOrder[i-1],'
 
 assert(builder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(builder.includes('"MMTornMarketPulse"'));
-assert(builder.includes('default=8'));
+assert(builder.includes('default=9'));
 assert(builder.includes('MM_Acquisitions.market-pulse.js'));
 
 for(const re of [
@@ -50,6 +50,10 @@ for(const re of [
 
 assert(!/globalThis\.__MM_PDA_API_KEY|window\.__MM_PDA_API_KEY/.test(pda),'PDA injected API key must remain lexical');
 assert(pda.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"),'PDA lexical key placeholder must remain present');
+assert(desktop.includes('Movement = quantity disappearing'),'desktop must explain Pulse movement semantics');
+assert(desktop.includes('not a confirmed player sale'),'desktop must not present Pulse as confirmed sales');
+assert(desktop.includes("const VERIFIED_SALES_URL='https://torn.marches.cafe/#/items/auction';"),'desktop must expose verified-sales evidence viewer');
+assert(!desktop.includes('// @connect      torn.marches.cafe'),'verified-sales viewer must not become a market data dependency');
 assert(desktop.includes('Complete the purchase manually on Torn.')||desktop.includes('final purchase manual'),'desktop manual purchase boundary must remain explicit');
 assert(pda.includes('Complete the purchase manually on Torn.')||pda.includes('final purchase manual'),'PDA manual purchase boundary must remain explicit');
 
