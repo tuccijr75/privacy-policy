@@ -1217,6 +1217,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     const itemId = currentItemId();
     if (!itemId || String(itemId) !== String(pendingItemScan.itemId)) return false;
     const request = {...pendingItemScan};
+    if (request.scanSession && !PLATFORM.pda && !PLATFORM.mobile && !isScanWorker()) return false;
     if (request.scanSession && isScanWorker()) {
       try { window.opener?.focus(); } catch {}
     }
