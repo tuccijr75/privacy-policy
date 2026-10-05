@@ -1,8 +1,8 @@
 # MM_Acquisitions Acceptance
 
 Candidate:
-- Desktop: 8.0.0-alpha.23
-- TornPDA: 8.0.0-alpha.23-pda.10
+- Desktop: 8.0.0-alpha.24
+- TornPDA: 8.0.0-alpha.24-pda.11
 - Branch: crm-v8-acquisitions-alpha22-clarity
 - Base: crm-v8-acquisitions-ranked-profit
 - Stable/customer publication: not approved
@@ -15,7 +15,7 @@ The normal user path is:
 
 1. **Find One Item** — search by item name or Torn item ID.
 2. **Check Prices** — compare Bazaar, Item Market, Torn shop, and Travel when available.
-3. **Open a source** — Open Cheapest Source, Open Bazaar, Open Item Market, or Open Travel Agency.
+3. **Choose a destination** — use the large **GO TO BAZAAR**, **GO TO ITEM MARKET**, or **GO TO TRAVEL AGENCY** button.
 4. Complete any purchase, bid, or travel action manually in Torn.
 
 The user should not need to understand Market Pulse, liquidity, velocity, confidence, BB floor, or other advanced terms to complete this path. Advanced data must remain behind expandable details or specialist pages.
@@ -55,7 +55,9 @@ PASS:
   - Likely Resale;
   - Estimated Profit;
   - Return on Cost (with ROI explained as the alternate name).
-- Confirm **Open Cheapest Source** is the primary action.
+- Confirm the item card clearly asks **WHERE DO YOU WANT TO BUY?**.
+- Confirm **GO TO BAZAAR** says it opens player-owned bazaars.
+- Confirm **GO TO ITEM MARKET** says it opens Torn Item Market for that item.
 - Confirm Bazaar / Item Market / Travel alternatives appear as direct actions when those sources exist.
 - Confirm advanced source details and market-activity metrics are collapsed.
 - Confirm Market Activity says observed listing movement is not a confirmed individual sale.
@@ -176,7 +178,7 @@ PASS:
 
 ## TornPDA
 
-Install 8.0.0-alpha.23-pda.10.
+Install 8.0.0-alpha.24-pda.11.
 
 ### Boot
 
