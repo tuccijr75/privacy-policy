@@ -147,6 +147,10 @@ def build(pda_revision: int) -> str:
         "position:fixed;right:52px;bottom:6px;",
         "position:fixed;right:10px;bottom:86px;",
     )
+    body = body.replace(
+        "const apiKey=()=>String(GM_getValue(API_KEY,'')||'').trim();",
+        "const apiKey=()=>{const saved=String(GM_getValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(globalThis.__MM_PDA_API_KEY__||'').trim();const unresolved='###PDA-'+'APIKEY###';return pda&&pda!==unresolved?pda:'';};",
+    )
 
     body = body.replace(
         "function initializeAcquisitions(){createLauncher();installChannel();}",
@@ -175,7 +179,7 @@ def build(pda_revision: int) -> str:
 
 def cli() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pda-revision", type=int, default=3)
+    parser.add_argument("--pda-revision", type=int, default=4)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.pda_revision < 1:
