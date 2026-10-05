@@ -36,6 +36,27 @@ assert.strictEqual(liveMeta.sellerId,'123');
 assert.strictEqual(liveMeta.sellerName,'Seller');
 assert.strictEqual(liveMeta.quantity,2);
 assert.strictEqual(liveMeta.url,'https://example.invalid/listing');
+assert.strictEqual(liveMeta.isAuction,true);
+assert.strictEqual(liveMeta.sortScore,liveMeta.auctionWatchScore);
+
+const farAuction=logic.evaluateListing({
+  ...candidate,
+  source:'Auction',
+  price:1,
+  endsAt:Math.floor(now/1000)+20*3600
+},[],{now,bbRate:6000000,bonusBand:5,minComparableSales:3});
+const nearAuction=logic.evaluateListing({
+  ...candidate,
+  source:'Auction',
+  price:1,
+  endsAt:Math.floor(now/1000)+30*60
+},[],{now,bbRate:6000000,bonusBand:5,minComparableSales:3});
+assert.strictEqual(farAuction.history.confidence,0);
+assert.strictEqual(farAuction.liquidityScore,0);
+assert(farAuction.investmentScore>=40,'legacy purchase-style score demonstrates why auctions need separate watch scoring');
+assert(farAuction.auctionWatchScore<30,'long-running $1 auction with no history must not look like a strong investment');
+assert(nearAuction.auctionWatchScore>farAuction.auctionWatchScore,'watch score should increase as an otherwise equal auction nears completion');
+assert.strictEqual(farAuction.sortScore,farAuction.auctionWatchScore);
 assert.strictEqual(value.bbUnits,10);
 assert.strictEqual(value.bbFloor,60000000);
 assert(value.auctionValue>=58000000&&value.auctionValue<100000000,'outlier should not dominate auction median');
