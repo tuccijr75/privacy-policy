@@ -3,6 +3,7 @@
 
   const PDA_API_KEY_PLACEHOLDER='###PDA-APIKEY###';
   const PDA_GM_PREFIX='mm_acquisitions_pda_gm_v1:';
+  globalThis.__MM_TORN_PDA__=true;
 
   if(typeof globalThis.GM_getValue!=='function'){
     globalThis.GM_getValue=(key,def)=>{
@@ -122,8 +123,10 @@
   }
 
   async function nativeGet(){
-    if(typeof globalThis.PDA_storage!=='undefined'&&typeof globalThis.PDA_storage.get==='function'){
-      return await globalThis.PDA_storage.get(STORAGE_KEY,null);
+    // TornPDA binds PDA_storage as a lexical const around each userscript,
+    // not as window.PDA_storage. Refer to that injected binding directly.
+    if(typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.get==='function'){
+      return await PDA_storage.get(STORAGE_KEY,null);
     }
     try{
       const raw=localStorage.getItem(LOCAL_FALLBACK_KEY);
@@ -132,8 +135,8 @@
   }
 
   async function nativeSet(value){
-    if(typeof globalThis.PDA_storage!=='undefined'&&typeof globalThis.PDA_storage.set==='function'){
-      await globalThis.PDA_storage.set(STORAGE_KEY,value);
+    if(typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.set==='function'){
+      await PDA_storage.set(STORAGE_KEY,value);
       return;
     }
     localStorage.setItem(LOCAL_FALLBACK_KEY,JSON.stringify(value));
@@ -185,7 +188,7 @@
     return Object.freeze({
       coreVersion:String(original.version||'')+'-pda',
       platform:'tornpda',
-      storage:typeof globalThis.PDA_storage!=='undefined'?'PDA_storage':'localStorage-fallback',
+      storage:typeof PDA_storage!=='undefined'&&PDA_storage?'PDA_storage':'localStorage-fallback',
       validation:original.validateLegacyState(state),
       summary:original.summarizeState(state),
       freshness:original.freshnessSnapshot(state)
