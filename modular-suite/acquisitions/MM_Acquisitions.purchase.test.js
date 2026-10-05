@@ -12,11 +12,11 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.19'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@41e31d2bb1d55ae69fddf127a3c627475a3e254d/modular-suite/core/MM_Torn_Core.js'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@41e31d2bb1d55ae69fddf127a3c627475a3e254d/modular-suite/acquisitions/MM_Acquisitions.logic.js'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@41e31d2bb1d55ae69fddf127a3c627475a3e254d/modular-suite/acquisitions/MM_Acquisitions.live.js'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@41e31d2bb1d55ae69fddf127a3c627475a3e254d/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js'));
+assert(userSource.includes('// @version      8.0.0-alpha.20'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/core/MM_Torn_Core.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/acquisitions/MM_Acquisitions.logic.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/acquisitions/MM_Acquisitions.live.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js'));
 assert(!userSource.includes('// @updateURL'));
 assert(!userSource.includes('// @downloadURL'));
 assert(userSource.includes('async function autoRefreshAcquisitions'));
@@ -83,7 +83,7 @@ console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS
 const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      8.0.0-alpha.19-pda.6'));
+assert(pdaSource.includes('// @version      8.0.0-alpha.20-pda.6'));
 assert(!pdaHeader.includes('@require'));
 assert(!pdaSource.includes('globalThis.GM_getValue=function'));
 assert(pdaSource.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
@@ -109,7 +109,7 @@ assert(pdaAdapterSource.includes("typeof PDA_storage!=='undefined'&&PDA_storage&
 
 const pdaBuilder=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
 assert(pdaBuilder.includes('def replace_once('));
-assert(pdaBuilder.includes('default=6'));
+assert(pdaBuilder.includes('default=7'));
 assert(pdaBuilder.includes('PDA cross-origin Travel storage'));
 assert(pdaBuilder.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
 
@@ -136,6 +136,10 @@ assert(liveSource.includes("source:'Item Market'"));
 assert(liveSource.includes("source:'Overseas'"));
 assert(liveSource.includes("reason:'overseas-recommended'"));
 assert(liveSource.includes("reason:verificationWarnings.length?'live-verification-unavailable'"));
+assert(liveSource.includes('ITEM_MARKET_RECENT_REUSE_MS = 2500'));
+assert(liveSource.includes('function recentItemMarketSnapshot'));
+assert(liveSource.includes('async function verifyItemMarket'));
+assert(liveSource.includes('let verifiedItemMarketSnapshot=null;'));
 assert(liveSource.includes("verificationWarnings.push({source:'Item Market'"));
 assert(liveSource.includes("message:String(error?.message||error||'verification failed')"));
 assert(liveSource.includes('function normalizeTornCatalog'));
@@ -153,7 +157,7 @@ assert(liveSource.includes('Torn API finished Auction House'));
 
 const userSourceArmory=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceArmory);
-assert(userSourceArmory.includes('// @version      8.0.0-alpha.19'));
+assert(userSourceArmory.includes('// @version      8.0.0-alpha.20'));
 assert(userSourceArmory.includes('MM_Acquisitions.live.js'));
 assert(userSourceArmory.includes("type!=='armory-acquisition-request'"));
 assert(userSourceArmory.includes('Faction Armory request: '));
