@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.18-pda.2
+// @version      8.0.0-alpha.18-pda.3
 // @description  TornPDA-compatible bundled MM Acquisitions build. Profit, ranked weapons, travel procurement, manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -16,6 +16,41 @@
 // ==/UserScript==
 
 
+(() => {
+  'use strict';
+  globalThis.__MM_ACQ_PDA_STAGE='boot';
+  function ensureBootLauncher(){
+    if(!document.body)return;
+    let b=document.getElementById('mm-acquisitions-launcher');
+    if(!b){
+      b=document.createElement('button');
+      b.id='mm-acquisitions-launcher';
+      b.type='button';
+      b.setAttribute('aria-label','MM_Acquisitions');
+      b.title='MM_Acquisitions';
+      b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 4 4M9 7.5v6M6.8 9.2h4.4M6.8 11.8h4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+      b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+      b.addEventListener('click',()=>{
+        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){
+          globalThis.__MM_ACQ_OPEN__();
+          return;
+        }
+        const stage=String(globalThis.__MM_ACQ_PDA_STAGE||'unknown');
+        let d=document.getElementById('mm-acq-pda-boot-diagnostic');
+        if(!d){
+          d=document.createElement('div');
+          d.id='mm-acq-pda-boot-diagnostic';
+          d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';
+          document.body.appendChild(d);
+        }
+        d.innerHTML='<b>MM_Acquisitions PDA boot diagnostic</b><div style="margin-top:6px;">Stopped at: <code>'+stage.replace(/[<>&]/g,'')+'</code></div><div style="margin-top:4px;color:#bbb;">Send a screenshot of this message.</div>';
+      });
+      document.body.appendChild(b);
+    }
+  }
+  if(document.body)ensureBootLauncher();
+  else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
+})();
 
 /* ===== MM Torn Core (bundled) ===== */
 
@@ -1139,6 +1174,9 @@
 })();
 
 
+;globalThis.__MM_ACQ_PDA_STAGE='core';
+
+
 /* ===== TornPDA platform/state adapter ===== */
 
 (() => {
@@ -1173,7 +1211,8 @@
     try{value=originalGetValue(key,def);}catch{value=def;}
     if(String(key)==='mm_acquisitions_api_v1'){
       const pdaKey=String(PDA_API_KEY_PLACEHOLDER||'').trim();
-      const realPdaKey=pdaKey&&!pdaKey.includes('###PDA-APIKEY###');
+      const placeholderSentinel='###PDA-'+'APIKEY###';
+      const realPdaKey=pdaKey&&pdaKey!==placeholderSentinel;
       if((value==null||value===''||value===def)&&realPdaKey)return pdaKey;
     }
     return value;
@@ -1350,6 +1389,9 @@
     value:api,configurable:true,enumerable:false,writable:false
   });
 })();
+
+
+;globalThis.__MM_ACQ_PDA_STAGE='adapter';
 
 
 /* ===== Acquisitions logic (bundled) ===== */
@@ -1707,6 +1749,9 @@
     value:api,configurable:true,enumerable:false,writable:false
   });
 })();
+
+
+;globalThis.__MM_ACQ_PDA_STAGE='logic';
 
 
 /* ===== Acquisitions live service (bundled) ===== */
@@ -2673,6 +2718,9 @@
 })();
 
 
+;globalThis.__MM_ACQ_PDA_STAGE='live';
+
+
 /* ===== Ranked profit logic (bundled) ===== */
 
 (() => {
@@ -2911,6 +2959,9 @@
   });
 })();
 
+;globalThis.__MM_ACQ_PDA_STAGE='ranked';
+
+
 /* ===== Purchase ledger logic (bundled) ===== */
 
 (() => {
@@ -2956,6 +3007,9 @@
   const api=Object.freeze({ACQUISITION_LOG_IDS,ensureProcurement,parseAcquisitionLog,mergeAcquisitionLogRows,syncWindowStart});
   Object.defineProperty(globalThis,'MMTornAcquisitionLedger',{value:api,configurable:true,enumerable:false,writable:false});
 })();
+
+;globalThis.__MM_ACQ_PDA_STAGE='ledger';
+
 
 /* ===== Acquisitions UI ===== */
 
@@ -4314,7 +4368,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.18-pda.2 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.18-pda.3 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -4476,7 +4530,7 @@
     installTravelCollector();
     return;
   }
-  function initializeAcquisitions(){createLauncher();installChannel();}
+  globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';function initializeAcquisitions(){createLauncher();installChannel();}
   if(document.body)initializeAcquisitions();
   else window.addEventListener('DOMContentLoaded',initializeAcquisitions,{once:true});
 })();
