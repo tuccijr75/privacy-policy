@@ -122,4 +122,61 @@ const snapshot=(id,timestamp,quantity,price=1_000_000,fetchedAt=now)=>pulse.norm
   assert(!/seller|attack|mug/i.test(json),'diagnostics must remain seller/attack-target free');
 }
 
+
+vm.runInContext(fs.readFileSync(__dirname+'/MM_Acquisitions.logic.js','utf8'),sandbox,{filename:'MM_Acquisitions.logic.js'});
+vm.runInContext(fs.readFileSync(__dirname+'/MM_Acquisitions.ranked.logic.js','utf8'),sandbox,{filename:'MM_Acquisitions.ranked.logic.js'});
+const logic=sandbox.globalThis.MMTornAcquisitionsLogic;
+const rankedLogic=sandbox.globalThis.MMTornRankedProfitLogic;
+assert(logic&&rankedLogic,'Acquisitions logic modules must load after Market Pulse');
+
+{
+  const nowIso=new Date(now).toISOString();
+  const db={
+    businessRules:{minRoiPct:0,minDemandPerDay:0,minPrice:1,maxPrice:10000,minAbsoluteProfit:1,minSellerCount:1,minConfidencePct:0,maxListingAgeSec:300},
+    marketIntel:{marketplaceGeneratedAt:nowIso,settings:{bazaarExitHaircutPct:0},marketplace:{
+      '1':{itemId:'1',itemName:'High Margin Slow',marketPrice:1264,bazaarAverage:0,lowestPrice:1000,totalBazaars:3},
+      '2':{itemId:'2',itemName:'Lower Margin Fast',marketPrice:1179,bazaarAverage:0,lowestPrice:1000,totalBazaars:3}
+    },details:{},traders:{},history:{},marketPulse:{items:{}}},
+    procurement:{catalog:{'1':{name:'High Margin Slow'},'2':{name:'Lower Margin Fast'}},marketSnapshots:{
+      '1':{fetchedAt:nowIso,itemMarket:{lowest:1000,median:1264,third:1264,listings:3,totalQty:3,depth1Pct:1},bazaar:{}},
+      '2':{fetchedAt:nowIso,itemMarket:{lowest:1000,median:1179,third:1179,listings:40,totalQty:100000,depth1Pct:5000},bazaar:{}}
+    }},
+    sales:{}
+  };
+  db.marketIntel.marketPulse.items['2']={
+    itemId:'2',itemName:'Lower Margin Fast',fetchedAt:now,sourceTimestamp:now,upstreamCacheDelayMs:60000,
+    lastSnapshot:{fetchedAt:now,sourceTimestamp:now,floorPrice:1000,marketDepth:100,totalQty:100000,marketExposure:100000000,upstreamCacheDelayMs:60000},
+    snapshotHistory:[{fetchedAt:now-180000,floorPrice:1000}],
+    movementHistory:Array.from({length:10},(_,i)=>({at:now-(10-i)*15000,units:5000,turnover:5_000_000,confidencePct:82}))
+  };
+  const rows=logic.rankCachedOpportunities(db,now);
+  const slow=rows.find(row=>row.id==='1');
+  const fast=rows.find(row=>row.id==='2');
+  assert(slow&&fast);
+  assert(slow.roiPct>fast.roiPct,'fixture must keep the slow item theoretical ROI higher');
+  assert.strictEqual(rows[0].id,'2','fresh proven liquidity/profit velocity must be able to outrank a somewhat higher theoretical ROI');
+  assert(fast.marketPulseScore>0&&fast.profitVelocityPerHour>0,'ranking must expose Market Pulse score components');
+  assert.strictEqual(fast.pulseTier,'proven');
+}
+
+{
+  const listing={itemId:'2',itemName:'Lower Margin Fast',price:1000,source:'Item Market',rarity:'yellow',bonuses:[]};
+  const history=[
+    {itemId:'2',price:1500,timestamp:Math.floor((now-86400000)/1000),rarity:'yellow',bonuses:[]},
+    {itemId:'2',price:1550,timestamp:Math.floor((now-2*86400000)/1000),rarity:'yellow',bonuses:[]},
+    {itemId:'2',price:1525,timestamp:Math.floor((now-3*86400000)/1000),rarity:'yellow',bonuses:[]}
+  ];
+  const noPulse=rankedLogic.evaluateListing(listing,history,{now,minComparableSales:3});
+  assert.strictEqual(noPulse.liquidityScore,noPulse.auctionHistoryLiquidityScore,'ranked no-Pulse behavior must preserve AH liquidity');
+  const p={
+    itemId:'2',tier:'proven',fetchedAt:now,sourceTimestamp:now,upstreamCacheDelayMs:60000,
+    liquidityScore:91,confidencePct:88,observedEventsPerHour:3,observedUnitsPerHour:100,
+    turnoverPerHour:10000000,marketDepth:100,trendPct:2
+  };
+  const withPulse=rankedLogic.evaluateListing(listing,history,{now,minComparableSales:3,pulseByItem:{'2':p}});
+  assert.strictEqual(withPulse.pulseTier,'proven');
+  assert(withPulse.pulseLiquidityScore>0&&withPulse.profitVelocityPerHour>0);
+  assert.strictEqual(withPulse.pulseSourceTimestamp,now);
+}
+
 console.log('MM_Acquisitions Market Pulse regression tests: PASS');
