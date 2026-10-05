@@ -163,5 +163,56 @@ const live=sandbox.globalThis.MMTornAcquisitionsLive;assert(live);
   assert.strictEqual(overseasRoute.country,'China');
   assert.strictEqual(overseasRoute.profit,63892);
 
+  // A single provider failure must not abort the full purchase route. This
+  // reproduces the TornPDA live failure where seller-specific Bazaar
+  // verification errored after Item Market had already refreshed successfully.
+  db={
+    businessRules:{maxListingAgeSec:180},
+    marketIntel:{
+      settings:{bazaarExitHaircutPct:0},
+      marketplace:{
+        '999':{itemId:'999',itemName:'Fallback Item',marketPrice:650,bazaarAverage:610,lowestPrice:500,totalBazaars:2}
+      },
+      details:{},traders:{}
+    },
+    procurement:{
+      catalog:{'999':{id:'999',name:'Fallback Item',type:'Other',marketPrice:650,shops:[]}},
+      marketSnapshots:{}
+    },
+    travelIntel:{rows:[]}
+  };
+  const fallbackNavigations=[];
+  const fallbackService=live.createService({
+    core,
+    logic:{
+      rankCachedOpportunities:()=>[{id:'999',name:'Fallback Item',itemType:'Other',maxBuyPrice:1000}]
+    },
+    hasTornKey:()=>true,
+    navigate:url=>fallbackNavigations.push(url),
+    bazaarRequest:async()=>{throw new Error('PDA bazaar request failed');},
+    weavRequest:async path=>{
+      if(path==='/marketplace/999') return {
+        item_name:'Fallback Item',market_price:650,bazaar_average:610,
+        listings:[{
+          item_id:999,player_id:123,player_name:'Seller',quantity:3,price:500,
+          last_checked:Date.now(),content_updated:Date.now()
+        }]
+      };
+      if(path==='/marketplace/999/traders') return {item_name:'Fallback Item',traders:[]};
+      throw new Error('unexpected fallback weav path '+path);
+    },
+    tornRequest:async path=>{
+      if(String(path).includes('/market/999/itemmarket')) return {
+        itemmarket:{listings:[{price:600,quantity:10}]}
+      };
+      throw new Error('unexpected fallback torn path '+path);
+    }
+  });
+  const fallbackRoute=await fallbackService.acquire('999');
+  assert.strictEqual(fallbackRoute.routed,true,'Bazaar verification network failure must fall through to a healthy Item Market source');
+  assert.strictEqual(fallbackRoute.source,'Item Market');
+  assert(fallbackRoute.verificationWarnings.some(row=>row.source==='Bazaar'&&row.message.includes('PDA bazaar request failed')));
+  assert(fallbackNavigations.some(url=>url.includes('sid=ItemMarket')&&url.includes('itemID=999')));
+
   console.log('MM_Acquisitions selected-source consistency regression: PASS');
 })().catch(error=>{console.error(error);process.exitCode=1;});
