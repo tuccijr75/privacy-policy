@@ -852,57 +852,53 @@
     const buyable=rows.filter(r=>r.purchaseReady).slice(0,12);
     const pricelistScan=logic.rankPricelistUniverse(state);
     const pricelistDeals=pricelistScan.filter(r=>r.hasMarketEvidence).slice(0,20);
-    const pricelistProfitable=pricelistScan.filter(r=>r.profitable).length;
-    const pricelistQualified=pricelistScan.filter(r=>r.qualifies).length;
     const research=rows.filter(r=>!r.purchaseReady).slice(0,8);
     const pulseMovers=pulse?.rankPulseItems?.(state)?.slice(0,12)||[];
 
     return armoryRequestHtml()+card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
-        '<div><b>Best Deals to Check</b><div style="font-size:10px;color:#888;">Suggested buy-low / sell-high opportunities. Check a price before opening a source.</div></div>'+
-        '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-reload" style="'+button()+'">Reload Cache</button><button id="mm-acq-sync-purchases" '+(busy?'disabled':'')+' style="'+button()+'">Sync Purchases</button><button id="mm-acq-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Opportunities</button></div>'+
+        '<div><b>Best Deals</b><div style="font-size:10px;color:#888;">Start with the first few rows. Click Check & Open to re-check the price and open the best current source.</div></div>'+
+        '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Deals</button><button id="mm-acq-sync-purchases" '+(busy?'disabled':'')+' style="'+button()+'">Sync Purchases</button></div>'+
       '</div>'
     )+
-    card('<b>Advanced Market Activity</b>'+
-      '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Proven high-money movers are always listed before emerging/large-exposure candidates. Movement means observed seller-independent market outflow, not attributed player sales.</div>'+
-      (pulseMovers.length?pulseMovers.map((r,i)=>
-        '<div style="border-top:1px solid #303030;padding:7px 0;font-size:10px;">'+
-          '<b>#'+(i+1)+' '+esc(r.itemName||('Item '+r.itemId))+'</b> · '+(r.tier==='proven'?'<b style="color:#9fe3a8;">HOT / PROVEN</b>':r.tier==='candidate'?'<b style="color:#ffd18a;">EMERGING CANDIDATE</b>':'OBSERVED')+
-          '<div style="color:#888;">Floor '+money(r.floorPrice||0)+' · depth '+Number(r.marketDepth||0).toLocaleString()+' · events/hr '+Number(r.observedEventsPerHour||0).toFixed(2)+' · units/hr '+Number(r.observedUnitsPerHour||0).toFixed(2)+' · turnover/hr '+money(r.turnoverPerHour||0)+' · liquidity '+Number(r.liquidityScore||0).toFixed(0)+'/100 · confidence '+Number(r.confidencePct||0).toFixed(0)+'% · trend '+Number(r.trendPct||0).toFixed(1)+'% · '+esc(r.freshness?.label||'UNKNOWN')+'</div>'+
-        '</div>'
-      ).join(''):'<div style="font-size:10px;color:#888;">Collecting Market Pulse history. Candidates can appear from current market exposure before enough repeated movement exists for proven status.</div>')
-    )+
-    card('<b>Pricelist Universe Scan · '+pricelistScan.length.toLocaleString()+' evaluated</b>'+
-      '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Every positively priced item on the configured TornW3B pricelist is screened from the global Bazaar observation feed before deeper Bazaar + Item Market verification. '+pricelistProfitable.toLocaleString()+' currently show positive gross spread; '+pricelistQualified.toLocaleString()+' meet active ROI/profit rules. Pricelist buy rate is a benchmark, not a resale exit.</div>'+
-      (pricelistDeals.length?pricelistDeals.map((r,i)=>
-        '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
-          '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.freshness?.label||'UNKNOWN')+' · <b>'+esc(r.buySource||'Bazaar observed')+'</b>'+
-          '<div>Bazaar low <b>'+money(r.buyPrice)+'</b> · Bazaar avg '+money(r.bazaarAverage||0)+' · Your buy rate '+money(r.targetBuy)+' · Best exit '+money(r.bestExit)+' ('+esc(r.bestExitRoute||'')+') · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
-          '<div style="color:#888;">Profit/unit '+(r.profit>=0?'+':'-')+money(Math.abs(r.profit||0))+' · liquidity '+Number(r.liquidity||0)+'/100 · confidence '+Number(r.confidence||0)+'% · bazaars '+Number(r.sellerCount||0)+'</div>'+pulseLine(r,r.id,r.profit)+'</div>'+
-          '<button data-pricelist-verify="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(r.qualifies)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Check Price</button>'+
-        '</div>'
-      ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">Pricelist rows are loaded, but current market evidence is unavailable. Refresh Opportunities.</div>')
-    )+
-    card('<b>Recommended Deals</b>'+
-      '<div style="font-size:10px;color:#888;margin:3px 0 6px;">Meets current ROI / profit / listing / confidence rules. Current cash balance is not checked; Verify & Buy re-verifies the source and keeps final purchase manual.</div>'+
+    card(
+      '<b>Recommended Deals</b>'+
+      '<div style="font-size:10px;color:#888;margin:3px 0 6px;">These currently meet your deal rules. Acquisitions still re-checks the live source before opening it.</div>'+
       (buyable.length?buyable.map((r,i)=>
-        '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
-          '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.purchaseSource)+
-          '<div>Buy <b>'+money(r.buyPrice)+'</b> · Max '+money(r.maxBuyPrice)+' · Exit '+money(r.bestExit)+' · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
-          '<div style="color:#888;">3d sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% ('+esc(r.conversionSource)+') · Confidence '+Number(r.confidence||0).toFixed(0)+'% · Live listings '+Number(r.liveListingCount||0)+' · Qty '+Number(r.recommendedQty||1)+' · Est. 3d profit '+money(r.expectedProfit3d||0)+'</div>'+pulseLine(r,r.id,r.profit)+'</div>'+
-          '<button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Verify & Buy</button>'+
+        '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;border-top:1px solid #303030;padding:9px 0;font-size:11px;align-items:center;">'+
+          '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b><div style="color:#aaa;margin-top:3px;">Buy about <b>'+money(r.buyPrice)+'</b> · likely resale <b>'+money(r.bestExit)+'</b> · est. profit <b style="color:'+(Number(r.profit||0)>=0?'#9fe3a8':'#ffaaaa')+';">'+(Number(r.profit||0)>=0?'+':'-')+money(Math.abs(Number(r.profit||0)))+'</b> · return on cost <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
+          '<div style="font-size:10px;color:#888;margin-top:2px;">Current source: '+esc(String(r.purchaseSource||'Unknown').replace('Bazaar aggregate','Bazaar'))+'</div>'+
+          '<details style="margin-top:4px;"><summary style="cursor:pointer;font-size:10px;color:#777;">Why this deal?</summary><div style="font-size:10px;color:#888;margin-top:4px;">Live listings '+Number(r.liveListingCount||0)+' · suggested qty '+Number(r.recommendedQty||1)+' · confidence '+Number(r.confidence||0).toFixed(0)+'% · estimated 3-day profit '+money(r.expectedProfit3d||0)+'</div>'+pulseLine(r,r.id,r.profit)+'</details></div>'+
+          '<button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Check & Open</button>'+
         '</div>'
-      ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No current cached opportunity meets the active business rules.</div>')
+      ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No deal currently meets your rules. Click Refresh Deals or use Find Item.</div>')
     )+
-    card('<details><summary style="cursor:pointer;font-weight:700;">Research leads ('+research.length+')</summary>'+
-      '<div style="font-size:10px;color:#888;margin:4px 0;">These require fresher seller or Item Market evidence before routing.</div>'+
-      (research.length?research.map(r=>
-        '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:6px 0;font-size:10px;">'+
-          '<div><b>'+esc(r.name)+'</b> · '+esc(r.discoverySource||'Research')+' · ROI '+Number(r.roiPct||0).toFixed(1)+'% · Sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% · score '+Number(r.score||0).toFixed(0)+pulseLine(r,r.id,r.profit)+'</div>'+
-          '<button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'padding:4px 7px;">Find & Buy</button>'+
-        '</div>'
-      ).join(''):'<div style="font-size:10px;color:#888;margin-top:6px;">No additional leads.</div>')+
-    '</details>');
+    card(
+      '<details><summary style="cursor:pointer;font-weight:700;">More deal sources and advanced signals</summary>'+
+        '<details style="margin-top:7px;"><summary style="cursor:pointer;font-size:11px;"><b>Pricelist opportunities</b> · '+pricelistDeals.length+'</summary>'+
+          '<div style="font-size:10px;color:#888;margin:4px 0;">Items on your configured buy pricelist that also have current market evidence.</div>'+
+          (pricelistDeals.length?pricelistDeals.map((r,i)=>
+            '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:7px 0;font-size:10px;">'+
+              '<div><b>'+esc(r.name)+'</b> · buy '+money(r.buyPrice)+' · likely resale '+money(r.bestExit)+' · est. profit '+(r.profit>=0?'+':'-')+money(Math.abs(r.profit||0))+' · return '+Number(r.roiPct||0).toFixed(1)+'%</div>'+
+              '<button data-pricelist-verify="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'padding:5px 7px;">Check Price</button>'+
+            '</div>'
+          ).join(''):'<div style="font-size:10px;color:#888;">No current pricelist opportunities.</div>')+
+        '</details>'+
+        '<details style="margin-top:7px;"><summary style="cursor:pointer;font-size:11px;"><b>Market activity</b></summary>'+
+          '<div style="font-size:10px;color:#888;margin:4px 0;">Advanced demand evidence. You do not need this section for normal buying.</div>'+
+          (pulseMovers.length?pulseMovers.map((r,i)=>
+            '<div style="border-top:1px solid #303030;padding:6px 0;font-size:10px;"><b>#'+(i+1)+' '+esc(r.itemName||('Item '+r.itemId))+'</b> · '+(r.tier==='proven'?'strong':r.tier==='candidate'?'building':'limited')+' activity · '+Number(r.observedUnitsPerHour||0).toFixed(2)+' units/hr · '+Number(r.confidencePct||0).toFixed(0)+'% confidence</div>'
+          ).join(''):'<div style="font-size:10px;color:#888;">Still collecting market activity history.</div>')+
+        '</details>'+
+        '<details style="margin-top:7px;"><summary style="cursor:pointer;font-size:11px;"><b>Research leads</b> · '+research.length+'</summary>'+
+          '<div style="font-size:10px;color:#888;margin:4px 0;">Possible deals that need stronger live evidence before opening a source.</div>'+
+          (research.length?research.map(r=>
+            '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:6px 0;font-size:10px;"><div><b>'+esc(r.name)+'</b> · estimated return '+Number(r.roiPct||0).toFixed(1)+'%</div><button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'padding:4px 7px;">Check</button></div>'
+          ).join(''):'<div style="font-size:10px;color:#888;">No additional research leads.</div>')+
+        '</details>'+
+        '<button id="mm-acq-reload" style="'+button()+'margin-top:8px;">Reload Cached Data</button>'+
+      '</details>'
+    );
   }
 
   function travelHtml(){
