@@ -83,6 +83,7 @@ assert(userSource.includes('Official Torn API finished Auction House records'));
 assert(userSource.includes('href="#mm-acq-verified-sales"'));
 assert(userSource.includes('data-sales-view'));
 assert(userSource.includes('data-sales-close'));
+assert(userSource.includes("verifiedSalesItemId===String(itemSelection.id)?verifiedSalesHtml(itemSelection.id):''"));
 assert(userSource.includes('sale #'));
 assert(userSource.includes('Movement = quantity disappearing'));
 assert(userSource.includes('not a confirmed player sale'));
