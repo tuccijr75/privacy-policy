@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.19-pda.6
+// @version      8.0.0-alpha.20-pda.7
 // @description  TornPDA-compatible bundled MM Acquisitions build. Profit, ranked weapons, travel procurement, manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -1734,6 +1734,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const API_BASE = 'https://api.torn.com/v2';
   const WEAV_BASE = 'https://weav3r.dev/api';
   const ITEM_MARKET_FEE_RATE = 0.05;
+  const ITEM_MARKET_RECENT_REUSE_MS = 2500;
   const MARKET_HISTORY_MAX = 240;
   const INTEL_HISTORY_MAX = 120;
   const VERIFY_MAX_AGE_SEC = 120;
@@ -2361,6 +2362,24 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       return snapshot;
     }
 
+    function recentItemMarketSnapshot(state,itemId,maxAgeMs=ITEM_MARKET_RECENT_REUSE_MS) {
+      const id=asId(itemId);
+      const snap=state?.procurement?.marketSnapshots?.[id]||null;
+      const fetchedAt=snap?.fetchedAt?Date.parse(snap.fetchedAt):0;
+      const ageMs=fetchedAt?Math.max(0,Date.now()-fetchedAt):Infinity;
+      const price=Math.max(0,Number(snap?.itemMarket?.lowest||0));
+      return price>0&&ageMs<=Math.max(0,Number(maxAgeMs||0))?snap:null;
+    }
+
+    async function verifyItemMarket(itemId,{allowRecentMs=ITEM_MARKET_RECENT_REUSE_MS}={}) {
+      const id=asId(itemId);
+      const before=await core.readLegacyState();
+      const recent=recentItemMarketSnapshot(before,id,allowRecentMs);
+      if(recent) return {snapshot:recent,reusedRecent:true};
+      const snapshot=await refreshItemMarket(id);
+      return {snapshot,reusedRecent:false};
+    }
+
     async function verifyBazaar(itemId,sellerId,expectedPrice=0) {
       if (!hasTornKey()) throw new Error('Save a Torn API key in Market Scout first.');
       const id=asId(itemId),seller=asId(sellerId);
@@ -2486,8 +2505,12 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       let state=await core.readLegacyState();
       const id=resolveProcurementItemId(state,itemId,itemName);
       if(!id) return {itemId:'',itemName:String(itemName||''),sources:[],state};
+      let itemMarketVerified=false;
       try { await enrichItem(id); } catch {}
-      try { await refreshItemMarket(id); } catch {}
+      try {
+        const verification=await verifyItemMarket(id);
+        itemMarketVerified=Boolean(verification?.snapshot);
+      } catch {}
       state=await core.readLegacyState();
 
       const catalog=state?.procurement?.catalog?.[id]||{};
@@ -2532,7 +2555,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         bazaarAverage:Number(marketplace?.bazaarAverage||0),bazaarCount:Number(marketplace?.totalBazaars||0)
       });
       if(itemMarketPrice>0) sources.push({
-        source:'Item Market',price:itemMarketPrice,quantity:Number(snap?.itemMarket?.depth1Pct||1)
+        source:'Item Market',price:itemMarketPrice,quantity:Number(snap?.itemMarket?.depth1Pct||1),
+        liveVerified:itemMarketVerified,verifiedAt:String(snap?.fetchedAt||'')
       });
       if(bestTravel) sources.push({
         source:'Overseas',
@@ -2616,9 +2640,17 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
           return {routed:true,source:'Bazaar',url,verified:verify,verificationWarnings,...result};
         }
         if(candidate.source==='Item Market') {
-          let fresh;
+          let fresh=null;
           try{
-            fresh=await refreshItemMarket(id);
+            const verifiedAt=candidate?.verifiedAt?Date.parse(candidate.verifiedAt):0;
+            const verifiedAgeMs=verifiedAt?Math.max(0,Date.now()-verifiedAt):Infinity;
+            if(candidate.liveVerified&&verifiedAgeMs<=ITEM_MARKET_RECENT_REUSE_MS){
+              fresh=(await core.readLegacyState())?.procurement?.marketSnapshots?.[id]||null;
+            }
+            if(!fresh){
+              const verification=await verifyItemMarket(id);
+              fresh=verification?.snapshot||null;
+            }
           }catch(error){
             verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'verification failed')});
             continue;
@@ -2660,13 +2692,15 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       if (!hasTornKey()) return {routed:false,reason:'api-key-required'};
       const id=asId(itemId);
       const verificationWarnings=[];
+      let verifiedItemMarketSnapshot=null;
       try {
         await enrichItem(id);
       } catch(error) {
         verificationWarnings.push({source:'Bazaar discovery',message:String(error?.message||error||'refresh failed')});
       }
       try {
-        await refreshItemMarket(id);
+        const verification=await verifyItemMarket(id);
+        verifiedItemMarketSnapshot=verification?.snapshot||null;
       } catch(error) {
         verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'refresh failed')});
       }
@@ -2707,12 +2741,15 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
           return {routed:true,source:'Bazaar',url,verified:result,verificationWarnings};
         }
 
-        let fresh;
-        try{
-          fresh=await refreshItemMarket(id);
-        }catch(error){
-          verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'verification failed')});
-          continue;
+        let fresh=verifiedItemMarketSnapshot;
+        if(!fresh){
+          try{
+            const verification=await verifyItemMarket(id);
+            fresh=verification?.snapshot||null;
+          }catch(error){
+            verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'verification failed')});
+            continue;
+          }
         }
         const livePrice=Number(fresh?.itemMarket?.lowest||0);
         if (!(livePrice>0)||(maxBuy>0&&livePrice>maxBuy)) continue;
@@ -4445,7 +4482,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.19-pda.6 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.20-pda.7 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
