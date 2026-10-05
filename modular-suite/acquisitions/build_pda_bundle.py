@@ -15,6 +15,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 CORE = HERE.parent / "core" / "MM_Torn_Core.js"
 ADAPTER = HERE / "MM_Acquisitions.pda.adapter.js"
+PULSE = HERE / "MM_Acquisitions.market-pulse.js"
 LOGIC = HERE / "MM_Acquisitions.logic.js"
 LIVE = HERE / "MM_Acquisitions.live.js"
 RANKED = HERE / "MM_Acquisitions.ranked.logic.js"
@@ -25,6 +26,7 @@ DEFAULT_OUTPUT = HERE / "MM_Acquisitions.pda.user.js"
 SECTIONS = [
     ("MM Torn Core (bundled)", CORE),
     ("TornPDA platform/state adapter", ADAPTER),
+    ("Market Pulse engine (bundled)", PULSE),
     ("Acquisitions logic (bundled)", LOGIC),
     ("Acquisitions live service (bundled)", LIVE),
     ("Ranked profit logic (bundled)", RANKED),
@@ -62,7 +64,7 @@ def metadata(version: str) -> str:
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
 // @version      {version}
-// @description  TornPDA-compatible bundled MM Acquisitions build. Profit, ranked weapons, travel procurement, manual final purchase.
+// @description  TornPDA-compatible bundled MM Acquisitions build. Market Pulse, profit, ranked weapons, travel procurement, manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
@@ -129,6 +131,7 @@ def build(pda_revision: int) -> str:
     stage_names = [
         "core",
         "adapter",
+        "pulse",
         "logic",
         "live",
         "ranked",
@@ -353,8 +356,8 @@ def build(pda_revision: int) -> str:
 
     body = replace_once(
         body,
-        "function initializeAcquisitions(){createLauncher();installChannel();}",
-        "globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';function initializeAcquisitions(){createLauncher();installChannel();}",
+        "function initializeAcquisitions(){createLauncher();installChannel();startAutoRefresh();}",
+        "globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';function initializeAcquisitions(){createLauncher();installChannel();startAutoRefresh();}",
         "PDA ready/open bridge",
     )
     pieces.append("\n/* ===== Acquisitions UI ===== */\n")
@@ -366,6 +369,7 @@ def build(pda_revision: int) -> str:
         raise RuntimeError("PDA metadata must not contain @require")
     for required in (
         "MMTornCore",
+        "MMTornMarketPulse",
         "MMTornAcquisitionsLogic",
         "MMTornAcquisitionsLive",
         "MMTornRankedProfitLogic",
@@ -380,7 +384,7 @@ def build(pda_revision: int) -> str:
 
 def cli() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pda-revision", type=int, default=7)
+    parser.add_argument("--pda-revision", type=int, default=8)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.pda_revision < 1:
