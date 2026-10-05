@@ -86,6 +86,20 @@ def build(pda_revision: int) -> str:
         f"v{base_version} · PROFIT / RANKED / TRAVEL",
         f"v{pda_version} · PROFIT / RANKED / TRAVEL",
     )
+
+    # TornPDA's browser chrome sits over the bottom of the webview. The shared
+    # desktop dock intentionally targets Torn's own footer row and can therefore
+    # place a correctly-created launcher underneath PDA's native bottom bar.
+    # Use the already-proven standalone launcher path on PDA and lift it above
+    # the native chrome; desktop builds keep the shared Core dock unchanged.
+    body = body.replace(
+        "if(core?.registerDockLauncher){",
+        "if(core?.registerDockLauncher&&!globalThis.__MM_TORN_PDA__){",
+    )
+    body = body.replace(
+        "position:fixed;right:52px;bottom:6px;",
+        "position:fixed;right:10px;bottom:86px;",
+    )
     pieces.append("\n/* ===== Acquisitions UI ===== */\n")
     pieces.append(body)
 
@@ -109,7 +123,7 @@ def build(pda_revision: int) -> str:
 
 def cli() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pda-revision", type=int, default=1)
+    parser.add_argument("--pda-revision", type=int, default=2)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.pda_revision < 1:
