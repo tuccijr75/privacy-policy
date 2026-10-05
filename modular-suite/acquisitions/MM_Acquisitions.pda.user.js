@@ -34,7 +34,10 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 4 4M9 7.5v6M6.8 9.2h4.4M6.8 11.8h4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
       b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;';
       b.addEventListener('click',()=>{
-        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){globalThis.__MM_ACQ_OPEN__();return;}
+        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){
+          globalThis.__MM_ACQ_OPEN__();
+          return;
+        }
         const stage=String(globalThis.__MM_ACQ_PDA_STAGE||'unknown');
         let d=document.getElementById('mm-acq-pda-boot-diagnostic');
         if(!d){
@@ -3745,6 +3748,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
 
 /* ===== Acquisitions UI ===== */
+
 (() => {
   'use strict';
 
