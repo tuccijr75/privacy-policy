@@ -2,7 +2,7 @@
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
 // @version      8.0.0-alpha.23
-// @description  Market acquisition with seller-free Market Pulse liquidity, pricelist profit, ranked-weapon valuation, live market/auction scouting and travel procurement with manual final purchase.
+// @description  Easy Torn buying workflow: find an item, compare Bazaar, Item Market and travel prices, then open a source and complete purchases manually.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
@@ -1426,9 +1426,8 @@
     const bestPrice=Math.max(0,Number(best?.price||0));
     const bestProfit=exit>0&&bestPrice>0?exit-bestPrice:0;
     const bestRoi=bestPrice>0&&exit>0?bestProfit/bestPrice*100:0;
-    const hasBazaar=sources.some(source=>String(source?.source||'').toLowerCase().startsWith('bazaar'));
-    const hasItemMarket=sources.some(source=>String(source?.source||'').toLowerCase()==='item market');
     const hasTravel=sources.some(source=>String(source?.source||'').toLowerCase()==='overseas');
+    const bestIsTravel=String(best?.source||'').toLowerCase()==='overseas';
     const historyRows=Array.isArray(state?.procurement?.ranked?.history?.[String(itemSelection.id)]?.rows)
       ?state.procurement.ranked.history[String(itemSelection.id)].rows:[];
     const rankedEligible=/(weapon|armor|armour)/i.test(String(itemSelection.type||'')+' '+String(itemSelection.subType||''));
@@ -1478,10 +1477,12 @@
       '<div><b style="font-size:14px;">'+esc(itemSelection.name)+'</b> <span style="color:#777;">['+esc(itemSelection.id)+']</span><div style="font-size:10px;color:#888;">Compare the prices below, then open the source you want. Buying remains manual.</div></div>'+
       decision+
       '<div style="display:flex;gap:5px;flex-wrap:wrap;margin:7px 0;">'+
-        '<button data-item-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Open Cheapest Source</button>'+
-        (hasBazaar?'<button data-item-alt-source="Bazaar" style="'+button()+'">Open Bazaar</button>':'')+
-        (hasItemMarket?'<button data-item-alt-source="Item Market" style="'+button()+'">Open Item Market</button>':'')+
-        (hasTravel?'<button data-item-travel="1" style="'+button()+'">Open Travel Agency</button>':'')+
+        (bestIsTravel
+          ?'<button data-item-travel="1" style="'+button(true)+'">Open Travel Agency</button>'
+          :'<button data-item-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Open Cheapest Source</button>')+
+        '<button data-item-alt-source="Bazaar" style="'+button()+'">Open Bazaar</button>'+
+        '<button data-item-alt-source="Item Market" style="'+button()+'">Open Item Market</button>'+
+        (!bestIsTravel&&hasTravel?'<button data-item-travel="1" style="'+button()+'">Open Travel Agency</button>':'')+
         verifiedSalesAction+
       '</div>'+
       (best&&String(best.source||'')==='Overseas'?'<div style="padding:6px;border:1px solid #6d5928;border-radius:5px;color:#e3ca82;font-size:10px;margin-bottom:6px;"><b>Travel is cheapest.</b> You can still open Bazaar or Item Market above if you do not want to travel.</div>':'')+
