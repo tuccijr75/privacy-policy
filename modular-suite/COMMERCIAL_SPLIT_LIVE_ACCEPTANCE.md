@@ -2347,4 +2347,27 @@ Regression:
 Next live gate:
 - install alpha.20-pda.7, reload TornPDA, and run one Verify & Buy on an Item Market-qualified deal;
 - expected: exact Item Market route opens without the `Live verification unavailable for Item Market` warning and no purchase is completed automatically.
+### alpha.20-pda.7 engineering closeout before live retest — 2026-10-05
+
+Repository reconciliation after the duplicate-GET correction:
+- desktop Acquisitions is `8.0.0-alpha.20`;
+- TornPDA artifact is `8.0.0-alpha.20-pda.7`;
+- desktop immutable dependency pin resolves to a commit containing the 2.5s Item Market reuse fix;
+- PDA bundle embeds the same corrected live service and remains self-contained with no `@require` metadata;
+- stale purchase-test expectation was corrected from pda.6 to pda.7;
+- suite manifest drift was corrected: Acquisitions now reports alpha.20 and suite manifest advances to alpha.60.
+
+Executable verification:
+- 9 Acquisitions/PDA JavaScript files parse successfully;
+- source-routing regression allows exactly one Item Market request and throws on any duplicate;
+- PASS: `routeProcurementRequest()` routes Item Market with one request;
+- PASS: Deals `acquire()` routes Item Market with one request;
+- PASS: current pda.7 simulated under immutable TornPDA GM helpers reaches `ui-ready`, creates the launcher, and keeps the 86px safe bottom offset;
+- PR #25 remains draft; no production promotion or merge performed.
+
+Live owner gate remains:
+- install alpha.20-pda.7;
+- press one qualified `Verify & Buy`;
+- confirm exact Item Market route opens without `Live verification unavailable for Item Market`;
+- do not complete a purchase.
 
