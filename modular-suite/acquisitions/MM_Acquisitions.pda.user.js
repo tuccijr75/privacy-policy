@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.18-pda.3
+// @version      8.0.0-alpha.18-pda.4
 // @description  TornPDA-compatible bundled MM Acquisitions build. Profit, ranked weapons, travel procurement, manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -1205,18 +1205,11 @@
     };
   }
 
-  const originalGetValue=globalThis.GM_getValue;
-  globalThis.GM_getValue=function(key,def){
-    let value;
-    try{value=originalGetValue(key,def);}catch{value=def;}
-    if(String(key)==='mm_acquisitions_api_v1'){
-      const pdaKey=String(PDA_API_KEY_PLACEHOLDER||'').trim();
-      const placeholderSentinel='###PDA-'+'APIKEY###';
-      const realPdaKey=pdaKey&&pdaKey!==placeholderSentinel;
-      if((value==null||value===''||value===def)&&realPdaKey)return pdaKey;
-    }
-    return value;
-  };
+  // TornPDA/GMforPDA exposes GM_* helpers as non-writable, non-configurable
+  // window properties. Never monkey-patch them. Keep the PDA-injected key in
+  // an MM-owned global and let the PDA-generated Acquisitions entrypoint choose
+  // it only when the script has no explicitly saved key.
+  globalThis.__MM_PDA_API_KEY__=String(PDA_API_KEY_PLACEHOLDER||'').trim();
 
   if(typeof globalThis.GM_xmlhttpRequest!=='function'&&typeof globalThis.PDA_httpGet==='function'){
     globalThis.GM_xmlhttpRequest=options=>{
@@ -3076,7 +3069,7 @@
     .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
     .replaceAll('"','&quot;').replaceAll("'",'&#039;');
   const money=value=>'$'+Math.max(0,Number(value)||0).toLocaleString('en-US',{maximumFractionDigits:0});
-  const apiKey=()=>String(GM_getValue(API_KEY,'')||'').trim();
+  const apiKey=()=>{const saved=String(GM_getValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(globalThis.__MM_PDA_API_KEY__||'').trim();const unresolved='###PDA-'+'APIKEY###';return pda&&pda!==unresolved?pda:'';};
 
   function button(primary=false){
     return 'border:1px solid '+(primary?'#9a7b35':'#555')+';background:'+(primary?'#4b3b18':'#232323')+';color:#eee;border-radius:6px;padding:7px 10px;cursor:pointer;font:12px Arial,sans-serif;';
@@ -4368,7 +4361,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.18-pda.3 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.18-pda.4 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
