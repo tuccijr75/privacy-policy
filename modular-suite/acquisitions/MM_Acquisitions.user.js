@@ -1,17 +1,17 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.18
+// @version      8.0.0-alpha.19
 // @description  Market acquisition, pricelist profit, ranked-weapon valuation, live market/auction scouting and travel procurement with manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6e409ed0849fd15378ed513d76a8b954c766660c/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6e409ed0849fd15378ed513d76a8b954c766660c/modular-suite/acquisitions/MM_Acquisitions.logic.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6e409ed0849fd15378ed513d76a8b954c766660c/modular-suite/acquisitions/MM_Acquisitions.live.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6e409ed0849fd15378ed513d76a8b954c766660c/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6e409ed0849fd15378ed513d76a8b954c766660c/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@41e31d2bb1d55ae69fddf127a3c627475a3e254d/modular-suite/core/MM_Torn_Core.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@41e31d2bb1d55ae69fddf127a3c627475a3e254d/modular-suite/acquisitions/MM_Acquisitions.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@41e31d2bb1d55ae69fddf127a3c627475a3e254d/modular-suite/acquisitions/MM_Acquisitions.live.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@41e31d2bb1d55ae69fddf127a3c627475a3e254d/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@41e31d2bb1d55ae69fddf127a3c627475a3e254d/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -204,7 +204,10 @@
           resolve(body);
         },
         ontimeout:()=>reject(new Error('Request timed out.')),
-        onerror:()=>reject(new Error('Network request failed.'))
+        onerror:error=>{
+          const detail=String(error?.statusText||error?.message||error?.error||'').trim();
+          reject(new Error('Network request failed'+(detail?': '+detail:'')+'.'));
+        }
       });
     });
   }
@@ -292,7 +295,10 @@
           resolve(data);
         },
         ontimeout:()=>reject(new Error('Request timed out.')),
-        onerror:()=>reject(new Error('Network request failed.'))
+        onerror:error=>{
+          const detail=String(error?.statusText||error?.message||error?.error||'').trim();
+          reject(new Error('Network request failed'+(detail?': '+detail:'')+'.'));
+        }
       });
     });
   }
@@ -454,11 +460,14 @@
       const result=await service.acquire(itemId);
       if(!result?.routed){
         const reason=String(result?.reason||'no-live-source');
+        const warningSources=[...new Set((result?.verificationWarnings||[]).map(row=>String(row?.source||'')).filter(Boolean))];
         statusText=reason==='no-qualified-opportunity'
           ? 'Opportunity no longer meets ROI/profit rules.'
           : reason==='no-live-source-inside-ceiling'
             ? 'No current Bazaar seller or Item Market listing remains inside the buy ceiling.'
-            : 'Could not route purchase: '+reason;
+            : reason==='live-verification-unavailable'
+              ? 'Live verification unavailable'+(warningSources.length?' for '+warningSources.join(' / '):'')+'. No purchase route was opened.'
+              : 'Could not route purchase: '+reason;
         state=await core.readLegacyState();
       }
     }catch(error){
@@ -1375,7 +1384,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.18 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.19 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
