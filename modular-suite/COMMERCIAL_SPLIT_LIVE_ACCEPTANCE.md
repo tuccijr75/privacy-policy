@@ -2199,4 +2199,30 @@ Next live gate:
 - replace/disable the old desktop alpha.18 script in TornPDA;
 - install `MM_Acquisitions.pda.user.js` by direct remote URL;
 - verify the dependency/state errors are gone and continue mobile interaction acceptance.
+### TornPDA pda.1 launcher-hidden follow-up — pda.2
+
+Owner installed/enabled `MM_Acquisitions PDA`; TornPDA script manager showed the script active with API/network/native-storage badges, but no Acquisitions launcher was visible in the Torn browser.
+
+Root cause from PDA architecture + prior live evidence:
+- desktop alpha.18 with missing dependencies used Acquisitions' standalone fallback launcher; that fallback was visibly rendered in the first PDA test;
+- pda.1 successfully bundled Core, so `createLauncher()` switched to the shared desktop Core dock path;
+- the shared Core dock intentionally aligns against Torn desktop/footer geometry and uses a 6px viewport-bottom fallback;
+- TornPDA overlays native browser controls over the bottom of its webview, so a valid Core launcher can be placed underneath that native chrome and appear absent.
+
+pda.2 correction:
+- marks the runtime explicitly as TornPDA;
+- PDA build bypasses the shared desktop dock only for the Acquisitions launcher; desktop source/behavior remains unchanged;
+- reuses the standalone Acquisitions launcher path already proven visible on PDA;
+- lifts the PDA launcher to `bottom:86px; right:10px` so it sits above native TornPDA browser chrome;
+- fixes native state persistence to use TornPDA's lexical `PDA_storage` binding rather than looking for `window.PDA_storage`;
+- regenerated self-contained artifact version `8.0.0-alpha.18-pda.2`.
+
+Verification:
+- generated bundle syntax compile PASS under a simulated lexical `PDA_storage` binding;
+- PDA launcher bypass token present;
+- safe launcher offset present;
+- no `@require` dependency metadata introduced.
+
+Next live gate:
+- update TornPDA script to pda.2, reload the Torn browser, confirm Acquisitions launcher is visible above the PDA bottom controls, then open it and continue functional mobile acceptance.
 
