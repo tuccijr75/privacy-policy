@@ -1,11 +1,24 @@
 # MM_Acquisitions Acceptance
 
 Candidate:
-- Desktop: 8.0.0-alpha.22
-- TornPDA: 8.0.0-alpha.22-pda.9
+- Desktop: 8.0.0-alpha.23
+- TornPDA: 8.0.0-alpha.23-pda.10
 - Branch: crm-v8-acquisitions-alpha22-clarity
 - Base: crm-v8-acquisitions-ranked-profit
 - Stable/customer publication: not approved
+
+## Simplified workflow
+
+On first open, Acquisitions must land on **Home**.
+
+The normal user path is:
+
+1. **Find One Item** — search by item name or Torn item ID.
+2. **Check Prices** — compare Bazaar, Item Market, Torn shop, and Travel when available.
+3. **Open a source** — Open Cheapest Source, Open Bazaar, Open Item Market, or Open Travel Agency.
+4. Complete any purchase, bid, or travel action manually in Torn.
+
+The user should not need to understand Market Pulse, liquidity, velocity, confidence, BB floor, or other advanced terms to complete this path. Advanced data must remain behind expandable details or specialist pages.
 
 ## Purpose
 
@@ -30,27 +43,27 @@ PASS:
 - panel opens/closes normally;
 - existing layout position is preserved.
 
-### 2. Items clarity
+### 2. Home and Find Item workflow
 
-Use Can of Crocozade or another ordinary item.
-
-- Open Items.
-- Find the item and run Find Best Price.
-- Confirm the selected-item card separates:
-  - Best Buy;
-  - Estimated Resale;
+- Open Acquisitions and confirm **Home** is the first screen.
+- Confirm Home explains the order: choose item → compare prices → open source → buy manually.
+- Confirm the glossary is collapsed behind **What do these words mean?**
+- Open **Find Item**.
+- Search Can of Crocozade or another ordinary item and click **Check Prices**.
+- Confirm the selected-item card shows:
+  - Cheapest Price;
+  - Likely Resale;
   - Estimated Profit;
-  - ROI;
-  - Pricelist Buy Rate when available.
-- Confirm each source row separately shows Buy / estimated resale / profit / ROI.
-- Confirm catalog reference is labeled reference-only.
-- Confirm Market Pulse says movement is seller-independent observational evidence and is not a confirmed player sale.
-- Confirm standard items without official completed-auction evidence do not claim to have verified sales.
+  - Return on Cost (with ROI explained as the alternate name).
+- Confirm **Open Cheapest Source** is the primary action.
+- Confirm Bazaar / Item Market / Travel alternatives appear as direct actions when those sources exist.
+- Confirm advanced source details and market-activity metrics are collapsed.
+- Confirm Market Activity says observed listing movement is not a confirmed individual sale.
 
 PASS:
-- the buy decision is understandable without parsing a long sentence;
+- a new user can follow the workflow without knowing advanced market terminology;
 - no source or exit value is mislabeled;
-- no observational Pulse movement is presented as a confirmed sale.
+- no observational market movement is presented as a confirmed sale.
 
 ### 3. Verified Sales evidence
 
@@ -163,7 +176,7 @@ PASS:
 
 ## TornPDA
 
-Install 8.0.0-alpha.22-pda.9.
+Install 8.0.0-alpha.23-pda.10.
 
 ### Boot
 
@@ -188,6 +201,15 @@ PASS:
 
 PASS:
 - no false Item Market verification failure caused by duplicate GET suppression.
+
+### Travel alternatives
+
+- Open Travel Deals and choose an item where Travel is the cheapest known source.
+- Confirm the row still shows **Check All Prices**, **Open Bazaar**, **Open Item Market**, and **Travel Agency**.
+- From an Item comparison where Travel is cheapest, confirm Acquisitions stays on the comparison and explains that Bazaar or Item Market can still be opened.
+- Confirm Open Bazaar can resolve aggregate Bazaar evidence to a verified seller before opening that seller's Bazaar.
+- Confirm Open Item Market opens the exact item search.
+- No button may complete a purchase automatically.
 
 ### Travel handoff
 
