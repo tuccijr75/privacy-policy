@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.23
+// @version      8.0.0-alpha.24
 // @description  Easy Torn buying workflow: find an item, compare Bazaar, Item Market and travel prices, then open a source and complete purchases manually.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -816,7 +816,7 @@
         '<div style="margin-top:9px;display:grid;gap:7px;">'+
           '<div style="border:1px solid #333;border-radius:7px;padding:8px;"><b>1. Choose what you want to buy.</b><div style="font-size:10px;color:#888;margin-top:2px;">Search for one item, browse suggested deals, look at ranked weapons, or check travel deals.</div></div>'+
           '<div style="border:1px solid #333;border-radius:7px;padding:8px;"><b>2. Let Acquisitions compare prices.</b><div style="font-size:10px;color:#888;margin-top:2px;">It compares Bazaar, Item Market, Torn shops, and overseas travel when data is available.</div></div>'+
-          '<div style="border:1px solid #333;border-radius:7px;padding:8px;"><b>3. Open the source you want.</b><div style="font-size:10px;color:#888;margin-top:2px;">Acquisitions opens the correct Torn page. You still make the final purchase, bid, or travel decision yourself.</div></div>'+
+          '<div style="border:1px solid #333;border-radius:7px;padding:8px;"><b>3. Open the source you want.</b><div style="font-size:10px;color:#888;margin-top:2px;">After Check Prices, use GO TO BAZAAR for player bazaars or GO TO ITEM MARKET for Torn's Item Market. You still make the final purchase yourself.</div></div>'+
         '</div>'+
         '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;">'+
           '<button data-home-view="items" style="'+button(true)+'">Find One Item</button>'+
@@ -944,9 +944,9 @@
           '</div>'+
           '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
             '<button data-travel-compare="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">Check All Prices</button>'+
-            '<button data-travel-source="Bazaar" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">Open Bazaar</button>'+
-            '<button data-travel-source="Item Market" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">Open Item Market</button>'+
-            '<button data-travel-agency="1" style="'+button(true)+'">Travel Agency</button>'+
+            '<button data-travel-source="Bazaar" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">GO TO BAZAAR</button>'+
+            '<button data-travel-source="Item Market" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">GO TO ITEM MARKET</button>'+
+            '<button data-travel-agency="1" style="'+button(true)+'">GO TO TRAVEL AGENCY</button>'+
           '</div>'+
         '</div>'+
       '</div>'
@@ -1460,7 +1460,13 @@
           '</div>'+
           (facts.length?'<div style="color:#888;margin-top:3px;">'+esc(facts.join(' · '))+'</div>':'')+
         '</div>'+
-        '<button data-item-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(index===0&&priceKnown)+(busy?'opacity:.5;':'')+'">Open</button>'+
+        (String(source.source||'').toLowerCase().startsWith('bazaar')
+          ?'<button data-item-alt-source="Bazaar" '+(busy?'disabled':'')+' style="'+button(index===0&&priceKnown)+(busy?'opacity:.5;':'')+'">GO TO BAZAAR</button>'
+          :String(source.source||'').toLowerCase()==='item market'
+            ?'<button data-item-alt-source="Item Market" '+(busy?'disabled':'')+' style="'+button(index===0&&priceKnown)+(busy?'opacity:.5;':'')+'">GO TO ITEM MARKET</button>'
+            :String(source.source||'').toLowerCase()==='overseas'
+              ?'<button data-item-travel="1" style="'+button(index===0&&priceKnown)+'">GO TO TRAVEL AGENCY</button>'
+              :'<button data-item-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(index===0&&priceKnown)+(busy?'opacity:.5;':'')+'">USE '+esc(sourceName.toUpperCase())+'</button>')+
       '</div>';
     }).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No current price sources were found.</div>';
 
@@ -1474,17 +1480,19 @@
       :'';
 
     return card(
-      '<div><b style="font-size:14px;">'+esc(itemSelection.name)+'</b> <span style="color:#777;">['+esc(itemSelection.id)+']</span><div style="font-size:10px;color:#888;">Compare the prices below, then open the source you want. Buying remains manual.</div></div>'+
+      '<div><b style="font-size:14px;">'+esc(itemSelection.name)+'</b> <span style="color:#777;">['+esc(itemSelection.id)+']</span><div style="font-size:10px;color:#888;">Check prices, then click GO TO BAZAAR or GO TO ITEM MARKET. Buying remains manual.</div></div>'+
       decision+
-      '<div style="display:flex;gap:5px;flex-wrap:wrap;margin:7px 0;">'+
-        (bestIsTravel
-          ?'<button data-item-travel="1" style="'+button(true)+'">Open Travel Agency</button>'
-          :'<button data-item-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Open Cheapest Source</button>')+
-        '<button data-item-alt-source="Bazaar" style="'+button()+'">Open Bazaar</button>'+
-        '<button data-item-alt-source="Item Market" style="'+button()+'">Open Item Market</button>'+
-        (!bestIsTravel&&hasTravel?'<button data-item-travel="1" style="'+button()+'">Open Travel Agency</button>':'')+
-        verifiedSalesAction+
+      '<div style="border:1px solid #6b5a2e;background:#19170f;border-radius:8px;padding:9px;margin:8px 0;">'+
+        '<div style="font-size:12px;font-weight:700;color:#f0d27a;">WHERE DO YOU WANT TO BUY?</div>'+
+        '<div style="font-size:10px;color:#aaa;margin:2px 0 7px;">Choose one. Acquisitions opens the page; you make the purchase manually.</div>'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:6px;">'+
+          '<button data-item-alt-source="Bazaar" '+(busy?'disabled':'')+' style="'+button(String(best?.source||'').toLowerCase().startsWith('bazaar'))+(busy?'opacity:.5;':'')+'padding:10px;"><b>GO TO BAZAAR</b><br><span style="font-size:9px;font-weight:400;">Player-owned bazaars</span></button>'+
+          '<button data-item-alt-source="Item Market" '+(busy?'disabled':'')+' style="'+button(String(best?.source||'').toLowerCase()==='item market')+(busy?'opacity:.5;':'')+'padding:10px;"><b>GO TO ITEM MARKET</b><br><span style="font-size:9px;font-weight:400;">Torn Item Market for this item</span></button>'+
+          (hasTravel?'<button data-item-travel="1" style="'+button(bestIsTravel)+'padding:10px;"><b>GO TO TRAVEL AGENCY</b><br><span style="font-size:9px;font-weight:400;">Overseas buying</span></button>':'')+
+        '</div>'+
+        (best?'<div style="font-size:10px;color:#d8b96a;margin-top:6px;">Cheapest currently shown: <b>'+esc(String(best.source||'').replace('Bazaar aggregate','Bazaar').replace('Overseas','Travel'))+'</b> at '+money(bestPrice)+'.</div>':'')+
       '</div>'+
+      '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px;">'+verifiedSalesAction+'</div>'+
       (best&&String(best.source||'')==='Overseas'?'<div style="padding:6px;border:1px solid #6d5928;border-radius:5px;color:#e3ca82;font-size:10px;margin-bottom:6px;"><b>Travel is cheapest.</b> You can still open Bazaar or Item Market above if you do not want to travel.</div>':'')+
       pulseLine({},itemSelection.id,bestProfit)+
       (verifiedSalesItemId===String(itemSelection.id)?verifiedSalesHtml(itemSelection.id):'')+
@@ -1621,7 +1629,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.23 · SIMPLE BUYING WORKFLOW</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.24 · SIMPLE BUYING WORKFLOW</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -1633,6 +1641,7 @@
           '<button data-acq-view="travel" style="'+button(activeView==='travel')+'">Travel Deals</button>'+
           '<button data-acq-view="settings" style="'+button(activeView==='settings')+'">Setup</button>'+
         '</div>'+
+        '<div style="padding:7px 8px;background:#17140c;border:1px solid #5b4a22;border-radius:6px;color:#e0c56b;margin-bottom:6px;font-size:10px;line-height:1.4;"><b>To open Bazaar or Item Market:</b> Find Item → Check Prices → click <b>GO TO BAZAAR</b> or <b>GO TO ITEM MARKET</b>.</div>'+
         '<div style="padding:5px 7px;background:#151515;border:1px solid #333;border-radius:5px;color:#d7ad4b;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(statusText)+'</div>'+
         sourceStrip()+
         (loadError?card('<b style="color:#ffaaaa;">Cannot read shared CRM state</b><div style="font-size:11px;margin-top:4px;">'+esc(loadError)+'</div>'):'')+
