@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.15
+// @version      0.1.0-rc.16
 // @description  Discovers Torn Bazaar-directory sellers, scans them in one background tab for exact $1 stock, and leaves every purchase manual.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -28,7 +28,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.15';
+const VERSION = '0.1.0-rc.16';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
@@ -69,6 +69,19 @@ function exactPrice(text) {
 }
 const fingerprint = (target, item) => JSON.stringify([target, item.listingId || item.itemId || item.name, 1]);
 function emptyState() { return {schema:SCHEMA, version:VERSION, revision:0, targets:[], worker:null, sellerScan:null, events:[], seen:[], sellerLeads:[], marketLeads:[], discoveryCursor:0, lastSellerDiscovery:0, lastDiscovery:0, lastDetection:0}; }
+function clearDiscoveryResults(state) {
+  state.worker=null;
+  state.sellerScan=null;
+  state.events=[];
+  state.seen=[];
+  state.sellerLeads=[];
+  state.marketLeads=[];
+  state.discoveryCursor=0;
+  state.lastSellerDiscovery=0;
+  state.lastDiscovery=0;
+  state.lastDetection=0;
+  return state;
+}
 function validSellerLead(lead) {
   return !!lead && textField(lead.id,80) && lead.id===`seller:${lead.sellerId}` && validId(lead.sellerId) &&
     textField(lead.name) && lead.name.length>0 && typeof lead.isOpen==='boolean' &&
@@ -979,7 +992,7 @@ function makeUI(doc) {
       <div class="status"><span class="dot"></span><span id="status" role="status">Ready</span></div>
       <div id="mode" class="muted">Official directory discovery · one background Bazaar scanner tab · manual purchase only</div>
       <p id="notice" role="status"></p>
-      <div class="row"><button id="find-deals" class="primary" type="button">Find & Scan Dollar Sellers</button><button id="reset-scan" type="button">Reset after closing tab</button></div>
+      <div class="row"><button id="find-deals" class="primary" type="button">Find & Scan Dollar Sellers</button><button id="refresh-scan" type="button">Refresh / Start Over</button><button id="clear-results" type="button">Clear Results</button><button id="reset-scan" type="button">Reset after closing tab</button></div>
       <div id="discovery-progress" class="muted"></div>
       <h2>DISCOVERED BAZAARS <span class="count" id="seller-count"></span></h2><div id="seller-leads" aria-live="polite"></div>
       <h2>FOUND $1 SALES <span class="count" id="count"></span></h2><div id="events" aria-live="polite"></div>
@@ -1035,7 +1048,10 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
   ui.el('status').textContent=status;
   ui.el('notice').textContent=localError||scan?.error||w?.error||'';
   ui.el('discovery-progress').textContent=session.discoveryProgress||(scanActive?`Background scan ${scan.scanned}/${scan.sellerIds.length} · ${scan.found} $1 sale${scan.found===1?'':'s'} collected${scan.errors.length?` · ${scan.errors.length} store error${scan.errors.length===1?'':'s'}`:''}`:`${state.sellerLeads.length} directory seller${state.sellerLeads.length===1?'':'s'} · ${state.marketLeads.length} item lead${state.marketLeads.length===1?'':'s'} · deep-scan cursor ${state.discoveryCursor}`);
+  const hasResettableResults=!!scan||!!w||state.sellerLeads.length>0||state.events.length>0||state.marketLeads.length>0||state.discoveryCursor>0||state.lastSellerDiscovery>0||state.lastDiscovery>0||state.lastDetection>0;
   ui.el('find-deals').disabled=!!localError||session.discoveryBusy||scanActive||!session.apiConfigured;
+  ui.el('refresh-scan').disabled=!!localError||session.discoveryBusy||scanActive||!session.apiConfigured;
+  ui.el('clear-results').disabled=!!localError||session.discoveryBusy||scanActive||!hasResettableResults;
   ui.el('reset-scan').disabled=!scanStale;
   ui.el('deep-scan').disabled=!!localError||session.discoveryBusy||scanActive||!session.apiConfigured;
   ui.el('verify-market').disabled=!!localError||session.discoveryBusy||!session.currentMarketLead;
@@ -1293,7 +1309,7 @@ async function boot(gm, win, doc) {
     render();
   }));
 
-  on(ui.el('find-deals'),'click',e=>act(e,async()=>{
+  async function runSellerDiscovery(resetFirst=false) {
     if(!apiKey) throw new Error('Save a Torn public API key first.');
     if(typeof gm.openInTab!=='function') throw new Error('Tampermonkey background-tab permission is unavailable.');
     if(sellerScanIsActive(state.sellerScan)) {
@@ -1303,6 +1319,13 @@ async function boot(gm, win, doc) {
       const staleId=state.sellerScan.id;
       scannerTab=null;
       await change(s=>failSellerScan(s,staleId,'Stale scanner ownership was closed before restart.',Date.now()));
+    }
+    if(resetFirst) {
+      if(scannerTab){try{scannerTab.close?.();}catch{} scannerTab=null;}
+      await change(s=>clearDiscoveryResults(s));
+      played.clear();playedMarket.clear();
+      discoveryProgress='Previous listings cleared · starting a fresh directory scan.';
+      render();
     }
     discoveryBusy=true;discoveryProgress='Loading Torn dollar-sale Bazaar directory…';render();
     try {
@@ -1325,6 +1348,19 @@ async function boot(gm, win, doc) {
     } finally {
       discoveryBusy=false;render();
     }
+  }
+
+  on(ui.el('find-deals'),'click',e=>act(e,()=>runSellerDiscovery(false)));
+
+  on(ui.el('refresh-scan'),'click',e=>act(e,()=>runSellerDiscovery(true)));
+
+  on(ui.el('clear-results'),'click',e=>act(e,async()=>{
+    if(sellerScanIsActive(state.sellerScan)) throw new Error('Wait for the active Bazaar scan to finish, or close/reset the scanner before clearing results.');
+    if(scannerTab){try{scannerTab.close?.();}catch{} scannerTab=null;}
+    await change(s=>clearDiscoveryResults(s));
+    played.clear();playedMarket.clear();
+    discoveryProgress='Listings and scan progress cleared. API key, preferences, and known seller IDs were kept.';
+    render();
   }));
 
   on(ui.el('reset-scan'),'click',e=>act(e,async()=>{
