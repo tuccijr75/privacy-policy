@@ -2241,4 +2241,44 @@ Behavior:
 Also corrected TornPDA API-key placeholder detection so source-wide `###PDA-APIKEY###` replacement no longer defeats the runtime key check.
 
 Artifact: `8.0.0-alpha.18-pda.3`.
+### TornPDA compatibility research + code audit — pda.5
+
+Owner pda.3 boot diagnostic stopped at `core`, proving:
+- TornPDA injected the self-contained userscript;
+- the early launcher ran;
+- bundled MM Torn Core completed;
+- execution failed inside the PDA adapter before the `adapter` checkpoint.
+
+Root cause confirmed against current TornPDA source:
+- TornPDA's built-in GM compatibility handler exposes `GM_getValue`, `GM_setValue`, `GM_deleteValue`, `GM_xmlhttpRequest`, etc. with `writable:false` and `configurable:false`;
+- pda.3/pda.4 adapter attempted `globalThis.GM_getValue = function(...)` in strict mode;
+- that assignment throws immediately on current TornPDA, exactly matching the observed `Stopped at: core` checkpoint;
+- TornPDA's current GM compatibility docs also state that `@require` is parsed/stored but automatic required-script loading remains TODO, validating the self-contained bundle architecture.
+
+Additional audit findings:
+- TornPDA replaces the literal `###PDA-APIKEY###` in the userscript source before execution; the PDA build should consume that lexical value directly rather than monkey-patching GM storage;
+- TornPDA binds `PDA_storage` lexically per installed script; it is asynchronous and survives browser cache clearing;
+- GM value helpers are localStorage-backed and therefore origin-scoped in the webview;
+- Acquisitions Travel capture crosses `www.torn.com` -> `weav3r.dev` -> `www.torn.com`; using GM/localStorage for `TRAVEL_FEED_KEY` / `TRAVEL_RETURN_KEY` is therefore invalid on PDA even if the rest of the app loads.
+
+pda.5 corrections:
+- removed all PDA attempts to overwrite immutable TornPDA GM helpers;
+- PDA API key now remains lexical inside TornPDA's per-script wrapper; it is not copied to a page-global variable;
+- explicit Acquisitions saved key still takes precedence; TornPDA's injected key is the fallback;
+- Travel cross-origin feed + return handoff now uses native per-script `PDA_storage` with async read/write/delete;
+- Travel feed keeps an in-memory cache for synchronous UI rendering after async load;
+- fallback live Travel collector is async-safe and persists the return URL before navigating to TornW3B;
+- PDA builder now fails hard when any source-transform anchor disappears instead of silently generating a partially-adapted build;
+- existing early boot-stage diagnostics remain.
+
+Verification:
+- exact current TornPDA behavior was simulated with non-writable/non-configurable GM globals;
+- pda.5 completed through `ui-ready` without mutating those GM properties;
+- mock runtime created the PDA launcher at the safe 86px bottom offset;
+- Core adapted successfully to `8.0.0-alpha.13-pda`; 
+- no API key was exposed through `window/globalThis`; 
+- generated bundle parses successfully with lexical `PDA_storage`; 
+- static regressions added to the existing Acquisitions purchase/source test file.
+
+Artifact: `MM_Acquisitions.pda.user.js` version `8.0.0-alpha.18-pda.5`.
 
