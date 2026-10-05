@@ -176,17 +176,34 @@
     const profit=fairValue>0&&ask>0?fairValue-ask:0;
     const roiPct=ask>0?profit/ask*100:0;
     const volume=salesVolume(history,row,num(settings.now)||Date.now());
-    const liquidity=Math.round(Math.max(0,Math.min(100,
+    const auctionHistoryLiquidityScore=Math.round(Math.max(0,Math.min(100,
       Math.log1p(volume.d30)*24+Math.log1p(volume.d90)*12
     )));
     const marginScore=fairValue>0?Math.max(0,Math.min(100,profit/fairValue*100)):0;
     const roiScore=Math.max(0,Math.min(100,roiPct));
     const confidence=historyValue.confidence;
+    const now=num(settings.now)||Date.now();
+    const pulse=settings?.pulseByItem?.[String(row.itemId)]||null;
+    const pulseFetchedAt=Math.max(0,num(pulse?.fetchedAt));
+    const pulseAgeMs=pulseFetchedAt?Math.max(0,now-pulseFetchedAt):Infinity;
+    const pulseTtlMs=Math.max(10*60*1000,num(settings.pulseTtlMs)||45*60*1000);
+    const pulseConfidencePct=Math.max(0,Math.min(100,num(pulse?.confidencePct)));
+    const pulseUsable=Boolean(pulse&&pulseAgeMs<=pulseTtlMs&&pulseConfidencePct>=30);
+    const pulseLiquidityScore=pulseUsable?Math.max(0,Math.min(100,num(pulse?.liquidityScore))):0;
+    const observedEventsPerHour=pulseUsable?Math.max(0,num(pulse?.observedEventsPerHour)):0;
+    const observedUnitsPerHour=pulseUsable?Math.max(0,num(pulse?.observedUnitsPerHour)):0;
+    const turnoverPerHour=pulseUsable?Math.max(0,num(pulse?.turnoverPerHour)):0;
+    const profitVelocityPerHour=pulseUsable?Math.max(0,profit)*observedUnitsPerHour:0;
+    const pulseVelocityScore=pulseUsable?Math.max(0,Math.min(100,(Math.log10(1+profitVelocityPerHour)-4)*22)):0;
+    const liquidity=Math.round(pulseUsable
+      ?Math.max(0,Math.min(100,auctionHistoryLiquidityScore*.58+pulseLiquidityScore*.42))
+      :auctionHistoryLiquidityScore);
     const isAuction=lower(row.source)==='auction';
     const investmentScore=Math.round(Math.max(0,Math.min(100,
-      roiScore*.40+liquidity*.30+confidence*.20+marginScore*.10
+      pulseUsable
+        ?roiScore*.34+liquidity*.27+confidence*.17+marginScore*.08+pulseVelocityScore*.14
+        :roiScore*.40+liquidity*.30+confidence*.20+marginScore*.10
     )));
-    const now=num(settings.now)||Date.now();
     const endMs=Math.max(0,num(row.endsAt))*1000;
     const hoursRemaining=endMs>now?(endMs-now)/3600000:0;
     const auctionUrgencyScore=isAuction&&endMs>now
@@ -210,7 +227,16 @@
     return {
       ...row,price:ask,bbUnits:units,bbRate,bbFloor,auctionValue,fairValue,profit,roiPct,
       volume7:volume.d7,volume30:volume.d30,volume90:volume.d90,
-      liquidityScore:liquidity,investmentScore,auctionWatchScore,auctionUrgencyScore,auctionDiscountScore,
+      liquidityScore:liquidity,auctionHistoryLiquidityScore,investmentScore,auctionWatchScore,auctionUrgencyScore,auctionDiscountScore,
+      pulseTier:pulseUsable?String(pulse?.tier||'observed'):'unknown',
+      pulseLiquidityScore,pulseConfidencePct:pulseUsable?pulseConfidencePct:0,
+      observedEventsPerHour,observedUnitsPerHour,turnoverPerHour,profitVelocityPerHour,
+      pulseMarketDepth:pulseUsable?Math.max(0,num(pulse?.marketDepth)):0,
+      pulseTrendPct:pulseUsable?num(pulse?.trendPct):0,
+      pulseFreshness:pulseUsable?(pulseAgeMs<=60_000?'FRESH':pulseAgeMs<=5*60_000?'GOOD':'AGING'):'UNKNOWN',
+      pulseSourceTimestamp:pulseUsable?Math.max(0,num(pulse?.sourceTimestamp)):0,
+      pulseFetchedAt:pulseUsable?pulseFetchedAt:0,
+      pulseUpstreamCacheDelayMs:pulseUsable?Math.max(0,num(pulse?.upstreamCacheDelayMs)):0,
       hoursRemaining,sortScore,isAuction,lowTier,valuationSource,
       history:historyValue
     };

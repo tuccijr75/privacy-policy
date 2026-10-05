@@ -9,6 +9,7 @@
   const INTEL_HISTORY_MAX = 120;
   const VERIFY_MAX_AGE_SEC = 120;
   const VERIFY_SELLERS = 4;
+  const marketPulse = globalThis.MMTornMarketPulse;
 
   const asId = value => String(value ?? '').trim();
   const nowIso = () => new Date().toISOString();
@@ -599,12 +600,18 @@
     }
 
     async function refreshItemMarket(itemId) {
-      if (!hasTornKey()) throw new Error('Save a Torn API key in Market Scout first.');
+      if (!hasTornKey()) throw new Error('Save a Torn API key in MM Acquisitions first.');
       const id=asId(itemId);
       if (!/^\d+$/.test(id)) throw new Error('Invalid item ID.');
       const data=await deps.tornRequest('/market/'+encodeURIComponent(id)+'/itemmarket?limit=25');
       const itemRows=genericMarketListings(data);
       const before=await core.readLegacyState();
+      const pulseSnapshot=marketPulse?.normalizeTornItemMarket?.(
+        id,
+        String(before?.procurement?.catalog?.[id]?.name||before?.marketIntel?.marketplace?.[id]?.itemName||('Item '+id)),
+        data,
+        {fetchedAt:Date.now()}
+      )||null;
       const aggregateBazaarLow=Math.max(0,Number(before?.marketIntel?.marketplace?.[id]?.lowestPrice||0));
       const bazaarRows=freshOrganicListings(before,id)
         .filter(row=>!(aggregateBazaarLow>0)||Number(row.price||0)<=aggregateBazaarLow*1.35)
@@ -619,6 +626,7 @@
         itemId:id,itemMarket,bazaar,realisticExit,
         sources:{itemMarket:itemRows.length?'Torn API Item Market':null,bazaar:bazaarRows.length?'TornW3B fresh seller observations':null},
         totalDepth3Pct:Number(itemMarket.depth3Pct||0)+Number(bazaar.depth3Pct||0),
+        pulseSnapshot,
         fetchedAt:nowIso()
       };
       await core.updateDomainState('market',draft=>{
@@ -627,6 +635,9 @@
         proc.marketSnapshots[id]=snapshot;
         pushMarketHistory(proc,id,snapshot);
         proc.lastItemMarketAt=snapshot.fetchedAt;
+        if(pulseSnapshot&&marketPulse?.applySnapshotToDraft){
+          marketPulse.applySnapshotToDraft(draft,pulseSnapshot,{recordRequest:true});
+        }
         return draft;
       });
       return snapshot;
@@ -651,7 +662,7 @@
     }
 
     async function verifyBazaar(itemId,sellerId,expectedPrice=0) {
-      if (!hasTornKey()) throw new Error('Save a Torn API key in Market Scout first.');
+      if (!hasTornKey()) throw new Error('Save a Torn API key in MM Acquisitions first.');
       const id=asId(itemId),seller=asId(sellerId);
       if (!/^\d+$/.test(id)||!/^\d+$/.test(seller)) return {verified:false,reason:'invalid-id'};
       const data=await deps.bazaarRequest(seller);
@@ -709,7 +720,7 @@
         travel.lastSyncAt=new Date(at).toISOString();
         travel.source='TornW3B Travel Stock';
         travel.diagnostics=Array.isArray(travel.diagnostics)?travel.diagnostics:[];
-        travel.diagnostics.unshift({at:nowIso(),text:'Market Scout Travel import: '+safeRows.length+' rows.'});
+        travel.diagnostics.unshift({at:nowIso(),text:'MM Acquisitions Travel import: '+safeRows.length+' rows.'});
         travel.diagnostics=travel.diagnostics.slice(0,30);
         recordTravelSnapshots(travel,safeRows,at);
         return draft;

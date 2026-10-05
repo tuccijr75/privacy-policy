@@ -12,11 +12,12 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.20'));
+assert(userSource.includes('// @version      8.0.0-alpha.21'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/core/MM_Torn_Core.js'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/acquisitions/MM_Acquisitions.logic.js'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/acquisitions/MM_Acquisitions.live.js'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.logic.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.live.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js'));
 assert(!userSource.includes('// @updateURL'));
 assert(!userSource.includes('// @downloadURL'));
 assert(userSource.includes('async function autoRefreshAcquisitions'));
@@ -39,7 +40,7 @@ assert(userSource.includes('ITEM_PAGE_SIZE=75'));
 assert(userSource.includes('CATALOG_STALE_MS=24*60*60*1000'));
 assert(userSource.includes('MM_Acquisitions.ranked.logic.js'));
 assert(userSource.includes('Ranked Weapon Profit Scout'));
-assert(userSource.includes('Auction prices are current bids, not guaranteed purchase prices.'));
+assert(userSource.includes('current bids are not guaranteed purchase prices.'));
 assert(userSource.includes('Current bid <b>'));
 assert(userSource.includes('Break-even ceiling '));
 assert(userSource.includes('Max bid @ '));
@@ -83,7 +84,7 @@ console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS
 const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      8.0.0-alpha.20-pda.7'));
+assert(pdaSource.includes('// @version      8.0.0-alpha.21-pda.8'));
 assert(!pdaHeader.includes('@require'));
 assert(!pdaSource.includes('globalThis.GM_getValue=function'));
 assert(pdaSource.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
@@ -91,6 +92,7 @@ assert(!pdaSource.includes('__MM_PDA_API_KEY__'));
 assert(pdaSource.includes("const apiKey=()=>{const saved=String(GM_getValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(__MM_PDA_API_KEY||'').trim();"));
 assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='boot'"));
 assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='adapter'"));
+assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='pulse'"));
 assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='ui-ready'"));
 assert(pdaSource.includes("if(core?.registerDockLauncher&&!globalThis.__MM_TORN_PDA__)"));
 assert(pdaSource.includes('position:fixed;right:10px;bottom:86px;'));
@@ -109,7 +111,9 @@ assert(pdaAdapterSource.includes("typeof PDA_storage!=='undefined'&&PDA_storage&
 
 const pdaBuilder=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
 assert(pdaBuilder.includes('def replace_once('));
-assert(pdaBuilder.includes('default=7'));
+assert(pdaBuilder.includes('("Market Pulse engine (bundled)", PULSE)'));
+assert(pdaBuilder.includes('"MMTornMarketPulse"'));
+assert(pdaBuilder.includes('default=8'));
 assert(pdaBuilder.includes('PDA cross-origin Travel storage'));
 assert(pdaBuilder.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
 
@@ -157,7 +161,7 @@ assert(liveSource.includes('Torn API finished Auction House'));
 
 const userSourceArmory=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceArmory);
-assert(userSourceArmory.includes('// @version      8.0.0-alpha.20'));
+assert(userSourceArmory.includes('// @version      8.0.0-alpha.21'));
 assert(userSourceArmory.includes('MM_Acquisitions.live.js'));
 assert(userSourceArmory.includes("type!=='armory-acquisition-request'"));
 assert(userSourceArmory.includes('Faction Armory request: '));

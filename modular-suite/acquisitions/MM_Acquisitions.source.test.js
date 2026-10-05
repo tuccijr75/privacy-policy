@@ -95,6 +95,12 @@ const live=sandbox.globalThis.MMTornAcquisitionsLive;assert(live);
   assert.strictEqual(routed.source,'Item Market');
   assert(navigations.some(url=>url.includes('sid=ItemMarket')&&url.includes('itemID=17')));
 
+  const overseasRoute=await service.routeProcurementRequest({itemId:'17',itemName:'Beretta 92FS',preferredSource:'Overseas'});
+  assert.strictEqual(overseasRoute.routed,false);
+  assert.strictEqual(overseasRoute.reason,'overseas-recommended');
+  assert.strictEqual(overseasRoute.priceKnown,false);
+  assert.strictEqual(overseasRoute.country,'China');
+  assert.strictEqual(overseasRoute.profit,63892);
 
   // Reproduce the live Pangolin failure: current sources are ~204k but a depth-derived
   // snapshot can reach 275,420. Selected-item valuation must ignore that derived snapshot.
@@ -155,13 +161,6 @@ const live=sandbox.globalThis.MMTornAcquisitionsLive;assert(live);
   assert.strictEqual(pangolin.exitValue,204985,'selected-item exit must ignore the inflated snapshot and use current source-specific exit evidence');
   assert.strictEqual(pangolin.exitRoute,'Bazaar');
   assert(pangolin.exitValue<210000,'Pangolin exit must remain in the live ~204k market range');
-
-  const overseasRoute=await service.routeProcurementRequest({itemId:'17',itemName:'Beretta 92FS',preferredSource:'Overseas'});
-  assert.strictEqual(overseasRoute.routed,false);
-  assert.strictEqual(overseasRoute.reason,'overseas-recommended');
-  assert.strictEqual(overseasRoute.priceKnown,false);
-  assert.strictEqual(overseasRoute.country,'China');
-  assert.strictEqual(overseasRoute.profit,63892);
 
   // A single provider failure must not abort the full purchase route. This
   // reproduces the TornPDA live failure where seller-specific Bazaar
