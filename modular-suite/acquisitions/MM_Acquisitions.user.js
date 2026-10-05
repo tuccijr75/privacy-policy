@@ -816,7 +816,7 @@
         '<div style="margin-top:9px;display:grid;gap:7px;">'+
           '<div style="border:1px solid #333;border-radius:7px;padding:8px;"><b>1. Choose what you want to buy.</b><div style="font-size:10px;color:#888;margin-top:2px;">Search for one item, browse suggested deals, look at ranked weapons, or check travel deals.</div></div>'+
           '<div style="border:1px solid #333;border-radius:7px;padding:8px;"><b>2. Let Acquisitions compare prices.</b><div style="font-size:10px;color:#888;margin-top:2px;">It compares Bazaar, Item Market, Torn shops, and overseas travel when data is available.</div></div>'+
-          '<div style="border:1px solid #333;border-radius:7px;padding:8px;"><b>3. Open the source you want.</b><div style="font-size:10px;color:#888;margin-top:2px;">After Check Prices, use GO TO BAZAAR for player bazaars or GO TO ITEM MARKET for Torn's Item Market. You still make the final purchase yourself.</div></div>'+
+          '<div style="border:1px solid #333;border-radius:7px;padding:8px;"><b>3. Open the source you want.</b><div style="font-size:10px;color:#888;margin-top:2px;">After Check Prices, use GO TO BAZAAR for player bazaars or GO TO ITEM MARKET for Torn\'s Item Market. You still make the final purchase yourself.</div></div>'+
         '</div>'+
         '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;">'+
           '<button data-home-view="items" style="'+button(true)+'">Find One Item</button>'+
