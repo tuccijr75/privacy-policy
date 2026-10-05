@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.10
+// @version      0.1.0-rc.11
 // @description  Finds $1 market leads via Torn's official API, verifies visible Buy state, and never purchases automatically.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -26,7 +26,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.10';
+const VERSION = '0.1.0-rc.11';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
