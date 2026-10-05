@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.9
+// @version      0.1.0-rc.10
 // @description  Finds $1 market leads via Torn's official API, verifies visible Buy state, and never purchases automatically.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -9,8 +9,8 @@
 // @noframes
 // @sandbox      JavaScript
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@5cf7e5c114b8e1a2c4d60d70456c2f0c3f5bdbf9/modular-suite/core/MM_Torn_Core.js
-// @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@main/MM_Dollar_Broker.user.js
-// @downloadURL  https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@main/MM_Dollar_Broker.user.js
+// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Dollar_Broker.user.js
+// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Dollar_Broker.user.js
 // @connect      api.torn.com
 // @grant        GM.getValue
 // @grant        GM.setValue
@@ -26,7 +26,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.9';
+const VERSION = '0.1.0-rc.10';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
