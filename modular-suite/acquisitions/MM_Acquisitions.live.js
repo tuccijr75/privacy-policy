@@ -837,48 +837,75 @@
       const preferred=String(preferredSource||'Best').toLowerCase();
       const ordered=result.sources.filter(source=>preferred==='best'||String(source.source||'').toLowerCase()===preferred);
       if(!ordered.length) return {routed:false,reason:'preferred-source-unavailable',...result};
+      const verificationWarnings=[];
 
       for(const candidate of ordered) {
         if(candidate.source==='Bazaar aggregate') {
-          try { await enrichItem(id); } catch {}
+          try { await enrichItem(id); } catch(error) {
+            verificationWarnings.push({source:'Bazaar discovery',message:String(error?.message||error||'refresh failed')});
+          }
           const refreshed=await core.readLegacyState();
           const aggregate=Math.max(0,Number(refreshed?.marketIntel?.marketplace?.[id]?.lowestPrice||candidate.price||0));
           const liveRows=freshOrganicListings(refreshed,id)
             .filter(row=>Number(row?.price||0)>0&&(!(aggregate>0)||Number(row.price)<=aggregate*1.35))
             .slice(0,VERIFY_SELLERS);
           for(const row of liveRows){
-            const verify=await verifyBazaar(id,row.sellerId,row.price);
+            let verify;
+            try{
+              verify=await verifyBazaar(id,row.sellerId,row.price);
+            }catch(error){
+              verificationWarnings.push({
+                source:'Bazaar',sellerId:asId(row.sellerId),
+                message:String(error?.message||error||'verification failed')
+              });
+              continue;
+            }
             await persistBazaarResult(id,row.sellerId,verify);
             if(!verify.verified)continue;
             const url='https://www.torn.com/bazaar.php?userId='+encodeURIComponent(asId(row.sellerId));
             navigate(url);
-            return {routed:true,source:'Bazaar',url,verified:verify,...result};
+            return {routed:true,source:'Bazaar',url,verified:verify,verificationWarnings,...result};
           }
           continue;
         }
         if(candidate.source==='Bazaar') {
-          const verify=await verifyBazaar(id,candidate.sellerId,candidate.price);
+          let verify;
+          try{
+            verify=await verifyBazaar(id,candidate.sellerId,candidate.price);
+          }catch(error){
+            verificationWarnings.push({
+              source:'Bazaar',sellerId:asId(candidate.sellerId),
+              message:String(error?.message||error||'verification failed')
+            });
+            continue;
+          }
           await persistBazaarResult(id,candidate.sellerId,verify);
           if(!verify.verified) continue;
           const url='https://www.torn.com/bazaar.php?userId='+encodeURIComponent(asId(candidate.sellerId));
           navigate(url);
-          return {routed:true,source:'Bazaar',url,verified:verify,...result};
+          return {routed:true,source:'Bazaar',url,verified:verify,verificationWarnings,...result};
         }
         if(candidate.source==='Item Market') {
-          const fresh=await refreshItemMarket(id);
+          let fresh;
+          try{
+            fresh=await refreshItemMarket(id);
+          }catch(error){
+            verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'verification failed')});
+            continue;
+          }
           const livePrice=Number(fresh?.itemMarket?.lowest||0);
           if(!(livePrice>0)) continue;
           const catalog=(await core.readLegacyState())?.procurement?.catalog?.[id]||{};
           const url=itemMarketPurchaseUrl(id,result.itemName,catalog.type||'');
           navigate(url);
-          return {routed:true,source:'Item Market',url,price:livePrice,...result};
+          return {routed:true,source:'Item Market',url,price:livePrice,verificationWarnings,...result};
         }
         if(candidate.source==='Overseas') {
           return {
             routed:false,reason:'overseas-recommended',recommendedSource:'Overseas',
             country:String(candidate.country||''),price:Number(candidate.price||0),stock:Number(candidate.quantity||0),
             profit:Number(candidate.profit||0),sourceProfitPerHour:Number(candidate.sourceProfitPerHour||0),
-            priceKnown:Boolean(candidate.priceKnown),
+            priceKnown:Boolean(candidate.priceKnown),verificationWarnings,
             ...result
           };
         }
@@ -886,22 +913,36 @@
           return {
             routed:false,reason:'shop-recommended',recommendedSource:'Torn Shop',
             shopName:String(candidate.shopName||'Torn shop'),country:String(candidate.country||''),
-            price:Number(candidate.price||0),stock:Number(candidate.quantity||0),
+            price:Number(candidate.price||0),stock:Number(candidate.quantity||0),verificationWarnings,
             ...result
           };
         }
       }
-      return {routed:false,reason:'source-verification-failed',...result};
+      return {
+        routed:false,
+        reason:verificationWarnings.length?'live-verification-unavailable':'source-verification-failed',
+        verificationWarnings,
+        ...result
+      };
     }
 
     async function acquire(itemId) {
       if (!hasTornKey()) return {routed:false,reason:'api-key-required'};
       const id=asId(itemId);
-      await enrichItem(id);
-      try { await refreshItemMarket(id); } catch {}
+      const verificationWarnings=[];
+      try {
+        await enrichItem(id);
+      } catch(error) {
+        verificationWarnings.push({source:'Bazaar discovery',message:String(error?.message||error||'refresh failed')});
+      }
+      try {
+        await refreshItemMarket(id);
+      } catch(error) {
+        verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'refresh failed')});
+      }
       let state=await core.readLegacyState();
       let opportunity=logic.rankCachedOpportunities(state).find(row=>asId(row.id)===id);
-      if (!opportunity) return {routed:false,reason:'no-qualified-opportunity'};
+      if (!opportunity) return {routed:false,reason:'no-qualified-opportunity',verificationWarnings};
 
       const maxBuy=Math.max(0,Number(opportunity.maxBuyPrice||0));
       const bazaarCandidates=freshOrganicListings(state,id)
@@ -918,16 +959,31 @@
 
       for (const candidate of candidates) {
         if (candidate.source==='Bazaar') {
-          const result=await verifyBazaar(id,candidate.row.sellerId,candidate.row.price);
+          let result;
+          try{
+            result=await verifyBazaar(id,candidate.row.sellerId,candidate.row.price);
+          }catch(error){
+            verificationWarnings.push({
+              source:'Bazaar',sellerId:asId(candidate.row.sellerId),
+              message:String(error?.message||error||'verification failed')
+            });
+            continue;
+          }
           await persistBazaarResult(id,candidate.row.sellerId,result);
           if (!result.verified) continue;
           if (maxBuy>0&&Number(result.actualPrice||0)>maxBuy) continue;
           const url='https://www.torn.com/bazaar.php?userId='+encodeURIComponent(asId(candidate.row.sellerId));
           navigate(url);
-          return {routed:true,source:'Bazaar',url,verified:result};
+          return {routed:true,source:'Bazaar',url,verified:result,verificationWarnings};
         }
 
-        const fresh=await refreshItemMarket(id);
+        let fresh;
+        try{
+          fresh=await refreshItemMarket(id);
+        }catch(error){
+          verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'verification failed')});
+          continue;
+        }
         const livePrice=Number(fresh?.itemMarket?.lowest||0);
         if (!(livePrice>0)||(maxBuy>0&&livePrice>maxBuy)) continue;
         state=await core.readLegacyState();
@@ -935,9 +991,14 @@
         const catalog=state?.procurement?.catalog?.[id]||{};
         const url=itemMarketPurchaseUrl(id,opportunity.name,catalog.type||opportunity.itemType);
         navigate(url);
-        return {routed:true,source:'Item Market',url,price:livePrice};
+        return {routed:true,source:'Item Market',url,price:livePrice,verificationWarnings};
       }
-      return {routed:false,reason:'no-live-source-inside-ceiling',maxBuyPrice:maxBuy};
+      return {
+        routed:false,
+        reason:verificationWarnings.length?'live-verification-unavailable':'no-live-source-inside-ceiling',
+        maxBuyPrice:maxBuy,
+        verificationWarnings
+      };
     }
 
     return Object.freeze({
