@@ -4,6 +4,9 @@ const sandbox={globalThis:{},URL,Date,console};
 vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync(__dirname+'/MM_Acquisitions.live.js','utf8'),sandbox,{filename:'MM_Acquisitions.live.js'});
 const live=sandbox.globalThis.MMTornAcquisitionsLive;assert(live);
+const liveSource=fs.readFileSync(__dirname+'/MM_Acquisitions.live.js','utf8');
+assert(liveSource.includes("if(preferred==='bazaar')return name==='bazaar'||name==='bazaar aggregate';"),'friendly Bazaar routing must include aggregate Bazaar discovery');
+assert(liveSource.includes("if(preferred==='market'||preferred==='item market'||preferred==='item-market')return name==='item market';"),'friendly market routing must resolve Item Market');
 
 (async()=>{
   const now=Date.now();
