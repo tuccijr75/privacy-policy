@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.14
+// @version      0.1.0-rc.15
 // @description  Discovers Torn Bazaar-directory sellers, scans them in one background tab for exact $1 stock, and leaves every purchase manual.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -28,7 +28,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.14';
+const VERSION = '0.1.0-rc.15';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
@@ -256,10 +256,12 @@ function actionableMarketLeads(state,now) {
 }
 const finite = n => Number.isFinite(n) && n >= 0;
 const textField = (v, max = 180) => typeof v === 'string' && v.length <= max;
+const EVENT_TTLS=new Set([120000,LIMIT.fresh]);
+const validEventTtl=e=>finite(e?.detectedAt)&&finite(e?.expiresAt)&&EVENT_TTLS.has(e.expiresAt-e.detectedAt);
 function validEvent(e) {
   return !!e && e.schema === SCHEMA && validId(e.targetId) && textField(e.id,400) && textField(e.fingerprint,400) &&
     textField(e.seller) && textField(e.item?.name) && e.item.name.length > 0 && textField(e.item.itemId,80) && textField(e.item.listingId,80) && Number.isSafeInteger(e.item.quantity) && e.item.quantity>0 &&
-    e.price === 1 && e.url === bazaarUrl(e.targetId) && finite(e.detectedAt) && e.expiresAt === e.detectedAt + LIMIT.fresh &&
+    e.price === 1 && e.url === bazaarUrl(e.targetId) && validEventTtl(e) &&
     textField(e.workerId,80) && textField(e.documentId,80) && e.validity === 'observed-available' && typeof e.acknowledged === 'boolean';
 }
 function readState(raw) {
@@ -1197,7 +1199,7 @@ async function boot(gm, win, doc) {
     apiKey=String(await gm.getValue(API_KEY_KEY,'')||'').trim();
     const savedPrefs=await gm.getValue(PREF_KEY,null);
     if(savedPrefs && Number.isSafeInteger(Number(savedPrefs.minValue)) && Number(savedPrefs.minValue)>0) preferences.minValue=Number(savedPrefs.minValue);
-  } catch {error='Storage initialization failed or has an unsupported schema. Existing data was preserved.';}
+  } catch(e) {error=e?.message||'Storage initialization failed or has an unsupported schema. Existing data was preserved.';}
 
   const initialUrl=win.location.href;
   const scanId=scanTokenAt(initialUrl);
