@@ -157,7 +157,7 @@
     return '<div id="mm-acq-verified-sales" style="border:1px solid #35513f;background:#121713;border-radius:8px;padding:9px;margin:7px 0;">'+
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
         '<div><b>Verified Sales · '+esc(name)+'</b>'+
-          '<div style="font-size:10px;color:#8b9b91;margin-top:2px;">Official Torn API finished Auction House records · '+rows.length.toLocaleString()+' loaded · updated '+esc(age(entry?.fetchedAt||entry?.updatedAt||''))+'.</div>'+
+          '<div style="font-size:10px;color:#8b9b91;margin-top:2px;">Official Torn API finished Auction House records · '+rows.length.toLocaleString()+' loaded · updated '+esc(age(entry?.lastSyncAt||''))+'.</div>'+
         '</div>'+
         '<button data-sales-close="1" style="'+button(false)+'padding:5px 7px;">Hide</button>'+
       '</div>'+
