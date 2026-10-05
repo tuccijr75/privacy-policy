@@ -16,71 +16,6 @@
 // ==/UserScript==
 
 
-(() => {
-  'use strict';
-
-  // TornPDA does not currently resolve Tampermonkey @require dependencies.
-  // This distribution is intentionally self-contained. The code below provides
-  // only platform bridges; all MM dependencies are bundled later in this file.
-
-  const PDA_API_KEY_PLACEHOLDER='###PDA-APIKEY###';
-  const PDA_GM_PREFIX='mm_acquisitions_pda_gm_v1:';
-
-  if(typeof globalThis.GM_getValue!=='function'){
-    globalThis.GM_getValue=(key,def)=>{
-      try{
-        const raw=localStorage.getItem(PDA_GM_PREFIX+String(key));
-        return raw==null?def:JSON.parse(raw);
-      }catch{return def;}
-    };
-  }
-  if(typeof globalThis.GM_setValue!=='function'){
-    globalThis.GM_setValue=(key,value)=>{
-      try{localStorage.setItem(PDA_GM_PREFIX+String(key),JSON.stringify(value));}catch{}
-    };
-  }
-  if(typeof globalThis.GM_deleteValue!=='function'){
-    globalThis.GM_deleteValue=key=>{
-      try{localStorage.removeItem(PDA_GM_PREFIX+String(key));}catch{}
-    };
-  }
-
-  const originalGetValue=globalThis.GM_getValue;
-  globalThis.GM_getValue=function(key,def){
-    let value;
-    try{value=originalGetValue(key,def);}catch{value=def;}
-    if(String(key)==='mm_acquisitions_api_v1'){
-      const pdaKey=String(PDA_API_KEY_PLACEHOLDER||'').trim();
-      const realPdaKey=pdaKey && !pdaKey.includes('###PDA-APIKEY###');
-      if((value==null||value===''||value===def)&&realPdaKey)return pdaKey;
-    }
-    return value;
-  };
-
-  if(typeof globalThis.GM_xmlhttpRequest!=='function'&&typeof globalThis.PDA_httpGet==='function'){
-    globalThis.GM_xmlhttpRequest=options=>{
-      const opts=options&&typeof options==='object'?options:{};
-      let aborted=false;
-      let settled=false;
-      let timer=null;
-      const finish=(fn,arg)=>{
-        if(settled||aborted)return;
-        settled=true;
-        if(timer)clearTimeout(timer);
-        try{fn?.(arg);}catch{}
-      };
-      if(Number(opts.timeout||0)>0){
-        timer=setTimeout(()=>finish(opts.ontimeout,{status:0,statusText:'timeout',responseText:''}),Number(opts.timeout));
-      }
-      Promise.resolve()
-        .then(()=>globalThis.PDA_httpGet(String(opts.url||''),opts.headers||{}))
-        .then(response=>finish(opts.onload,response))
-        .catch(error=>finish(opts.onerror,{status:0,statusText:String(error?.message||error||'request failed'),responseText:'',error}));
-      return {abort(){aborted=true;if(timer)clearTimeout(timer);}};
-    };
-  }
-})();
-
 
 /* ===== MM Torn Core (bundled) ===== */
 
@@ -1204,7 +1139,68 @@
 })();
 
 
-/* ===== TornPDA standalone state adapter ===== */
+/* ===== TornPDA platform/state adapter ===== */
+
+(() => {
+  'use strict';
+
+  const PDA_API_KEY_PLACEHOLDER='###PDA-APIKEY###';
+  const PDA_GM_PREFIX='mm_acquisitions_pda_gm_v1:';
+
+  if(typeof globalThis.GM_getValue!=='function'){
+    globalThis.GM_getValue=(key,def)=>{
+      try{
+        const raw=localStorage.getItem(PDA_GM_PREFIX+String(key));
+        return raw==null?def:JSON.parse(raw);
+      }catch{return def;}
+    };
+  }
+  if(typeof globalThis.GM_setValue!=='function'){
+    globalThis.GM_setValue=(key,value)=>{
+      try{localStorage.setItem(PDA_GM_PREFIX+String(key),JSON.stringify(value));}catch{}
+    };
+  }
+  if(typeof globalThis.GM_deleteValue!=='function'){
+    globalThis.GM_deleteValue=key=>{
+      try{localStorage.removeItem(PDA_GM_PREFIX+String(key));}catch{}
+    };
+  }
+
+  const originalGetValue=globalThis.GM_getValue;
+  globalThis.GM_getValue=function(key,def){
+    let value;
+    try{value=originalGetValue(key,def);}catch{value=def;}
+    if(String(key)==='mm_acquisitions_api_v1'){
+      const pdaKey=String(PDA_API_KEY_PLACEHOLDER||'').trim();
+      const realPdaKey=pdaKey&&!pdaKey.includes('###PDA-APIKEY###');
+      if((value==null||value===''||value===def)&&realPdaKey)return pdaKey;
+    }
+    return value;
+  };
+
+  if(typeof globalThis.GM_xmlhttpRequest!=='function'&&typeof globalThis.PDA_httpGet==='function'){
+    globalThis.GM_xmlhttpRequest=options=>{
+      const opts=options&&typeof options==='object'?options:{};
+      let aborted=false;
+      let settled=false;
+      let timer=null;
+      const finish=(fn,arg)=>{
+        if(settled||aborted)return;
+        settled=true;
+        if(timer)clearTimeout(timer);
+        try{fn?.(arg);}catch{}
+      };
+      if(Number(opts.timeout||0)>0){
+        timer=setTimeout(()=>finish(opts.ontimeout,{status:0,statusText:'timeout',responseText:''}),Number(opts.timeout));
+      }
+      Promise.resolve()
+        .then(()=>globalThis.PDA_httpGet(String(opts.url||''),opts.headers||{}))
+        .then(response=>finish(opts.onload,response))
+        .catch(error=>finish(opts.onerror,{status:0,statusText:String(error?.message||error||'request failed'),responseText:'',error}));
+      return {abort(){aborted=true;if(timer)clearTimeout(timer);}};
+    };
+  }
+})();
 
 (() => {
   'use strict';
