@@ -1941,4 +1941,23 @@ Next live gate:
 2. refresh Ranked;
 3. verify page 1 no longer consists primarily of long-running $1 auctions solely because of provisional ROI;
 4. then run Analyze AH on one low-tier/BB weapon and one premium weapon.
+### alpha.16 desktop acceptance — auction watch-score pass — 2026-10-05
+
+Observed directly in the authenticated Torn desktop tab with Ranked open:
+- PASS: panel reports `v8.0.0-alpha.16 · PROFIT / RANKED / TRAVEL`;
+- PASS: refreshed live sources remain split and populated: 132 Bazaar + 168 Item Market + 219 Auction;
+- PASS: current result set is 183 matches;
+- PASS: Auction rows display `watch`, `urgency` and `bid discount` components instead of the normal purchase investment score;
+- PASS: current-bid ROI remains explicitly provisional and no longer determines the displayed/sort score by itself;
+- PASS: representative page-1 rows show materially different watch components based on time remaining and current discount:
+  - Luger: current bid $1,000,001, ends ~4h22m, watch 35, urgency 82, bid discount 99;
+  - Flail: current bid $50,000,001, ends ~2h51m, watch 35, urgency 88, bid discount 84;
+  - Ithaca 37: current bid $1, ends ~6h07m, watch 34, urgency 74, bid discount 100;
+  - Raven MP25: current bid $13, ends ~5h35m, watch 34, urgency 77, bid discount 100;
+- PASS: long-running $1 bids no longer surface with a generic ~50 investment score solely because provisional ROI is huge;
+- PASS: no completed-AH history has been loaded yet, so confidence/liquidity remain 0 and are not fabricated;
+- PASS: desktop geometry/readability remains acceptable and the panel stays above the shared dock/footer without overlap.
+
+Remaining Ranked live gate:
+- run Analyze AH on one low-tier/BB-dominant weapon and one premium weapon to validate completed-sale cohort, median, confidence, traffic, liquidity and fairValue=max(BB floor, AH median).
 
