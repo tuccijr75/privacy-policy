@@ -1,17 +1,17 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.17
+// @version      8.0.0-alpha.18
 // @description  Market acquisition, pricelist profit, ranked-weapon valuation, live market/auction scouting and travel procurement with manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b1181e57501af7fb0fdc0aa6dc7b356286f0a1b9/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b1181e57501af7fb0fdc0aa6dc7b356286f0a1b9/modular-suite/acquisitions/MM_Acquisitions.logic.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b1181e57501af7fb0fdc0aa6dc7b356286f0a1b9/modular-suite/acquisitions/MM_Acquisitions.live.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b1181e57501af7fb0fdc0aa6dc7b356286f0a1b9/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b1181e57501af7fb0fdc0aa6dc7b356286f0a1b9/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6e409ed0849fd15378ed513d76a8b954c766660c/modular-suite/core/MM_Torn_Core.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6e409ed0849fd15378ed513d76a8b954c766660c/modular-suite/acquisitions/MM_Acquisitions.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6e409ed0849fd15378ed513d76a8b954c766660c/modular-suite/acquisitions/MM_Acquisitions.live.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6e409ed0849fd15378ed513d76a8b954c766660c/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6e409ed0849fd15378ed513d76a8b954c766660c/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -1375,7 +1375,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.17 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.18 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
