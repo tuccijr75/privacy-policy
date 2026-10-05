@@ -28,8 +28,8 @@
     {
       "id": "acquisitions",
       "name": "MM_Acquisitions",
-      "role": "acquire-market-travel-purchase-ledger",
-      "version": "8.0.0-alpha.20",
+      "role": "acquire-market-pulse-travel-purchase-ledger",
+      "version": "8.0.0-alpha.21",
       "status": "implemented-non-production"
     },
     {
