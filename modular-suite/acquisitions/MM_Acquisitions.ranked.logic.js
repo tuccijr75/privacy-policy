@@ -234,6 +234,9 @@
       pulseMarketDepth:pulseUsable?Math.max(0,num(pulse?.marketDepth)):0,
       pulseTrendPct:pulseUsable?num(pulse?.trendPct):0,
       pulseFreshness:pulseUsable?(pulseAgeMs<=60_000?'FRESH':pulseAgeMs<=5*60_000?'GOOD':'AGING'):'UNKNOWN',
+      pulseSourceTimestamp:pulseUsable?Math.max(0,num(pulse?.sourceTimestamp)):0,
+      pulseFetchedAt:pulseUsable?pulseFetchedAt:0,
+      pulseUpstreamCacheDelayMs:pulseUsable?Math.max(0,num(pulse?.upstreamCacheDelayMs)):0,
       hoursRemaining,sortScore,isAuction,lowTier,valuationSource,
       history:historyValue
     };
