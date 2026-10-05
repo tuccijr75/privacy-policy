@@ -1351,7 +1351,9 @@
         source.sellerName?String(source.sellerName):'',
         Number(source.quantity||0)>0?'Available '+Number(source.quantity).toLocaleString():'',
         source.aggregateOnly&&Number(source.bazaarCount||0)>0?Number(source.bazaarCount).toLocaleString()+' bazaars':'',
-        source.aggregateOnly&&Number(source.bazaarAverage||0)>0?'Bazaar avg '+money(source.bazaarAverage):''
+        source.aggregateOnly&&Number(source.bazaarAverage||0)>0?'Bazaar avg '+money(source.bazaarAverage):'',
+        source.travelEvidence?'Travel profit '+(Number(source.profit||0)>=0?'+':'-')+money(Math.abs(Number(source.profit||0))):'',
+        source.travelEvidence&&Number(source.sourceProfitPerHour||0)?money(source.sourceProfitPerHour)+'/hr travel profit':''
       ].filter(Boolean);
       const note=source.aggregateOnly
         ?'Aggregate Bazaar evidence; a seller is re-verified before routing.'
