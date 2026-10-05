@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.21-pda.8
+// @version      8.0.0-alpha.22-pda.9
 // @description  TornPDA-compatible bundled MM Acquisitions build. Market Pulse, profit, ranked weapons, travel procurement, manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -3773,6 +3773,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const RANKED_LIVE_STALE_MS=300_000;
   const PRICELIST_STALE_MS=3600_000;
   const DEFAULT_PRICELIST_USER_ID='4054377';
+  const VERIFIED_SALES_URL='https://torn.marches.cafe/#/items/auction';
 
   let activeView='deals';
   let state=null;
@@ -3841,26 +3842,30 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   function pulseLine(row={},itemId='',unitProfit=0){
     const p=(row&&row.pulseTier)?row:(logic?.pulseFields?.(state,itemId,unitProfit)||{});
     const tier=String(p?.pulseTier||'unknown');
-    if(tier==='unknown')return '<div style="font-size:10px;color:#777;">Market Pulse · collecting seller-free Torn API movement evidence</div>';
+    if(tier==='unknown')return '<div style="font-size:10px;color:#777;margin-top:4px;"><b>Market activity:</b> collecting seller-independent Torn API snapshots. Movement is not a confirmed sale.</div>';
     const freshness=typeof p?.pulseFreshness==='string'?String(p.pulseFreshness):String(p?.pulseFreshness?.label||'UNKNOWN');
     const sourceAt=Number(p?.pulseSourceTimestamp||0);
     const fetchedAt=Number(p?.pulseFetchedAt||0);
     const cacheDelaySec=Math.round(Math.max(0,Number(p?.pulseUpstreamCacheDelayMs||0))/1000);
-    const score=p?.marketPulseScore===null||p?.marketPulseScore===undefined?'':(' · pulse score '+Number(p.marketPulseScore||0).toFixed(0)+'/100');
-    const velocity=Number(p?.profitVelocityPerHour||0)>0?' · est profit velocity '+money(p.profitVelocityPerHour)+'/hr':'';
-    return '<div style="font-size:10px;color:#8fb9a1;">Market Pulse '+esc(tier.toUpperCase())+
-      ' · events/hr '+Number(p?.observedEventsPerHour||0).toFixed(2)+
-      ' · units/hr '+Number(p?.observedUnitsPerHour||0).toFixed(2)+
-      ' · turnover/hr '+money(p?.turnoverPerHour||0)+
-      ' · liquidity '+Number(p?.pulseLiquidityScore||0).toFixed(0)+'/100'+
-      ' · depth '+Number(p?.pulseMarketDepth||0).toLocaleString()+
-      ' · confidence '+Number(p?.pulseConfidencePct||0).toFixed(0)+'%'+
-      ' · trend '+Number(p?.pulseTrendPct||0).toFixed(1)+'%'+score+velocity+
-      ' · '+esc(freshness)+
-      ' · source '+(sourceAt?esc(age(new Date(sourceAt).toISOString())):'unknown')+
-      ' · fetched '+(fetchedAt?esc(age(new Date(fetchedAt).toISOString())):'unknown')+
-      (cacheDelaySec?' · upstream cache '+cacheDelaySec+'s':'')+
-      ' · Torn API</div>';
+    const tierLabel=tier==='proven'?'Strong evidence':tier==='candidate'?'Early signal':'Observed';
+    const tierColor=tier==='proven'?'#9fe3a8':tier==='candidate'?'#d8b96a':'#9ab7c9';
+    const score=p?.marketPulseScore===null||p?.marketPulseScore===undefined?'':(' · score '+Number(p.marketPulseScore||0).toFixed(0)+'/100');
+    const velocity=Number(p?.profitVelocityPerHour||0)>0?' · est. profit velocity '+money(p.profitVelocityPerHour)+'/hr':'';
+    return '<div style="margin-top:5px;padding:6px 7px;border:1px solid #2f4638;border-radius:6px;background:#121713;font-size:10px;line-height:1.45;">'+
+      '<div style="color:'+tierColor+';"><b>Market activity:</b> '+esc(tierLabel)+
+        ' · '+Number(p?.observedEventsPerHour||0).toFixed(2)+' movements/hr'+
+        ' · '+Number(p?.observedUnitsPerHour||0).toFixed(2)+' units/hr'+
+        ' · '+money(p?.turnoverPerHour||0)+'/hr observed turnover'+
+        ' · '+Number(p?.pulseConfidencePct||0).toFixed(0)+'% confidence</div>'+
+      '<div style="color:#8b9b91;">Liquidity '+Number(p?.pulseLiquidityScore||0).toFixed(0)+'/100'+
+        ' · visible depth '+Number(p?.pulseMarketDepth||0).toLocaleString()+
+        ' · trend '+Number(p?.pulseTrendPct||0).toFixed(1)+'%'+score+velocity+
+        ' · '+esc(freshness)+
+        ' · source '+(sourceAt?esc(age(new Date(sourceAt).toISOString())):'unknown')+
+        ' · fetched '+(fetchedAt?esc(age(new Date(fetchedAt).toISOString())):'unknown')+
+        (cacheDelaySec?' · upstream cache '+cacheDelaySec+'s':'')+'</div>'+
+      '<div style="color:#777;">Movement = quantity disappearing between seller-independent Torn Item Market snapshots; it is <b>not a confirmed player sale</b>.</div>'+
+    '</div>';
   }
 
   function futureDuration(unixSeconds){
@@ -4854,11 +4859,12 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const itemMarketCount=liveMarketRows.filter(row=>['item market','market'].includes(String(row?.source||'').toLowerCase())).length;
     return card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
-        '<div><b>Ranked Weapon Profit Scout</b><div style="font-size:10px;color:#888;">No bonuses excluded. BB scrap floor + completed Torn auctions + live market/auction opportunities. Bazaar / Item Market use investment score; auctions use watch score because current bids are not guaranteed purchase prices.</div></div>'+
+        '<div><b>Ranked Weapon Profit Scout</b><div style="font-size:10px;color:#888;">No bonuses excluded. Fair value combines BB floor and official Torn completed-auction sales. Live Bazaar / Item Market rows use investment score; live auctions use watch score because a current bid is not a completed sale.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
           '<button id="mm-acq-rw-pricelist-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Update Pricelist</button>'+
           '<button id="mm-acq-rw-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Ranked</button>'+
           '<button id="mm-acq-rw-analyze-visible" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Analyze Visible</button>'+
+          '<a href="'+VERIFIED_SALES_URL+'" target="_blank" rel="noopener noreferrer" style="'+button(false)+'text-decoration:none;display:inline-block;">Verified Sales ↗</a>'+
         '</div>'+
       '</div>'+
       '<div style="font-size:10px;color:#888;margin-top:5px;">BB '+money(cfg.bbRate)+'/buck · Pricelist '+Number(priceList.pricedCount||0).toLocaleString()+' priced · Live <b>'+bazaarCount.toLocaleString()+' Bazaar</b> + <b>'+itemMarketCount.toLocaleString()+' Item Market</b> + <b>'+Number(ranked.liveAuction?.length||0).toLocaleString()+' Auction</b> · AH history '+historyCount+' weapon types · updated '+esc(age(ranked.lastLiveAt))+'</div>'+
@@ -4903,7 +4909,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
               '<div style="color:#888;">Traffic 7/30/90d '+Number(row.volume7||0)+'/'+Number(row.volume30||0)+'/'+Number(row.volume90||0)+' · liquidity '+Number(row.liquidityScore||0)+'/100 (AH '+Number(row.auctionHistoryLiquidityScore||0)+'/100) · '+(isAuction?'watch '+Number(row.auctionWatchScore||0)+'/100 · urgency '+Number(row.auctionUrgencyScore||0)+'/100 · bid discount '+Number(row.auctionDiscountScore||0)+'/100':'investment '+Number(row.investmentScore||0)+'/100')+'</div>'+pulseLine(row,row.itemId,row.profit)+
             '</div>'+
             '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
-              '<button data-rw-history="'+esc(row.itemId)+'" '+(busy?'disabled':'')+' style="'+button(!historyLoaded)+(busy?'opacity:.5;':'')+'padding:5px 7px;">'+(historyLoaded?'Refresh AH':'Analyze AH')+'</button>'+
+              '<button data-rw-history="'+esc(row.itemId)+'" '+(busy?'disabled':'')+' style="'+button(!historyLoaded)+(busy?'opacity:.5;':'')+'padding:5px 7px;">'+(historyLoaded?'Refresh Sales':'Load Sales')+'</button>'+
+              (historyLoaded?'<a href="'+VERIFIED_SALES_URL+'" target="_blank" rel="noopener noreferrer" style="'+button(false)+'text-decoration:none;display:inline-block;padding:5px 7px;">Verified Sales ('+Number(row.history?.samples||0)+') ↗</a>':'')+
               '<button data-rw-open="'+globalIndex+'" style="'+button(true)+'padding:5px 7px;">Open</button>'+
             '</div>'+
           '</div>'+
@@ -5073,45 +5080,85 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   function itemPriceResultHtml(){
     if(!itemSelection)return '';
     const sources=Array.isArray(itemSources?.sources)?itemSources.sources:[];
+    const targetBuy=Math.max(0,Number(itemSelection?.pricelistBuyPrice||0));
+    const exit=Math.max(0,Number(itemSources?.exitValue||0));
+    const exitRoute=String(itemSources?.exitRoute||'Unknown');
+    const priced=sources.filter(source=>source?.priceKnown!==false&&Number(source?.price||0)>0);
+    const best=priced[0]||null;
+    const bestPrice=Math.max(0,Number(best?.price||0));
+    const bestProfit=exit>0&&bestPrice>0?exit-bestPrice:0;
+    const bestRoi=bestPrice>0&&exit>0?bestProfit/bestPrice*100:0;
+    const historyRows=Array.isArray(state?.procurement?.ranked?.history?.[String(itemSelection.id)]?.rows)
+      ?state.procurement.ranked.history[String(itemSelection.id)].rows:[];
+    const rankedEligible=/(weapon|armor|armour)/i.test(String(itemSelection.type||'')+' '+String(itemSelection.subType||''));
+    const verifiedSalesAction=historyRows.length
+      ?'<a href="'+VERIFIED_SALES_URL+'" target="_blank" rel="noopener noreferrer" style="'+button(false)+'text-decoration:none;display:inline-block;">Verified Sales ('+historyRows.length+') ↗</a>'
+      :rankedEligible
+        ?'<button data-rw-history="'+esc(itemSelection.id)+'" '+(busy?'disabled':'')+' style="'+button(false)+(busy?'opacity:.5;':'')+'">Load Verified Sales</button>'
+        :'';
+    const verifiedNote=historyRows.length
+      ?'Completed Auction House records loaded from the official Torn API. The external link is a read-only public viewer; it is not used for pricing calculations.'
+      :rankedEligible
+        ?'Completed Auction House sales can be loaded from the official Torn API for this ranked item.'
+        :'No official completed-sale history is available here for this standard item. Market Pulse movement is observational, not a confirmed sale.';
+
     const rows=sources.length?sources.map((source,index)=>{
-      const detail=[
-        source.shopName?String(source.shopName):'',
-        source.country?String(source.country):'',
-        source.sellerName?String(source.sellerName):'',
-        Number(source.quantity||0)>0?'qty/stock '+Number(source.quantity).toLocaleString():'',
-        source.aggregateOnly&&Number(source.bazaarCount||0)>0?'bazaars '+Number(source.bazaarCount).toLocaleString():'',
-        source.aggregateOnly&&Number(source.bazaarAverage||0)>0?'avg '+money(source.bazaarAverage):''
-      ].filter(Boolean).join(' · ');
-      const targetBuy=Math.max(0,Number(itemSelection?.pricelistBuyPrice||0));
-      const exit=Math.max(0,Number(itemSources?.exitValue||0));
-      const exitRoute=String(itemSources?.exitRoute||'Unknown');
       const sourcePrice=Math.max(0,Number(source.price||0));
       const priceKnown=source.priceKnown!==false&&sourcePrice>0;
       const profit=exit>0&&priceKnown?exit-sourcePrice:0;
       const roi=exit>0&&priceKnown?profit/sourcePrice*100:0;
-      const target=targetBuy>0?' · Your buy rate '+money(targetBuy):'';
-      const economics=exit>0&&priceKnown?' · Live exit '+money(exit)+' ('+esc(exitRoute)+') · Profit '+(profit>=0?'+':'-')+money(Math.abs(profit))+' · ROI '+roi.toFixed(1)+'%':'';
-      const travelEconomics=source.travelEvidence
-        ?' · Travel profit '+(Number(source.profit||0)>=0?'+':'-')+money(Math.abs(Number(source.profit||0)))+(Number(source.sourceProfitPerHour||0)?' · '+money(source.sourceProfitPerHour)+'/hr':'')
-        :'';
-      const sourceNote=source.aggregateOnly
-        ?' · aggregate Bazaar evidence; seller is re-resolved before routing'
+      const bestBadge=index===0&&priceKnown?'<span style="color:#d8b96a;font-size:10px;">BEST AVAILABLE</span>':'';
+      const facts=[
+        source.shopName?String(source.shopName):'',
+        source.country?String(source.country):'',
+        source.sellerName?String(source.sellerName):'',
+        Number(source.quantity||0)>0?'Available '+Number(source.quantity).toLocaleString():'',
+        source.aggregateOnly&&Number(source.bazaarCount||0)>0?Number(source.bazaarCount).toLocaleString()+' bazaars':'',
+        source.aggregateOnly&&Number(source.bazaarAverage||0)>0?'Bazaar avg '+money(source.bazaarAverage):''
+      ].filter(Boolean);
+      const note=source.aggregateOnly
+        ?'Aggregate Bazaar evidence; a seller is re-verified before routing.'
         :source.travelEvidence&&!priceKnown
-          ?' · shop cost unavailable in current TornW3B table; preserved as travel evidence'
+          ?'Travel evidence only; current feed does not expose the shop cost.'
           :'';
-      const displayPrice=priceKnown?money(sourcePrice):'Cost unavailable';
-      return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
-        '<div><b>'+(index===0&&priceKnown?'BEST · ':'')+esc(source.source)+'</b> · <b>'+displayPrice+'</b>'+(detail?' · '+esc(detail):'')+target+economics+travelEconomics+sourceNote+'</div>'+
+      return '<div style="display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
+        '<div style="min-width:0;">'+
+          '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;"><b>'+esc(source.source)+'</b>'+bestBadge+'</div>'+
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:3px;">'+
+            '<span>Buy <b>'+(priceKnown?money(sourcePrice):'Cost unavailable')+'</b></span>'+
+            (exit>0&&priceKnown?'<span>Est. resale <b>'+money(exit)+'</b></span><span>Profit <b style="color:'+(profit>=0?'#9fe3a8':'#ffaaaa')+';">'+(profit>=0?'+':'-')+money(Math.abs(profit))+'</b></span><span>ROI <b>'+roi.toFixed(1)+'%</b></span>':'')+
+          '</div>'+
+          (facts.length?'<div style="color:#888;margin-top:3px;">'+esc(facts.join(' · '))+'</div>':'')+
+          (note?'<div style="color:#777;margin-top:2px;">'+esc(note)+'</div>':'')+
+        '</div>'+
         '<button data-item-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(index===0&&priceKnown)+(busy?'opacity:.5;':'')+'">Use</button>'+
       '</div>';
-    }).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">No current source comparison loaded.</div>';
+    }).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No current source comparison loaded.</div>';
+
+    const decision=sources.length&&best
+      ?'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:6px;margin:8px 0;">'+
+        '<div style="border:1px solid #3e3520;border-radius:6px;padding:7px;background:#1a1710;"><div style="font-size:9px;color:#9c9275;">BEST BUY</div><b>'+esc(best.source)+' · '+money(bestPrice)+'</b></div>'+
+        '<div style="border:1px solid #333;border-radius:6px;padding:7px;background:#141414;"><div style="font-size:9px;color:#888;">EST. RESALE</div><b>'+money(exit)+'</b><div style="font-size:9px;color:#777;">via '+esc(exitRoute)+'</div></div>'+
+        '<div style="border:1px solid #333;border-radius:6px;padding:7px;background:#141414;"><div style="font-size:9px;color:#888;">EST. PROFIT</div><b style="color:'+(bestProfit>=0?'#9fe3a8':'#ffaaaa')+';">'+(bestProfit>=0?'+':'-')+money(Math.abs(bestProfit))+'</b></div>'+
+        '<div style="border:1px solid #333;border-radius:6px;padding:7px;background:#141414;"><div style="font-size:9px;color:#888;">ROI</div><b>'+bestRoi.toFixed(1)+'%</b></div>'+
+        (targetBuy>0?'<div style="border:1px solid #333;border-radius:6px;padding:7px;background:#141414;"><div style="font-size:9px;color:#888;">PRICELIST BUY RATE</div><b>'+money(targetBuy)+'</b></div>':'')+
+      '</div>'
+      :'';
+
     return card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
         '<div><b>'+esc(itemSelection.name)+' ['+esc(itemSelection.id)+']</b>'+
-          '<div style="font-size:10px;color:#888;">'+esc(itemSelection.type)+(itemSelection.subType?' · '+esc(itemSelection.subType):'')+' · Torn catalog reference '+money(itemSelection.marketPrice||0)+' (reference only; not used as live exit)</div>'+
+          '<div style="font-size:10px;color:#888;">'+esc(itemSelection.type)+(itemSelection.subType?' · '+esc(itemSelection.subType):'')+' · Torn catalog reference '+money(itemSelection.marketPrice||0)+' <span style="color:#777;">(reference only; not used as live resale value)</span></div>'+
         '</div>'+
-        '<button data-item-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Use Best Source</button>'+
-      '</div>'+pulseLine({},itemSelection.id,0)+rows
+        '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+verifiedSalesAction+
+          '<button data-item-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Use Best Source</button>'+
+        '</div>'+
+      '</div>'+
+      decision+
+      '<div style="font-size:10px;color:#777;margin-bottom:3px;">'+esc(verifiedNote)+'</div>'+
+      pulseLine({},itemSelection.id,bestProfit)+
+      '<div style="margin-top:7px;font-size:10px;color:#aaa;"><b>Available sources</b> · lowest usable source is listed first.</div>'+
+      rows
     );
   }
 
@@ -5165,7 +5212,14 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       (visible.length?visible.map(row=>
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
           '<div style="min-width:0;"><b>'+esc(row.name)+'</b> <span style="color:#777;">['+esc(row.id)+']</span>'+
-            '<div style="color:#888;">'+esc(row.type)+(row.subType?' · '+esc(row.subType):'')+' · Bazaar low '+money(row.bazaarPrice||0)+' · Bazaar avg '+money(row.bazaarAverage||0)+' · Bazaars '+Number(row.bazaarSellers||0)+(row.itemMarketPrice>0?' · Item Market '+money(row.itemMarketPrice):'')+(row.pricelistBuyPrice>0?' · Pricelist '+money(row.pricelistBuyPrice):'')+' · Shops '+row.shops.filter(shop=>Number(shop?.price||0)>0).length+'</div>'+
+            '<div style="color:#888;margin-top:2px;">'+esc(row.type)+(row.subType?' · '+esc(row.subType):'')+'</div>'+
+            '<div style="display:flex;gap:9px;flex-wrap:wrap;color:#aaa;margin-top:3px;">'+
+              '<span>Bazaar low <b>'+money(row.bazaarPrice||0)+'</b></span>'+
+              (row.itemMarketPrice>0?'<span>Item Market <b>'+money(row.itemMarketPrice)+'</b></span>':'')+
+              (row.pricelistBuyPrice>0?'<span>Pricelist <b>'+money(row.pricelistBuyPrice)+'</b></span>':'')+
+              '<span>Bazaars <b>'+Number(row.bazaarSellers||0)+'</b></span>'+
+              '<span>Shops <b>'+row.shops.filter(shop=>Number(shop?.price||0)>0).length+'</b></span>'+
+            '</div>'+
           '</div>'+
           '<button data-catalog-find="'+esc(row.id)+'" '+(busy?'disabled':'')+' style="'+button(itemSelection?.id===row.id)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Find Price</button>'+
         '</div>'
@@ -5246,7 +5300,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.21-pda.8 · PROFIT / RANKED / TRAVEL / PULSE</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.22-pda.9 · PROFIT / RANKED / TRAVEL / PULSE</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
