@@ -2024,4 +2024,26 @@ Observed directly in authenticated Torn desktop with Travel open:
 Remaining Travel live gate:
 - owner must click `Update Travel` to refresh the browser-captured TornW3B travel feed;
 - after refresh, verify FRESH/AGING state, trip-aware filtering, recommendation rows, and `Compare Bazaar / Market` handoff into Items.
+### alpha.16 Travel fresh-state desktop acceptance — 2026-10-05
+
+Observed directly in authenticated Torn desktop after `Update Travel`:
+- PASS: travel freshness changed from STALE to FRESH;
+- PASS: browser capture and shared travel state both updated to ~31s old;
+- PASS: context remains `Next-trip planning from Torn`;
+- PASS: stale-state suppression lifted only after fresh data arrived;
+- PASS: 20 profitable overseas recommendations rendered;
+- PASS: every visible travel row exposes `Compare Bazaar / Market`;
+- PASS: recommendation rows include country, live overseas stock, profit, and source profit/hour;
+- PASS: purchases and travel remain manual.
+
+Representative current rows:
+- #1 Pangolin Scales · China · stock 3,462 · profit $63,892 · source profit/hr $8,370;
+- #2 Meteorite Fragment · Argentina · stock 2,972 · profit $35,042 · source profit/hr $6,654;
+- #3 Tear Gas · Argentina · stock 3 · profit $34,374 · source profit/hr $6,527;
+- #4 Camel Plushie · UAE · stock 735 · profit $53,108 · source profit/hr $6,199;
+- #5 Panda Plushie · China · stock 1,099 · profit $46,510 · source profit/hr $6,093.
+
+Remaining Travel live gate:
+- click one `Compare Bazaar / Market` row and verify handoff into Items deep source comparison for that exact travel item;
+- verify no automatic purchase/travel occurs during the handoff.
 
