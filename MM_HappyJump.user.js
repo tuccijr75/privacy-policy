@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MM Happy Jump
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.2
-// @description  Guided 4 Xanax / 5 Erotic DVD / Ecstasy happy-jump timer using Torn's official cooldown API.
+// @version      0.1.0-alpha.3
+// @description  Guided standard Happy Jump: 4 Xanax, cooldown checks, 5 Erotic DVDs, Ecstasy, train, refill, train.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -22,8 +22,8 @@
 (() => {
   'use strict';
 
-  const VERSION = '0.1.0-alpha.2';
-  const SCHEMA = 1;
+  const VERSION = '0.1.0-alpha.3';
+  const SCHEMA = 2;
   const MODULE_ID = 'happy-jump';
   const STATE_KEY = 'mm-happy-jump:state:v1';
   const API_KEY = 'mm-happy-jump:api-key:v1';
@@ -32,6 +32,7 @@
   const EDVD_TOTAL = 5;
   const API_FRESH_MS = 90000;
   const DRUG_WARN_MS = 300000;
+  const BOOSTER_WARN_MS = 300000;
   const TRAIN_WARN_MS = 120000;
   const QUARTER_MS = 900000;
   const QUARTER_GRACE_MS = 60000;
@@ -54,7 +55,17 @@
       version: VERSION,
       revision: 0,
       configured: false,
-      progress: { xanax: 0, edvd: 0, ecstasy: false, complete: false },
+      progress: {
+        prepEnergy: false,
+        xanax: 0,
+        edvd: 0,
+        ecstasy: false,
+        initialTrain: false,
+        refillUsed: false,
+        refillSkipped: false,
+        refillTrain: false,
+        complete: false
+      },
       cooldown: { drug: null, booster: null, fetchedAt: 0, status: 'unknown', error: '' },
       trainDeadlineAt: 0,
       lastActionAt: 0
@@ -74,16 +85,34 @@
 
   function normalize(raw) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return blankState();
-    if (Number(raw.schema || 0) !== SCHEMA) throw new Error('Unsupported MM Happy Jump state schema.');
 
-    const xanax = whole(raw.progress && raw.progress.xanax, 0, XANAX_TOTAL);
-    const edvd = whole(raw.progress && raw.progress.edvd, 0, EDVD_TOTAL);
-    const ecstasy = raw.progress && raw.progress.ecstasy === true;
-    const complete = raw.progress && raw.progress.complete === true;
+    const sourceSchema = Number(raw.schema || 1);
+    if (sourceSchema !== 1 && sourceSchema !== SCHEMA) {
+      throw new Error('Unsupported MM Happy Jump state schema.');
+    }
+
+    const rp = raw.progress && typeof raw.progress === 'object' ? raw.progress : {};
+    const xanax = whole(rp.xanax, 0, XANAX_TOTAL);
+    const edvd = whole(rp.edvd, 0, EDVD_TOTAL);
+    const ecstasy = rp.ecstasy === true;
+    const legacyComplete = sourceSchema === 1 && rp.complete === true;
+    const prepEnergy = sourceSchema === 1 ? xanax > 0 : (rp.prepEnergy === true || xanax > 0);
+    const initialTrain = sourceSchema === 1 ? legacyComplete : rp.initialTrain === true;
+    const refillUsed = sourceSchema === 1 ? false : rp.refillUsed === true;
+    const refillSkipped = sourceSchema === 1 ? legacyComplete : rp.refillSkipped === true;
+    const refillTrain = sourceSchema === 1 ? false : rp.refillTrain === true;
+    const complete = rp.complete === true;
+
     if (xanax === null || edvd === null) throw new Error('Saved Happy Jump progress is invalid.');
     if (edvd > 0 && xanax !== XANAX_TOTAL) throw new Error('DVD progress requires all 4 Xanax.');
     if (ecstasy && (xanax !== XANAX_TOTAL || edvd !== EDVD_TOTAL)) throw new Error('Ecstasy progress requires 4 Xanax and 5 DVDs.');
-    if (complete && !ecstasy) throw new Error('Completed jump requires Ecstasy acknowledgement.');
+    if (initialTrain && !ecstasy) throw new Error('Initial training requires Ecstasy acknowledgement.');
+    if ((refillUsed || refillSkipped) && !initialTrain) throw new Error('Refill step requires the initial train.');
+    if (refillUsed && refillSkipped) throw new Error('Refill cannot be both used and skipped.');
+    if (refillTrain && !refillUsed) throw new Error('Refill training requires a used refill.');
+    if (complete && !(initialTrain && (refillSkipped || (refillUsed && refillTrain)))) {
+      throw new Error('Completed jump requires the training/refill workflow.');
+    }
 
     const cd = raw.cooldown && typeof raw.cooldown === 'object' ? raw.cooldown : {};
     const drugRaw = cd.drug !== undefined ? cd.drug : cd.drugSeconds;
@@ -98,7 +127,17 @@
       version: VERSION,
       revision: whole(raw.revision, 0, Number.MAX_SAFE_INTEGER) || 0,
       configured: raw.configured === true,
-      progress: { xanax: xanax, edvd: edvd, ecstasy: ecstasy, complete: complete },
+      progress: {
+        prepEnergy: prepEnergy,
+        xanax: xanax,
+        edvd: edvd,
+        ecstasy: ecstasy,
+        initialTrain: initialTrain,
+        refillUsed: refillUsed,
+        refillSkipped: refillSkipped,
+        refillTrain: refillTrain,
+        complete: complete
+      },
       cooldown: {
         drug: drug,
         booster: booster,
@@ -218,16 +257,29 @@
     at = Number(at || Date.now());
     const p = state.progress;
     const drugMs = drugRemaining(at);
+    const boosterMs = boosterRemaining(at);
 
     if (!state.configured) {
       return { stage: 'setup', item: 'setup', title: 'Set up your jump', text: 'Enter how many Xanax and DVDs you have already used.', ms: null, warn: 0 };
     }
     if (p.complete) {
-      return { stage: 'complete', item: 'done', title: 'Happy jump complete', text: 'Reset when you are ready to start another jump.', ms: null, warn: 0 };
+      return { stage: 'complete', item: 'done', title: 'Happy jump complete', text: 'The standard jump workflow is complete. Reset when you are ready to start another.', ms: null, warn: 0 };
     }
+
     if (p.ecstasy) {
       const deadline = state.trainDeadlineAt || nextQuarter(at);
-      return { stage: 'train', item: 'ecstasy', title: 'TRAIN NOW', text: 'Spend the stacked energy in the gym before the next happiness reset.', ms: Math.max(0, deadline - at), warn: TRAIN_WARN_MS };
+      if (deadline <= at) {
+        return { stage: 'expired', item: 'ecstasy', title: 'Happiness window expired', text: 'A quarter-hour happiness reset has passed. Do not mark this as a successful jump; reset or recover manually.', ms: 0, warn: TRAIN_WARN_MS };
+      }
+      if (!p.initialTrain) {
+        return { stage: 'train-initial', item: 'energy', title: 'TRAIN 1,000 ENERGY NOW', text: 'Spend the stacked energy in the gym before the next happiness reset.', ms: deadline - at, warn: TRAIN_WARN_MS };
+      }
+      if (!p.refillUsed && !p.refillSkipped) {
+        return { stage: 'use-refill', item: 'refill', title: 'Use the 30-point Energy refill', text: 'Use today\'s Energy refill manually if available, then acknowledge it here. You may explicitly skip it if unavailable.', ms: deadline - at, warn: TRAIN_WARN_MS };
+      }
+      if (p.refillUsed && !p.refillTrain) {
+        return { stage: 'train-refill', item: 'energy', title: 'TRAIN REFILL ENERGY NOW', text: 'Spend the refilled energy in the gym before the next happiness reset.', ms: deadline - at, warn: TRAIN_WARN_MS };
+      }
     }
 
     if (p.edvd > 0) {
@@ -237,13 +289,17 @@
       return { stage: 'take-ecstasy', item: 'ecstasy', title: 'Take Ecstasy now', text: 'All 5 DVDs are logged. Take Ecstasy manually, then acknowledge it here.', ms: 0, warn: 60000 };
     }
 
+    if (p.xanax === 0 && !p.prepEnergy) {
+      return { stage: 'prep-energy', item: 'energy', title: 'Spend your current energy first', text: 'Burn your current energy before stacking Xanax so the four 250-energy doses build the standard 1,000-energy stack without wasting starting energy.', ms: null, warn: 0 };
+    }
+
     if (!apiKey()) {
       return { stage: 'key', item: 'xanax', title: 'API key required', text: 'Save your own minimal-access Torn API key. It stays local to this script.', ms: null, warn: 0 };
     }
 
     if (p.xanax < XANAX_TOTAL) {
       if (drugMs === null || (drugMs <= 0 && !cooldownFresh(at))) {
-        return { stage: 'sync', item: 'xanax', title: 'Check Xanax #' + (p.xanax + 1), text: 'Sync Torn cooldown before taking the next Xanax.', ms: null, warn: 0 };
+        return { stage: 'sync', item: 'xanax', title: 'Check Xanax #' + (p.xanax + 1), text: 'Sync Torn drug cooldown before taking the next Xanax.', ms: null, warn: 0 };
       }
       if (drugMs > 0) {
         return { stage: 'wait-xanax', item: 'xanax', title: 'Xanax ' + p.xanax + '/' + XANAX_TOTAL + ' logged', text: 'Wait for drug cooldown. Next: Xanax #' + (p.xanax + 1) + '.', ms: drugMs, warn: DRUG_WARN_MS };
@@ -251,18 +307,27 @@
       return { stage: 'take-xanax', item: 'xanax', title: 'Take Xanax #' + (p.xanax + 1), text: 'Take it manually in Torn, then acknowledge it here.', ms: 0, warn: DRUG_WARN_MS };
     }
 
-    if (drugMs === null || (drugMs <= 0 && !cooldownFresh(at))) {
-      return { stage: 'sync', item: 'xanax', title: 'Confirm final cooldown', text: 'Sync Torn cooldown before starting the DVD stage.', ms: null, warn: 0 };
+    if (drugMs === null) {
+      return { stage: 'sync', item: 'xanax', title: 'Confirm final cooldowns', text: 'Sync Torn before starting the happiness stage.', ms: null, warn: 0 };
     }
     if (drugMs > 0) {
       return { stage: 'wait-final', item: 'xanax', title: '4/4 Xanax complete', text: 'Wait for the final drug cooldown to clear. Do not take Ecstasy yet.', ms: drugMs, warn: DRUG_WARN_MS };
     }
+    if (boosterMs === null) {
+      return { stage: 'sync', item: 'edvd', title: 'Confirm booster cooldown', text: 'Sync Torn booster cooldown before starting the five-DVD chain.', ms: null, warn: 0 };
+    }
+    if (boosterMs > 0) {
+      return { stage: 'wait-booster', item: 'edvd', title: 'Wait for booster cooldown', text: 'For the standard 5-DVD jump, begin with booster cooldown at 0. The script will hold the DVD stage until it clears.', ms: boosterMs, warn: BOOSTER_WARN_MS };
+    }
+    if (!cooldownFresh(at)) {
+      return { stage: 'sync', item: 'edvd', title: 'Confirm zero cooldowns', text: 'Refresh Torn cooldowns to confirm both drug and booster cooldown are 0 before starting.', ms: null, warn: 0 };
+    }
 
     const q = quarterGate(at);
     if (!q.ready) {
-      return { stage: 'wait-quarter', item: 'edvd', title: 'Xanax stack ready', text: 'For timing safety, start the DVD chain just after the next :00 / :15 / :30 / :45 happiness reset.', ms: q.ms, warn: 60000 };
+      return { stage: 'wait-quarter', item: 'edvd', title: 'Stack ready', text: 'Wait until just after the next :00 / :15 / :30 / :45 happiness reset, then start the five-DVD chain.', ms: q.ms, warn: 60000 };
     }
-    return { stage: 'take-edvd', item: 'edvd', title: 'Use Erotic DVD #1', text: 'Use it manually, then acknowledge it here. Continue quickly through all 5.', ms: 0, warn: 60000 };
+    return { stage: 'take-edvd', item: 'edvd', title: 'Use Erotic DVD #1', text: 'Both cooldowns are clear and the timing window is open. Use it manually, then acknowledge it here.', ms: 0, warn: 60000 };
   }
 
   function icon(item) {
@@ -271,6 +336,12 @@
     }
     if (item === 'ecstasy') {
       return '<svg viewBox="0 0 28 28"><circle cx="14" cy="14" r="9.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 10h8M10 14h6M10 18h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+    }
+    if (item === 'energy') {
+      return '<svg viewBox="0 0 28 28"><path d="M16 3 7 16h6l-1 9 9-14h-6l1-8Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>';
+    }
+    if (item === 'refill') {
+      return '<svg viewBox="0 0 28 28"><circle cx="14" cy="14" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M14 9v10M9 14h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
     }
     if (item === 'done') {
       return '<svg viewBox="0 0 28 28"><circle cx="14" cy="14" r="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="m9 14 3 3 7-8" fill="none" stroke="currentColor" stroke-width="2.3"/></svg>';
@@ -319,11 +390,11 @@
     panel.innerHTML =
       '<header id="header"><b>MM Happy Jump</b><span class="muted">v' + VERSION + '</span><button id="sync" type="button">Sync</button><button id="min" type="button">-</button></header>' +
       '<main>' +
-      '<div class="card next"><div class="head"><div class="icon" id="itemicon"></div><div><div class="title" id="title">Loading...</div><div class="muted" id="stage"></div></div></div><div class="timer" id="timer">--:--:--</div><div id="text"></div><div class="notice" id="notice"></div><div class="row"><button class="primary" id="action" type="button">Continue</button></div></div>' +
+      '<div class="card next"><div class="head"><div class="icon" id="itemicon"></div><div><div class="title" id="title">Loading...</div><div class="muted" id="stage"></div></div></div><div class="timer" id="timer">--:--:--</div><div id="text"></div><div class="notice" id="notice"></div><div class="row"><button class="primary" id="action" type="button">Continue</button><button id="skip" type="button" hidden>Skip refill</button></div></div>' +
       '<div class="progress"><div><span class="muted">Xanax</span><b id="xp">0/4</b></div><div><span class="muted">eDVD</span><b id="dp">0/5</b></div><div><span class="muted">Ecstasy</span><b id="ep">No</b></div></div>' +
-      '<div class="card" id="setup"><div class="title">Full Happy Jump</div><div class="muted">4 Xanax -> final drug cooldown -> 5 Erotic DVDs -> Ecstasy -> train.</div><div class="grid"><div><label>Xanax taken</label><input id="x" type="number" min="0" max="4" step="1"></div><div><label>eDVD used</label><input id="d" type="number" min="0" max="5" step="1"></div><label class="check"><input id="e" type="checkbox"> Ecstasy taken</label></div><div class="row"><button class="primary" id="start" type="button">Start / Resume</button></div></div>' +
+      '<div class="card" id="setup"><div class="title">Standard Happy Jump</div><div class="muted">Spend current E -> 4 Xanax -> drug + booster cooldown 0 -> quarter reset -> 5 Erotic DVDs -> Ecstasy -> train -> 30-point refill -> train.</div><div class="grid"><div><label>Xanax taken</label><input id="x" type="number" min="0" max="4" step="1"></div><div><label>eDVD used</label><input id="d" type="number" min="0" max="5" step="1"></div><label class="check"><input id="e" type="checkbox"> Ecstasy taken</label></div><div class="row"><button class="primary" id="start" type="button">Start / Resume</button></div></div>' +
       '<div class="card"><div class="title">Torn cooldown</div><div id="cd">Not synced.</div><div class="muted" id="fresh">Official Torn API. Local fetch time is shown; source timestamp is unavailable.</div><label>Minimal-access Torn API key</label><div class="api"><input id="apikey" type="password" autocomplete="off" spellcheck="false" placeholder="Stored only in this script"><button id="savekey" type="button">Save</button></div><div class="muted" id="keystatus"></div></div>' +
-      '<div class="row"><button id="edit" type="button">Edit Progress</button><button id="reset" class="danger" type="button">Reset Jump</button></div><div class="foot">Manual acknowledgements only. This script never takes drugs, uses boosters, or trains for you.</div>' +
+      '<div class="row"><button id="edit" type="button">Edit Progress</button><button id="reset" class="danger" type="button">Reset Jump</button></div><div class="foot">Manual acknowledgements only. This script never takes drugs, uses boosters, spends points, or trains for you.</div>' +
       '</main>';
 
     shadow.append(style, panel);
@@ -362,14 +433,20 @@
     action.dataset.action = f.stage;
     action.disabled = false;
     if (f.stage === 'setup') action.textContent = 'Complete setup below';
+    else if (f.stage === 'prep-energy') action.textContent = 'My starting energy is spent';
     else if (f.stage === 'key') action.textContent = 'Save API key below';
-    else if (f.stage === 'sync') action.textContent = 'Sync cooldown';
+    else if (f.stage === 'sync') action.textContent = 'Sync cooldowns';
     else if (f.stage === 'take-xanax') action.textContent = 'I took Xanax #' + (state.progress.xanax + 1);
     else if (f.stage === 'take-edvd') action.textContent = 'I used eDVD #' + (state.progress.edvd + 1);
     else if (f.stage === 'take-ecstasy') action.textContent = 'I took Ecstasy';
-    else if (f.stage === 'train') action.textContent = 'Jump complete';
+    else if (f.stage === 'train-initial') action.textContent = 'Initial 1,000E train done';
+    else if (f.stage === 'use-refill') action.textContent = 'I used the 30-point refill';
+    else if (f.stage === 'train-refill') action.textContent = 'Refill energy trained';
     else action.textContent = f.stage === 'complete' ? 'Complete' : 'Waiting';
-    if (['wait-xanax', 'wait-final', 'wait-quarter', 'complete'].includes(f.stage)) action.disabled = true;
+
+    const skip = ui.el('skip');
+    skip.hidden = f.stage !== 'use-refill';
+    if (['wait-xanax', 'wait-final', 'wait-booster', 'wait-quarter', 'expired', 'complete'].includes(f.stage)) action.disabled = true;
 
     ui.el('cd').textContent = 'Drug ' + clock(drugRemaining()) + ' · Booster ' + clock(boosterRemaining());
     if (state.cooldown.fetchedAt) {
@@ -493,7 +570,17 @@
 
     change(function (draft) {
       draft.configured = true;
-      draft.progress = { xanax: xanax, edvd: edvd, ecstasy: ecstasy, complete: false };
+      draft.progress = {
+        prepEnergy: xanax > 0,
+        xanax: xanax,
+        edvd: edvd,
+        ecstasy: ecstasy,
+        initialTrain: false,
+        refillUsed: false,
+        refillSkipped: false,
+        refillTrain: false,
+        complete: false
+      };
       draft.trainDeadlineAt = ecstasy ? nextQuarter() : 0;
       draft.lastActionAt = Date.now();
     });
@@ -512,9 +599,20 @@
     if (type === 'key') return ui.el('apikey').focus();
     if (type === 'sync') return void syncCooldown(false);
 
+    if (type === 'prep-energy') {
+      change(function (draft) {
+        draft.progress.prepEnergy = true;
+        draft.lastActionAt = Date.now();
+      });
+      notice('Starting energy acknowledged as spent. Begin the Xanax stack when drug cooldown is clear.');
+      render();
+      return;
+    }
+
     if (type === 'take-xanax') {
       change(function (draft) {
         if (draft.progress.xanax < XANAX_TOTAL) draft.progress.xanax += 1;
+        draft.progress.prepEnergy = true;
         draft.cooldown.status = 'stale';
         draft.cooldown.error = 'Waiting for Torn to confirm the new drug cooldown.';
         draft.lastActionAt = Date.now();
@@ -541,17 +639,39 @@
         draft.trainDeadlineAt = nextQuarter();
         draft.lastActionAt = Date.now();
       });
-      notice('Ecstasy acknowledged. Train now.');
+      notice('Ecstasy acknowledged. Train the stacked energy now.');
       render();
       return;
     }
 
-    if (type === 'train') {
+    if (type === 'train-initial') {
       change(function (draft) {
+        draft.progress.initialTrain = true;
+        draft.lastActionAt = Date.now();
+      });
+      notice('Initial energy train acknowledged. Use the daily Energy refill now if available.');
+      render();
+      return;
+    }
+
+    if (type === 'use-refill') {
+      change(function (draft) {
+        draft.progress.refillUsed = true;
+        draft.progress.refillSkipped = false;
+        draft.lastActionAt = Date.now();
+      });
+      notice('Energy refill acknowledged. Train the refilled energy now.');
+      render();
+      return;
+    }
+
+    if (type === 'train-refill') {
+      change(function (draft) {
+        draft.progress.refillTrain = true;
         draft.progress.complete = true;
         draft.lastActionAt = Date.now();
       });
-      notice('Jump marked complete.');
+      notice('Happy jump marked complete.');
       render();
     }
   }
@@ -568,6 +688,17 @@
     });
 
     ui.el('action').addEventListener('click', handleAction);
+    ui.el('skip').addEventListener('click', function (event) {
+      if (!event.isTrusted || !window.confirm('Skip the daily Energy refill for this jump?')) return;
+      change(function (draft) {
+        draft.progress.refillUsed = false;
+        draft.progress.refillSkipped = true;
+        draft.progress.complete = true;
+        draft.lastActionAt = Date.now();
+      });
+      notice('Energy refill skipped. Jump marked complete after the initial train.');
+      render();
+    });
     ui.el('start').addEventListener('click', saveProgress);
 
     ui.el('edit').addEventListener('click', function (event) {
