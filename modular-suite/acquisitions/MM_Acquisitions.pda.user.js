@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.18-pda.5
+// @version      8.0.0-alpha.19-pda.6
 // @description  TornPDA-compatible bundled MM Acquisitions build. Profit, ranked weapons, travel procurement, manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -24,33 +24,14 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(!document.body)return;
     let b=document.getElementById('mm-acquisitions-launcher');
     if(!b){
-      b=document.createElement('button');
-      b.id='mm-acquisitions-launcher';
-      b.type='button';
-      b.setAttribute('aria-label','MM_Acquisitions');
-      b.title='MM_Acquisitions';
+      b=document.createElement('button');b.id='mm-acquisitions-launcher';b.type='button';b.setAttribute('aria-label','MM_Acquisitions');b.title='MM_Acquisitions';
       b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 4 4M9 7.5v6M6.8 9.2h4.4M6.8 11.8h4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
       b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;';
-      b.addEventListener('click',()=>{
-        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){
-          globalThis.__MM_ACQ_OPEN__();
-          return;
-        }
-        const stage=String(globalThis.__MM_ACQ_PDA_STAGE||'unknown');
-        let d=document.getElementById('mm-acq-pda-boot-diagnostic');
-        if(!d){
-          d=document.createElement('div');
-          d.id='mm-acq-pda-boot-diagnostic';
-          d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';
-          document.body.appendChild(d);
-        }
-        d.innerHTML='<b>MM_Acquisitions PDA boot diagnostic</b><div style="margin-top:6px;">Stopped at: <code>'+stage.replace(/[<>&]/g,'')+'</code></div><div style="margin-top:4px;color:#bbb;">Send a screenshot of this message.</div>';
-      });
+      b.addEventListener('click',()=>{if(typeof globalThis.__MM_ACQ_OPEN__==='function'){globalThis.__MM_ACQ_OPEN__();return;}const stage=String(globalThis.__MM_ACQ_PDA_STAGE||'unknown');let d=document.getElementById('mm-acq-pda-boot-diagnostic');if(!d){d=document.createElement('div');d.id='mm-acq-pda-boot-diagnostic';d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';document.body.appendChild(d);}d.innerHTML='<b>MM_Acquisitions PDA boot diagnostic</b><div style="margin-top:6px;">Stopped at: <code>'+stage.replace(/[<>&]/g,'')+'</code></div><div style="margin-top:4px;color:#bbb;">Send a screenshot of this message.</div>';});
       document.body.appendChild(b);
     }
   }
-  if(document.body)ensureBootLauncher();
-  else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
+  if(document.body)ensureBootLauncher();else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
 })();
 
 /* ===== MM Torn Core (bundled) ===== */
@@ -2586,48 +2567,75 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       const preferred=String(preferredSource||'Best').toLowerCase();
       const ordered=result.sources.filter(source=>preferred==='best'||String(source.source||'').toLowerCase()===preferred);
       if(!ordered.length) return {routed:false,reason:'preferred-source-unavailable',...result};
+      const verificationWarnings=[];
 
       for(const candidate of ordered) {
         if(candidate.source==='Bazaar aggregate') {
-          try { await enrichItem(id); } catch {}
+          try { await enrichItem(id); } catch(error) {
+            verificationWarnings.push({source:'Bazaar discovery',message:String(error?.message||error||'refresh failed')});
+          }
           const refreshed=await core.readLegacyState();
           const aggregate=Math.max(0,Number(refreshed?.marketIntel?.marketplace?.[id]?.lowestPrice||candidate.price||0));
           const liveRows=freshOrganicListings(refreshed,id)
             .filter(row=>Number(row?.price||0)>0&&(!(aggregate>0)||Number(row.price)<=aggregate*1.35))
             .slice(0,VERIFY_SELLERS);
           for(const row of liveRows){
-            const verify=await verifyBazaar(id,row.sellerId,row.price);
+            let verify;
+            try{
+              verify=await verifyBazaar(id,row.sellerId,row.price);
+            }catch(error){
+              verificationWarnings.push({
+                source:'Bazaar',sellerId:asId(row.sellerId),
+                message:String(error?.message||error||'verification failed')
+              });
+              continue;
+            }
             await persistBazaarResult(id,row.sellerId,verify);
             if(!verify.verified)continue;
             const url='https://www.torn.com/bazaar.php?userId='+encodeURIComponent(asId(row.sellerId));
             navigate(url);
-            return {routed:true,source:'Bazaar',url,verified:verify,...result};
+            return {routed:true,source:'Bazaar',url,verified:verify,verificationWarnings,...result};
           }
           continue;
         }
         if(candidate.source==='Bazaar') {
-          const verify=await verifyBazaar(id,candidate.sellerId,candidate.price);
+          let verify;
+          try{
+            verify=await verifyBazaar(id,candidate.sellerId,candidate.price);
+          }catch(error){
+            verificationWarnings.push({
+              source:'Bazaar',sellerId:asId(candidate.sellerId),
+              message:String(error?.message||error||'verification failed')
+            });
+            continue;
+          }
           await persistBazaarResult(id,candidate.sellerId,verify);
           if(!verify.verified) continue;
           const url='https://www.torn.com/bazaar.php?userId='+encodeURIComponent(asId(candidate.sellerId));
           navigate(url);
-          return {routed:true,source:'Bazaar',url,verified:verify,...result};
+          return {routed:true,source:'Bazaar',url,verified:verify,verificationWarnings,...result};
         }
         if(candidate.source==='Item Market') {
-          const fresh=await refreshItemMarket(id);
+          let fresh;
+          try{
+            fresh=await refreshItemMarket(id);
+          }catch(error){
+            verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'verification failed')});
+            continue;
+          }
           const livePrice=Number(fresh?.itemMarket?.lowest||0);
           if(!(livePrice>0)) continue;
           const catalog=(await core.readLegacyState())?.procurement?.catalog?.[id]||{};
           const url=itemMarketPurchaseUrl(id,result.itemName,catalog.type||'');
           navigate(url);
-          return {routed:true,source:'Item Market',url,price:livePrice,...result};
+          return {routed:true,source:'Item Market',url,price:livePrice,verificationWarnings,...result};
         }
         if(candidate.source==='Overseas') {
           return {
             routed:false,reason:'overseas-recommended',recommendedSource:'Overseas',
             country:String(candidate.country||''),price:Number(candidate.price||0),stock:Number(candidate.quantity||0),
             profit:Number(candidate.profit||0),sourceProfitPerHour:Number(candidate.sourceProfitPerHour||0),
-            priceKnown:Boolean(candidate.priceKnown),
+            priceKnown:Boolean(candidate.priceKnown),verificationWarnings,
             ...result
           };
         }
@@ -2635,22 +2643,36 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
           return {
             routed:false,reason:'shop-recommended',recommendedSource:'Torn Shop',
             shopName:String(candidate.shopName||'Torn shop'),country:String(candidate.country||''),
-            price:Number(candidate.price||0),stock:Number(candidate.quantity||0),
+            price:Number(candidate.price||0),stock:Number(candidate.quantity||0),verificationWarnings,
             ...result
           };
         }
       }
-      return {routed:false,reason:'source-verification-failed',...result};
+      return {
+        routed:false,
+        reason:verificationWarnings.length?'live-verification-unavailable':'source-verification-failed',
+        verificationWarnings,
+        ...result
+      };
     }
 
     async function acquire(itemId) {
       if (!hasTornKey()) return {routed:false,reason:'api-key-required'};
       const id=asId(itemId);
-      await enrichItem(id);
-      try { await refreshItemMarket(id); } catch {}
+      const verificationWarnings=[];
+      try {
+        await enrichItem(id);
+      } catch(error) {
+        verificationWarnings.push({source:'Bazaar discovery',message:String(error?.message||error||'refresh failed')});
+      }
+      try {
+        await refreshItemMarket(id);
+      } catch(error) {
+        verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'refresh failed')});
+      }
       let state=await core.readLegacyState();
       let opportunity=logic.rankCachedOpportunities(state).find(row=>asId(row.id)===id);
-      if (!opportunity) return {routed:false,reason:'no-qualified-opportunity'};
+      if (!opportunity) return {routed:false,reason:'no-qualified-opportunity',verificationWarnings};
 
       const maxBuy=Math.max(0,Number(opportunity.maxBuyPrice||0));
       const bazaarCandidates=freshOrganicListings(state,id)
@@ -2667,16 +2689,31 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
       for (const candidate of candidates) {
         if (candidate.source==='Bazaar') {
-          const result=await verifyBazaar(id,candidate.row.sellerId,candidate.row.price);
+          let result;
+          try{
+            result=await verifyBazaar(id,candidate.row.sellerId,candidate.row.price);
+          }catch(error){
+            verificationWarnings.push({
+              source:'Bazaar',sellerId:asId(candidate.row.sellerId),
+              message:String(error?.message||error||'verification failed')
+            });
+            continue;
+          }
           await persistBazaarResult(id,candidate.row.sellerId,result);
           if (!result.verified) continue;
           if (maxBuy>0&&Number(result.actualPrice||0)>maxBuy) continue;
           const url='https://www.torn.com/bazaar.php?userId='+encodeURIComponent(asId(candidate.row.sellerId));
           navigate(url);
-          return {routed:true,source:'Bazaar',url,verified:result};
+          return {routed:true,source:'Bazaar',url,verified:result,verificationWarnings};
         }
 
-        const fresh=await refreshItemMarket(id);
+        let fresh;
+        try{
+          fresh=await refreshItemMarket(id);
+        }catch(error){
+          verificationWarnings.push({source:'Item Market',message:String(error?.message||error||'verification failed')});
+          continue;
+        }
         const livePrice=Number(fresh?.itemMarket?.lowest||0);
         if (!(livePrice>0)||(maxBuy>0&&livePrice>maxBuy)) continue;
         state=await core.readLegacyState();
@@ -2684,9 +2721,14 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         const catalog=state?.procurement?.catalog?.[id]||{};
         const url=itemMarketPurchaseUrl(id,opportunity.name,catalog.type||opportunity.itemType);
         navigate(url);
-        return {routed:true,source:'Item Market',url,price:livePrice};
+        return {routed:true,source:'Item Market',url,price:livePrice,verificationWarnings};
       }
-      return {routed:false,reason:'no-live-source-inside-ceiling',maxBuyPrice:maxBuy};
+      return {
+        routed:false,
+        reason:verificationWarnings.length?'live-verification-unavailable':'no-live-source-inside-ceiling',
+        maxBuyPrice:maxBuy,
+        verificationWarnings
+      };
     }
 
     return Object.freeze({
@@ -3188,7 +3230,10 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
           resolve(body);
         },
         ontimeout:()=>reject(new Error('Request timed out.')),
-        onerror:()=>reject(new Error('Network request failed.'))
+        onerror:error=>{
+          const detail=String(error?.statusText||error?.message||error?.error||'').trim();
+          reject(new Error('Network request failed'+(detail?': '+detail:'')+'.'));
+        }
       });
     });
   }
@@ -3311,7 +3356,10 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
           resolve(data);
         },
         ontimeout:()=>reject(new Error('Request timed out.')),
-        onerror:()=>reject(new Error('Network request failed.'))
+        onerror:error=>{
+          const detail=String(error?.statusText||error?.message||error?.error||'').trim();
+          reject(new Error('Network request failed'+(detail?': '+detail:'')+'.'));
+        }
       });
     });
   }
@@ -3473,11 +3521,14 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       const result=await service.acquire(itemId);
       if(!result?.routed){
         const reason=String(result?.reason||'no-live-source');
+        const warningSources=[...new Set((result?.verificationWarnings||[]).map(row=>String(row?.source||'')).filter(Boolean))];
         statusText=reason==='no-qualified-opportunity'
           ? 'Opportunity no longer meets ROI/profit rules.'
           : reason==='no-live-source-inside-ceiling'
             ? 'No current Bazaar seller or Item Market listing remains inside the buy ceiling.'
-            : 'Could not route purchase: '+reason;
+            : reason==='live-verification-unavailable'
+              ? 'Live verification unavailable'+(warningSources.length?' for '+warningSources.join(' / '):'')+'. No purchase route was opened.'
+              : 'Could not route purchase: '+reason;
         state=await core.readLegacyState();
       }
     }catch(error){
@@ -4394,7 +4445,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.18-pda.5 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.19-pda.6 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
