@@ -24,18 +24,11 @@
     };
   }
 
-  const originalGetValue=globalThis.GM_getValue;
-  globalThis.GM_getValue=function(key,def){
-    let value;
-    try{value=originalGetValue(key,def);}catch{value=def;}
-    if(String(key)==='mm_acquisitions_api_v1'){
-      const pdaKey=String(PDA_API_KEY_PLACEHOLDER||'').trim();
-      const placeholderSentinel='###PDA-'+'APIKEY###';
-      const realPdaKey=pdaKey&&pdaKey!==placeholderSentinel;
-      if((value==null||value===''||value===def)&&realPdaKey)return pdaKey;
-    }
-    return value;
-  };
+  // TornPDA/GMforPDA exposes GM_* helpers as non-writable, non-configurable
+  // window properties. Never monkey-patch them. Keep the PDA-injected key in
+  // an MM-owned global and let the PDA-generated Acquisitions entrypoint choose
+  // it only when the script has no explicitly saved key.
+  globalThis.__MM_PDA_API_KEY__=String(PDA_API_KEY_PLACEHOLDER||'').trim();
 
   if(typeof globalThis.GM_xmlhttpRequest!=='function'&&typeof globalThis.PDA_httpGet==='function'){
     globalThis.GM_xmlhttpRequest=options=>{
