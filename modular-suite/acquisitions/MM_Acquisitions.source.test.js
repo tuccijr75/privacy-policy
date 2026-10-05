@@ -68,6 +68,8 @@ const live=sandbox.globalThis.MMTornAcquisitionsLive;assert(live);
 
   const result=await service.procurementSourceOptions('17','Beretta 92FS');
   assert.strictEqual(result.catalogReference,30000000,'catalog reference should remain visible only as reference');
+  assert.strictEqual(result.exitValue,488295,'selected-item exit must come from current Bazaar / Item Market evidence, not a derived cached snapshot');
+  assert.strictEqual(result.exitRoute,'Item Market Net');
   assert(result.exitValue>0&&result.exitValue<1000000,'live exit must not be contaminated by 30M catalog reference');
   assert(!result.sources.some(row=>row.source==='Bazaar'&&row.price===30000000),'inconsistent named Bazaar listing must be rejected');
   const aggregate=result.sources.find(row=>row.source==='Bazaar aggregate');
@@ -92,6 +94,67 @@ const live=sandbox.globalThis.MMTornAcquisitionsLive;assert(live);
   assert.strictEqual(routed.routed,true,'routing should fall through to the next verifiable source when aggregate Bazaar cannot resolve seller');
   assert.strictEqual(routed.source,'Item Market');
   assert(navigations.some(url=>url.includes('sid=ItemMarket')&&url.includes('itemID=17')));
+
+
+  // Reproduce the live Pangolin failure: current sources are ~204k but a depth-derived
+  // snapshot can reach 275,420. Selected-item valuation must ignore that derived snapshot.
+  db={
+    businessRules:{maxListingAgeSec:180},
+    marketIntel:{
+      settings:{bazaarExitHaircutPct:0},
+      marketplace:{
+        '1494':{
+          itemId:'1494',itemName:'Pangolin Scales',
+          marketPrice:204000,bazaarAverage:204985,lowestPrice:204994,totalBazaars:59
+        }
+      },
+      details:{},traders:{}
+    },
+    procurement:{
+      catalog:{
+        '1494':{id:'1494',name:'Pangolin Scales',type:'Other',marketPrice:204384,shops:[]}
+      },
+      marketSnapshots:{}
+    },
+    travelIntel:{rows:[{
+      itemId:'1494',itemName:'Pangolin Scales',country:'China',stock:3462,
+      profit:63892,sourceProfitPerHour:8370,shopCost:0,homeMarket:0
+    }]}
+  };
+  const pangolinService=live.createService({
+    core,
+    logic:{},
+    hasTornKey:()=>true,
+    navigate:url=>navigations.push(url),
+    bazaarRequest:async()=>({bazaar_is_open:true,bazaar_timestamp:Math.floor(Date.now()/1000),bazaar:[]}),
+    weavRequest:async(path)=>{
+      if(path==='/marketplace/1494') return {
+        item_name:'Pangolin Scales',market_price:204000,bazaar_average:204985,
+        listings:[
+          {item_id:1494,player_id:1,player_name:'A',quantity:1,price:204994,last_checked:Date.now(),content_updated:Date.now()},
+          {item_id:1494,player_id:2,player_name:'B',quantity:1,price:230000,last_checked:Date.now(),content_updated:Date.now()},
+          {item_id:1494,player_id:3,player_name:'C',quantity:1,price:275420,last_checked:Date.now(),content_updated:Date.now()}
+        ]
+      };
+      if(path==='/marketplace/1494/traders') return {item_name:'Pangolin Scales',traders:[]};
+      throw new Error('unexpected Pangolin weav path '+path);
+    },
+    tornRequest:async path=>{
+      if(String(path).includes('/market/1494/itemmarket')) return {
+        itemmarket:{listings:[
+          {price:204000,quantity:226},
+          {price:250000,quantity:1},
+          {price:290000,quantity:1}
+        ]}
+      };
+      throw new Error('unexpected Pangolin torn path '+path);
+    }
+  });
+  const pangolin=await pangolinService.procurementSourceOptions('1494','Pangolin Scales');
+  assert.strictEqual(db.procurement.marketSnapshots['1494'].realisticExit,275420,'fixture must recreate the inflated derived snapshot');
+  assert.strictEqual(pangolin.exitValue,204985,'selected-item exit must ignore the inflated snapshot and use current source-specific exit evidence');
+  assert.strictEqual(pangolin.exitRoute,'Bazaar');
+  assert(pangolin.exitValue<210000,'Pangolin exit must remain in the live ~204k market range');
 
   const overseasRoute=await service.routeProcurementRequest({itemId:'17',itemName:'Beretta 92FS',preferredSource:'Overseas'});
   assert.strictEqual(overseasRoute.routed,false);
