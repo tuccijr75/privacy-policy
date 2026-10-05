@@ -2281,4 +2281,41 @@ Verification:
 - static regressions added to the existing Acquisitions purchase/source test file.
 
 Artifact: `MM_Acquisitions.pda.user.js` version `8.0.0-alpha.18-pda.5`.
+### TornPDA pda.5 live UI pass + alpha.19-pda.6 source-fallback correction — 2026-10-05
+
+Owner screenshot on iOS TornPDA with `8.0.0-alpha.18-pda.5`:
+- PASS: PDA launcher is visible above native browser chrome;
+- PASS: Acquisitions panel opens and fits the mobile viewport;
+- PASS: Deals / Items / Ranked / Travel / Settings tabs render without horizontal clipping;
+- PASS: previous dependency failure and shared-state failure are gone;
+- PASS: Torn key reports SAVED;
+- PASS: Item Market refreshed successfully (~4s old in screenshot);
+- PASS: purchase log sync succeeded (~29s old, HTTP 200);
+- PASS: cached market opportunities render and remain manual `Verify & Buy` actions;
+- BLOCKER: a manual live verification surfaced `Live verification failed: Network request failed.`.
+
+Network-path audit:
+- the failing flow refreshes Item Market successfully before seller-specific Bazaar verification;
+- seller-specific Bazaar verification uses Torn's legacy `user -> bazaar` selection because current API v2 exposes item-specialized Bazaar directories but not seller inventory/price verification;
+- one Bazaar provider/network failure was allowed to throw out of `acquire()` / `routeProcurementRequest()` and abort the whole route even when a freshly verified Item Market fallback existed.
+
+alpha.19 / pda.6 correction:
+- Bazaar discovery refresh failures are recorded as warnings instead of aborting the route;
+- individual seller Bazaar verification failures are isolated per seller and the next source is tried;
+- Item Market verification failures are isolated the same way;
+- a healthy Item Market source now remains routable after Bazaar verification network failure;
+- if every live source fails, the result is `live-verification-unavailable` with provider warnings and no purchase route is opened;
+- UI reports which provider(s) were unavailable instead of the generic top-level network exception;
+- generic network errors now preserve TornPDA status/error detail when supplied.
+
+Verification:
+- regression fixture intentionally throws `PDA bazaar request failed` while Item Market is live;
+- PASS: route falls through to Item Market and navigates to the exact item;
+- PASS: Bazaar failure is retained in `verificationWarnings`; 
+- PASS: alpha.19-pda.6 simulated under immutable TornPDA GM helpers reaches `ui-ready`; 
+- PASS: launcher remains at safe 86px PDA offset.
+
+Next live gate:
+- install alpha.19-pda.6 and repeat one `Verify & Buy` on a qualified deal;
+- expected: Bazaar verification failure may be skipped, Item Market fallback should open when valid, and no purchase is completed automatically.
 
