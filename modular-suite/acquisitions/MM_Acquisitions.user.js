@@ -1,16 +1,17 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.20
-// @description  Market acquisition, pricelist profit, ranked-weapon valuation, live market/auction scouting and travel procurement with manual final purchase.
+// @version      8.0.0-alpha.21
+// @description  Market acquisition with seller-free Market Pulse liquidity, pricelist profit, ranked-weapon valuation, live market/auction scouting and travel procurement with manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/acquisitions/MM_Acquisitions.logic.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/acquisitions/MM_Acquisitions.live.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.live.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -29,6 +30,7 @@
   const TRAVEL_FEED_KEY='mm_acquisitions_travel_feed_v1';
   const TRAVEL_RETURN_KEY='mm_acquisitions_travel_return_v1';
   const WEAV_WATCH_LEASE_KEY='mm_acquisitions_weav_watch_lease_v1';
+  const PULSE_LEASE_KEY='mm_acquisitions_market_pulse_lease_v1';
   const CHANNEL='mm_bazaar_crm_cross_tab_v1';
   const INSTANCE_ID='acq-'+Date.now()+'-'+Math.random().toString(36).slice(2,9);
   const AUTO_REFRESH_MS=60_000;
@@ -74,6 +76,7 @@
   let rankedPage=0;
 
   const core=globalThis.MMTornCore;
+  const pulse=globalThis.MMTornMarketPulse;
   const logic=globalThis.MMTornAcquisitionsLogic;
   const live=globalThis.MMTornAcquisitionsLive;
   const rankedLogic=globalThis.MMTornRankedProfitLogic;
@@ -105,6 +108,31 @@
     if(sec<3600)return Math.floor(sec/60)+'m ago';
     if(sec<86400)return Math.floor(sec/3600)+'h ago';
     return Math.floor(sec/86400)+'d ago';
+  }
+
+  function pulseLine(row={},itemId='',unitProfit=0){
+    const p=(row&&row.pulseTier)?row:(logic?.pulseFields?.(state,itemId,unitProfit)||{});
+    const tier=String(p?.pulseTier||'unknown');
+    if(tier==='unknown')return '<div style="font-size:10px;color:#777;">Market Pulse · collecting seller-free Torn API movement evidence</div>';
+    const freshness=typeof p?.pulseFreshness==='string'?String(p.pulseFreshness):String(p?.pulseFreshness?.label||'UNKNOWN');
+    const sourceAt=Number(p?.pulseSourceTimestamp||0);
+    const fetchedAt=Number(p?.pulseFetchedAt||0);
+    const cacheDelaySec=Math.round(Math.max(0,Number(p?.pulseUpstreamCacheDelayMs||0))/1000);
+    const score=p?.marketPulseScore===null||p?.marketPulseScore===undefined?'':(' · pulse score '+Number(p.marketPulseScore||0).toFixed(0)+'/100');
+    const velocity=Number(p?.profitVelocityPerHour||0)>0?' · est profit velocity '+money(p.profitVelocityPerHour)+'/hr':'';
+    return '<div style="font-size:10px;color:#8fb9a1;">Market Pulse '+esc(tier.toUpperCase())+
+      ' · events/hr '+Number(p?.observedEventsPerHour||0).toFixed(2)+
+      ' · units/hr '+Number(p?.observedUnitsPerHour||0).toFixed(2)+
+      ' · turnover/hr '+money(p?.turnoverPerHour||0)+
+      ' · liquidity '+Number(p?.pulseLiquidityScore||0).toFixed(0)+'/100'+
+      ' · depth '+Number(p?.pulseMarketDepth||0).toLocaleString()+
+      ' · confidence '+Number(p?.pulseConfidencePct||0).toFixed(0)+'%'+
+      ' · trend '+Number(p?.pulseTrendPct||0).toFixed(1)+'%'+score+velocity+
+      ' · '+esc(freshness)+
+      ' · source '+(sourceAt?esc(age(new Date(sourceAt).toISOString())):'unknown')+
+      ' · fetched '+(fetchedAt?esc(age(new Date(fetchedAt).toISOString())):'unknown')+
+      (cacheDelaySec?' · upstream cache '+cacheDelaySec+'s':'')+
+      ' · Torn API</div>';
   }
 
   function futureDuration(unixSeconds){
@@ -344,6 +372,16 @@
     navigate
   });
 
+  const pulseEngine=core&&pulse&&service?pulse.createEngine({
+    core,
+    refreshItemMarket:itemId=>service.refreshItemMarket(itemId),
+    hasKey:()=>Boolean(apiKey()),
+    readLease:()=>GM_getValue(PULSE_LEASE_KEY,null),
+    writeLease:value=>GM_setValue(PULSE_LEASE_KEY,value),
+    ownerId:INSTANCE_ID,
+    onState:next=>{state=next;}
+  }):null;
+
   async function importTravelCapture({silent=false}={}){
     const feed=readTravelFeed();
     if(!feed?.rows?.length) {
@@ -382,7 +420,7 @@
 
   async function reloadCachedState(){
     loadError='';
-    if(!core||!logic||!live||!rankedLogic||!ledger||!service){
+    if(!core||!pulse||!logic||!live||!rankedLogic||!ledger||!service||!pulseEngine){
       loadError='MM Acquisitions dependencies did not load.';
       state=null;
       render();
@@ -563,26 +601,31 @@
   }
 
   async function autoRefreshAcquisitions({force=false}={}){
-    if(autoRefreshRunning||busy||watchRunning||document.visibilityState!=='visible')return;
+    if(autoRefreshRunning||busy||watchRunning||document.visibilityState!=='visible'||!core)return;
     const root=document.getElementById(ROOT_ID);
-    if(!root||root.style.display==='none')return;
+    const panelOpen=Boolean(root&&root.style.display!=='none');
     autoRefreshRunning=true;
     try{
       state=await core.readLegacyState();
-      try{await importTravelCapture({silent:true});}catch{}
-      if(apiKey())try{await refreshTravelContext({force:false,silent:true});}catch{}
-      const f=core.freshnessSnapshot(state||{});
-      const now=Date.now();
-      const purchaseAt=Date.parse(f.acquisitions||state?.procurement?.lastAcquisitionSyncAt||'')||0;
-      const itemMarketAt=Date.parse(f.itemMarket||'')||0;
-      if(apiKey()&&(force||!purchaseAt||now-purchaseAt>=PURCHASE_STALE_MS))await syncPurchases();
-      if(force||!itemMarketAt||now-itemMarketAt>=OPPORTUNITY_STALE_MS)await refreshOpportunities();
-      if(activeView==='ranked')await ensureRankedFresh();
-      else render();
+      if(panelOpen){
+        try{await importTravelCapture({silent:true});}catch{}
+        if(apiKey())try{await refreshTravelContext({force:false,silent:true});}catch{}
+        const f=core.freshnessSnapshot(state||{});
+        const now=Date.now();
+        const purchaseAt=Date.parse(f.acquisitions||state?.procurement?.lastAcquisitionSyncAt||'')||0;
+        const itemMarketAt=Date.parse(f.itemMarket||'')||0;
+        if(apiKey()&&(force||!purchaseAt||now-purchaseAt>=PURCHASE_STALE_MS))await syncPurchases();
+        if(force||!itemMarketAt||now-itemMarketAt>=OPPORTUNITY_STALE_MS)await refreshOpportunities();
+        if(activeView==='ranked')await ensureRankedFresh();
+      }
+      if(apiKey()&&pulseEngine){
+        const result=await pulseEngine.tick();
+        if(result?.state)state=result.state;
+      }
+      if(panelOpen)render();
     }catch(error){
       console.warn('[MM_Acquisitions] automatic refresh failed',error);
-      statusText='Auto-refresh warning: '+(error?.message||String(error));
-      render();
+      if(panelOpen){statusText='Auto-refresh warning: '+(error?.message||String(error));render();}
     }finally{autoRefreshRunning=false;}
   }
 
@@ -596,12 +639,46 @@
     if(autoRefreshTimer){clearInterval(autoRefreshTimer);autoRefreshTimer=null;}
   }
 
+  async function refreshMarketPulse(){
+    if(busy||autoRefreshRunning||!pulseEngine)return;
+    if(!apiKey()){statusText='Save a Torn API key in Settings before refreshing Market Pulse.';activeView='settings';render();return;}
+    busy=true;statusText='Refreshing one Market Pulse item from Torn API…';render();
+    try{
+      state=await core.readLegacyState();
+      const itemId=pulse.trackedItemIds(state,1)[0]||'';
+      if(!itemId){statusText='Market Pulse has no tracked acquisition item yet. Refresh Opportunities or Pricelist first.';return;}
+      const result=await pulseEngine.tick({itemId});
+      if(result?.state)state=result.state;
+      statusText=result?.refreshed
+        ?('Market Pulse refreshed item '+itemId+(result.reusedRecent?' from the just-verified 2.5s snapshot.':'.'))
+        :('Market Pulse did not refresh: '+String(result?.skipped||result?.error||'not due')+'.');
+    }catch(error){statusText='Market Pulse refresh failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function exportMarketPulseDiagnostics(){
+    if(!pulse||!state)return;
+    const diagnostics=pulse.sanitizedDiagnostics(state,GM_getValue(PULSE_LEASE_KEY,null));
+    const blob=new Blob([JSON.stringify(diagnostics,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');a.href=url;a.download='MM_Acquisitions-Market-Pulse-'+Date.now()+'.json';
+    document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    statusText='Sanitized Market Pulse diagnostics exported.';render();
+  }
+
   function sourceStrip(){
     if(!state)return '';
     const f=core.freshnessSnapshot(state);
+    const pulseState=state?.marketIntel?.marketPulse||{};
+    const pulseItems=Object.values(pulseState.items||{});
+    const proven=pulseItems.filter(row=>String(row?.tier||'')==='proven').length;
+    const candidates=pulseItems.filter(row=>String(row?.tier||'')==='candidate').length;
+    const budget=pulse?.budgetStatus?.(state)||{used:0,limit:0};
+    const pulseAt=Number(pulseState.updatedAt||0);
     return '<div style="display:flex;gap:5px;flex-wrap:wrap;font-size:10px;color:#aaa;margin-bottom:7px;">'+
       '<span>Bazaar '+esc(age(f.weav3rGeneratedAt))+' <span style="color:#777;">(Weav3r)</span></span>'+
       '<span>· Item Market '+esc(age(f.itemMarket))+'</span>'+
+      '<span>· Market Pulse '+(pulseAt?esc(age(new Date(pulseAt).toISOString())):'not synced')+' <span style="color:#777;">(Torn API · '+proven+' proven / '+candidates+' candidates · budget '+Number(budget.used||0)+'/'+Number(budget.limit||0)+')</span></span>'+
       '<span>· Travel '+esc(age(f.travel))+'</span>'+
       '<span>· Pricelist '+esc(age(state?.procurement?.pricelist?.lastSyncAt))+'</span>'+
       '<span>· Ranked '+esc(age(state?.procurement?.ranked?.lastLiveAt))+'</span>'+
@@ -714,7 +791,7 @@
         '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
           '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.freshness?.label||'UNKNOWN')+' · <b>'+esc(r.buySource||'Bazaar observed')+'</b>'+
           '<div>Bazaar low <b>'+money(r.buyPrice)+'</b> · Bazaar avg '+money(r.bazaarAverage||0)+' · Your buy rate '+money(r.targetBuy)+' · Best exit '+money(r.bestExit)+' ('+esc(r.bestExitRoute||'')+') · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
-          '<div style="color:#888;">Profit/unit '+(r.profit>=0?'+':'-')+money(Math.abs(r.profit||0))+' · liquidity '+Number(r.liquidity||0)+'/100 · confidence '+Number(r.confidence||0)+'% · bazaars '+Number(r.sellerCount||0)+'</div></div>'+
+          '<div style="color:#888;">Profit/unit '+(r.profit>=0?'+':'-')+money(Math.abs(r.profit||0))+' · liquidity '+Number(r.liquidity||0)+'/100 · confidence '+Number(r.confidence||0)+'% · bazaars '+Number(r.sellerCount||0)+'</div>'+pulseLine(r,r.id,r.profit)+'</div>'+
           '<button data-pricelist-verify="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(r.qualifies)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Verify</button>'+
         '</div>'
       ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">Pricelist rows are loaded, but current market evidence is unavailable. Refresh Opportunities.</div>')
@@ -725,7 +802,7 @@
         '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
           '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.name)+'</b> · '+esc(r.purchaseSource)+
           '<div>Buy <b>'+money(r.buyPrice)+'</b> · Max '+money(r.maxBuyPrice)+' · Exit '+money(r.bestExit)+' · ROI <b>'+Number(r.roiPct||0).toFixed(1)+'%</b></div>'+
-          '<div style="color:#888;">3d sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% ('+esc(r.conversionSource)+') · Confidence '+Number(r.confidence||0).toFixed(0)+'% · Live listings '+Number(r.liveListingCount||0)+' · Qty '+Number(r.recommendedQty||1)+' · Est. 3d profit '+money(r.expectedProfit3d||0)+'</div></div>'+
+          '<div style="color:#888;">3d sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% ('+esc(r.conversionSource)+') · Confidence '+Number(r.confidence||0).toFixed(0)+'% · Live listings '+Number(r.liveListingCount||0)+' · Qty '+Number(r.recommendedQty||1)+' · Est. 3d profit '+money(r.expectedProfit3d||0)+'</div>'+pulseLine(r,r.id,r.profit)+'</div>'+
           '<button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'white-space:nowrap;">Verify & Buy</button>'+
         '</div>'
       ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No current cached opportunity meets the active business rules.</div>')
@@ -734,7 +811,7 @@
       '<div style="font-size:10px;color:#888;margin:4px 0;">These require fresher seller or Item Market evidence before routing.</div>'+
       (research.length?research.map(r=>
         '<div style="display:flex;justify-content:space-between;gap:8px;border-top:1px solid #303030;padding:6px 0;font-size:10px;">'+
-          '<div><b>'+esc(r.name)+'</b> · '+esc(r.discoverySource||'Research')+' · ROI '+Number(r.roiPct||0).toFixed(1)+'% · Sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% · score '+Number(r.score||0).toFixed(0)+'</div>'+
+          '<div><b>'+esc(r.name)+'</b> · '+esc(r.discoverySource||'Research')+' · ROI '+Number(r.roiPct||0).toFixed(1)+'% · Sell-through '+Number(r.sellThrough3dPct||0).toFixed(0)+'% · score '+Number(r.score||0).toFixed(0)+pulseLine(r,r.id,r.profit)+'</div>'+
           '<button data-acquire-item="'+esc(r.id)+'" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'padding:4px 7px;">Find & Buy</button>'+
         '</div>'
       ).join(''):'<div style="font-size:10px;color:#888;margin-top:6px;">No additional leads.</div>')+
@@ -778,7 +855,7 @@
     )+
     card(rows.length?rows.map((r,i)=>
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;"><div><b>#'+(i+1)+' '+esc(r.itemName)+'</b> · '+esc(r.country)+
-      '<div>Overseas stock '+Number(r.stock||0).toLocaleString()+' · Profit '+money(r.profit||0)+' · Source profit/hr '+money(r.sourceProfitPerHour||0)+'</div></div>'+
+      '<div>Overseas stock '+Number(r.stock||0).toLocaleString()+' · Profit '+money(r.profit||0)+' · Source profit/hr '+money(r.sourceProfitPerHour||0)+' · Liquidity-adjusted '+money(r.liquidityAdjustedProfitPerHour||0)+'/hr</div>'+pulseLine(r,r.itemId,r.profit)+'</div>'+
       '<button data-travel-compare="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'white-space:nowrap;">Compare Bazaar / Market</button></div>'
     ).join(''):(stale
       ?'<div style="font-size:11px;color:#888;">No travel recommendations shown until data is refreshed.</div>'
@@ -917,7 +994,7 @@
         weaponType:String(row.weaponType||cat.weaponCategory||'')
       };
       const hist=Array.isArray(history?.[String(row.itemId)]?.rows)?history[String(row.itemId)].rows:[];
-      return rankedLogic.evaluateListing(candidate,hist,{...cfg,bbRate:cfg.bbRate});
+      return rankedLogic.evaluateListing(candidate,hist,{...cfg,bbRate:cfg.bbRate,pulseByItem:state?.marketIntel?.marketPulse?.items||{}});
     });
     const bonusQ=rankedBonus.trim().toLowerCase();
     const weaponQ=rankedWeapon.trim().toLowerCase();
@@ -1050,7 +1127,7 @@
               '<div>'+esc(bonus)+'</div>'+
               priceLine+auctionLine+
               '<div style="color:#888;">'+esc(row.valuationSource)+' · BB '+Number(row.bbUnits||0)+' ('+money(row.bbFloor)+') · AH median '+money(row.auctionValue)+' · '+esc(row.history?.cohort||'BASE')+' n='+Number(row.history?.samples||0)+' · confidence '+Number(row.history?.confidence||0)+'%</div>'+
-              '<div style="color:#888;">Traffic 7/30/90d '+Number(row.volume7||0)+'/'+Number(row.volume30||0)+'/'+Number(row.volume90||0)+' · liquidity '+Number(row.liquidityScore||0)+'/100 · '+(isAuction?'watch '+Number(row.auctionWatchScore||0)+'/100 · urgency '+Number(row.auctionUrgencyScore||0)+'/100 · bid discount '+Number(row.auctionDiscountScore||0)+'/100':'investment '+Number(row.investmentScore||0)+'/100')+'</div>'+
+              '<div style="color:#888;">Traffic 7/30/90d '+Number(row.volume7||0)+'/'+Number(row.volume30||0)+'/'+Number(row.volume90||0)+' · liquidity '+Number(row.liquidityScore||0)+'/100 (AH '+Number(row.auctionHistoryLiquidityScore||0)+'/100) · '+(isAuction?'watch '+Number(row.auctionWatchScore||0)+'/100 · urgency '+Number(row.auctionUrgencyScore||0)+'/100 · bid discount '+Number(row.auctionDiscountScore||0)+'/100':'investment '+Number(row.investmentScore||0)+'/100')+'</div>'+pulseLine(row,row.itemId,row.profit)+
             '</div>'+
             '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
               '<button data-rw-history="'+esc(row.itemId)+'" '+(busy?'disabled':'')+' style="'+button(!historyLoaded)+(busy?'opacity:.5;':'')+'padding:5px 7px;">'+(historyLoaded?'Refresh AH':'Analyze AH')+'</button>'+
@@ -1261,7 +1338,7 @@
           '<div style="font-size:10px;color:#888;">'+esc(itemSelection.type)+(itemSelection.subType?' · '+esc(itemSelection.subType):'')+' · Torn catalog reference '+money(itemSelection.marketPrice||0)+' (reference only; not used as live exit)</div>'+
         '</div>'+
         '<button data-item-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Use Best Source</button>'+
-      '</div>'+rows
+      '</div>'+pulseLine({},itemSelection.id,0)+rows
     );
   }
 
@@ -1325,6 +1402,11 @@
 
   function settingsHtml(){
     const r=state?.businessRules||{};
+    const pulseState=state?.marketIntel?.marketPulse||{};
+    const pulseRows=Object.values(pulseState.items||{});
+    const pulseBudget=pulse?.budgetStatus?.(state)||{used:0,limit:0};
+    const pulseProven=pulseRows.filter(row=>String(row?.tier||'')==='proven').length;
+    const pulseCandidates=pulseRows.filter(row=>String(row?.tier||'')==='candidate').length;
     return card(
       '<b>MM Acquisitions Connection</b>'+
       '<div style="font-size:10px;color:#888;margin:4px 0 7px;">The API key is stored only in this userscript\'s Tampermonkey GM storage. It is not copied to shared IndexedDB/localStorage. Required scope: Torn Items catalog, User Basic, User Log purchase events used by the ledger, and market data needed for live verification.</div>'+
@@ -1334,6 +1416,13 @@
         '<button id="mm-acq-clear-key" style="'+button()+'">Clear</button>'+
       '</div>'+
       '<div style="font-size:10px;color:#888;margin-top:7px;">While Acquisitions is open and visible, stale purchase logs and opportunity data refresh automatically with guarded intervals. Weav3r generation is checked once per minute. Verify & Buy and final purchase remain manual.</div>'
+    )+
+    card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+        '<div><b>Market Pulse</b><div style="font-size:10px;color:#888;margin-top:4px;">Seller-free Torn API movement intelligence. One cross-tab engine lease, bounded cache/history, cache-delay-aware cadence and local request-budget governor. No seller-target, mug or attack model is retained.</div></div>'+
+        '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-pulse-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Pulse</button><button id="mm-acq-pulse-export" style="'+button()+'">Export Diagnostics</button></div>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:7px;">Source: Torn API v2 Item Market · cached items '+pulseRows.length+' · proven '+pulseProven+' · candidates '+pulseCandidates+' · request budget '+Number(pulseBudget.used||0)+'/'+Number(pulseBudget.limit||0)+' in the last minute · updated '+(Number(pulseState.updatedAt||0)?esc(age(new Date(Number(pulseState.updatedAt)).toISOString())):'not synced')+'.</div>'
     )+
     card(
       '<b>Shared Acquisition Rules</b>'+
@@ -1384,7 +1473,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.20 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.21 · PROFIT / RANKED / TRAVEL / PULSE</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -1420,6 +1509,8 @@
     root.querySelectorAll('#mm-acq-reload').forEach(b=>b.addEventListener('click',reloadCachedState));
     root.querySelector('#mm-acq-live-refresh')?.addEventListener('click',refreshOpportunities);
     root.querySelector('#mm-acq-sync-purchases')?.addEventListener('click',syncPurchases);
+    root.querySelector('#mm-acq-pulse-refresh')?.addEventListener('click',refreshMarketPulse);
+    root.querySelector('#mm-acq-pulse-export')?.addEventListener('click',exportMarketPulseDiagnostics);
     root.querySelector('#mm-acq-travel-update')?.addEventListener('click',updateTravelData);
     root.querySelector('#mm-acq-travel-import')?.addEventListener('click',()=>importTravelCapture({silent:false}).catch(error=>{
       statusText='Travel import failed: '+(error?.message||String(error));
@@ -1513,7 +1604,6 @@
     if(root)root.style.display='none';
     core?.setDockLauncherActive?.('acquisitions',false);
     stopWatcher();
-    stopAutoRefresh();
   }
 
   function createLauncher(){
@@ -1546,7 +1636,8 @@
     installTravelCollector();
     return;
   }
-  function initializeAcquisitions(){createLauncher();installChannel();}
+  function initializeAcquisitions(){createLauncher();installChannel();startAutoRefresh();}
+  window.addEventListener('pagehide',()=>{stopAutoRefresh();pulseEngine?.release?.();},{once:true});
   if(document.body)initializeAcquisitions();
   else window.addEventListener('DOMContentLoaded',initializeAcquisitions,{once:true});
 })();
