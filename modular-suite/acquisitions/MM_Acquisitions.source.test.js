@@ -25,7 +25,10 @@ const live=sandbox.globalThis.MMTornAcquisitionsLive;assert(live);
       },
       marketSnapshots:{}
     },
-    travelIntel:{rows:[]}
+    travelIntel:{rows:[{
+      itemId:'17',itemName:'Beretta 92FS',country:'China',stock:37,
+      profit:63892,sourceProfitPerHour:8370,shopCost:0,homeMarket:0
+    }]}
   };
 
   const core={
@@ -75,11 +78,27 @@ const live=sandbox.globalThis.MMTornAcquisitionsLive;assert(live);
   assert(itemMarket,'Item Market must remain available');
   assert.strictEqual(itemMarket.price,513995);
   assert.strictEqual(result.sources[0].source,'Bazaar aggregate','best observed acquisition source should be Bazaar aggregate');
+  const overseas=result.sources.find(row=>row.source==='Overseas');
+  assert(overseas,'Travel-originating overseas evidence must survive source comparison even when shop cost is absent');
+  assert.strictEqual(overseas.price,0);
+  assert.strictEqual(overseas.priceKnown,false);
+  assert.strictEqual(overseas.country,'China');
+  assert.strictEqual(overseas.quantity,37);
+  assert.strictEqual(overseas.profit,63892);
+  assert.strictEqual(overseas.sourceProfitPerHour,8370);
+  assert.strictEqual(result.sources[result.sources.length-1].source,'Overseas','price-less travel evidence must sort after comparable priced sources');
 
   const routed=await service.routeProcurementRequest({itemId:'17',itemName:'Beretta 92FS',preferredSource:'Best'});
   assert.strictEqual(routed.routed,true,'routing should fall through to the next verifiable source when aggregate Bazaar cannot resolve seller');
   assert.strictEqual(routed.source,'Item Market');
   assert(navigations.some(url=>url.includes('sid=ItemMarket')&&url.includes('itemID=17')));
+
+  const overseasRoute=await service.routeProcurementRequest({itemId:'17',itemName:'Beretta 92FS',preferredSource:'Overseas'});
+  assert.strictEqual(overseasRoute.routed,false);
+  assert.strictEqual(overseasRoute.reason,'overseas-recommended');
+  assert.strictEqual(overseasRoute.priceKnown,false);
+  assert.strictEqual(overseasRoute.country,'China');
+  assert.strictEqual(overseasRoute.profit,63892);
 
   console.log('MM_Acquisitions selected-source consistency regression: PASS');
 })().catch(error=>{console.error(error);process.exitCode=1;});
