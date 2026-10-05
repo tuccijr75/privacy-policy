@@ -1837,4 +1837,50 @@ Observed directly in the authenticated Torn desktop tab with Items open:
 
 Remaining Items live gate:
 - one manual selected-item `Find Price` action is still required to inspect the deep source-comparison card (Bazaar / Item Market / Torn Shop / Overseas) and routing without purchase.
+### alpha.15 selected-item source consistency fix — 2026-10-05
+
+Live alpha.14 Items acceptance exposed a root-cause pricing defect on Beretta 92FS:
+- aggregate catalog row correctly showed Bazaar low ~$444k / Bazaar avg ~$478k and Item Market ~$514k;
+- deep `Find Price` comparison instead surfaced a stale/incomplete named Bazaar listing at $30M;
+- deep economics also promoted the Torn catalog reference value ($30M) into `Market exit`, producing a false +$29M / 5,700%+ ROI on the ~$514k Item Market listing.
+
+Root causes:
+- selected-item UI used `max(snapshot exit, Bazaar average, marketplace price, Torn catalog market reference)`, allowing a static/stale catalog reference to override live market evidence;
+- per-item Bazaar fallback could retain a named listing grossly inconsistent with the current global Bazaar aggregate if enrichment failed or stale state survived;
+- refreshItemMarket could let that inconsistent Bazaar detail contaminate the live snapshot realistic-exit value.
+
+alpha.15 fixes:
+- Torn catalog market price remains visible only as `reference only; not used as live exit`;
+- selected-item economics use live exit evidence returned by the source-comparison service;
+- live exit candidates are limited to plausible live snapshot, Bazaar exit and Item Market net evidence;
+- snapshot exits grossly inconsistent with current Bazaar/Item Market references are rejected;
+- named Bazaar candidates >35% above the current global Bazaar low are rejected from best-source selection;
+- if no consistent named seller is available, the global Bazaar low is retained as `Bazaar aggregate` evidence;
+- `Bazaar aggregate` cannot route blindly: Use/Best re-enriches and resolves a concrete seller, then verifies that seller's Bazaar; if none resolves, routing falls through to the next verifiable source;
+- refreshItemMarket also rejects Bazaar detail rows grossly inconsistent with the current global Bazaar low.
+
+Regression fixture reproducing the live failure:
+- item: Beretta 92FS [17];
+- global Bazaar low $444,444 / avg $478,032 / Item Market $513,995;
+- Torn catalog reference intentionally set to $30,000,000;
+- stale named Bazaar fixture intentionally set to $30,000,000;
+- alpha.15 result: sources = Bazaar aggregate $444,444 + Item Market $513,995;
+- alpha.15 live exit = $488,295 from live snapshot evidence, not $30M;
+- catalog reference remains $30M but is excluded from ROI;
+- inconsistent $30M named Bazaar listing is removed;
+- Best routing attempts to resolve Bazaar aggregate, then safely falls through to verified Item Market when no concrete Bazaar seller resolves.
+
+Verification:
+- 11 Acquisitions JS/source-test files compile;
+- selected-source consistency executable regression PASS;
+- immutable candidate dependencies pinned to commit 58b6722c711b69c6fa34584d67780bfde9f2e55f;
+- auto-update/download remains disabled during live acceptance.
+
+Next live gate:
+1. install alpha.15;
+2. repeat Beretta 92FS Find Price;
+3. verify Bazaar aggregate / concrete Bazaar and Item Market values are in the same realistic price range;
+4. verify live exit does not use the $30M Torn catalog reference;
+5. test Use Best Source routing without completing a purchase;
+6. then continue Ranked and Travel acceptance.
 
