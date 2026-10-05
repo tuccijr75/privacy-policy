@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.18-pda.4
+// @version      8.0.0-alpha.18-pda.5
 // @description  TornPDA-compatible bundled MM Acquisitions build. Profit, ranked weapons, travel procurement, manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -16,6 +16,7 @@
 // ==/UserScript==
 
 
+const __MM_PDA_API_KEY='###PDA-APIKEY###';
 (() => {
   'use strict';
   globalThis.__MM_ACQ_PDA_STAGE='boot';
@@ -1182,7 +1183,6 @@
 (() => {
   'use strict';
 
-  const PDA_API_KEY_PLACEHOLDER='###PDA-APIKEY###';
   const PDA_GM_PREFIX='mm_acquisitions_pda_gm_v1:';
   globalThis.__MM_TORN_PDA__=true;
 
@@ -1206,10 +1206,8 @@
   }
 
   // TornPDA/GMforPDA exposes GM_* helpers as non-writable, non-configurable
-  // window properties. Never monkey-patch them. Keep the PDA-injected key in
-  // an MM-owned global and let the PDA-generated Acquisitions entrypoint choose
-  // it only when the script has no explicitly saved key.
-  globalThis.__MM_PDA_API_KEY__=String(PDA_API_KEY_PLACEHOLDER||'').trim();
+  // window properties. Never monkey-patch them. The PDA bundle keeps its
+  // injected API key in the outer TornPDA userscript closure instead of window.
 
   if(typeof globalThis.GM_xmlhttpRequest!=='function'&&typeof globalThis.PDA_httpGet==='function'){
     globalThis.GM_xmlhttpRequest=options=>{
@@ -3069,7 +3067,7 @@
     .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
     .replaceAll('"','&quot;').replaceAll("'",'&#039;');
   const money=value=>'$'+Math.max(0,Number(value)||0).toLocaleString('en-US',{maximumFractionDigits:0});
-  const apiKey=()=>{const saved=String(GM_getValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(globalThis.__MM_PDA_API_KEY__||'').trim();const unresolved='###PDA-'+'APIKEY###';return pda&&pda!==unresolved?pda:'';};
+  const apiKey=()=>{const saved=String(GM_getValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(__MM_PDA_API_KEY||'').trim();const unresolved='###PDA-'+'APIKEY###';return pda&&pda!==unresolved?pda:'';};
 
   function button(primary=false){
     return 'border:1px solid '+(primary?'#9a7b35':'#555')+';background:'+(primary?'#4b3b18':'#232323')+';color:#eee;border-radius:6px;padding:7px 10px;cursor:pointer;font:12px Arial,sans-serif;';
@@ -3195,30 +3193,65 @@
     });
   }
 
-  function readTravelFeed(){
-    const raw=GM_getValue(TRAVEL_FEED_KEY,null);
+  let pdaTravelFeedCache=null;
+
+  async function pdaSharedGet(key,def=null){
+    if(typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.get==='function'){
+      return await PDA_storage.get(String(key),def);
+    }
+    return GM_getValue(key,def);
+  }
+
+  async function pdaSharedSet(key,value){
+    if(typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.set==='function'){
+      await PDA_storage.set(String(key),value);
+      return;
+    }
+    GM_setValue(key,value);
+  }
+
+  async function pdaSharedDelete(key){
+    if(typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.delete==='function'){
+      await PDA_storage.delete(String(key));
+      return;
+    }
+    GM_deleteValue(key);
+  }
+
+  function normalizeTravelFeed(raw){
     if(!raw)return null;
     if(typeof raw==='string'){try{return JSON.parse(raw);}catch{return null;}}
     return raw&&typeof raw==='object'?raw:null;
   }
 
-  function writeTravelFeed(rows,capturedAt=Date.now()){
+  function readTravelFeed(){
+    return pdaTravelFeedCache;
+  }
+
+  async function loadTravelFeed(){
+    pdaTravelFeedCache=normalizeTravelFeed(await pdaSharedGet(TRAVEL_FEED_KEY,null));
+    return pdaTravelFeedCache;
+  }
+
+  async function writeTravelFeed(rows,capturedAt=Date.now()){
     const payload={capturedAt:Number(capturedAt||Date.now()),rows:Array.isArray(rows)?rows:[]};
-    GM_setValue(TRAVEL_FEED_KEY,JSON.stringify(payload));
+    pdaTravelFeedCache=payload;
+    await pdaSharedSet(TRAVEL_FEED_KEY,payload);
     return payload;
   }
 
-  function beginTravelCapture(){
-    GM_setValue(TRAVEL_RETURN_KEY,{url:location.href,at:Date.now()});
+  async function beginTravelCapture(){
+    await pdaSharedSet(TRAVEL_RETURN_KEY,{url:location.href,at:Date.now()});
     statusText='Opening TornW3B Travel Stock for live capture…';
     render();
     setTimeout(()=>{location.href='https://weav3r.dev/travel-stock';},120);
   }
 
-  function captureTravelPage(){
+  async function captureTravelPage(){
     try{
       const rows=live.parseTravelStockHtml(document.documentElement.outerHTML);
-      return writeTravelFeed(rows,Date.now()).rows.length;
+      await writeTravelFeed(rows,Date.now());
+      return rows.length;
     }catch{return 0;}
   }
 
@@ -3226,37 +3259,37 @@
     if(!/^(www\.)?weav3r\.dev$/.test(location.hostname)||!location.pathname.startsWith('/travel-stock'))return;
     let attempts=0,stable=0,lastCount=0,returned=false;
     let observer=null;
-    const maybeReturn=count=>{
+    const maybeReturn=async count=>{
       if(!count||returned)return;
       stable=count===lastCount?stable+1:1;
       lastCount=count;
       if(stable<2)return;
-      const ret=GM_getValue(TRAVEL_RETURN_KEY,null);
+      const ret=await pdaSharedGet(TRAVEL_RETURN_KEY,null);
       const requestedAt=Number(ret?.at||0);
       const returnUrl=String(ret?.url||'');
       if(returnUrl.startsWith('https://www.torn.com/')&&Date.now()-requestedAt<5*60*1000){
         returned=true;
-        GM_deleteValue(TRAVEL_RETURN_KEY);
+        await pdaSharedDelete(TRAVEL_RETURN_KEY);
         try{observer?.disconnect();}catch{}
         setTimeout(()=>{location.href=returnUrl;},650);
       }
     };
-    const capture=()=>{
+    const capture=async()=>{
       if(returned)return;
       attempts++;
-      const count=captureTravelPage();
-      if(count>0)maybeReturn(count);
+      const count=await captureTravelPage();
+      if(count>0)await maybeReturn(count);
       if(!returned&&attempts<90)setTimeout(capture,1000);
     };
-    observer=new MutationObserver(()=>{
+    observer=new MutationObserver(async()=>{
       if(returned)return;
       const table=[...document.querySelectorAll('table')].find(t=>{
         const x=String(t.textContent||'').toLowerCase();
         return x.includes('country')&&x.includes('item')&&x.includes('stock')&&x.includes('profit');
       });
       if(table){
-        const count=captureTravelPage();
-        if(count>0)maybeReturn(count);
+        const count=await captureTravelPage();
+        if(count>0)await maybeReturn(count);
       }
     });
     observer.observe(document.documentElement,{childList:true,subtree:true});
@@ -3325,7 +3358,7 @@
   });
 
   async function importTravelCapture({silent=false}={}){
-    const feed=readTravelFeed();
+    const feed=await loadTravelFeed();
     if(!feed?.rows?.length) {
       if(!silent){statusText='No MM Acquisitions travel capture is available yet.';render();}
       return false;
@@ -3346,14 +3379,14 @@
     try{
       const html=await gmText('https://weav3r.dev/travel-stock');
       const rows=live.parseTravelStockHtml(html);
-      const feed=writeTravelFeed(rows,Date.now());
+      const feed=await writeTravelFeed(rows,Date.now());
       state=await service.importTravelRows(feed.rows,feed.capturedAt);
       statusText='Travel updated: '+rows.length+' current routes.';
     }catch(error){
       busy=false;
       statusText='Direct refresh blocked; opening live TornW3B page for capture…';
       render();
-      beginTravelCapture();
+      await beginTravelCapture();
       return;
     }
     busy=false;
@@ -4361,7 +4394,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.18-pda.4 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.18-pda.5 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
