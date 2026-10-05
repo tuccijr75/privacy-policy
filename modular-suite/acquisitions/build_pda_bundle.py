@@ -76,10 +76,57 @@ def build(pda_revision: int) -> str:
     base_version = source_version(main_source)
     pda_version = f"{base_version}-pda.{pda_revision}"
 
-    pieces = [metadata(pda_version)]
-    for title, path in SECTIONS:
+    boot = r"""
+(() => {
+  'use strict';
+  globalThis.__MM_ACQ_PDA_STAGE='boot';
+  function ensureBootLauncher(){
+    if(!document.body)return;
+    let b=document.getElementById('mm-acquisitions-launcher');
+    if(!b){
+      b=document.createElement('button');
+      b.id='mm-acquisitions-launcher';
+      b.type='button';
+      b.setAttribute('aria-label','MM_Acquisitions');
+      b.title='MM_Acquisitions';
+      b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 4 4M9 7.5v6M6.8 9.2h4.4M6.8 11.8h4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+      b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+      b.addEventListener('click',()=>{
+        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){
+          globalThis.__MM_ACQ_OPEN__();
+          return;
+        }
+        const stage=String(globalThis.__MM_ACQ_PDA_STAGE||'unknown');
+        let d=document.getElementById('mm-acq-pda-boot-diagnostic');
+        if(!d){
+          d=document.createElement('div');
+          d.id='mm-acq-pda-boot-diagnostic';
+          d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';
+          document.body.appendChild(d);
+        }
+        d.innerHTML='<b>MM_Acquisitions PDA boot diagnostic</b><div style="margin-top:6px;">Stopped at: <code>'+stage.replace(/[<>&]/g,'')+'</code></div><div style="margin-top:4px;color:#bbb;">Send a screenshot of this message.</div>';
+      });
+      document.body.appendChild(b);
+    }
+  }
+  if(document.body)ensureBootLauncher();
+  else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
+})();
+"""
+    pieces = [metadata(pda_version), boot]
+
+    stage_names = [
+        "core",
+        "adapter",
+        "logic",
+        "live",
+        "ranked",
+        "ledger",
+    ]
+    for (stage, (title, path)) in zip(stage_names, SECTIONS):
         pieces.append(f"\n/* ===== {title} ===== */\n")
         pieces.append(read(path))
+        pieces.append(f"\n;globalThis.__MM_ACQ_PDA_STAGE='{stage}';\n")
 
     body = main_body(main_source)
     body = body.replace(
@@ -99,6 +146,11 @@ def build(pda_revision: int) -> str:
     body = body.replace(
         "position:fixed;right:52px;bottom:6px;",
         "position:fixed;right:10px;bottom:86px;",
+    )
+
+    body = body.replace(
+        "function initializeAcquisitions(){createLauncher();installChannel();}",
+        "globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';function initializeAcquisitions(){createLauncher();installChannel();}",
     )
     pieces.append("\n/* ===== Acquisitions UI ===== */\n")
     pieces.append(body)
@@ -123,7 +175,7 @@ def build(pda_revision: int) -> str:
 
 def cli() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pda-revision", type=int, default=2)
+    parser.add_argument("--pda-revision", type=int, default=3)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.pda_revision < 1:
