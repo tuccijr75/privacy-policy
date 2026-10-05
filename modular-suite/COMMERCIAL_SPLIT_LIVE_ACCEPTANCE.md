@@ -2046,4 +2046,36 @@ Representative current rows:
 Remaining Travel live gate:
 - click one `Compare Bazaar / Market` row and verify handoff into Items deep source comparison for that exact travel item;
 - verify no automatic purchase/travel occurs during the handoff.
+### alpha.16 Travel handoff live defect + alpha.17 fix — 2026-10-05
+
+Live Pangolin Scales handoff from Travel to Items:
+- PASS: exact item handoff resolved Pangolin Scales [1494];
+- PASS: Item Market $204,990 and concrete Bazaar $204,994 were compared independently;
+- PASS: catalog row simultaneously showed Bazaar low $204,000 / avg $204,998 / 59 bazaars / Item Market $204,990 / customer pricelist $200,237;
+- PASS: live exit remained ~$205,000 and catalog reference stayed reference-only;
+- DEFECT: the originating China travel opportunity disappeared from the deep comparison because TornW3B's current Travel Stock table exposes country / stock / profit / profit-hour but not a readable shop-cost column in the captured table.
+
+alpha.17 root-cause correction:
+- preserve the originating Overseas row whenever matching Travel evidence exists, even when `shopCost` is absent;
+- never fabricate an overseas purchase price;
+- price-less Overseas evidence sorts after priced Bazaar / Item Market / Torn Shop sources and cannot be labeled BEST;
+- Items deep comparison shows `Cost unavailable` plus country, stock, Travel profit, and profit/hour;
+- UI explicitly states `shop cost unavailable in current TornW3B table; preserved as travel evidence`;
+- explicit Overseas routing remains advisory/manual and returns country / stock / projected profit without auto-travel or purchase;
+- if a future/current travel feed supplies a real shop cost, the same source path uses that concrete price automatically.
+
+Regression using current Pangolin-style state:
+- Item Market $204,990;
+- Bazaar seller $204,994;
+- Overseas China stock 3,462 / projected profit $63,892 / $8,370 per hour / shop cost unavailable;
+- source order keeps comparable priced market sources first and Overseas evidence last;
+- 11 Acquisitions JS/source-test files compile.
+
+Next live gate:
+1. install alpha.17;
+2. refresh Torn;
+3. Travel -> Compare Bazaar / Market on Pangolin Scales;
+4. confirm Items card shows Item Market, Bazaar, and Overseas China evidence together;
+5. confirm Overseas displays Cost unavailable rather than $0 or an inferred/fabricated number;
+6. no purchase/travel action should occur without an explicit manual choice.
 
