@@ -2078,4 +2078,37 @@ Next live gate:
 4. confirm Items card shows Item Market, Bazaar, and Overseas China evidence together;
 5. confirm Overseas displays Cost unavailable rather than $0 or an inferred/fabricated number;
 6. no purchase/travel action should occur without an explicit manual choice.
+### alpha.17 Travel source-preservation live pass + alpha.18 selected-item exit correction — 2026-10-05
+
+Live alpha.17 Pangolin Scales [1494] comparison:
+- PASS: originating Overseas · China evidence is preserved in Items;
+- PASS: Overseas shows Cost unavailable instead of $0 or an invented price;
+- PASS: Overseas row includes China, stock 3,462, Travel profit +$63,892, and $8,370/hr;
+- PASS: Item Market and Bazaar remain separate priced sources;
+- PASS: catalog reference remains explicitly reference-only.
+
+New defect exposed during the same live pass:
+- current Item Market / Bazaar were ~ $204k but selected-item `Live exit` displayed $275,420;
+- this produced a false ~34–35% ROI;
+- root cause: selected-item valuation still allowed cached/depth-derived `marketSnapshots.realisticExit` to compete with freshly refreshed source-specific exits.
+
+alpha.18 root-cause correction:
+- selected-item exit valuation no longer consumes `Live snapshot` / `realisticExit` as a pricing source;
+- Bazaar exit is derived from current Bazaar average with configured haircut;
+- Item Market exit is derived from the current refreshed Item Market lowest ask net of fee;
+- selected-item fair exit chooses only among those explicit source-specific exits;
+- depth-derived snapshot remains available for history/diagnostics but cannot inflate selected-item ROI.
+
+Regression reproducing the Pangolin failure:
+- derived snapshot intentionally reaches $275,420;
+- selected-item exit correctly resolves to Bazaar $204,985;
+- Overseas China evidence remains preserved with shop cost unavailable;
+- 11 Acquisitions JS/source-test files compile.
+
+Next live gate:
+1. install alpha.18;
+2. refresh Torn;
+3. repeat Travel -> Pangolin Scales -> Compare Bazaar / Market;
+4. confirm Overseas China evidence remains present;
+5. confirm selected-item exit stays in the live ~204k market range and no false 34%+ ROI appears.
 
