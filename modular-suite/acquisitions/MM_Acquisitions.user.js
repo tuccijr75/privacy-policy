@@ -45,7 +45,6 @@
   const RANKED_LIVE_STALE_MS=300_000;
   const PRICELIST_STALE_MS=3600_000;
   const DEFAULT_PRICELIST_USER_ID='4054377';
-  const VERIFIED_SALES_URL='https://torn.marches.cafe/#/items/auction';
 
   let activeView='deals';
   let state=null;
@@ -68,6 +67,7 @@
   let itemPage=0;
   let itemSelection=null;
   let itemSources=null;
+  let verifiedSalesItemId='';
   let rankedType='all';
   let rankedSource='all';
   let rankedRarity='all';
@@ -137,6 +137,44 @@
         ' · fetched '+(fetchedAt?esc(age(new Date(fetchedAt).toISOString())):'unknown')+
         (cacheDelaySec?' · upstream cache '+cacheDelaySec+'s':'')+'</div>'+
       '<div style="color:#777;">Movement = quantity disappearing between seller-independent Torn Item Market snapshots; it is <b>not a confirmed player sale</b>.</div>'+
+    '</div>';
+  }
+
+  function completedSalesForItem(itemId){
+    const entry=state?.procurement?.ranked?.history?.[String(itemId||'')]||{};
+    const rows=Array.isArray(entry?.rows)?entry.rows:[];
+    return rows.slice().sort((a,b)=>Number(b?.timestamp||0)-Number(a?.timestamp||0));
+  }
+
+  function verifiedSalesHtml(itemId){
+    const id=String(itemId||'');
+    const rows=completedSalesForItem(id);
+    if(!id||!rows.length)return '';
+    const catalog=state?.procurement?.catalog?.[id]||{};
+    const name=String(catalog?.name||rows[0]?.itemName||('Item '+id));
+    const entry=state?.procurement?.ranked?.history?.[id]||{};
+    const visible=rows.slice(0,12);
+    return '<div id="mm-acq-verified-sales" style="border:1px solid #35513f;background:#121713;border-radius:8px;padding:9px;margin:7px 0;">'+
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+        '<div><b>Verified Sales · '+esc(name)+'</b>'+
+          '<div style="font-size:10px;color:#8b9b91;margin-top:2px;">Official Torn API finished Auction House records · '+rows.length.toLocaleString()+' loaded · updated '+esc(age(entry?.fetchedAt||entry?.updatedAt||''))+'.</div>'+
+        '</div>'+
+        '<button data-sales-close="1" style="'+button(false)+'padding:5px 7px;">Hide</button>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#777;margin-top:5px;">These are completed auctions, not current asking prices. They are evidence for realized sale prices and are used only where the ranked valuation model permits.</div>'+
+      '<div style="margin-top:6px;">'+visible.map(row=>{
+        const ts=Math.max(0,Number(row?.timestamp||0))*1000;
+        const when=ts?new Date(ts).toLocaleString():'Time unavailable';
+        const rarity=String(row?.rarity||'').trim();
+        const bonuses=Array.isArray(row?.bonuses)?row.bonuses:[];
+        const bonusText=bonuses.map(b=>String(b?.title||b?.bonus||'')+(Number(b?.value||0)?' '+Number(b.value).toFixed(0)+'%':'')).filter(Boolean).join(' + ');
+        return '<div style="display:grid;grid-template-columns:minmax(105px,.8fr) minmax(90px,.7fr) minmax(0,1.7fr);gap:8px;border-top:1px solid #26352b;padding:6px 0;font-size:10px;align-items:center;">'+
+          '<span>'+esc(when)+'</span>'+
+          '<span><b>'+money(row?.price||0)+'</b>'+(Number(row?.bids||0)>0?' · '+Number(row.bids)+' bids':'')+'</span>'+
+          '<span style="color:#888;">'+(rarity?esc(rarity.toUpperCase()):'')+(bonusText?(rarity?' · ':'')+esc(bonusText):'')+(row?.id?' · sale #'+esc(row.id):'')+'</span>'+
+        '</div>';
+      }).join('')+'</div>'+
+      (rows.length>visible.length?'<div style="font-size:10px;color:#777;margin-top:5px;">Showing newest '+visible.length+' of '+rows.length.toLocaleString()+' loaded completed sales.</div>':'')+
     '</div>';
   }
 
@@ -989,7 +1027,8 @@
     try{
       const result=await service.refreshRankedHistory(id,{days:rankedSettings().historyDays,maxPages:8});
       state=result?.state||await core.readLegacyState();
-      statusText='Auction history updated for '+String(catalog.name||('Item '+id))+': '+Number(result?.rows?.length||0).toLocaleString()+' completed sales.';
+      verifiedSalesItemId=id;
+      statusText='Verified sales updated for '+String(catalog.name||('Item '+id))+': '+Number(result?.rows?.length||0).toLocaleString()+' completed Auction House sales.';
     }catch(error){statusText='Auction history failed: '+(error?.message||String(error));}
     finally{busy=false;render();}
   }
@@ -1101,7 +1140,6 @@
           '<button id="mm-acq-rw-pricelist-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Update Pricelist</button>'+
           '<button id="mm-acq-rw-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Ranked</button>'+
           '<button id="mm-acq-rw-analyze-visible" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Analyze Visible</button>'+
-          '<a href="'+VERIFIED_SALES_URL+'" target="_blank" rel="noopener noreferrer" style="'+button(false)+'text-decoration:none;display:inline-block;">Verified Sales ↗</a>'+
         '</div>'+
       '</div>'+
       '<div style="font-size:10px;color:#888;margin-top:5px;">BB '+money(cfg.bbRate)+'/buck · Pricelist '+Number(priceList.pricedCount||0).toLocaleString()+' priced · Live <b>'+bazaarCount.toLocaleString()+' Bazaar</b> + <b>'+itemMarketCount.toLocaleString()+' Item Market</b> + <b>'+Number(ranked.liveAuction?.length||0).toLocaleString()+' Auction</b> · AH history '+historyCount+' weapon types · updated '+esc(age(ranked.lastLiveAt))+'</div>'+
@@ -1115,6 +1153,7 @@
       '</div>'+
       '<button id="mm-acq-rw-filter" style="'+button()+'margin-top:6px;">Apply Filters</button>'
     )+
+    (verifiedSalesItemId?verifiedSalesHtml(verifiedSalesItemId):'')+
     card(
       '<div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#888;align-items:center;">'+
         '<span>'+all.length.toLocaleString()+' matches · page '+(rankedPage+1)+'/'+pages+'</span>'+
@@ -1147,7 +1186,7 @@
             '</div>'+
             '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
               '<button data-rw-history="'+esc(row.itemId)+'" '+(busy?'disabled':'')+' style="'+button(!historyLoaded)+(busy?'opacity:.5;':'')+'padding:5px 7px;">'+(historyLoaded?'Refresh Sales':'Load Sales')+'</button>'+
-              (historyLoaded?'<a href="'+VERIFIED_SALES_URL+'" target="_blank" rel="noopener noreferrer" style="'+button(false)+'text-decoration:none;display:inline-block;padding:5px 7px;">Verified Sales ('+Number(row.history?.samples||0)+') ↗</a>':'')+
+              (historyLoaded?'<a href="#mm-acq-verified-sales" data-sales-view="'+esc(row.itemId)+'" style="'+button(false)+'text-decoration:none;display:inline-block;padding:5px 7px;">Verified Sales ('+Number(row.history?.samples||0)+') ↓</a>':'')+
               '<button data-rw-open="'+globalIndex+'" style="'+button(true)+'padding:5px 7px;">Open</button>'+
             '</div>'+
           '</div>'+
@@ -1329,12 +1368,12 @@
       ?state.procurement.ranked.history[String(itemSelection.id)].rows:[];
     const rankedEligible=/(weapon|armor|armour)/i.test(String(itemSelection.type||'')+' '+String(itemSelection.subType||''));
     const verifiedSalesAction=historyRows.length
-      ?'<a href="'+VERIFIED_SALES_URL+'" target="_blank" rel="noopener noreferrer" style="'+button(false)+'text-decoration:none;display:inline-block;">Verified Sales ('+historyRows.length+') ↗</a>'
+      ?'<a href="#mm-acq-verified-sales" data-sales-view="'+esc(itemSelection.id)+'" style="'+button(false)+'text-decoration:none;display:inline-block;">Verified Sales ('+historyRows.length+') ↓</a>'
       :rankedEligible
         ?'<button data-rw-history="'+esc(itemSelection.id)+'" '+(busy?'disabled':'')+' style="'+button(false)+(busy?'opacity:.5;':'')+'">Load Verified Sales</button>'
         :'';
     const verifiedNote=historyRows.length
-      ?'Completed Auction House records loaded from the official Torn API. The external link is a read-only public viewer; it is not used for pricing calculations.'
+      ?'Completed Auction House records loaded from the official Torn API. Use Verified Sales to inspect the realized sale evidence directly in Acquisitions.'
       :rankedEligible
         ?'Completed Auction House sales can be loaded from the official Torn API for this ranked item.'
         :'No official completed-sale history is available here for this standard item. Market Pulse movement is observational, not a confirmed sale.';
@@ -1396,6 +1435,7 @@
       decision+
       '<div style="font-size:10px;color:#777;margin-bottom:3px;">'+esc(verifiedNote)+'</div>'+
       pulseLine({},itemSelection.id,bestProfit)+
+      verifiedSalesHtml(itemSelection.id)+
       '<div style="margin-top:7px;font-size:10px;color:#aaa;"><b>Available sources</b> · lowest usable source is listed first.</div>'+
       rows
     );
@@ -1612,6 +1652,16 @@
     root.querySelector('#mm-acq-rw-prev')?.addEventListener('click',()=>{rankedPage=Math.max(0,rankedPage-1);render();});
     root.querySelector('#mm-acq-rw-next')?.addEventListener('click',()=>{rankedPage++;render();});
     root.querySelectorAll('[data-rw-history]').forEach(b=>b.addEventListener('click',()=>analyzeRankedHistory(b.dataset.rwHistory)));
+    root.querySelectorAll('[data-sales-view]').forEach(a=>a.addEventListener('click',event=>{
+      event.preventDefault();
+      verifiedSalesItemId=String(a.dataset.salesView||'');
+      render();
+      setTimeout(()=>document.getElementById('mm-acq-verified-sales')?.scrollIntoView({block:'nearest',behavior:'smooth'}),0);
+    }));
+    root.querySelectorAll('[data-sales-close]').forEach(b=>b.addEventListener('click',()=>{
+      verifiedSalesItemId='';
+      render();
+    }));
     root.querySelectorAll('[data-rw-open]').forEach(b=>b.addEventListener('click',()=>routeRankedListing(b.dataset.rwOpen)));
     root.querySelector('#mm-acq-item-filter')?.addEventListener('click',()=>{
       itemQuery=String(root.querySelector('#mm-acq-item-query')?.value||'').trim();
