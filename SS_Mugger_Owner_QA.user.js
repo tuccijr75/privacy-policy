@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.12.1
+// @version      1.1.13.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -22,7 +22,7 @@
 
   const RUNTIME_GUARD = '__SS_MUGGER_RUNTIME_ACTIVE__';
   if (window[RUNTIME_GUARD]) return;
-  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.12'};
+  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.13'};
 
   const BOOT_PROBE_ID = 'ss-mugger-boot-probe';
   function showBootProbe(label = 'SSQ', isError = false) {
@@ -627,7 +627,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.12.1';
+  const VERSION = '1.1.13.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
@@ -650,7 +650,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     seenAuctions: `${PREFIX}:seen_auctions`,
     itemSignals: `${PREFIX}:item_signals`,
     itemScans: `${PREFIX}:item_scans`,
-    pendingScan: `${PREFIX}:pending_scan`
+    pendingScan: `${PREFIX}:pending_scan`,
+    scanSession: `${PREFIX}:scan_session`
   };
   const DEFAULTS = Object.freeze({
     marketPollSeconds: 30,
@@ -682,7 +683,15 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     itemMovementWindowMinutes: 180,
     itemRefreshMinutes: 10,
     minItemConfidence: 60,
-    hotItemLimit: 12
+    hotItemLimit: 12,
+    targetMinPayout: 0,
+    targetMinWinProbability: 0,
+    targetMinItemConfidence: 60,
+    targetMinInactivityMinutes: 0,
+    targetMaxLevel: 0,
+    targetMaxLifePercent: 100,
+    targetSaleConfidence: 'any',
+    targetSource: 'any'
   });
 
   const nowSec = () => Math.floor(Date.now() / 1000);
@@ -747,6 +756,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   let itemSignals = readJson(STORE.itemSignals, []);
   let itemScans = readJson(STORE.itemScans, {});
   let pendingItemScan = readJson(STORE.pendingScan, null);
+  let scanSession = readJson(STORE.scanSession, {active:false,queue:[],scanned:[],startedAt:0,completedAt:0});
   let apiKey = String(storageGet(STORE.key, '') || PDA_INJECTED_API_KEY || '').trim();
   let ownerBattleStats = null;
   let ownerBattleStatsStatus = 'not-loaded';
@@ -762,7 +772,10 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   let activeTab = 'hot';
   let lastItemMaintenanceAt = 0;
   const panelDraft = new Map();
-  const FILTER_FIELD_IDS = Object.freeze(['mmms-filter-payout','mmms-filter-win','mmms-filter-ready']);
+  const FILTER_FIELD_IDS = Object.freeze([
+    'mmms-target-payout','mmms-target-win','mmms-target-item-confidence','mmms-target-inactivity',
+    'mmms-target-max-level','mmms-target-max-life','mmms-target-sale-confidence','mmms-target-source'
+  ]);
   const SETTINGS_FIELD_IDS = Object.freeze([
     'mmms-key','mmms-min','mmms-market-poll','mmms-points-poll','mmms-bazaar-poll',
     'mmms-auto-bazaar-poll','mmms-discover-bazaar','mmms-bazaar-cap','mmms-discover-auction',
@@ -782,6 +795,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   const saveItemSignals = () => writeJson(STORE.itemSignals, itemSignals.slice(-2500));
   const saveItemScans = () => writeJson(STORE.itemScans, itemScans);
   const savePendingScan = () => writeJson(STORE.pendingScan, pendingItemScan);
+  const saveScanSession = () => writeJson(STORE.scanSession, scanSession);
   const saveSettings = () => writeJson(STORE.settings, settings);
 
   function logError(scope, error) {
@@ -901,22 +915,169 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       });
     return result.sort((a,b)=>b.score-a.score || b.salesPerHour-a.salesPerHour || b.turnoverPerHour-a.turnoverPerHour).slice(0,Math.max(4,Math.min(30,Number(settings.hotItemLimit)||12)));
   }
+  const SCAN_WORKER_NAME = 'ss_mugger_hot_scan_worker';
+
   function itemPosUrl(itemId, itemName = '') {
     const name = String(itemName || '').trim();
     const namePart = name && !/^Item \d+$/.test(name) ? `&itemName=${encodeURIComponent(name)}` : '';
     return `https://www.torn.com/page.php?sid=ItemMarket#/market/view=search&itemID=${encodeURIComponent(itemId)}${namePart}`;
   }
-  function openItemPos(itemId, itemName = '') {
-    const id = String(itemId || '');
-    if (!/^\d+$/.test(id)) return;
-    pendingItemScan = {itemId:id,itemName:String(itemName||`Item ${id}`),requestedAt:nowSec()};
-    savePendingScan();
-    openTornUrl(itemPosUrl(id, itemName));
+
+  function scanSessionProgress() {
+    const queue = Array.isArray(scanSession?.queue) ? scanSession.queue : [];
+    const scanned = new Set((Array.isArray(scanSession?.scanned) ? scanSession.scanned : []).map(String));
+    return {queue, scanned, done:queue.filter((item)=>scanned.has(String(item.itemId))).length, total:queue.length};
   }
+
+  function resetScanSession() {
+    scanSession = {active:false,queue:[],scanned:[],startedAt:0,completedAt:0};
+    saveScanSession();
+    ensureScanWorkerBar();
+    render(true);
+  }
+
+  function ensureHotScanSession() {
+    const existing = scanSessionProgress();
+    if (scanSession?.active && existing.total) return existing;
+    const movers = hotItems();
+    scanSession = {
+      active:Boolean(movers.length),
+      queue:movers.map((item,index)=>({itemId:String(item.itemId),itemName:String(item.itemName || `Item ${item.itemId}`),hotRank:index+1})),
+      scanned:[],
+      startedAt:nowSec(),
+      completedAt:0
+    };
+    saveScanSession();
+    return scanSessionProgress();
+  }
+
+  function showScanToast(message) {
+    if (!document.body || !focused()) return;
+    let toast = document.getElementById('mmms-scan-toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'mmms-scan-toast';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.hidden = false;
+    clearTimeout(showScanToast.timer);
+    showScanToast.timer = setTimeout(()=>{ if (toast) toast.hidden = true; }, 7000);
+  }
+
+  function openScanWorker(item, fromSession = false) {
+    const id = String(item?.itemId || '');
+    if (!/^\d+$/.test(id)) return false;
+    const itemName = String(item?.itemName || `Item ${id}`);
+    pendingItemScan = {itemId:id,itemName,requestedAt:nowSec(),scanSession:Boolean(fromSession)};
+    savePendingScan();
+    const url = itemPosUrl(id, itemName);
+    if (PLATFORM.pda || PLATFORM.mobile || window.name === SCAN_WORKER_NAME) {
+      location.href = url;
+      return true;
+    }
+    try {
+      const worker = window.open(url, SCAN_WORKER_NAME);
+      if (worker) { try { worker.focus(); } catch {} return true; }
+    } catch {}
+    location.href = url;
+    return true;
+  }
+
+  function openItemPos(itemId, itemName = '') {
+    return openScanWorker({itemId:String(itemId || ''), itemName:String(itemName || '')}, false);
+  }
+
+  function scanNextHotItem() {
+    const progress = ensureHotScanSession();
+    const next = progress.queue.find((item)=>!progress.scanned.has(String(item.itemId)));
+    if (!next) {
+      scanSession.active = false;
+      scanSession.completedAt = scanSession.completedAt || nowSec();
+      saveScanSession();
+      showScanToast(`${APP}: Hot-item scan complete (${progress.done}/${progress.total}).`);
+      ensureScanWorkerBar();
+      render(true);
+      return false;
+    }
+    return openScanWorker(next, true);
+  }
+
+  function markHotScanComplete(itemId) {
+    if (!scanSession?.active) return;
+    const id = String(itemId || '');
+    if (!scanSession.queue?.some((item)=>String(item.itemId)===id)) return;
+    const scanned = new Set((scanSession.scanned || []).map(String));
+    scanned.add(id);
+    scanSession.scanned = [...scanned];
+    const progress = scanSessionProgress();
+    if (progress.total && progress.done >= progress.total) {
+      scanSession.active = false;
+      scanSession.completedAt = nowSec();
+      showScanToast(`${APP}: Hot-item scan complete — ${progress.total} items scanned.`);
+      try { if (navigator.vibrate) navigator.vibrate([80,60,80]); } catch {}
+    } else {
+      showScanToast(`${APP}: scanned ${progress.done}/${progress.total}. Use Scan Next to continue.`);
+    }
+    saveScanSession();
+    ensureScanWorkerBar();
+  }
+
+  async function refreshCandidatesForItem(itemId) {
+    const due = candidates
+      .filter((c)=>!c.stale && String(c.itemId || '') === String(itemId || ''))
+      .sort((a,b)=>(Number(b.grossValue)||0)-(Number(a.grossValue)||0))
+      .slice(0,5);
+    for (const candidate of due) {
+      if (!budgetAvailable()) break;
+      await refreshCandidate(candidate, false);
+    }
+  }
+
+  function ensureScanWorkerBar() {
+    const shouldShow = isItemMarket() && (Boolean(scanSession?.active) || Boolean(scanSession?.completedAt));
+    let bar = document.getElementById('mmms-scan-worker-bar');
+    if (!shouldShow) { bar?.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'mmms-scan-worker-bar';
+      document.body?.appendChild(bar);
+      bar.addEventListener('click',(event)=>{
+        const button = event.target.closest('[data-scan-action]');
+        if (!button) return;
+        if (button.dataset.scanAction === 'next') scanNextHotItem();
+        if (button.dataset.scanAction === 'reset') resetScanSession();
+        if (button.dataset.scanAction === 'close') { try { window.close(); } catch {} }
+      });
+    }
+    const progress = scanSessionProgress();
+    const current = currentItemName() || `Item ${currentItemId() || '?'}`;
+    if (scanSession.active) {
+      bar.innerHTML = `<b>SS_Mugger Scan</b><span>${esc(current)} · ${progress.done}/${progress.total} · ${verifiedTargetPool().length} verified targets</span><button data-scan-action="next">Scan Next</button><button data-scan-action="reset">Stop</button>`;
+    } else {
+      bar.innerHTML = `<b>SS_Mugger Scan Complete</b><span>${progress.done}/${progress.total} Hot items scanned · ${verifiedTargetPool().length} verified targets</span><button data-scan-action="close">Close worker</button><button data-scan-action="reset">Reset</button>`;
+    }
+  }
+
+  async function waitForItemMarketReady(itemId, timeoutMs = 8000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (!focused() || !isItemMarket() || String(currentItemId()) !== String(itemId)) return false;
+      const buyControls = [...document.querySelectorAll('button,[role="button"]')].filter((node)=>/\bBUY\b/i.test(String(node.textContent || node.getAttribute?.('aria-label') || '')));
+      const sellerLinks = document.querySelectorAll('a[href*="profiles.php"][href*="XID="]');
+      if (buyControls.length || sellerLinks.length) return true;
+      await new Promise((resolve)=>setTimeout(resolve, 350));
+    }
+    return focused() && isItemMarket() && String(currentItemId()) === String(itemId);
+  }
+
   async function runPendingItemScan() {
     if (!pendingItemScan || !licensed() || !focused() || !isItemMarket()) return false;
     const itemId = currentItemId();
     if (!itemId || String(itemId) !== String(pendingItemScan.itemId)) return false;
+    const request = {...pendingItemScan};
+    await waitForItemMarketReady(itemId);
+    if (!focused() || String(currentItemId()) !== String(itemId)) return false;
     const captured = captureItemMarketVisible();
     itemScans[itemId] = nowSec();
     saveItemScans();
@@ -926,9 +1087,14 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     for (const watch of group) watch.nextPollAt = 0;
     saveWatches();
     if (group.length && budgetAvailable()) { try { await pollMarketGroup(itemId, true); } catch {} }
+    if (budgetAvailable()) { try { await refreshCandidatesForItem(itemId); } catch {} }
     pruneItemSignals(true);
+    if (request.scanSession) markHotScanComplete(itemId);
+    ensureScanWorkerBar();
+    render();
     return captured >= 0;
   }
+
   function clearSavedLists() {
     watches = []; saveWatches();
     render(true);
@@ -940,7 +1106,9 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
   function clearItemHistory() {
     itemSignals = []; itemScans = {}; pendingItemScan = null;
-    saveItemSignals(); saveItemScans(); savePendingScan();
+    scanSession = {active:false,queue:[],scanned:[],startedAt:0,completedAt:0};
+    saveItemSignals(); saveItemScans(); savePendingScan(); saveScanSession();
+    ensureScanWorkerBar();
     render(true);
   }
 
@@ -1532,6 +1700,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         candidate.profileStatus = String(profileStatus || '').slice(0, 160);
         candidate.statusState = gate.state; candidate.activityStatus = gate.activity; candidate.attackableNow = gate.attackableNow;
         candidate.factionId = gate.factionId;
+        candidate.verifiedAt = nowSec();
         applyTargetProfile(candidate, profile, gate);
         candidate.nextProfileCheckAt = nowSec() + Math.max(15, Number(settings.candidateRecheckSeconds)||30);
       } else {
@@ -1542,7 +1711,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
           previousReportedAt: signal.previousReportedAt, lastAction: gate.lastAction, inactivitySeconds: gate.inactivitySeconds,
           confidence: gate.confidence, evidence: signal.evidence, profileStatus: String(profileStatus || '').slice(0, 160),
           statusState: gate.state, activityStatus: gate.activity, attackableNow: gate.attackableNow,
-          factionId: gate.factionId, nextProfileCheckAt: nowSec() + Math.max(15, Number(settings.candidateRecheckSeconds)||30), stale:false
+          factionId: gate.factionId, verifiedAt:nowSec(), nextProfileCheckAt: nowSec() + Math.max(15, Number(settings.candidateRecheckSeconds)||30), stale:false
         };
         applyTargetProfile(candidate, profile, gate);
         candidates.push(candidate);
@@ -1693,6 +1862,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       const lastAction = Number(profile?.last_action?.timestamp || 0);
       const suitability = profileSuitability(profile);
       candidate.lastCheckedAt = nowSec();
+      candidate.verifiedAt = nowSec();
       candidate.nextProfileCheckAt = nowSec() + Math.max(15, Number(settings.candidateRecheckSeconds)||30);
       candidate.lastAction = lastAction || candidate.lastAction;
       candidate.statusState = suitability.state;
@@ -1804,12 +1974,12 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     #mm-mug-signal-launcher .mm-badge{position:absolute;right:-5px;top:-6px;min-width:16px;height:16px;padding:0 3px;border-radius:9px;background:#b62828;color:#fff;font:700 10px/16px Arial;text-align:center}
     #mm-mug-signals-panel{position:fixed;right:12px;top:130px;width:min(510px,calc(100vw - 24px));max-height:72vh;overflow:auto;background:#17191c;color:#ddd;border:1px solid #4c5056;border-radius:8px;box-shadow:0 8px 30px #000a;z-index:2147482999;font:12px/1.35 Arial,sans-serif;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
     #mm-mug-signals-panel input,#mm-mug-signals-panel select,#mm-mug-signals-panel textarea{pointer-events:auto!important;touch-action:auto!important;-webkit-user-select:text!important;user-select:text!important}
-    #mm-mug-signals-panel[hidden]{display:none!important}.mmms-head{position:sticky;top:0;background:#22262a;border-bottom:1px solid #3c4045;padding:9px 10px;display:flex;gap:8px;align-items:center;z-index:2}.mmms-title{font-weight:700;font-size:14px;flex:1}.mmms-dot{width:8px;height:8px;border-radius:50%;background:#50a450}.mmms-dot.pause{background:#b28b3b}.mmms-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 10px}.mmms-stat{background:#202327;border:1px solid #34383d;border-radius:5px;padding:6px}.mmms-stat b{display:block;font-size:14px;color:#fff}.mmms-actions{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 9px}.mmms-btn{border:1px solid #555;background:#2c3035;color:#eee;border-radius:4px;padding:5px 8px;cursor:pointer;font:12px Arial;touch-action:manipulation;-webkit-tap-highlight-color:transparent}.mmms-btn:hover{background:#393e44}.mmms-btn.danger{border-color:#744}.mmms-section{border-top:1px solid #333;padding:9px 10px}.mmms-section h3{font-size:12px;margin:0 0 7px;color:#f3f3f3}.mmms-card{border:1px solid #3b4046;background:#202327;border-radius:5px;padding:7px;margin:0 0 6px}.mmms-card.high{border-left:3px solid #4da35a}.mmms-card.medium{border-left:3px solid #b68b39}.mmms-card.stale{opacity:.55;border-left-color:#666}.mmms-row{display:flex;gap:8px;align-items:center}.mmms-grow{flex:1;min-width:0}.mmms-name{font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmms-muted{color:#9da3a9;font-size:11px}.mmms-value{font-size:14px;font-weight:700;color:#f5f5f5}.mmms-tag{display:inline-block;border:1px solid #4a4e54;border-radius:10px;padding:1px 6px;margin-right:4px;color:#bbb;font-size:10px}.mmms-empty{color:#8f969d;padding:6px 0}.mmms-settings{display:grid;grid-template-columns:145px 1fr;gap:7px;align-items:center}.mmms-input{width:100%;box-sizing:border-box;background:#101214;color:#eee;border:1px solid #4a4e54;border-radius:4px;padding:5px}.mmms-small{font-size:10px;color:#8f969d}.mmms-watch{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;border-bottom:1px solid #2d3034;padding:5px 0}.mmms-watch:last-child{border-bottom:0}.mmms-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;padding:7px 10px;background:#1e2125;border-bottom:1px solid #34383d}.mmms-tab{border:1px solid #494e54;background:#292d32;color:#aaa;border-radius:5px;padding:7px 6px;font-weight:700;cursor:pointer}.mmms-tab.active{background:#41474e;color:#fff;border-color:#69717a}.mmms-mover{border:1px solid #3d4349;background:#202428;border-radius:6px;padding:8px;margin-bottom:7px}.mmms-mover-top{display:flex;gap:8px;align-items:flex-start}.mmms-mover-rank{min-width:25px;font-size:18px;font-weight:700;color:#d4d7da}.mmms-mover-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:6px}.mmms-mover-stat{background:#181b1e;border-radius:4px;padding:5px}.mmms-mover-stat b{display:block;color:#fff}.mmms-confidence.high{color:#77c985}.mmms-confidence.medium{color:#d4b367}.mmms-details{border:1px solid #363b40;border-radius:5px;margin-top:8px;padding:6px}.mmms-details>summary{cursor:pointer;font-weight:700;color:#ccc}
+    #mm-mug-signals-panel[hidden]{display:none!important}.mmms-head{position:sticky;top:0;background:#22262a;border-bottom:1px solid #3c4045;padding:9px 10px;display:flex;gap:8px;align-items:center;z-index:2}.mmms-title{font-weight:700;font-size:14px;flex:1}.mmms-dot{width:8px;height:8px;border-radius:50%;background:#50a450}.mmms-dot.pause{background:#b28b3b}.mmms-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:8px 10px}.mmms-stat{background:#202327;border:1px solid #34383d;border-radius:5px;padding:6px}.mmms-stat b{display:block;font-size:14px;color:#fff}.mmms-actions{display:flex;flex-wrap:wrap;gap:6px;padding:0 10px 9px}.mmms-btn{border:1px solid #555;background:#2c3035;color:#eee;border-radius:4px;padding:5px 8px;cursor:pointer;font:12px Arial;touch-action:manipulation;-webkit-tap-highlight-color:transparent}.mmms-btn:hover{background:#393e44}.mmms-btn.danger{border-color:#744}.mmms-section{border-top:1px solid #333;padding:9px 10px}.mmms-section h3{font-size:12px;margin:0 0 7px;color:#f3f3f3}.mmms-card{border:1px solid #3b4046;background:#202327;border-radius:5px;padding:7px;margin:0 0 6px}.mmms-card.high{border-left:3px solid #4da35a}.mmms-card.medium{border-left:3px solid #b68b39}.mmms-card.stale{opacity:.55;border-left-color:#666}.mmms-row{display:flex;gap:8px;align-items:center}.mmms-grow{flex:1;min-width:0}.mmms-name{font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mmms-muted{color:#9da3a9;font-size:11px}.mmms-value{font-size:14px;font-weight:700;color:#f5f5f5}.mmms-tag{display:inline-block;border:1px solid #4a4e54;border-radius:10px;padding:1px 6px;margin-right:4px;color:#bbb;font-size:10px}.mmms-empty{color:#8f969d;padding:6px 0}.mmms-settings{display:grid;grid-template-columns:145px 1fr;gap:7px;align-items:center}.mmms-input{width:100%;box-sizing:border-box;background:#101214;color:#eee;border:1px solid #4a4e54;border-radius:4px;padding:5px}.mmms-small{font-size:10px;color:#8f969d}.mmms-watch{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center;border-bottom:1px solid #2d3034;padding:5px 0}.mmms-watch:last-child{border-bottom:0}.mmms-tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;padding:7px 10px;background:#1e2125;border-bottom:1px solid #34383d}.mmms-tab{border:1px solid #494e54;background:#292d32;color:#aaa;border-radius:5px;padding:7px 6px;font-weight:700;cursor:pointer}.mmms-tab.active{background:#41474e;color:#fff;border-color:#69717a}.mmms-btn.primary{font-weight:700;border-color:#6b737c;background:#3a4047}.mmms-mover{border:1px solid #3d4349;background:#202428;border-radius:6px;padding:8px;margin-bottom:7px}.mmms-mover-top{display:flex;gap:8px;align-items:flex-start}.mmms-mover-rank{min-width:25px;font-size:18px;font-weight:700;color:#d4d7da}.mmms-mover-stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-top:6px}.mmms-mover-stat{background:#181b1e;border-radius:4px;padding:5px}.mmms-mover-stat b{display:block;color:#fff}.mmms-confidence.high{color:#77c985}.mmms-confidence.medium{color:#d4b367}.mmms-details{border:1px solid #363b40;border-radius:5px;margin-top:8px;padding:6px}.mmms-details>summary{cursor:pointer;font-weight:700;color:#ccc}.mmms-scan-box{background:#1b1f23}.mmms-target-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.mmms-target-filters label{display:grid;gap:3px;color:#b9bec4;font-size:10px}.mmms-target-card{border:1px solid #42484e;border-left:3px solid #5f9b68;background:#202428;border-radius:6px;padding:9px;margin-bottom:8px}.mmms-target-head{display:flex;gap:8px;align-items:flex-start}.mmms-target-name{font-size:14px;font-weight:700;color:#fff}.mmms-target-payout{font-size:17px;font-weight:700;text-align:right;white-space:nowrap}.mmms-target-payout small{display:block;font-size:9px;font-weight:400;color:#9da3a9}.mmms-target-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin:7px 0}.mmms-target-grid>div{background:#181b1e;border-radius:4px;padding:5px}.mmms-target-grid b,.mmms-target-grid span{display:block}.mmms-target-grid span{font-size:9px;color:#9da3a9}.mmms-target-item{margin:5px 0;color:#d7dade}.mmms-target-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:7px}#mmms-scan-worker-bar{position:fixed;right:12px;top:78px;z-index:2147482998;display:flex;align-items:center;gap:7px;max-width:min(620px,calc(100vw - 24px));padding:7px 9px;background:#1d2024;border:1px solid #555b62;border-radius:7px;box-shadow:0 3px 14px #0009;font:12px Arial;color:#ddd}#mmms-scan-worker-bar span{color:#aeb4ba}#mmms-scan-worker-bar button{border:1px solid #555;background:#30353a;color:#eee;border-radius:4px;padding:5px 8px;cursor:pointer}#mmms-scan-toast{position:fixed;right:12px;bottom:84px;z-index:2147483646;max-width:min(420px,calc(100vw - 24px));padding:9px 11px;background:#24282d;color:#fff;border:1px solid #666d74;border-radius:7px;box-shadow:0 4px 16px #0009;font:12px Arial}
     @media (max-width:640px),(pointer:coarse){
       #mm-mug-signal-launcher{width:44px;height:44px;font-size:12px}
       #mm-mug-signal-launcher[data-fallback="1"]{top:auto;right:max(10px,env(safe-area-inset-right));bottom:calc(124px + env(safe-area-inset-bottom))}
       #mm-mug-signals-panel{left:max(6px,env(safe-area-inset-left));right:max(6px,env(safe-area-inset-right));top:auto;bottom:calc(6px + env(safe-area-inset-bottom));width:auto;max-height:82vh;max-height:82dvh;border-radius:10px;font-size:13px}
-      .mmms-head{padding:10px}.mmms-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:8px}.mmms-actions{padding-left:8px;padding-right:8px}.mmms-btn{min-height:40px;padding:8px 10px;font-size:13px}.mmms-settings{grid-template-columns:1fr;gap:4px}.mmms-settings label{margin-top:4px;color:#b8bdc3}.mmms-input{min-height:40px;font-size:16px;padding:8px}.mmms-row{align-items:flex-start}.mmms-value{white-space:nowrap}.mmms-card{padding:9px}.mmms-tag{margin-bottom:4px;padding:3px 7px;font-size:11px}.mmms-watch{grid-template-columns:minmax(0,1fr) auto}.mmms-section{padding:9px 8px}
+      .mmms-head{padding:10px}.mmms-grid{grid-template-columns:repeat(2,minmax(0,1fr));padding:8px}.mmms-actions{padding-left:8px;padding-right:8px}.mmms-btn{min-height:40px;padding:8px 10px;font-size:13px}.mmms-settings{grid-template-columns:1fr;gap:4px}.mmms-settings label{margin-top:4px;color:#b8bdc3}.mmms-input{min-height:40px;font-size:16px;padding:8px}.mmms-row{align-items:flex-start}.mmms-value{white-space:nowrap}.mmms-card{padding:9px}.mmms-tag{margin-bottom:4px;padding:3px 7px;font-size:11px}.mmms-watch{grid-template-columns:minmax(0,1fr) auto}.mmms-section{padding:9px 8px}.mmms-target-filters{grid-template-columns:1fr}.mmms-target-grid{grid-template-columns:repeat(2,minmax(0,1fr))}#mmms-scan-worker-bar{left:max(6px,env(safe-area-inset-left));right:max(6px,env(safe-area-inset-right));top:70px;flex-wrap:wrap}#mmms-scan-worker-bar button{min-height:38px}
     }
   `;
 
@@ -1900,6 +2070,8 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       const action = button.dataset.action;
       if (action === 'tab') { activeTab = String(button.dataset.tab || 'hot'); render(true); }
       if (action === 'open-item') { openItemPos(button.dataset.itemId, button.dataset.itemName || ''); }
+      if (action === 'scan-next') scanNextHotItem();
+      if (action === 'scan-reset') resetScanSession();
       if (action === 'clear-saved') clearSavedLists();
       if (action === 'clear-item-history') clearItemHistory();
       if (action === 'refresh-hot') {
@@ -1919,12 +2091,22 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       if (action === 'profile') openTornUrl(profileUrl(button.dataset.id));
       if (action === 'attack') { const c = candidates.find((x)=>x.id === button.dataset.candidate); if (c) await refreshCandidate(c, true); }
       if (action === 'save-settings') savePanelSettings();
-      if (action === 'apply-filters') {
-        settings.minDisplayPayout = Math.max(0, Number(document.getElementById('mmms-filter-payout')?.value) || 0);
-        settings.minDisplayWinProbability = Math.max(0, Math.min(100, Number(document.getElementById('mmms-filter-win')?.value) || 0));
-        settings.displayReadyOnly = Boolean(document.getElementById('mmms-filter-ready')?.checked);
+      if (action === 'apply-target-filters') {
+        settings.targetMinPayout = Math.max(0, Number(document.getElementById('mmms-target-payout')?.value) || 0);
+        settings.targetMinWinProbability = Math.max(0, Math.min(100, Number(document.getElementById('mmms-target-win')?.value) || 0));
+        settings.targetMinItemConfidence = Math.max(0, Math.min(100, Number(document.getElementById('mmms-target-item-confidence')?.value) || 0));
+        settings.targetMinInactivityMinutes = Math.max(0, Number(document.getElementById('mmms-target-inactivity')?.value) || 0);
+        settings.targetMaxLevel = Math.max(0, Math.min(100, Number(document.getElementById('mmms-target-max-level')?.value) || 0));
+        settings.targetMaxLifePercent = Math.max(0, Math.min(100, Number(document.getElementById('mmms-target-max-life')?.value) || 100));
+        settings.targetSaleConfidence = String(document.getElementById('mmms-target-sale-confidence')?.value || 'any');
+        settings.targetSource = String(document.getElementById('mmms-target-source')?.value || 'any');
         saveSettings();
         clearPanelDraft(FILTER_FIELD_IDS);
+        render(true);
+      }
+      if (action === 'refresh-targets') {
+        const pool = hotCandidatePool().filter((c)=>!c.stale).slice(0,10);
+        for (const candidate of pool) { if (!budgetAvailable()) break; await refreshCandidate(candidate, false); }
         render(true);
       }
       if (action === 'test-key') await testApiKey();
@@ -1934,6 +2116,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   }
 
   function activeCount() { return watches.filter((w) => w.active).length; }
+
   function hotCandidatePool() {
     const movers = hotItems();
     const hotByItem = new Map(movers.map((item, index) => [String(item.itemId), {...item, hotRank:index + 1}]));
@@ -1953,35 +2136,73 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         };
       });
   }
-  function displayCandidates() {
-    const filtered = filterCandidates(hotCandidatePool(), {
-      minPayout:settings.minDisplayPayout,
-      minWinProbability:settings.minDisplayWinProbability,
-      readyOnly:settings.displayReadyOnly
-    });
-    return filtered.sort((a, b) => {
-      const hotBoostA = Math.min(260, Math.max(0, Number(a.hotItemScore) || 0) * 0.7);
-      const hotBoostB = Math.min(260, Math.max(0, Number(b.hotItemScore) || 0) * 0.7);
-      return (candidateScore(b) + hotBoostB) - (candidateScore(a) + hotBoostA)
-        || Number(a.hotItemRank || 999) - Number(b.hotItemRank || 999)
-        || Number(b.grossValue || 0) - Number(a.grossValue || 0);
-    });
+
+  function targetPassesSource(candidate) {
+    const wanted = String(settings.targetSource || 'any');
+    if (wanted === 'any') return true;
+    return (candidate.sources || [candidate.source]).map(String).includes(wanted);
   }
-  function readyCount() { return displayCandidates().filter((c) => !c.stale && c.attackableNow).length; }
+
+  function targetPassesSaleConfidence(candidate) {
+    const wanted = String(settings.targetSaleConfidence || 'any');
+    if (wanted === 'any') return true;
+    const rank = {low:0,medium:1,high:2};
+    return (rank[String(candidate.confidence || 'low')] ?? 0) >= (rank[wanted] ?? 0);
+  }
+
+  function verifiedTargetPool() {
+    const now = nowSec();
+    const verifyWindow = Math.max(45, Math.max(15, Number(settings.candidateRecheckSeconds)||30) * 2);
+    return hotCandidatePool()
+      .filter((candidate) => {
+        if (candidate.stale || !candidate.attackableNow) return false;
+        if (!(Number(candidate.verifiedAt) > 0) || now - Number(candidate.verifiedAt) > verifyWindow) return false;
+        const payout = Number(candidate.mugEstimate?.planningAmount || 0);
+        if (payout < Math.max(0, Number(settings.targetMinPayout)||0)) return false;
+        const minWin = Math.max(0, Math.min(100, Number(settings.targetMinWinProbability)||0));
+        if (minWin > 0 && (!Number.isFinite(Number(candidate.winProbability)) || Number(candidate.winProbability) < minWin)) return false;
+        if (Number(candidate.hotItemConfidence || 0) < Math.max(0, Number(settings.targetMinItemConfidence)||0)) return false;
+        const inactivity = Math.max(0, Number(candidate.signalAt||0)-Number(candidate.lastAction||0));
+        if (inactivity < Math.max(0, Number(settings.targetMinInactivityMinutes)||0) * 60) return false;
+        const maxLevel = Math.max(0, Number(settings.targetMaxLevel)||0);
+        if (maxLevel > 0 && (!Number.isFinite(Number(candidate.level)) || Number(candidate.level) > maxLevel)) return false;
+        const maxLife = Math.max(0, Math.min(100, Number(settings.targetMaxLifePercent) || 100));
+        if (maxLife < 100 && (!Number.isFinite(Number(candidate.lifePercent)) || Number(candidate.lifePercent) > maxLife)) return false;
+        if (!targetPassesSaleConfidence(candidate) || !targetPassesSource(candidate)) return false;
+        return true;
+      })
+      .sort((a,b)=>{
+        const hotA = Math.max(0, Number(a.hotItemScore)||0);
+        const hotB = Math.max(0, Number(b.hotItemScore)||0);
+        const payoutA = Math.max(0, Number(a.mugEstimate?.planningAmount)||0);
+        const payoutB = Math.max(0, Number(b.mugEstimate?.planningAmount)||0);
+        const winA = Number.isFinite(Number(a.winProbability)) ? Number(a.winProbability) : 0;
+        const winB = Number.isFinite(Number(b.winProbability)) ? Number(b.winProbability) : 0;
+        const scoreA = candidateScore(a) + hotA*0.8 + Math.log10(payoutA+1)*12 + winA*0.5;
+        const scoreB = candidateScore(b) + hotB*0.8 + Math.log10(payoutB+1)*12 + winB*0.5;
+        return scoreB-scoreA || Number(a.hotItemRank||999)-Number(b.hotItemRank||999);
+      });
+  }
+
+  function readyCount() { return verifiedTargetPool().length; }
   function apiUsage() { cleanRecentCalls(); return `${recentCalls.length}/${settings.requestBudgetPerMinute}`; }
 
-  function candidateHtml(c) {
-    const inactivity = Math.max(0, c.signalAt - c.lastAction);
-    const readiness = c.stale ? 'STALE' : c.attackableNow ? 'READY' : (c.statusState || 'WAIT');
-    return `<div class="mmms-card ${esc(c.confidence)} ${c.stale ? 'stale' : ''}">
-      <div class="mmms-row"><div class="mmms-grow"><div class="mmms-name">${esc(c.sellerName)} [${esc(c.sellerId)}] · ${esc(readiness)}</div><div class="mmms-muted">${esc((c.sources||[c.source]).join('+'))} · ${esc(c.itemName)}${Number(c.signalCount||1) > 1 ? ` · ${esc(c.signalCount)} signals` : ` ×${esc(c.soldQty)}`} · signal ${new Date(c.signalAt * 1000).toLocaleTimeString()}</div></div><div class="mmms-value">${money(c.grossValue)}</div></div>
-      ${c.mugEstimate ? `<div style="margin-top:5px"><span class="mmms-tag"><b>EST MUG ${money(c.mugEstimate.planningAmount)}</b></span><span class="mmms-tag">range ${money(c.mugEstimate.minAmount)}–${money(c.mugEstimate.maxAmount)}</span><span class="mmms-tag">${Number(c.mugEstimate.planningPercent).toFixed(2)}% planning</span>${c.targetMugReductionPercent ? `<span class="mmms-tag">target protection −${esc(c.targetMugReductionPercent)}%</span>` : ''}</div>` : ''}
-      <div style="margin-top:5px"><span class="mmms-tag"><b>HOT #${esc(c.hotItemRank ?? '?')}</b></span><span class="mmms-tag">${esc(c.hotItemConfidence ?? '?')}% item confidence</span><span class="mmms-tag">${money(c.hotItemTurnoverPerHour || 0)}/hr turnover</span><span class="mmms-tag">${money(c.hotItemMugPerHour || 0)}/hr est mug flow</span></div>
-      <div style="margin-top:5px"><span class="mmms-tag">${esc(c.confidence)} sale confidence</span><span class="mmms-tag">${esc(c.activityStatus || 'activity ?')}</span><span class="mmms-tag">inactive ${age(inactivity)} at signal</span>${c.profileStatus ? `<span class="mmms-tag">${esc(c.profileStatus)}</span>` : ''}</div>
-      <div style="margin-top:5px"><span class="mmms-tag">Lvl ${esc(c.level ?? '?')} · ${esc(c.levelBand || '?')}</span><span class="mmms-tag">${c.daysOld === null || c.daysOld === undefined ? '?' : esc(c.daysOld)} days · ${esc(c.ageBand || '?')}</span><span class="mmms-tag">Life ${c.lifeCurrent ?? '?'} / ${c.lifeMaximum ?? '?'}${Number.isFinite(Number(c.lifePercent)) ? ` (${esc(c.lifePercent)}%)` : ''}</span></div>
-      <div style="margin-top:5px">${Number.isFinite(Number(c.winProbability)) ? `<span class="mmms-tag"><b>WIN ${esc(c.winProbability)}%</b></span><span class="mmms-tag">DEFEAT ${esc(c.defeatProbability)}%</span><span class="mmms-tag">combat confidence ${esc(c.combatConfidence || 'low')}</span>` : '<span class="mmms-tag">combat estimate unavailable</span>'}</div>
-      <div class="mmms-muted" style="margin-top:4px">Evidence: ${esc(c.evidence)}. Win/defeat is a customer-specific estimate; profile-only estimates are low-confidence unless verified target stats are available. Probable exposure is not guaranteed cash-on-hand or mug proceeds.</div>
-      <div style="margin-top:6px">${/^\d+$/.test(String(c.itemId||'')) ? `<button class="mmms-btn" data-action="open-item" data-item-id="${esc(c.itemId)}" data-item-name="${esc(c.itemName||'')}">Item POS</button> ` : ''}<button class="mmms-btn" data-action="profile" data-id="${esc(c.sellerId)}">Profile</button> <button class="mmms-btn" data-action="attack" data-candidate="${esc(c.id)}" ${c.stale ? 'disabled' : ''}>Verify + attack</button></div>
+  function targetHtml(c) {
+    const inactivity = Math.max(0, Number(c.signalAt||0)-Number(c.lastAction||0));
+    const verifiedAge = Math.max(0, nowSec()-Number(c.verifiedAt||0));
+    const payout = Number(c.mugEstimate?.planningAmount || 0);
+    const win = Number.isFinite(Number(c.winProbability)) ? `${Math.round(Number(c.winProbability))}%` : 'n/a';
+    return `<div class="mmms-target-card">
+      <div class="mmms-target-head"><div class="mmms-grow"><div class="mmms-target-name">${esc(c.sellerName)} [${esc(c.sellerId)}]</div><div class="mmms-muted">VERIFIED ${age(verifiedAge)} ago · ${esc(c.profileStatus || c.statusState || 'attackable')}</div></div><div class="mmms-target-payout">${money(payout)}<small>est. mug</small></div></div>
+      <div class="mmms-target-grid">
+        <div><b>WIN ${esc(win)}</b><span>${esc(c.combatConfidence || 'unavailable')} confidence</span></div>
+        <div><b>Lvl ${esc(c.level ?? '?')}</b><span>Life ${esc(c.lifePercent ?? '?')}%</span></div>
+        <div><b>HOT #${esc(c.hotItemRank ?? '?')}</b><span>${esc(c.hotItemConfidence ?? '?')}% item conf.</span></div>
+        <div><b>${age(inactivity)}</b><span>inactive at signal</span></div>
+      </div>
+      <div class="mmms-target-item"><b>${esc(c.itemName)}</b> · ${esc(c.signalCount || 1)} sale signal${Number(c.signalCount||1)===1?'':'s'} · ${money(c.hotItemTurnoverPerHour||0)}/hr mover turnover</div>
+      <div class="mmms-muted">Source: ${esc((c.sources||[c.source]).join(' + '))} · Sale confidence: ${esc(c.confidence)} · Probable exposure: ${money(c.grossValue)}${c.targetMugReductionPercent ? ` · protection −${esc(c.targetMugReductionPercent)}%` : ''}</div>
+      <div class="mmms-target-actions"><button class="mmms-btn primary" data-action="attack" data-candidate="${esc(c.id)}">ATTACK</button><button class="mmms-btn" data-action="profile" data-id="${esc(c.sellerId)}">Profile</button>${/^\d+$/.test(String(c.itemId||'')) ? `<button class="mmms-btn" data-action="open-item" data-item-id="${esc(c.itemId)}" data-item-name="${esc(c.itemName||'')}">Item POS</button>` : ''}</div>
     </div>`;
   }
 
@@ -1998,6 +2219,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
   function tabsHtml() {
     return `<div class="mmms-tabs">
       <button class="mmms-tab ${activeTab==='hot'?'active':''}" data-action="tab" data-tab="hot">Hot</button>
+      <button class="mmms-tab ${activeTab==='targets'?'active':''}" data-action="tab" data-tab="targets">Targets</button>
       <button class="mmms-tab ${activeTab==='saved'?'active':''}" data-action="tab" data-tab="saved">Saved</button>
       <button class="mmms-tab ${activeTab==='settings'?'active':''}" data-action="tab" data-tab="settings">Settings</button>
     </div>`;
@@ -2005,26 +2227,45 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
   function hotTabHtml() {
     const movers = hotItems();
-    const visibleCandidates = displayCandidates();
+    const progress = scanSessionProgress();
     return `<div class="mmms-grid">
         <div class="mmms-stat"><b>${movers.length}</b>hot items</div>
-        <div class="mmms-stat"><b>${readyCount()}</b>ready targets</div>
-        <div class="mmms-stat"><b>${apiUsage()}</b>API/min</div>
+        <div class="mmms-stat"><b>${readyCount()}</b>verified targets</div>
+        <div class="mmms-stat"><b>${scanSession?.active ? `${progress.done}/${progress.total}` : (scanSession?.completedAt ? 'DONE' : '—')}</b>scan progress</div>
         <div class="mmms-stat"><b>${paused ? 'PAUSED' : 'LIVE'}</b>engine</div>
       </div>
-      <div class="mmms-actions"><button class="mmms-btn" data-action="refresh-hot">Refresh movers</button><button class="mmms-btn" data-action="pause">${paused ? 'Resume' : 'Pause'}</button><button class="mmms-btn" data-action="export">Diagnostics</button></div>
-      <div class="mmms-section"><h3>High-money movers</h3><div class="mmms-muted" style="margin-bottom:7px">Ranked for both money flow and real sale velocity. Items must show repeat movement and clear the adaptive high-money floor; low-confidence or one-dimensional movers are excluded automatically.</div>
-        ${movers.length ? movers.map(moverHtml).join('') : '<div class="mmms-empty">Building movement history. Auction/Bazaar signals populate automatically; Item Market signals improve as POS pages are scanned.</div>'}
+      <div class="mmms-section mmms-scan-box"><h3>Hot-item scan</h3><div class="mmms-muted">Uses one reusable worker tab. Torn requires one manual Scan Next action for each page load; the focused page is captured automatically, API validation runs, and target state is saved immediately.</div>
+        <div class="mmms-actions" style="padding:8px 0 0"><button class="mmms-btn primary" data-action="scan-next">${scanSession?.active ? 'Scan Next Hot Item' : 'Start Hot Scan'}</button>${(scanSession?.active || scanSession?.completedAt) ? '<button class="mmms-btn" data-action="scan-reset">Reset Scan</button>' : ''}<button class="mmms-btn" data-action="tab" data-tab="targets">View Targets</button></div>
       </div>
-      <div class="mmms-section"><h3>Best mug targets from Hot sales</h3><div class="mmms-muted" style="margin-bottom:7px">Only sellers tied to recent sales of items currently ranked in Hot are shown here. If an item loses Hot status, its targets leave this list automatically.</div>
-        <div class="mmms-settings" style="margin-bottom:8px">
-          <label>Min est. payout</label><input id="mmms-filter-payout" class="mmms-input" type="number" min="0" step="100000" value="${Number(settings.minDisplayPayout)||0}">
-          <label>Min win chance %</label><input id="mmms-filter-win" class="mmms-input" type="number" min="0" max="100" step="1" value="${Number(settings.minDisplayWinProbability)||0}">
-          <label>Ready only</label><input id="mmms-filter-ready" type="checkbox" ${settings.displayReadyOnly ? 'checked' : ''}>
-        </div><div class="mmms-actions" style="padding:0 0 8px"><button class="mmms-btn" data-action="apply-filters">Apply</button><span class="mmms-muted">Showing ${visibleCandidates.length} of ${hotCandidatePool().length} Hot-sale targets</span><span class="mmms-muted" id="mmms-filter-draft-status"></span></div>
-        ${visibleCandidates.length ? visibleCandidates.map(candidateHtml).join('') : '<div class="mmms-empty">No recent sellers from current Hot items pass the payout/win/activity filters.</div>'}
-        <button class="mmms-btn danger" data-action="clear-candidates">Clear targets</button>
+      <div class="mmms-actions"><button class="mmms-btn" data-action="refresh-hot">Refresh movers</button><button class="mmms-btn" data-action="pause">${paused ? 'Resume' : 'Pause'}</button><button class="mmms-btn" data-action="export">Diagnostics</button></div>
+      <div class="mmms-section"><h3>High-money movers</h3><div class="mmms-muted" style="margin-bottom:7px">Ranked for both money flow and real sale velocity. Items must show repeat movement and clear the adaptive high-money floor.</div>
+        ${movers.length ? movers.map(moverHtml).join('') : '<div class="mmms-empty">Building movement history. API sale signals populate automatically; focused Item Market scans improve seller coverage.</div>'}
       </div>`;
+  }
+
+  function targetsTabHtml() {
+    const targets = verifiedTargetPool();
+    return `<div class="mmms-grid">
+      <div class="mmms-stat"><b>${targets.length}</b>verified + attackable</div>
+      <div class="mmms-stat"><b>${targets[0]?.mugEstimate ? money(targets[0].mugEstimate.planningAmount) : '$0'}</b>top est. mug</div>
+      <div class="mmms-stat"><b>${hotItems().length}</b>Hot items</div>
+      <div class="mmms-stat"><b>${apiUsage()}</b>API/min</div>
+    </div>
+    <div class="mmms-section"><h3>Targets</h3><div class="mmms-muted" style="margin-bottom:8px">Only freshly verified, currently attackable sellers from current Hot-item sales appear here. A target disappears automatically if its status changes, verification expires, or its item leaves Hot.</div>
+      <div class="mmms-target-filters">
+        <label>Min est. mug<input id="mmms-target-payout" class="mmms-input" type="number" min="0" step="100000" value="${Number(settings.targetMinPayout)||0}"></label>
+        <label>Min win %<input id="mmms-target-win" class="mmms-input" type="number" min="0" max="100" step="1" value="${Number(settings.targetMinWinProbability)||0}"></label>
+        <label>Min item confidence<input id="mmms-target-item-confidence" class="mmms-input" type="number" min="0" max="100" step="1" value="${Number(settings.targetMinItemConfidence)||60}"></label>
+        <label>Min inactive (min)<input id="mmms-target-inactivity" class="mmms-input" type="number" min="0" step="1" value="${Number(settings.targetMinInactivityMinutes)||0}"></label>
+        <label>Max level (0 = any)<input id="mmms-target-max-level" class="mmms-input" type="number" min="0" max="100" step="1" value="${Number(settings.targetMaxLevel)||0}"></label>
+        <label>Max life %<input id="mmms-target-max-life" class="mmms-input" type="number" min="0" max="100" step="1" value="${Number(settings.targetMaxLifePercent)||100}"></label>
+        <label>Sale confidence<select id="mmms-target-sale-confidence" class="mmms-input"><option value="any" ${settings.targetSaleConfidence==='any'?'selected':''}>Any</option><option value="medium" ${settings.targetSaleConfidence==='medium'?'selected':''}>Medium+</option><option value="high" ${settings.targetSaleConfidence==='high'?'selected':''}>High only</option></select></label>
+        <label>Source<select id="mmms-target-source" class="mmms-input"><option value="any" ${settings.targetSource==='any'?'selected':''}>Any</option><option value="bazaar" ${settings.targetSource==='bazaar'?'selected':''}>Bazaar</option><option value="itemmarket" ${settings.targetSource==='itemmarket'?'selected':''}>Item Market</option><option value="auctionhouse" ${settings.targetSource==='auctionhouse'?'selected':''}>Auction House</option><option value="pointsmarket" ${settings.targetSource==='pointsmarket'?'selected':''}>Points Market</option></select></label>
+      </div>
+      <div class="mmms-actions" style="padding:8px 0 8px"><button class="mmms-btn primary" data-action="apply-target-filters">Apply Filters</button><button class="mmms-btn" data-action="refresh-targets">Refresh Verification</button><span class="mmms-muted" id="mmms-filter-draft-status"></span></div>
+      ${targets.length ? targets.map(targetHtml).join('') : '<div class="mmms-empty">No verified attackable targets currently meet these filters.</div>'}
+      <div class="mmms-actions" style="padding:8px 0 0"><button class="mmms-btn danger" data-action="clear-candidates">Clear candidate history</button></div>
+    </div>`;
   }
 
   function savedTabHtml() {
@@ -2037,7 +2278,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     return `<div class="mmms-section"><h3>Saved scans / watchlist</h3><div class="mmms-muted" style="margin-bottom:7px">Only validated market watches and active Bazaar watches are shown. Unresolved market rows get a short validation window and are dropped automatically.</div>
       <div class="mmms-grid" style="padding:0 0 8px"><div class="mmms-stat"><b>${list.length}</b>tracked</div><div class="mmms-stat"><b>${validating.length}</b>validating</div><div class="mmms-stat"><b>${watches.filter((w)=>!w.active).length}</b>inactive</div><div class="mmms-stat"><b>${active.length}</b>active total</div></div>
       <div class="mmms-actions" style="padding:0 0 8px"><button class="mmms-btn danger" data-action="clear-saved">Clear saved list</button><button class="mmms-btn" data-action="clear-inactive">Remove inactive</button></div>
-      ${list.length ? list.map(watchHtml).join('') : '<div class="mmms-empty">No validated saved watches yet. Open a Hot item POS and SS_Mugger will validate trackable seller listings automatically.</div>'}
+      ${list.length ? list.map(watchHtml).join('') : '<div class="mmms-empty">No validated saved watches yet. Open a Hot item POS or use the Hot scan worker to populate this list.</div>'}
       <div class="mmms-settings" style="margin-top:10px"><label>Bazaar player ID</label><div style="display:flex;gap:5px"><input id="mmms-bazaar-id" class="mmms-input" inputmode="numeric" placeholder="Player ID"><button class="mmms-btn" data-action="add-bazaar">Add</button></div></div>
       <div class="mmms-actions" style="padding:10px 0 0"><button class="mmms-btn danger" data-action="clear-item-history">Clear mover history</button></div>
     </div>`;
@@ -2107,7 +2348,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
       panel.dataset.mmRendered = '1';
       return;
     }
-    const body = activeTab === 'saved' ? savedTabHtml() : activeTab === 'settings' ? settingsTabHtml() : hotTabHtml();
+    const body = activeTab === 'targets' ? targetsTabHtml() : activeTab === 'saved' ? savedTabHtml() : activeTab === 'settings' ? settingsTabHtml() : hotTabHtml();
     panel.innerHTML = `<div class="mmms-head"><span class="mmms-dot ${paused ? 'pause' : ''}"></span><span class="mmms-title">${APP} <span class="mmms-muted">${VERSION}</span></span><button class="mmms-btn" data-action="close">Close</button></div>${tabsHtml()}${body}`;
     restorePanelDraft();
     updatePanelDraftIndicators();
@@ -2194,12 +2435,21 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     render(true);
   }
 
+  function syncSharedState() {
+    watches = readJson(STORE.watches, watches);
+    candidates = readJson(STORE.candidates, candidates);
+    itemSignals = readJson(STORE.itemSignals, itemSignals);
+    itemScans = readJson(STORE.itemScans, itemScans);
+    pendingItemScan = readJson(STORE.pendingScan, pendingItemScan);
+    scanSession = readJson(STORE.scanSession, scanSession);
+  }
+
   function exportDiagnostics() {
     const payload = {
       app: APP, version: VERSION, licensedUser:{id:LICENSED_USER_ID,name:LICENSED_USER_NAME}, licenseStatus:licenseState.status, exportedAt: new Date().toISOString(), url: location.href,
       focused: focused(), route: {itemMarket: isItemMarket(), pointsMarket: isPointsMarket(), bazaar: isBazaar(), itemId: currentItemId()},
       platform: PLATFORM, settings: {...settings}, apiKeyConfigured: Boolean(apiKey), apiKeySource: PDA_INJECTED_API_KEY && apiKey === PDA_INJECTED_API_KEY ? 'tornpda' : (apiKey ? 'stored/manual' : 'none'), apiUsageLastMinute: recentCalls.length, combatModelStatus: ownerBattleStatsStatus, mugModel: {status:ownerMugProfile.status, masterfulLevel:ownerMugProfile.masterfulLevel, masterfulBonusPercent:ownerMugProfile.masterfulBonusPercent, detectedPlunderPercent:ownerMugProfile.detectedPlunderPercent, effectivePlunderPercent:ownerMugProfile.effectivePlunderPercent, otherBonusPercent:ownerMugProfile.otherBonusPercent, awards:ownerMugProfile.awards, refreshedAt:ownerMugProfile.refreshedAt},
-      watches, candidates, hotItems:hotItems(), itemSignalCount:itemSignals.length, itemScans:{...itemScans}, pendingItemScan:pendingItemScan ? {...pendingItemScan} : null, activeTab, discovery: {...discovery, owner: discovery.owner ? {...discovery.owner} : null}, seenAuctionCount: seenAuctions.length, rejections: rejections.slice(-50), errors: errors.slice(-50)
+      watches, candidates, hotItems:hotItems(), verifiedTargets:verifiedTargetPool(), itemSignalCount:itemSignals.length, itemScans:{...itemScans}, pendingItemScan:pendingItemScan ? {...pendingItemScan} : null, scanSession:{...scanSession}, activeTab, discovery: {...discovery, owner: discovery.owner ? {...discovery.owner} : null}, seenAuctionCount: seenAuctions.length, rejections: rejections.slice(-50), errors: errors.slice(-50)
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
     const a = document.createElement('a');
@@ -2219,6 +2469,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
   setInterval(() => {
     attachLauncher();
+    if (focused()) ensureScanWorkerBar();
     if (settings.autoCapture && focused()) {
       const marker = `${location.href}|${document.body?.childElementCount || 0}`;
       if (marker !== lastCaptureUrl || isItemMarket() || isPointsMarket()) {
@@ -2229,13 +2480,24 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
     }
   }, 3000);
   setInterval(schedulerTick, 1200);
-  document.addEventListener('visibilitychange', () => { if (licensed() && document.visibilityState === 'visible') { captureActivePage(); if (pendingItemScan) void runPendingItemScan(); } });
-  window.addEventListener('focus', () => { if (licensed()) { captureActivePage(); if (pendingItemScan) void runPendingItemScan(); } });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    syncSharedState();
+    ensureScanWorkerBar();
+    if (licensed()) { captureActivePage(); if (pendingItemScan) void runPendingItemScan(); }
+    if (panelOpen) render(true);
+  });
+  window.addEventListener('focus', () => {
+    syncSharedState();
+    ensureScanWorkerBar();
+    if (licensed()) { captureActivePage(); if (pendingItemScan) void runPendingItemScan(); }
+    if (panelOpen) render(true);
+  });
   window.addEventListener('orientationchange', () => setTimeout(render, 120));
-  window.addEventListener('pagehide', () => { saveWatches(); saveCandidates(); saveItemSignals(); saveItemScans(); savePendingScan(); });
+  window.addEventListener('pagehide', () => { saveWatches(); saveCandidates(); saveItemSignals(); saveItemScans(); savePendingScan(); saveScanSession(); });
   sanitizeWatches();
   seedItemSignalHistory();
-  setTimeout(() => { if (pendingItemScan) void runPendingItemScan(); }, 1400);
+  setTimeout(() => { ensureScanWorkerBar(); if (pendingItemScan) void runPendingItemScan(); }, 1400);
 
   render();
 })();
