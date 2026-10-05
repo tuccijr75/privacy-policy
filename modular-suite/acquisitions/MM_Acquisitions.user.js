@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.15
+// @version      8.0.0-alpha.16
 // @description  Market acquisition, pricelist profit, ranked-weapon valuation, live market/auction scouting and travel procurement with manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -932,7 +932,7 @@
       if(bonusQ&&!row.bonuses.some(b=>String(b.title||'').toLowerCase().includes(bonusQ)))return false;
       if(Number(row.roiPct||0)<Math.max(rankedMinRoi,cfg.minRoiPct))return false;
       return true;
-    }).sort((a,b)=>b.investmentScore-a.investmentScore||b.roiPct-a.roiPct||b.profit-a.profit);
+    }).sort((a,b)=>Number(b.sortScore||0)-Number(a.sortScore||0)||Number(b.history?.confidence||0)-Number(a.history?.confidence||0)||Number(b.liquidityScore||0)-Number(a.liquidityScore||0)||b.roiPct-a.roiPct||b.profit-a.profit);
   }
 
   async function analyzeVisibleRanked(){
@@ -995,7 +995,7 @@
     const itemMarketCount=liveMarketRows.filter(row=>['item market','market'].includes(String(row?.source||'').toLowerCase())).length;
     return card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
-        '<div><b>Ranked Weapon Profit Scout</b><div style="font-size:10px;color:#888;">No bonuses excluded. BB scrap floor + completed Torn auctions + live market/auction opportunities. Auction prices are current bids, not guaranteed purchase prices.</div></div>'+
+        '<div><b>Ranked Weapon Profit Scout</b><div style="font-size:10px;color:#888;">No bonuses excluded. BB scrap floor + completed Torn auctions + live market/auction opportunities. Bazaar / Item Market use investment score; auctions use watch score because current bids are not guaranteed purchase prices.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
           '<button id="mm-acq-rw-pricelist-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Update Pricelist</button>'+
           '<button id="mm-acq-rw-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Ranked</button>'+
@@ -1041,7 +1041,7 @@
               '<div>'+esc(bonus)+'</div>'+
               priceLine+auctionLine+
               '<div style="color:#888;">'+esc(row.valuationSource)+' · BB '+Number(row.bbUnits||0)+' ('+money(row.bbFloor)+') · AH median '+money(row.auctionValue)+' · '+esc(row.history?.cohort||'BASE')+' n='+Number(row.history?.samples||0)+' · confidence '+Number(row.history?.confidence||0)+'%</div>'+
-              '<div style="color:#888;">Traffic 7/30/90d '+Number(row.volume7||0)+'/'+Number(row.volume30||0)+'/'+Number(row.volume90||0)+' · liquidity '+Number(row.liquidityScore||0)+'/100 · investment '+Number(row.investmentScore||0)+'/100</div>'+
+              '<div style="color:#888;">Traffic 7/30/90d '+Number(row.volume7||0)+'/'+Number(row.volume30||0)+'/'+Number(row.volume90||0)+' · liquidity '+Number(row.liquidityScore||0)+'/100 · '+(isAuction?'watch '+Number(row.auctionWatchScore||0)+'/100 · urgency '+Number(row.auctionUrgencyScore||0)+'/100 · bid discount '+Number(row.auctionDiscountScore||0)+'/100':'investment '+Number(row.investmentScore||0)+'/100')+'</div>'+
             '</div>'+
             '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
               '<button data-rw-history="'+esc(row.itemId)+'" '+(busy?'disabled':'')+' style="'+button(!historyLoaded)+(busy?'opacity:.5;':'')+'padding:5px 7px;">'+(historyLoaded?'Refresh AH':'Analyze AH')+'</button>'+
@@ -1363,7 +1363,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.15 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.16 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
