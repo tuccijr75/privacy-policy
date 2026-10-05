@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.14
+// @version      8.0.0-alpha.15
 // @description  Market acquisition, pricelist profit, ranked-weapon valuation, live market/auction scouting and travel procurement with manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -1217,26 +1217,27 @@
         source.shopName?String(source.shopName):'',
         source.country?String(source.country):'',
         source.sellerName?String(source.sellerName):'',
-        Number(source.quantity||0)>0?'qty/stock '+Number(source.quantity).toLocaleString():''
+        Number(source.quantity||0)>0?'qty/stock '+Number(source.quantity).toLocaleString():'',
+        source.aggregateOnly&&Number(source.bazaarCount||0)>0?'bazaars '+Number(source.bazaarCount).toLocaleString():'',
+        source.aggregateOnly&&Number(source.bazaarAverage||0)>0?'avg '+money(source.bazaarAverage):''
       ].filter(Boolean).join(' · ');
       const targetBuy=Math.max(0,Number(itemSelection?.pricelistBuyPrice||0));
-      const id=String(itemSelection?.id||'');
-      const snap=state?.procurement?.marketSnapshots?.[id]||{};
-      const intel=state?.marketIntel?.marketplace?.[id]||{};
-      const exit=Math.max(0,Number(snap.realisticExit||0),Number(intel.bazaarAverage||0),Number(intel.marketPrice||0),Number(itemSelection?.marketPrice||0));
+      const exit=Math.max(0,Number(itemSources?.exitValue||0));
+      const exitRoute=String(itemSources?.exitRoute||'Unknown');
       const profit=exit>0?exit-Number(source.price||0):0;
       const roi=exit>0&&Number(source.price||0)>0?profit/Number(source.price||0)*100:0;
       const target=targetBuy>0?' · Your buy rate '+money(targetBuy):'';
-      const economics=exit>0?' · Market exit '+money(exit)+' · Profit '+(profit>=0?'+':'-')+money(Math.abs(profit))+' · ROI '+roi.toFixed(1)+'%':'';
+      const economics=exit>0?' · Live exit '+money(exit)+' ('+esc(exitRoute)+') · Profit '+(profit>=0?'+':'-')+money(Math.abs(profit))+' · ROI '+roi.toFixed(1)+'%':'';
+      const sourceNote=source.aggregateOnly?' · aggregate Bazaar evidence; seller is re-resolved before routing':'';
       return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
-        '<div><b>'+(index===0?'BEST · ':'')+esc(source.source)+'</b> · <b>'+money(source.price)+'</b>'+(detail?' · '+esc(detail):'')+target+economics+'</div>'+
+        '<div><b>'+(index===0?'BEST · ':'')+esc(source.source)+'</b> · <b>'+money(source.price)+'</b>'+(detail?' · '+esc(detail):'')+target+economics+sourceNote+'</div>'+
         '<button data-item-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(index===0)+(busy?'opacity:.5;':'')+'">Use</button>'+
       '</div>';
     }).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">No current source comparison loaded.</div>';
     return card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
         '<div><b>'+esc(itemSelection.name)+' ['+esc(itemSelection.id)+']</b>'+
-          '<div style="font-size:10px;color:#888;">'+esc(itemSelection.type)+(itemSelection.subType?' · '+esc(itemSelection.subType):'')+' · Torn market reference '+money(itemSelection.marketPrice||0)+'</div>'+
+          '<div style="font-size:10px;color:#888;">'+esc(itemSelection.type)+(itemSelection.subType?' · '+esc(itemSelection.subType):'')+' · Torn catalog reference '+money(itemSelection.marketPrice||0)+' (reference only; not used as live exit)</div>'+
         '</div>'+
         '<button data-item-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Use Best Source</button>'+
       '</div>'+rows
@@ -1362,7 +1363,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.14 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.15 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
