@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.16
+// @version      8.0.0-alpha.17
 // @description  Market acquisition, pricelist profit, ranked-weapon valuation, live market/auction scouting and travel procurement with manual final purchase.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -1197,7 +1197,9 @@
       }
       if(result?.reason==='overseas-recommended'){
         activeView='travel';
-        statusText='Best selected source is overseas: '+String(result.country||'destination')+' · '+money(result.price||0)+' each · stock '+Number(result.stock||0).toLocaleString()+'.';
+        const priceText=result.priceKnown&&Number(result.price||0)>0?money(result.price)+' each':'shop cost unavailable in current feed';
+        const profitText=Number(result.profit||0)?' · projected profit '+money(result.profit):'';
+        statusText='Best selected source is overseas: '+String(result.country||'destination')+' · '+priceText+' · stock '+Number(result.stock||0).toLocaleString()+profitText+'. Travel and purchase remain manual.';
       }else if(result?.reason==='shop-recommended'){
         statusText='Best selected source is '+String(result.shopName||'a Torn shop')+' at '+money(result.price||0)+' each'+(result.country?' · '+String(result.country):'')+'. Purchase remains manual.';
       }else if(result?.reason==='preferred-source-unavailable'){
@@ -1224,14 +1226,24 @@
       const targetBuy=Math.max(0,Number(itemSelection?.pricelistBuyPrice||0));
       const exit=Math.max(0,Number(itemSources?.exitValue||0));
       const exitRoute=String(itemSources?.exitRoute||'Unknown');
-      const profit=exit>0?exit-Number(source.price||0):0;
-      const roi=exit>0&&Number(source.price||0)>0?profit/Number(source.price||0)*100:0;
+      const sourcePrice=Math.max(0,Number(source.price||0));
+      const priceKnown=source.priceKnown!==false&&sourcePrice>0;
+      const profit=exit>0&&priceKnown?exit-sourcePrice:0;
+      const roi=exit>0&&priceKnown?profit/sourcePrice*100:0;
       const target=targetBuy>0?' · Your buy rate '+money(targetBuy):'';
-      const economics=exit>0?' · Live exit '+money(exit)+' ('+esc(exitRoute)+') · Profit '+(profit>=0?'+':'-')+money(Math.abs(profit))+' · ROI '+roi.toFixed(1)+'%':'';
-      const sourceNote=source.aggregateOnly?' · aggregate Bazaar evidence; seller is re-resolved before routing':'';
+      const economics=exit>0&&priceKnown?' · Live exit '+money(exit)+' ('+esc(exitRoute)+') · Profit '+(profit>=0?'+':'-')+money(Math.abs(profit))+' · ROI '+roi.toFixed(1)+'%':'';
+      const travelEconomics=source.travelEvidence
+        ?' · Travel profit '+(Number(source.profit||0)>=0?'+':'-')+money(Math.abs(Number(source.profit||0)))+(Number(source.sourceProfitPerHour||0)?' · '+money(source.sourceProfitPerHour)+'/hr':'')
+        :'';
+      const sourceNote=source.aggregateOnly
+        ?' · aggregate Bazaar evidence; seller is re-resolved before routing'
+        :source.travelEvidence&&!priceKnown
+          ?' · shop cost unavailable in current TornW3B table; preserved as travel evidence'
+          :'';
+      const displayPrice=priceKnown?money(sourcePrice):'Cost unavailable';
       return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
-        '<div><b>'+(index===0?'BEST · ':'')+esc(source.source)+'</b> · <b>'+money(source.price)+'</b>'+(detail?' · '+esc(detail):'')+target+economics+sourceNote+'</div>'+
-        '<button data-item-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(index===0)+(busy?'opacity:.5;':'')+'">Use</button>'+
+        '<div><b>'+(index===0&&priceKnown?'BEST · ':'')+esc(source.source)+'</b> · <b>'+displayPrice+'</b>'+(detail?' · '+esc(detail):'')+target+economics+travelEconomics+sourceNote+'</div>'+
+        '<button data-item-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(index===0&&priceKnown)+(busy?'opacity:.5;':'')+'">Use</button>'+
       '</div>';
     }).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">No current source comparison loaded.</div>';
     return card(
@@ -1363,7 +1375,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.16 · PROFIT / RANKED / TRAVEL</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.17 · PROFIT / RANKED / TRAVEL</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
