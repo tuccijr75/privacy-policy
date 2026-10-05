@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SS_Mugger Owner QA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      1.1.14.1
+// @version      1.1.15.1
 // @description  API-first mug target acquisition from Bazaar, Item Market, Points Market and completed auctions. No automated attacks.
 // @author       MM Torn Systems
 // @updateURL    https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@mm-market-mug-signals-owner-qa/SS_Mugger_Owner_QA.user.js
@@ -22,7 +22,7 @@
 
   const RUNTIME_GUARD = '__SS_MUGGER_RUNTIME_ACTIVE__';
   if (window[RUNTIME_GUARD]) return;
-  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.14'};
+  window[RUNTIME_GUARD] = {startedAt: Date.now(), version: '1.1.0-rc.15'};
 
   const BOOT_PROBE_ID = 'ss-mugger-boot-probe';
   function showBootProbe(label = 'SSQ', isError = false) {
@@ -627,7 +627,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
 
 
   const APP = 'SS_Mugger Owner QA';
-  const VERSION = '1.1.14.1';
+  const VERSION = '1.1.15.1';
   const PREFIX = 'mm_market_mug_signals_v1';
   const LICENSED_USER_ID = '4325346';
   const LICENSED_USER_NAME = 'Manic-Mike';
@@ -987,18 +987,31 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         hotScanSessionId:String(row.sessionId || ''),
         hotScanObservedAt:Math.max(0, asInt(row.observedAt, 0)),
         intakeState:'awaiting-sale',
-        baseline:null
+        baseline:{
+          ok:true,
+          mode:String(row.uid || '') ? 'scan_uid' : 'scan_price',
+          count:1,
+          totalQty:Math.max(1, asInt(row.amount, 1)),
+          unique:true,
+          quantity:Math.max(1, asInt(row.amount, 1)),
+          reportedAt:Math.max(0, asInt(row.observedAt, 0)),
+          reason:'hot_scan_intake'
+        }
       };
       const key = watchKey(candidateWatch);
       const existing = watches.find((watch)=>watchKey(watch) === key);
       if (existing && Number(existing.hotScanObservedAt || 0) >= candidateWatch.hotScanObservedAt) continue;
+      if (existing && existing.baseline?.ok && Number(existing.baseline.reportedAt || 0) > Number(candidateWatch.baseline.reportedAt || 0)) {
+        candidateWatch.baseline = existing.baseline;
+      }
       const watch = upsertWatch(candidateWatch);
       if (!watch) continue;
       watch.hotScan = true;
       watch.hotRank = candidateWatch.hotRank;
       watch.hotScanSessionId = candidateWatch.hotScanSessionId;
       watch.hotScanObservedAt = candidateWatch.hotScanObservedAt;
-      watch.intakeState = watch.baseline?.ok ? 'tracking-sale' : 'awaiting-sale';
+      watch.baseline = candidateWatch.baseline;
+      watch.intakeState = 'tracking-sale';
       watch.nextPollAt = 0;
       ingested++;
     }
@@ -1937,6 +1950,7 @@ function rankCandidates(candidates, now = Math.floor(Date.now() / 1000)) {
         watch.baseline = result.baseline;
         watch.status = result.state || 'tracking';
         if (result.signal) {
+          watch.intakeState = 'sale-detected';
           await handleSignal(watch, result.signal);
           if (result.baseline.quantity === 0) watch.active = false;
         }
