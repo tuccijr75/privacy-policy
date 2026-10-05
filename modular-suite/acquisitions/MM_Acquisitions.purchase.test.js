@@ -40,7 +40,7 @@ assert(userSource.includes('ITEM_PAGE_SIZE=75'));
 assert(userSource.includes('CATALOG_STALE_MS=24*60*60*1000'));
 assert(userSource.includes('MM_Acquisitions.ranked.logic.js'));
 assert(userSource.includes('Ranked Weapon Profit Scout'));
-assert(userSource.includes('Auction prices are current bids, not guaranteed purchase prices.'));
+assert(userSource.includes('current bids are not guaranteed purchase prices.'));
 assert(userSource.includes('Current bid <b>'));
 assert(userSource.includes('Break-even ceiling '));
 assert(userSource.includes('Max bid @ '));
