@@ -1983,4 +1983,29 @@ Representative live rows:
 Interpretation:
 - completed-history ingestion, fallback cohorting, traffic/liquidity, confidence, and `fairValue=max(BB floor, AH median)` all pass live;
 - Steyr AUG is not the dedicated low-tier Conserve/Achilles acceptance case, so one low-tier weapon still remains to be analyzed.
+### alpha.16 Ranked low-tier completed-AH live pass — PKM Conserve — 2026-10-05
+
+Owner filtered `Conserve` and ran Analyze AH on PKM. Observed directly in authenticated Torn desktop:
+- PASS: status reports `Auction history updated for PKM: 100 completed sales.`;
+- PASS: Ranked header now reports `AH history 2 weapon types`;
+- PASS: Conserve filter returns 3 current matches;
+- PASS: PKM YELLOW / Conserve 25% is treated as a low-tier/BB-dominant weapon without excluding the bonus;
+- PASS: completed-sale traffic populated: 7/30/90d = 11/31/100;
+- PASS: liquidity populated to 100/100;
+- PASS: fallback cohort selected BASE n=90 with confidence 68% because a more-specific Conserve cohort did not meet the minimum comparable-sale threshold;
+- PASS: AH median = $86,500,001;
+- PASS: BB floor = 14 BB = $83,538,000 at $5,967,000/BB;
+- PASS: fair value = $86,500,001 because AH median exceeds BB floor;
+- PASS: valuation source displays `AH + BB FLOOR`;
+- PASS: current $1 bid remains explicitly provisional, with break-even ceiling/headroom based on fair value;
+- PASS: auction watch score rose to 74/100 after AH confidence/liquidity evidence loaded.
+
+Representative live row:
+- PKM · Primary · YELLOW · Auction · Conserve 25%; current bid $1; fair $86,500,001; BB 14 ($83,538,000); AH median $86,500,001; BASE n=90; confidence 68%; traffic 11/31/100; liquidity 100; watch 74.
+
+Result:
+- dedicated low-tier Conserve acceptance passes live;
+- no bonus is excluded from valuation;
+- low-tier/BB logic and completed-AH fallback ladder behave as designed;
+- Ranked desktop valuation gates are now complete except optional additional premium-specific cohort depth testing.
 
