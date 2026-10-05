@@ -45,7 +45,7 @@ assert(userSource.includes('Current bid <b>'));
 assert(userSource.includes('Break-even ceiling '));
 assert(userSource.includes('Max bid @ '));
 assert(userSource.includes('Provisional ROI at current bid'));
-assert(userSource.includes('live auctions use watch score'));
+assert(userSource.includes('Use this page only for ranked weapons.'));
 assert(userSource.includes("watch '+Number(row.auctionWatchScore||0)+'/100"));
 assert(userSource.includes("Number(b.sortScore||0)-Number(a.sortScore||0)"));
 assert(userSource.includes('UNDER BB FLOOR'));
