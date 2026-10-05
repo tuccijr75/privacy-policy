@@ -2008,4 +2008,20 @@ Result:
 - no bonus is excluded from valuation;
 - low-tier/BB logic and completed-AH fallback ladder behave as designed;
 - Ranked desktop valuation gates are now complete except optional additional premium-specific cohort depth testing.
+### alpha.16 Travel stale-state desktop acceptance — 2026-10-05
+
+Observed directly in authenticated Torn desktop with Travel open:
+- PASS: panel reports `v8.0.0-alpha.16 · PROFIT / RANKED / TRAVEL`;
+- PASS: travel context is `Next-trip planning from Torn`;
+- PASS: travel freshness is `STALE` because both browser capture and shared travel state are ~1 day old;
+- PASS: stale/unknown travel data is explicitly blocked from recommendations;
+- PASS: UI displays `Refresh required. Stale/unknown travel data is not used for recommendations.`;
+- PASS: no travel recommendation rows are shown while stale;
+- PASS: `Update Travel` control is available;
+- PASS: Recovery tools remain available but collapsed;
+- PASS: purchases and travel remain manual.
+
+Remaining Travel live gate:
+- owner must click `Update Travel` to refresh the browser-captured TornW3B travel feed;
+- after refresh, verify FRESH/AGING state, trip-aware filtering, recommendation rows, and `Compare Bazaar / Market` handoff into Items.
 
