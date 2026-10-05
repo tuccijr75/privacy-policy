@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.12
+// @version      0.1.0-rc.13
 // @description  Finds active dollar-sale Bazaars via Torn's official API, with deep Item Market scan and manual purchase verification.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -26,7 +26,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.12';
+const VERSION = '0.1.0-rc.13';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
@@ -75,8 +75,17 @@ function replaceSellerLeads(state,leads,now) {
   state.lastSellerDiscovery=now;
   return state.sellerLeads;
 }
-function loadOpenSellerTargets(state) {
-  if(state.worker) throw new Error('Stop the Bazaar worker before loading discovered sellers.');
+function workerIsStale(worker,now) {
+  if(!worker) return false;
+  if(!finite(now) || now<worker.heartbeat) return true;
+  if(now-worker.heartbeat>LIMIT.stale) return true;
+  return !!worker.navigation && (now<worker.navigation.at || now-worker.navigation.at>LIMIT.navigation);
+}
+function loadOpenSellerTargets(state,now) {
+  if(state.worker) {
+    if(workerIsStale(state.worker,now)) state.worker=null;
+    else throw new Error('Stop the active Bazaar worker before loading discovered sellers.');
+  }
   const before=new Set(state.targets);
   const discovered=state.sellerLeads.filter(x=>x.isOpen).map(x=>x.sellerId);
   state.targets=[...new Set([...discovered,...state.targets])].slice(0,LIMIT.targets);
@@ -175,7 +184,10 @@ function readState(raw) {
 const owns = (s, identity) => !!s.worker && s.worker.tabId === identity.tabId && s.worker.documentId === identity.documentId && s.worker.id === identity.workerId;
 function claimWorker(s, identity, now) {
   if (!s.targets.length) throw new Error('Add target player IDs first.');
-  if (s.worker && s.worker.tabId !== identity.tabId) throw new Error('Another tab owns the worker. Use that tab, or Stop before starting here.');
+  if (s.worker && s.worker.tabId !== identity.tabId) {
+    if(workerIsStale(s.worker,now)) s.worker=null;
+    else throw new Error('Another live tab owns the worker. Use that tab, or Stop before starting here.');
+  }
   const old = s.worker;
   s.worker = {id:identity.workerId, tabId:identity.tabId, documentId:identity.documentId, phase:'ready', index:old?.index ?? -1,
     targetId:old?.targetId ?? null, heartbeat:now, lastScan:old?.lastScan || 0, error:'', navigation:null};
@@ -223,7 +235,7 @@ function health(s, now) {
   if (!w) return {kind:'idle',label:'Stopped'};
   if (w.phase==='paused') return {kind:'idle',label:'Paused'};
   if (w.navigation && now-w.navigation.at>LIMIT.navigation) return {kind:'warning',label:'Navigation timed out'};
-  if (now-w.heartbeat>LIMIT.stale || now<w.heartbeat) return {kind:'warning',label:'Worker unavailable — focus its tab'};
+  if (workerIsStale(w,now)) return {kind:'warning',label:'Stale worker — reclaim available'};
   if (w.phase==='error') return {kind:'warning',label:'Inspection needs attention'};
   return {kind:'active',label:w.phase==='navigating'?'Opening target':w.phase==='inspecting'?'Inspecting':'Ready — manual inspection'};
 }
@@ -679,6 +691,7 @@ function makeUI(doc) {
 
 function renderUI(ui,state,identity,now,localError='',session={}) {
   const h=health(state,now), fresh=unread(state,now), actionable=actionableMarketLeads(state,now), w=state.worker;
+  const staleWorker=workerIsStale(w,now);
   const mine=w?.tabId===identity.tabId&&w?.documentId===identity.documentId;
   const totalBadge=actionable.length+fresh.length;
   const status=session.discoveryBusy?'Scanning official market':actionable.length?`${actionable.length} buyable now`:h.label;
@@ -697,14 +710,14 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
   ui.el('discovery-progress').textContent=session.discoveryProgress||`${state.sellerLeads.length} dollar seller${state.sellerLeads.length===1?'':'s'} · ${state.marketLeads.length} item lead${state.marketLeads.length===1?'':'s'} · deep-scan cursor ${state.discoveryCursor}`;
   ui.el('find-deals').disabled=!!localError||session.discoveryBusy||!session.apiConfigured;
   ui.el('deep-scan').disabled=!!localError||session.discoveryBusy||!session.apiConfigured;
-  ui.el('load-dollar-sellers').disabled=!!localError||!!w||!state.sellerLeads.some(x=>x.isOpen);
+  ui.el('load-dollar-sellers').disabled=!!localError|| (!!w&&!staleWorker) || !state.sellerLeads.some(x=>x.isOpen);
   ui.el('verify-market').disabled=!!localError||session.discoveryBusy||!session.currentMarketLead;
   ui.el('api-status').textContent=session.apiConfigured?'API key saved locally in Tampermonkey.':'No API key saved.';
   if(ui.shadow.activeElement!==ui.el('min-value'))ui.el('min-value').value=String(session.minValue||1);
 
   ui.el('progress').textContent=w?`${mine?'This tab is the Bazaar worker':'Bazaar worker is in another tab/document'} · ${w.index<0?'No seller opened':`${w.index+1}/${state.targets.length} · Player ${w.targetId||'—'}`}`:`${state.targets.length} known seller${state.targets.length===1?'':'s'} configured`;
   ui.el('start').textContent=w?.tabId===identity.tabId?'Resume here':'Start in this tab';
-  ui.el('start').disabled=!!localError||!state.targets.length||!!(w&&w.tabId!==identity.tabId);
+  ui.el('start').disabled=!!localError||!state.targets.length||!!(w&&w.tabId!==identity.tabId&&!staleWorker);
   ui.el('pause').disabled=!w||w.phase==='paused';ui.el('stop').disabled=!w;
   ui.el('next').disabled=!mine||w.phase==='paused'||w.phase==='navigating';
   ui.el('inspect').disabled=!mine||!w.targetId||['paused','navigating'].includes(w.phase);
@@ -896,7 +909,7 @@ async function boot(gm, win, doc) {
   }));
 
   on(ui.el('load-dollar-sellers'),'click',e=>act(e,async()=>{
-    const result=await change(s=>loadOpenSellerTargets(s));
+    const result=await change(s=>loadOpenSellerTargets(s,Date.now()));
     discoveryProgress=`Loaded ${result.result} open dollar-sale seller${result.result===1?'':'s'} into the Bazaar scanner.`;
     render();
   }));
