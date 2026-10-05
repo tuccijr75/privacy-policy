@@ -30,7 +30,8 @@
     try{value=originalGetValue(key,def);}catch{value=def;}
     if(String(key)==='mm_acquisitions_api_v1'){
       const pdaKey=String(PDA_API_KEY_PLACEHOLDER||'').trim();
-      const realPdaKey=pdaKey&&!pdaKey.includes('###PDA-APIKEY###');
+      const placeholderSentinel='###PDA-'+'APIKEY###';
+      const realPdaKey=pdaKey&&pdaKey!==placeholderSentinel;
       if((value==null||value===''||value===def)&&realPdaKey)return pdaKey;
     }
     return value;
