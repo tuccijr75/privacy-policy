@@ -807,11 +807,22 @@
       if(itemMarketPrice>0) sources.push({
         source:'Item Market',price:itemMarketPrice,quantity:Number(snap?.itemMarket?.depth1Pct||1)
       });
-      if(bestTravel&&Number(bestTravel.shopCost||0)>0) sources.push({
-        source:'Overseas',price:Number(bestTravel.shopCost||0),quantity:Number(bestTravel.stock||0),
-        country:String(bestTravel.country||''),profit:Number(bestTravel.profit||0)
+      if(bestTravel) sources.push({
+        source:'Overseas',
+        price:Math.max(0,Number(bestTravel.shopCost||0)),
+        quantity:Number(bestTravel.stock||0),
+        country:String(bestTravel.country||''),
+        profit:Number(bestTravel.profit||0),
+        sourceProfitPerHour:Number(bestTravel.sourceProfitPerHour||0),
+        priceKnown:Number(bestTravel.shopCost||0)>0,
+        travelEvidence:true
       });
-      sources.sort((a,b)=>Number(a.price||0)-Number(b.price||0));
+      sources.sort((a,b)=>{
+        const ap=Number(a.price||0),bp=Number(b.price||0);
+        const ak=ap>0,bk=bp>0;
+        if(ak!==bk)return ak?-1:1;
+        return ap-bp;
+      });
       const exitEvidence=selectedItemExitEvidence(state,id);
       return {
         itemId:id,itemName:resolvedName,sources,state,
@@ -869,6 +880,8 @@
           return {
             routed:false,reason:'overseas-recommended',recommendedSource:'Overseas',
             country:String(candidate.country||''),price:Number(candidate.price||0),stock:Number(candidate.quantity||0),
+            profit:Number(candidate.profit||0),sourceProfitPerHour:Number(candidate.sourceProfitPerHour||0),
+            priceKnown:Boolean(candidate.priceKnown),
             ...result
           };
         }
