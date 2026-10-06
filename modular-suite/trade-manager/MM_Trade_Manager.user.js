@@ -287,10 +287,15 @@
 
   function createLauncher(){
     if(!document.body)return;injectStyle();
-    if(core.registerDockLauncher){
+    if(core.registerDockLauncher&&!globalThis.__MM_TORN_PDA__){
       const b=core.registerDockLauncher({id:'trade-manager',label:'MM Trade Manager',accent:'#76559b',icon:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v10H4zM8 7V5h8v2M8 12h8M12 9v6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',onClick:()=>{const root=document.getElementById(ROOT_ID);if(root&&root.style.display!=='none')close();else open();}});
-      if(b)b.id=LAUNCHER_ID;core.adoptLegacyCrmLauncher?.();
+      if(b)b.id=LAUNCHER_ID;core.adoptLegacyCrmLauncher?.();return;
     }
+    if(document.getElementById(LAUNCHER_ID))return;
+    const b=document.createElement('button');b.id=LAUNCHER_ID;b.type='button';b.title='MM Trade Manager';b.setAttribute('aria-label','MM Trade Manager');
+    b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><path d="M4 7h16v10H4zM8 7V5h8v2M8 12h8M12 9v6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;border:1px solid #59466f;border-radius:5px;background:#684b91;color:#eee;box-shadow:0 2px 8px #000a;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+    b.addEventListener('click',()=>{const root=document.getElementById(ROOT_ID);if(root&&root.style.display!=='none')close();else open();});document.body.appendChild(b);
   }
 
   function installChannel(){
