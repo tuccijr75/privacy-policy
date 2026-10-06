@@ -71,6 +71,7 @@
   let sessionId = 0;
   let sessionFilled = false;
   let submitArmed = false;
+  let trustedSendAttemptAt = 0;
   let deliveryVerificationInFlight = false;
   let forumStatus = loadForumStatus();
   let forumCheckPromise = null;
@@ -512,6 +513,7 @@
     baselineTranscriptCount = transcriptBaseline;
     sessionFilled = true;
     submitArmed = false;
+    trustedSendAttemptAt = 0;
     deliveryVerificationInFlight = false;
     render();
     return { ok: true };
@@ -558,6 +560,7 @@
     baselineTranscriptCount = 0;
     sessionFilled = true;
     submitArmed = false;
+    trustedSendAttemptAt = 0;
     deliveryVerificationInFlight = false;
 
     render();
@@ -568,6 +571,10 @@
 
   async function verifyAssistedPost({retries=18,delayMs=150}={}) {
     if (deliveryVerificationInFlight || !sessionFilled || !lastFilledMessage) return false;
+    if (!trustedSendAttemptAt) {
+      setNote('No trusted human Send interaction has been observed for this filled message. Sent state and timer were not advanced.', false);
+      return false;
+    }
     deliveryVerificationInFlight = true;
     try {
       for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -590,6 +597,7 @@
     if (!event.isTrusted || !sessionFilled || !lastComposer || event.target !== lastComposer) return;
     if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
       submitArmed = true;
+      trustedSendAttemptAt = Date.now();
     }
   }
 
@@ -602,6 +610,7 @@
     const label = buttonText(button);
     if (!(label === 'send' || /^send\b/.test(label))) return;
     submitArmed = true;
+    trustedSendAttemptAt = Date.now();
   }
 
   function handleComposerInput(event) {
@@ -933,6 +942,7 @@
     lastComposer = null;
     lastFilledMessage = '';
     baselineTranscriptCount = 0;
+    trustedSendAttemptAt = 0;
     deliveryVerificationInFlight = false;
 
     root.style.display = 'block';
