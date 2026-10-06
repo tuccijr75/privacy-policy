@@ -2684,15 +2684,25 @@
       {Metric:'Minimum proposal approval status',Value:'PROVISIONAL — LEADERSHIP APPROVAL REQUIRED'},
       {Metric:'Open manager / leadership inputs',Value:minimumOpenInputs(minimums).filter(r=>!['READY','COMPLETE','MATURE','READY TO DESIGN'].includes(r.status)).length}
     ];
-    const memberHeaders=['Member ID','Member','Level','Torn Age Days','API Saved','Stats Source','Estimate Confidence','Readiness','War Ready','War Ready Reason','Procurement Disposition','Procurement Pass At','Procurement Pass Reason','Baseline Pass','Approved At','Approval Mode','Manual Override','Override Updated At','Override Reason','Override JSON','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberHeaders=['Member ID','Member','Level','Torn Age Days','API Saved','Stats Source','Estimate Confidence','Readiness','War Ready','War Ready Reason','Any Member Message','Last Member Message At','Build Message','Build Message At','Build Message Count','Data Request','Data Request At','Procurement Disposition','Procurement Pass At','Procurement Pass Reason','Baseline Pass','Approved At','Approval Mode','Manual Override','Override Updated At','Override Reason','Override JSON','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
     const memberData=members.map(r=>{
       const build=r.buildAssessment||logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
+      const anyMessage=memberAnyMessageStatus(r.memberId);
+      const buildMessage=memberMessageStatus(r.memberId,'member-build');
+      const dataRequest=memberMessageStatus(r.memberId,'member-data-reminder');
       return {
         'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'Torn Age Days':num(r.publicIntel?.ageDays),'API Saved':r.apiSaved?'YES':'NO',
         'Stats Source':r.statsEstimated?'PUBLIC ESTIMATE':'VERIFIED','Estimate Confidence':r.statsEstimated?String(r.statEstimate?.confidence||'LOW'):'',
         'Readiness':r.readinessStatus,
         'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO',
         'War Ready Reason':r.readinessApprovalReason||'',
+        'Any Member Message':anyMessage.sent?'SENT':'NOT SENT',
+        'Last Member Message At':anyMessage.sentAt||'',
+        'Build Message':buildMessage.sent?'SENT':'NOT SENT',
+        'Build Message At':buildMessage.sentAt||'',
+        'Build Message Count':buildMessage.count||0,
+        'Data Request':dataRequest.sent?'SENT':'NOT SENT',
+        'Data Request At':dataRequest.sentAt||'',
         'Procurement Disposition':r.acquisitionDisposition||'ACTIVE',
         'Procurement Pass At':r.procurementPassAt||'',
         'Procurement Pass Reason':r.procurementPassReason||'',
