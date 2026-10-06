@@ -2051,11 +2051,39 @@
     root.querySelectorAll('[data-armory-acquire]').forEach(b=>b.addEventListener('click',()=>{
       const plan=logic.acquisitionPlan(state?.factionInventory||{},{
         mode:stockMode,
-          procurementMode,
+        procurementMode,
         budgetCap:acquisitionBudget
       });
       const row=plan.list.find(x=>String(x.item||'')===String(b.dataset.armoryAcquire||''));
       if(row)handoffAcquisition(row,b.dataset.source||'Best');
+    }));
+    root.querySelectorAll('[data-save-acq-qty]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      const item=String(b.dataset.saveAcqQty||''),category=String(b.dataset.acqQtyCategory||'');
+      const plan=logic.acquisitionPlan(state?.factionInventory||{},{mode:stockMode,procurementMode,budgetCap:acquisitionBudget});
+      const row=plan.list.find(x=>String(x.item||'')===item&&String(x.category||'')===category);
+      const input=[...root.querySelectorAll('[data-acq-qty-input]')].find(x=>String(x.dataset.acqQtyInput||'')===item&&String(x.dataset.acqQtyCategory||'')===category);
+      if(!row||!input)return;
+      const value=input.value;
+      busy=true;statusText='Saving planned quantity…';render();
+      try{
+        const result=await setAcquisitionQuantityOverride(row,value);
+        statusText='Planned quantity saved for '+item+': '+fmt(result.qty)+'. Leader report and acquisition handoff now use this quantity.';
+      }catch(error){statusText='Quantity override failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-reset-acq-qty]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      const item=String(b.dataset.resetAcqQty||''),category=String(b.dataset.acqQtyCategory||'');
+      const plan=logic.acquisitionPlan(state?.factionInventory||{},{mode:stockMode,procurementMode,budgetCap:acquisitionBudget});
+      const row=plan.list.find(x=>String(x.item||'')===item&&String(x.category||'')===category);
+      if(!row)return;
+      busy=true;statusText='Resetting planned quantity…';render();
+      try{
+        await setAcquisitionQuantityOverride(row,'');
+        statusText='Manual quantity reset for '+item+'. System quantity is active again.';
+      }catch(error){statusText='Quantity reset failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
     }));
     root.querySelector('#mm-fa-settings-budget-save')?.addEventListener('click',()=>saveBudget(root.querySelector('#mm-fa-settings-budget')?.value));
 
@@ -2125,6 +2153,31 @@
       }catch(error){statusText='Readiness review update failed: '+(error?.message||String(error));}
       finally{busy=false;render();}
     }));
+    root.querySelectorAll('[data-procurement-pass]').forEach(b=>b.addEventListener('click',async()=>{
+      const id=asId(b.dataset.procurementPass);
+      const row=memberRows().find(item=>item.memberId===id);
+      if(!row||busy)return;
+      const reason=prompt(
+        'Procurement Pass excludes '+row.memberName+' from acquisition without claiming verified War Ready. Optional reason:',
+        row.hasVerifiedStats?'Leader procurement decision':'No current member data'
+      );
+      if(reason==null)return;
+      busy=true;statusText='Applying Procurement Pass…';render();
+      try{
+        const result=await setMemberProcurementPass(id,true,reason);
+        statusText=result.memberName+' is excluded from acquisition as PROCUREMENT PASS. New private member data will require review.';
+      }catch(error){statusText='Procurement Pass failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-reopen-procurement]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Reopening member procurement…';render();
+      try{
+        const result=await setMemberProcurementPass(b.dataset.reopenProcurement,false);
+        statusText=result.memberName+' is active in acquisition planning again.';
+      }catch(error){statusText='Procurement update failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
     root.querySelectorAll('[data-paste-reply]').forEach(b=>b.addEventListener('click',async()=>{
       const id=asId(b.dataset.pasteReply);
       const row=memberRows().find(x=>x.memberId===id);
@@ -2146,6 +2199,7 @@
       GM_deleteValue(FACTION_API_KEY);statusText='Faction Armory API key cleared.';render();
     });
     root.querySelector('#mm-fa-export')?.addEventListener('click',exportLeadershipExcel);
+    root.querySelector('#mm-fa-export-coverage')?.addEventListener('click',exportLeadershipExcel);
   }
 
   async function importFromField(save){
@@ -2190,6 +2244,9 @@
       budgetCap:acquisitionBudget
     });
     const inventory=Object.values(state.factionInventory?.current||{});
+    const coverage=logic.coverageComparison(state.factionInventory||{},{
+      mode:'war',procurementMode,budgetCap:acquisitionBudget,savedKeyIds:savedKeyIds()
+    });
     const summaryHeaders=['Metric','Value'];
     const summary=[
       {Metric:'Generated',Value:new Date().toISOString()},
@@ -2203,6 +2260,7 @@
       {Metric:'Faction members',Value:members.length},
       {Metric:'Estimated-stat members',Value:members.filter(r=>r.statsEstimated).length},
       {Metric:'War ready (approved)',Value:members.filter(r=>r.readinessStatus==='WAR READY').length},
+      {Metric:'Procurement pass / excluded',Value:members.filter(r=>r.procurementPassCurrent).length},
       {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
       {Metric:'Action needed',Value:members.filter(r=>r.readinessStatus==='ACTION NEEDED'||r.readinessStatus==='SUPPLY ACTION').length},
       {Metric:'Missing / stale',Value:members.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length},
@@ -2212,14 +2270,18 @@
       {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
       {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length}
     ];
-    const memberHeaders=['Member ID','Member','Level','Torn Age Days','API Saved','Stats Source','Estimate Confidence','Readiness','War Ready','Baseline Pass','Approved At','Approval Mode','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberHeaders=['Member ID','Member','Level','Torn Age Days','API Saved','Stats Source','Estimate Confidence','Readiness','War Ready','Procurement Disposition','Procurement Pass At','Procurement Pass Reason','Baseline Pass','Approved At','Approval Mode','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
     const memberData=members.map(r=>{
       const build=r.buildAssessment||logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
       return {
         'Member ID':r.memberId,'Member':r.memberName,'Level':num(r.level),'Torn Age Days':num(r.publicIntel?.ageDays),'API Saved':r.apiSaved?'YES':'NO',
         'Stats Source':r.statsEstimated?'PUBLIC ESTIMATE':'VERIFIED','Estimate Confidence':r.statsEstimated?String(r.statEstimate?.confidence||'LOW'):'',
         'Readiness':r.readinessStatus,
-        'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO','Baseline Pass':build.warReady?'YES':'NO','Approved At':r.readinessApprovedAt||'','Approval Mode':r.readinessApprovalMode||'',
+        'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO',
+        'Procurement Disposition':r.acquisitionDisposition||'ACTIVE',
+        'Procurement Pass At':r.procurementPassAt||'',
+        'Procurement Pass Reason':r.procurementPassReason||'',
+        'Baseline Pass':build.warReady?'YES':'NO','Approved At':r.readinessApprovedAt||'','Approval Mode':r.readinessApprovalMode||'',
         'Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
         'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
         'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
@@ -2235,8 +2297,19 @@
       xmlSheet('Members',memberHeaders,memberData)+
       xmlSheet('Inventory',invHeaders,invData)+
       xmlSheet('Minimums',minHeaders,minData)+
-      xmlSheet('Acquire',['Category','Item','Required Qty','Buy Now Qty','Deferred Qty','Reference Source','Reference Unit Value','Buy Now Cost','Reasons'],acquisition.list.map(r=>({
-        'Category':r.category,'Item':r.item,'Required Qty':num(r.qty),'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Buy Now Cost':num(r.fundedEstimatedValue),'Reasons':r.reasons
+      xmlSheet('Coverage',['Member ID','Member','Readiness','Procurement','Slot','Member Has','Has Score','Need Target','Need Floor','Ready','Route','Assigned Loan','Owned Alternative','Faction Qualifying Available','Faction Qualifying Items'],coverage.memberCoverage.map(r=>({
+        'Member ID':r.memberId,'Member':r.memberName,'Readiness':r.readinessStatus,'Procurement':r.acquisitionDisposition,
+        'Slot':r.slot,'Member Has':r.memberHas,'Has Score':num(r.memberHasScore),'Need Target':r.needTarget,'Need Floor':num(r.needFloor),
+        'Ready':r.ready?'YES':'NO','Route':r.route,'Assigned Loan':r.assignedLoan,'Owned Alternative':r.ownedAlternative,
+        'Faction Qualifying Available':num(r.factionAvailableQualifying),'Faction Qualifying Items':r.factionQualifyingItems.join(' | ')
+      })))+
+      xmlSheet('Faction Coverage',['Slot','Faction Owned','Available','Loaned','Member Gaps','Issue Assignments','Acquire Assignments','System Buy Qty','Planned Buy Qty'],coverage.factionCoverage.map(r=>({
+        'Slot':r.slot,'Faction Owned':num(r.owned),'Available':num(r.available),'Loaned':num(r.loaned),'Member Gaps':num(r.memberGaps),
+        'Issue Assignments':num(r.issueAssignments),'Acquire Assignments':num(r.acquireAssignments),'System Buy Qty':num(r.systemBuyQty),'Planned Buy Qty':num(r.plannedBuyQty)
+      })))+
+      xmlSheet('Acquire',['Category','Item','System Qty','Planned Qty','Manual Override','Buy Now Qty','Deferred Qty','Reference Source','Reference Unit Value','Buy Now Cost','Reasons'],acquisition.list.map(r=>({
+        'Category':r.category,'Item':r.item,'System Qty':num(r.systemQty),'Planned Qty':num(r.qty),'Manual Override':r.manualQtyOverride!=null?'YES':'NO',
+        'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Buy Now Cost':num(r.fundedEstimatedValue),'Reasons':r.reasons
       })))+
       '</Workbook>';
     const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
