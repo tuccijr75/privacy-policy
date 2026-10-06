@@ -5,6 +5,54 @@
   const n=v=>Number.isFinite(Number(v))?Number(v):0;
   const asId=v=>String(v??'').trim();
   const nowIso=()=>new Date().toISOString();
+  const DAY_MS=86400000;
+
+  function epochMs(value){
+    if(typeof value==='string'){
+      const parsed=Date.parse(value);
+      if(Number.isFinite(parsed)&&parsed>0)return parsed;
+    }
+    const raw=n(value);
+    if(!(raw>0))return 0;
+    return raw<100_000_000_000?raw*1000:raw;
+  }
+
+  function marketPulseEvidence(slice,itemId,at=Date.now()){
+    const id=asId(itemId);
+    const pulse=slice?.marketIntel?.marketPulse;
+    const item=pulse?.items?.[id];
+    if(!item||typeof item!=='object'){
+      return {
+        itemId:id,available:false,usable:false,stale:true,status:'MISSING',
+        floorPrice:0,marketDepth:0,observedUnitsPerHour:0,turnoverPerHour:0,
+        liquidityScore:0,confidencePct:0,trendPct:0,sourceTimestamp:0,
+        fetchedAt:0,sourceAgeMs:Infinity,fetchAgeMs:Infinity,ttlMs:0,
+        source:'Market Pulse'
+      };
+    }
+    const ttlMs=Math.max(0,n(pulse?.settings?.ttlMs));
+    const fetchedAt=epochMs(item.fetchedAt??item.lastSnapshot?.fetchedAt);
+    const sourceTimestamp=epochMs(item.sourceTimestamp??item.lastSnapshot?.sourceTimestamp);
+    const fetchAgeMs=fetchedAt?Math.max(0,Number(at)-fetchedAt):Infinity;
+    const sourceAgeMs=sourceTimestamp?Math.max(0,Number(at)-sourceTimestamp):Infinity;
+    const freshnessKnown=ttlMs>0&&fetchedAt>0;
+    const stale=!freshnessKnown||fetchAgeMs>ttlMs;
+    const floorPrice=Math.max(0,n(item.floorPrice??item.lastSnapshot?.floorPrice));
+    const available=fetchedAt>0||sourceTimestamp>0||floorPrice>0;
+    const usable=available&&!stale&&floorPrice>0;
+    return {
+      itemId:id,available,usable,stale,status:!available?'MISSING':stale?'STALE':'FRESH',
+      floorPrice,marketDepth:Math.max(0,Math.round(n(item.marketDepth??item.lastSnapshot?.marketDepth))),
+      observedUnitsPerHour:Math.max(0,n(item.observedUnitsPerHour)),
+      turnoverPerHour:Math.max(0,n(item.turnoverPerHour)),
+      liquidityScore:Math.max(0,n(item.liquidityScore)),
+      confidencePct:Math.max(0,n(item.confidencePct)),
+      trendPct:n(item.trendPct),
+      tier:String(item.tier||''),
+      sourceTimestamp,fetchedAt,sourceAgeMs,fetchAgeMs,ttlMs,
+      source:String(item.lastSnapshot?.source||item.sources?.itemMarket||'Market Pulse')
+    };
+  }
   function ensureInventorySlice(slice={}){
     const out=slice&&typeof slice==='object'?slice:{};
     out.sales=out.sales&&typeof out.sales==='object'&&!Array.isArray(out.sales)?out.sales:{};
@@ -189,7 +237,7 @@
         id,name:String(listing.name||inventory.name||metric.name||('Item '+id)),
         bazaarQty,bazaarPrice:n(listing.price),personalQty,
         units7d:n(metric.units7d),units30d:n(metric.units30d),daily30:daily,
-        avgSoldPrice30:n(metric.avgSoldPrice30),targetListed,addToBazaar,
+        avgSoldPrice30:n(metric.avgSoldPrice30),lastSaleAt:n(metric.lastSaleAt),targetListed,addToBazaar,
         plannedPrice:price,action
       });
     }
@@ -260,16 +308,57 @@
       const avgCost=basis.remainingQty>0?basis.remainingCost/basis.remainingQty:0;
       const exit=n(row.plannedPrice)||n(row.bazaarPrice)||n(row.avgSoldPrice30);
       const currentProfitPerUnit=avgCost>0&&exit>0?exit-avgCost:0;
+      const ownedQty=Math.max(0,n(row.bazaarQty)+n(row.personalQty));
+      const targetStock=Math.max(0,n(row.targetListed));
+      const deficit=targetStock>0?Math.max(0,targetStock-ownedQty):0;
+      const restockStatus=targetStock<=0?'NO SALES SIGNAL':ownedQty<=0?'OUT OF STOCK':deficit>0?'LOW STOCK':'ON TARGET';
+      const staleInventory=n(row.bazaarQty)>0&&n(row.units30d)<=0;
+      const pulse=marketPulseEvidence(db,row.id,at);
+      const pricingStatus=!pulse.available?'INSUFFICIENT EVIDENCE':pulse.stale?'MARKET DATA STALE':pulse.floorPrice>0?'MARKET EVIDENCE READY':'INSUFFICIENT EVIDENCE';
+      const listingVsMarketPct=pulse.usable&&n(row.bazaarPrice)>0?(n(row.bazaarPrice)-pulse.floorPrice)/pulse.floorPrice*100:null;
+      const expectedMarketProfitPerUnit=pulse.usable&&avgCost>0?pulse.floorPrice-avgCost:0;
+      const expectedMarketRoiPct=pulse.usable&&avgCost>0?expectedMarketProfitPerUnit/avgCost*100:0;
+      const coverDays=n(row.daily30)>0?ownedQty/n(row.daily30):null;
+      const attentionReasons=[];
+      if(row.action==='LIST'||row.action==='TOP UP'||row.action==='REVIEW SLOW')attentionReasons.push(row.action);
+      if(restockStatus==='OUT OF STOCK'||restockStatus==='LOW STOCK')attentionReasons.push(restockStatus);
+      if(staleInventory&&!attentionReasons.includes('REVIEW SLOW'))attentionReasons.push('STALE INVENTORY');
       return {...row,avgCost,trackedRemainingQty:basis.remainingQty,trackedRemainingCost:basis.remainingCost,currentProfitPerUnit,currentRoiPct:avgCost>0?currentProfitPerUnit/avgCost*100:0,
-        realizedRevenue30:realized.revenue,realizedCogs30:realized.cogs,realizedGrossProfit30:realized.grossProfit,realizedRoiPct30:realized.realizedRoiPct,costCoveragePct30:realized.costCoveragePct,matchedUnits30:realized.matchedUnits};
-    });
+        realizedRevenue30:realized.revenue,realizedCogs30:realized.cogs,realizedGrossProfit30:realized.grossProfit,realizedRoiPct30:realized.realizedRoiPct,costCoveragePct30:realized.costCoveragePct,matchedUnits30:realized.matchedUnits,
+        ownedQty,targetStock,deficit,restockStatus,staleInventory,coverDays,pulse,pricingStatus,listingVsMarketPct,expectedMarketProfitPerUnit,expectedMarketRoiPct,attentionReasons,needsAttention:attentionReasons.length>0};
+    }).sort((a,b)=>
+      Number(b.needsAttention)-Number(a.needsAttention)||
+      n(b.deficit)-n(a.deficit)||
+      n(b.daily30)-n(a.daily30)||
+      a.name.localeCompare(b.name)
+    );
+  }
+
+  function dashboardSummary(db,at=Date.now()){
+    const rows=inventoryRoiRows(db,at);
+    const sales=Object.values(db?.sales||{});
+    const revenue30=sales.filter(s=>n(s.timestamp)>=Number(at)-30*DAY_MS).reduce((sum,s)=>sum+n(s.total),0);
+    const gross30=rows.reduce((sum,row)=>sum+n(row.realizedGrossProfit30),0);
+    const cogs30=rows.reduce((sum,row)=>sum+n(row.realizedCogs30),0);
+    return {
+      skuCount:rows.length,
+      ownedUnits:rows.reduce((sum,row)=>sum+n(row.ownedQty),0),
+      listedUnits:rows.reduce((sum,row)=>sum+n(row.bazaarQty),0),
+      revenue30,gross30,cogs30,realizedRoiPct30:cogs30>0?gross30/cogs30*100:0,
+      attentionCount:rows.filter(row=>row.needsAttention).length,
+      restockSkuCount:rows.filter(row=>row.deficit>0).length,
+      restockUnits:rows.reduce((sum,row)=>sum+n(row.deficit),0),
+      pulseFreshCount:rows.filter(row=>row.pulse?.status==='FRESH').length,
+      pulseStaleCount:rows.filter(row=>row.pulse?.status==='STALE').length,
+      pulseMissingCount:rows.filter(row=>row.pulse?.status==='MISSING').length
+    };
   }
 
   const api=Object.freeze({
     BAZAAR_SELL_LOG_ID,
     ensureInventorySlice,normalizeItems,extractBazaarSale,importSalesEntries,
     parseStackableRows,salesItemMetrics,listingRows,updateShopSnapshot,
-    salesByItemDetailed,fifoLedger,realizedProfitMetrics,inventoryRoiRows
+    marketPulseEvidence,salesByItemDetailed,fifoLedger,realizedProfitMetrics,inventoryRoiRows,dashboardSummary
   });
 
   Object.defineProperty(globalThis,'MMTornInventoryRoiLogic',{value:api,configurable:true,enumerable:false,writable:false});
