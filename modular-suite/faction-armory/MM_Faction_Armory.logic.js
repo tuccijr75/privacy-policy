@@ -1252,6 +1252,81 @@
     return {key,active:true,qty:Math.floor(value),entry};
   }
 
+
+  function acquisitionQuoteKey(category,item){
+    return String(category||'other').trim().toLowerCase()+'|'+String(item||'').trim().toLowerCase();
+  }
+
+  function reconcileAcquisitionPricing(plan={},quotes={},budgetCap=null){
+    const cap=budgetCap==null?Math.max(0,n(plan?.budgetCap)):Math.max(0,n(budgetCap));
+    let remainingBudget=cap;
+    let fundedKnownCost=0;
+    let deferredKnownCost=0;
+    let fullPlannedKnownCost=0;
+    let fundedUnits=0;
+    let deferredUnits=0;
+    let unpricedUnits=0;
+    const list=(plan?.list||[]).map(sourceRow=>{
+      const row=clone(sourceRow);
+      const qty=Math.max(0,Math.round(n(row.qty)));
+      const quote=quotes?.[acquisitionQuoteKey(row.category,row.item)]||{};
+      const planningUnit=Math.max(0,n(quote?.planningUnit));
+      const priced=planningUnit>0;
+      const plannedKnownCost=priced?planningUnit*qty:0;
+      let fundedQty=0;
+      let deferredQty=qty;
+      if(qty<=0){
+        fundedQty=0;
+        deferredQty=0;
+      }else if(priced){
+        fundedQty=Math.min(qty,Math.floor(remainingBudget/planningUnit));
+        deferredQty=Math.max(0,qty-fundedQty);
+      }
+      const fundedCost=priced?fundedQty*planningUnit:0;
+      const deferredCost=priced?deferredQty*planningUnit:0;
+      if(priced)remainingBudget=Math.max(0,remainingBudget-fundedCost);
+      else unpricedUnits+=qty;
+      fundedKnownCost+=fundedCost;
+      deferredKnownCost+=deferredCost;
+      fullPlannedKnownCost+=plannedKnownCost;
+      fundedUnits+=fundedQty;
+      deferredUnits+=deferredQty;
+      const fundingStatus=qty<=0?'ZERO'
+        :!priced?'PRICE UNKNOWN'
+        :fundedQty===qty?'FUNDED'
+        :fundedQty>0?'PARTIAL'
+        :'DEFERRED';
+      return {
+        ...row,
+        quote:clone(quote),
+        planningUnit,
+        planningSource:String(quote?.planningSource||''),
+        priceEvidence:String(quote?.priceEvidence||''),
+        plannedKnownCost,
+        fundedQty,
+        deferredQty,
+        fundedEstimatedValue:fundedCost,
+        deferredEstimatedValue:deferredCost,
+        fundingStatus
+      };
+    });
+    return {
+      ...clone(plan),
+      budgetCap:cap,
+      remainingBudget,
+      list,
+      totalUnits:list.reduce((sum,row)=>sum+n(row.qty),0),
+      fundedUnits,
+      deferredUnits,
+      unpricedUnits,
+      fundedEstimatedValue:fundedKnownCost,
+      deferredEstimatedValue:deferredKnownCost,
+      fullPlannedKnownCost,
+      pricedLineCount:list.filter(row=>row.planningUnit>0).length,
+      unpricedLineCount:list.filter(row=>n(row.qty)>0&&!row.planningUnit).length
+    };
+  }
+
   function memberRows(factionInventory={},savedKeyIds=[],options={}){
     const readiness=factionInventory?.memberReadiness||{};
     const roster=Object.values(readiness?.roster||{});
@@ -1897,6 +1972,8 @@
     acquisitionPlan,
     acquisitionOverrideKey,
     acquisitionQuantityOverride,
+    acquisitionQuoteKey,
+    reconcileAcquisitionPricing,
     procurementPassIsCurrent,
     coverageComparison,
     loanMap,
