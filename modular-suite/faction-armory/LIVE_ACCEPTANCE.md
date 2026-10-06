@@ -1,7 +1,15 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.9**
+Status: **NON-PRODUCTION / alpha.24.10**
 
+
+## Alpha.24.10 acquisition wording clarity
+
+- Replaced the ambiguous `manual; system` wording used for procurement quantity overrides.
+- Acquire now shows **ARMORY REC** for the automatic recommendation and **YOUR OVERRIDE** when the Inventory Manager has set a different planned quantity.
+- Reset control reads **Use Armory <qty>**.
+- Leader acquisition snapshot states **your override <qty> · Armory recommendation <qty>**.
+- The override still changes procurement output only; the automatic recommendation remains visible and readiness/inventory facts are not rewritten.
 
 ## Alpha.24.9 stale-price accuracy gate
 
