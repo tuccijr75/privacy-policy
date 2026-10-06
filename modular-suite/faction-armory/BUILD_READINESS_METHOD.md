@@ -212,6 +212,44 @@ For ordinary war supplies:
 
 This means internal edits remain consistent across Minimums, Acquire, leader messaging and Leadership export. The only outbound procurement step is the existing Armory-to-MM_Acquisitions handoff; final purchase and transfer actions remain manual.
 
+## Acquisition output accuracy contract
+
+All Armory procurement outputs must derive from one reconciled acquisition snapshot.
+
+The underlying requirement quantity remains the readiness/minimums result. A manual planned quantity may override that procurement quantity without rewriting readiness or inventory facts.
+
+Price evidence is classified:
+
+1. **LIVE CACHED SOURCE** — cached Item Market, Bazaar, or overseas buyable/source evidence.
+2. **TORN MARKET REFERENCE** — Torn catalog/reference value only.
+3. **ARMORY STATIC REFERENCE** — built-in planning reference only.
+4. **UNPRICED** — no usable planning value.
+
+When any cached live buyable/source price exists, reference values cannot undercut it as the planning basis. References are fallback-only.
+
+Budget reconciliation uses the same planning unit prices displayed in Acquire and the Leader snapshot:
+
+`fundedQty = floor(remaining budget / planning unit price)`, capped by planned quantity.
+
+Unpriced rows receive funded quantity zero. They remain visible as unresolved procurement requirements and are excluded from funded dollar totals.
+
+The four outputs below must consume this same reconciled snapshot:
+
+- Acquire UI;
+- Leader acquisition snapshot;
+- Armory -> MM_Acquisitions handoff;
+- Leadership Excel export.
+
+The Leader snapshot must separately report:
+
+- budget-funded buy-now estimate;
+- full planned priced estimate;
+- known priced amount deferred by budget;
+- unpriced requirements;
+- reference-only priced rows.
+
+All dollar values remain planning estimates. MM_Acquisitions must reverify live source, availability and price before routing, and final purchase remains manual.
+
 ## Acquisition plan
 
 The Acquire screen aggregates all member requirements into a single list:
