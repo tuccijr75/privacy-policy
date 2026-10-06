@@ -53,6 +53,81 @@
       source:String(item.lastSnapshot?.source||item.sources?.itemMarket||'Market Pulse')
     };
   }
+
+  function pricingRecommendation({bazaarPrice=0,bazaarQty=0,personalQty=0,avgCost=0,avgSoldPrice30=0,pulse={}}={}){
+    const listingPrice=Math.max(0,n(bazaarPrice));
+    const availableQty=Math.max(0,n(personalQty));
+    const cost=Math.max(0,n(avgCost));
+    const historical=Math.max(0,n(avgSoldPrice30));
+    const floor=Math.max(0,n(pulse?.floorPrice));
+    const confidence=Math.max(0,n(pulse?.confidencePct));
+    const liquidity=Math.max(0,n(pulse?.liquidityScore));
+    const depth=Math.max(0,n(pulse?.marketDepth));
+    const base={
+      state:'INSUFFICIENT EVIDENCE',recommendedPrice:0,rangeLow:0,rangeHigh:0,
+      expectedProfitPerUnit:0,expectedRoiPct:0,marketFloor:floor,listingVsMarketPct:null,
+      source:String(pulse?.source||'Market Pulse'),sourceTimestamp:n(pulse?.sourceTimestamp),
+      fetchedAt:n(pulse?.fetchedAt),confidencePct:confidence,liquidityScore:liquidity,
+      explanation:''
+    };
+    if(!pulse?.available){
+      return {...base,explanation:'No current Market Pulse evidence is available for this item.'};
+    }
+    if(pulse?.stale){
+      return {...base,state:'MARKET DATA STALE',explanation:'Market evidence exists but is outside its defined freshness window.'};
+    }
+    if(!(floor>0)||!(depth>0)||confidence<30){
+      return {...base,explanation:'Fresh evidence is too weak to support a listing recommendation.'};
+    }
+
+    const undercutStep=Math.max(1,Math.min(1000,Math.round(floor*0.001)));
+    const rangeLow=Math.max(1,floor-undercutStep);
+    const rangeHigh=floor;
+    const listingVsMarketPct=listingPrice>0?(listingPrice-floor)/floor*100:null;
+    let state='PRICE COMPETITIVELY';
+    let recommendedPrice=floor;
+    let explanation='Fresh market floor supports pricing at the current competitive range.';
+
+    if(cost>0&&rangeHigh<=cost){
+      state='HOLD';
+      recommendedPrice=0;
+      explanation='Current fresh market floor does not clear the tracked FIFO cost basis.';
+    }else if(listingPrice>0){
+      const delta=(listingPrice-floor)/floor;
+      if(delta<=-0.03){
+        state='PRICE TOO LOW';
+        explanation='Current Bazaar listing is more than 3% below the fresh market floor.';
+      }else if(delta>=0.03){
+        state='PRICE TOO HIGH';
+        explanation='Current Bazaar listing is more than 3% above the fresh market floor.';
+      }else{
+        state='PRICE COMPETITIVELY';
+        recommendedPrice=Math.min(listingPrice,rangeHigh);
+        explanation='Current Bazaar listing is within 3% of the fresh market floor.';
+      }
+    }else if(availableQty>0&&confidence>=55&&liquidity>=55){
+      state='UNDERCUT OPPORTUNITY';
+      recommendedPrice=rangeLow;
+      explanation='Unlisted stock has fresh, sufficiently liquid evidence; a bounded undercut may improve queue position.';
+    }else{
+      explanation='Fresh market evidence exists, but liquidity/confidence does not justify an undercut recommendation.';
+    }
+
+    if(recommendedPrice>0&&cost>0&&recommendedPrice<=cost){
+      state='HOLD';
+      recommendedPrice=0;
+      explanation='Competitive pricing would not clear the tracked FIFO cost basis.';
+    }
+
+    const expectedProfitPerUnit=recommendedPrice>0&&cost>0?recommendedPrice-cost:0;
+    const expectedRoiPct=recommendedPrice>0&&cost>0?expectedProfitPerUnit/cost*100:0;
+    const historyNote=historical>0?' Recent 30-day realized average: '+Math.round(historical).toLocaleString()+'.':'';
+    return {
+      ...base,state,recommendedPrice,rangeLow,rangeHigh,expectedProfitPerUnit,expectedRoiPct,
+      listingVsMarketPct,explanation:explanation+historyNote
+    };
+  }
+
   function ensureInventorySlice(slice={}){
     const out=slice&&typeof slice==='object'?slice:{};
     out.sales=out.sales&&typeof out.sales==='object'&&!Array.isArray(out.sales)?out.sales:{};
@@ -314,8 +389,9 @@
       const restockStatus=targetStock<=0?'NO SALES SIGNAL':ownedQty<=0?'OUT OF STOCK':deficit>0?'LOW STOCK':'ON TARGET';
       const staleInventory=n(row.bazaarQty)>0&&n(row.units30d)<=0;
       const pulse=marketPulseEvidence(db,row.id,at);
-      const pricingStatus=!pulse.available?'INSUFFICIENT EVIDENCE':pulse.stale?'MARKET DATA STALE':pulse.floorPrice>0?'MARKET EVIDENCE READY':'INSUFFICIENT EVIDENCE';
-      const listingVsMarketPct=pulse.usable&&n(row.bazaarPrice)>0?(n(row.bazaarPrice)-pulse.floorPrice)/pulse.floorPrice*100:null;
+      const pricing=pricingRecommendation({bazaarPrice:row.bazaarPrice,bazaarQty:row.bazaarQty,personalQty:row.personalQty,avgCost,avgSoldPrice30:row.avgSoldPrice30,pulse});
+      const pricingStatus=pricing.state;
+      const listingVsMarketPct=pricing.listingVsMarketPct;
       const expectedMarketProfitPerUnit=pulse.usable&&avgCost>0?pulse.floorPrice-avgCost:0;
       const expectedMarketRoiPct=pulse.usable&&avgCost>0?expectedMarketProfitPerUnit/avgCost*100:0;
       const coverDays=n(row.daily30)>0?ownedQty/n(row.daily30):null;
@@ -325,7 +401,7 @@
       if(staleInventory&&!attentionReasons.includes('REVIEW SLOW'))attentionReasons.push('STALE INVENTORY');
       return {...row,avgCost,trackedRemainingQty:basis.remainingQty,trackedRemainingCost:basis.remainingCost,currentProfitPerUnit,currentRoiPct:avgCost>0?currentProfitPerUnit/avgCost*100:0,
         realizedRevenue30:realized.revenue,realizedCogs30:realized.cogs,realizedGrossProfit30:realized.grossProfit,realizedRoiPct30:realized.realizedRoiPct,costCoveragePct30:realized.costCoveragePct,matchedUnits30:realized.matchedUnits,
-        ownedQty,targetStock,deficit,restockStatus,staleInventory,coverDays,pulse,pricingStatus,listingVsMarketPct,expectedMarketProfitPerUnit,expectedMarketRoiPct,attentionReasons,needsAttention:attentionReasons.length>0};
+        ownedQty,targetStock,deficit,restockStatus,staleInventory,coverDays,pulse,pricing,pricingStatus,listingVsMarketPct,expectedMarketProfitPerUnit,expectedMarketRoiPct,attentionReasons,needsAttention:attentionReasons.length>0};
     }).sort((a,b)=>
       Number(b.needsAttention)-Number(a.needsAttention)||
       n(b.deficit)-n(a.deficit)||
@@ -358,7 +434,7 @@
     BAZAAR_SELL_LOG_ID,
     ensureInventorySlice,normalizeItems,extractBazaarSale,importSalesEntries,
     parseStackableRows,salesItemMetrics,listingRows,updateShopSnapshot,
-    marketPulseEvidence,salesByItemDetailed,fifoLedger,realizedProfitMetrics,inventoryRoiRows,dashboardSummary
+    marketPulseEvidence,pricingRecommendation,salesByItemDetailed,fifoLedger,realizedProfitMetrics,inventoryRoiRows,dashboardSummary
   });
 
   Object.defineProperty(globalThis,'MMTornInventoryRoiLogic',{value:api,configurable:true,enumerable:false,writable:false});
