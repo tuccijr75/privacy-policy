@@ -12,8 +12,8 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.26'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/core/MM_Torn_Core.js'));
+assert(userSource.includes('// @version      8.0.0-alpha.27'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.logic.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b5cb1338e22d67c4903f9abddc0ac471f7e043bd/modular-suite/acquisitions/MM_Acquisitions.live.js'));
@@ -23,6 +23,7 @@ assert(!userSource.includes('// @downloadURL'));
 assert(userSource.includes('async function autoRefreshAcquisitions'));
 assert(userSource.includes('AUTO_REFRESH_MS=60_000'));
 assert(userSource.includes('PURCHASE_STALE_MS=120_000'));
+assert(userSource.includes('core?.ensureSharedState'),'fresh-install Core bootstrap missing');
 assert(userSource.includes('OPPORTUNITY_STALE_MS=300_000'));
 assert(userSource.includes('TRAVEL_FRESH_MS=300_000'));
 assert(userSource.includes('TRAVEL_STALE_MS=900_000'));
@@ -139,7 +140,7 @@ console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS
 const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      8.0.0-alpha.26-pda.13'));
+assert(pdaSource.includes('// @version      8.0.0-alpha.27-pda.13'));
 assert(!pdaHeader.includes('@require'));
 assert(!pdaSource.includes('globalThis.GM_getValue=function'));
 assert(pdaSource.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
@@ -219,7 +220,7 @@ assert(liveSource.includes('Torn API finished Auction House'));
 
 const userSourceArmory=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceArmory);
-assert(userSourceArmory.includes('// @version      8.0.0-alpha.26'));
+assert(userSourceArmory.includes('// @version      8.0.0-alpha.27'));
 assert(userSourceArmory.includes('MM_Acquisitions.live.js'));
 assert(userSourceArmory.includes("type!=='armory-acquisition-request'"));
 assert(userSourceArmory.includes('Faction Armory request: '));
