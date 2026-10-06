@@ -4593,8 +4593,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
             error.code=String(data?.code||'');
             return reject(error);
           }
-          if(data?.error&&typeof data.error!=='object'){
-            return reject(new Error(String(data.error)));
+          if(data?.error){
+            const msg=data.error?.error||data.error?.message||data?.message||data.error||'API error';
+            return reject(new Error(String(msg)));
           }
           resolve({
             data,
