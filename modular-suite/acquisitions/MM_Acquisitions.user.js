@@ -1494,6 +1494,7 @@
       if(source==='auction'){
         const endsAt=Number(row.endsAt||0);
         if(endsAt>0&&endsAt*1000<=Date.now())return false;
+        if(row.auctionBidProvisional&&rankedSource!=='auction')return false;
       }else{
         const observed=Date.parse(row.lastUpdated||'')||0;
         if(!observed||Date.now()-observed>cfg.maxLiveAgeHours*3600000)return false;
@@ -1579,7 +1580,7 @@
     const itemMarketCount=liveMarketRows.filter(row=>['item market','market'].includes(String(row?.source||'').toLowerCase())).length;
     return card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-        '<div><b style="font-size:15px;">Ranked Weapons</b><div style="font-size:10px;color:#aaa;margin-top:3px;">Look for weapons below BB/AH value with positive ROI and useful sales traffic. No bonus is excluded.</div></div>'+
+        '<div><b style="font-size:15px;">Ranked Weapons</b><div style="font-size:10px;color:#aaa;margin-top:3px;">Look for weapons below BB/AH value with positive ROI and useful sales traffic. No bonus is excluded. Very early low auction bids are hidden from All Sources so a $1/$119 opening bid is not presented as a buy-price profit opportunity; choose Auction to inspect them.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
           '<button id="mm-acq-rw-pricelist-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Update BB Rate</button>'+
           '<button id="mm-acq-rw-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Weapons</button>'+
@@ -1615,9 +1616,10 @@
         const bidHeadroom=bidCeiling>0?bidCeiling-Number(row.price||0):0;
         const underBb=Number(row.bbFloor||0)>0&&Number(row.price||0)<Number(row.bbFloor||0);
         const belowFair=Number(row.fairValue||0)>0&&Number(row.price||0)<Number(row.fairValue||0);
-        const good=belowFair&&Number(row.roiPct||0)>0;
-        const decision=underBb?'UNDER BB VALUE':good?(isAuction?'WATCH / BID CANDIDATE':'INVESTMENT CANDIDATE'):'REVIEW';
-        const decisionColor=underBb?'#9fe3a8':good?'#d8d48a':'#aaa';
+        const provisional=Boolean(isAuction&&row.auctionBidProvisional);
+        const good=!provisional&&belowFair&&Number(row.roiPct||0)>0;
+        const decision=provisional?'EARLY BID · WATCH ONLY':underBb?'UNDER BB VALUE':good?(isAuction?'WATCH / BID CANDIDATE':'INVESTMENT CANDIDATE'):'REVIEW';
+        const decisionColor=provisional?'#ffcf7a':underBb?'#9fe3a8':good?'#d8d48a':'#aaa';
         const actionLabel=isAuction
           ?(String(row.url||'').startsWith('https://www.torn.com/')?'GO TO AUCTION':'OPEN AUCTION FINDER')
           :sourceLower.includes('bazaar')?'GO TO BAZAAR':'GO TO ITEM MARKET';
@@ -1629,7 +1631,7 @@
               '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(115px,1fr));gap:5px;margin-top:6px;">'+
                 '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">'+(isAuction?'CURRENT BID':'CURRENT PRICE')+'</div><b>'+money(row.price)+'</b></div>'+
                 '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">ESTIMATED VALUE</div><b>'+money(row.fairValue)+'</b></div>'+
-                '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">EST. PROFIT / ROI</div><b style="color:'+(Number(row.profit||0)>0?'#9fe3a8':'#ffaaaa')+';">'+(Number(row.profit||0)>=0?'+':'-')+money(Math.abs(Number(row.profit||0)))+' / '+Number(row.roiPct||0).toFixed(1)+'%</b></div>'+
+                '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">'+(provisional?'BID STATUS':'EST. PROFIT / ROI')+'</div>'+(provisional?'<b style="color:#ffcf7a;">PROVISIONAL</b><div style="font-size:9px;color:#777;">early bid is not a purchase price</div>':'<b style="color:'+(Number(row.profit||0)>0?'#9fe3a8':'#ffaaaa')+';">'+(Number(row.profit||0)>=0?'+':'-')+money(Math.abs(Number(row.profit||0)))+' / '+Number(row.roiPct||0).toFixed(1)+'%</b>')+'</div>'+
                 '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">SALES 7 / 30 / 90 DAYS</div><b>'+Number(row.volume7||0)+' / '+Number(row.volume30||0)+' / '+Number(row.volume90||0)+'</b></div>'+
               '</div>'+
               (isAuction?'<div style="color:#d8b96a;margin-top:5px;">'+(targetRoi>0?'Max bid for '+targetRoi.toFixed(1)+'% ROI':'Break-even bid ceiling')+' <b>'+money(bidCeiling)+'</b> · headroom <b>'+(bidHeadroom>=0?'+':'-')+money(Math.abs(bidHeadroom))+'</b> · '+Number(row.bids||0)+' bids · ends in '+esc(futureDuration(row.endsAt))+'</div>':'')+
