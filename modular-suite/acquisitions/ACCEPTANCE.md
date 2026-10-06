@@ -1,11 +1,12 @@
 # MM_Acquisitions Acceptance
 
 Candidate:
-- Desktop: 8.0.0-alpha.26
-- TornPDA: 8.0.0-alpha.26-pda.13
+- Desktop: 8.0.0-alpha.27
+- TornPDA: 8.0.0-alpha.27-pda.14
 - Branch: crm-v8-acquisitions-alpha22-clarity
 - Base: crm-v8-acquisitions-ranked-profit
 - Stable/customer publication: not approved
+- Fresh-install bootstrap: required after alpha.26 customer defect
 
 ## Focused customer workflow
 
@@ -24,6 +25,21 @@ The customer should not need to use More for the normal pricelist or ranked-weap
 Run this once after the source candidate is complete. Record each finding as PASS, DEFECT, UX FRICTION, EFFECTIVENESS GAP, or MISSING FEATURE.
 
 Do not complete a purchase, bid, travel purchase, transfer, or other irreversible action as part of this acceptance pass.
+
+### Fresh install / no legacy CRM database
+
+- Use a browser/profile where `mm_bazaar_crm_idb` does not already exist.
+- Install/open Acquisitions.
+- Confirm the app creates a valid empty shared schema-11 state through Core bootstrap.
+- Save a Torn API key and confirm the prior `Legacy IndexedDB does not exist` / `Cannot read shared CRM state` defect does not appear.
+- Refresh Pricelist and confirm normal state writes succeed.
+- Existing installations with populated schema-11 state must retain their data unchanged.
+
+PASS:
+- fresh install initializes once without destructive migration;
+- existing state is preserved;
+- read-only Core reads still do not create storage unless bootstrap is explicitly requested.
+
 
 ## Desktop
 
@@ -217,7 +233,7 @@ PASS:
 
 ## TornPDA
 
-Install 8.0.0-alpha.26-pda.13.
+Install 8.0.0-alpha.27-pda.14.
 
 - Confirm TornPDA also opens on Pricelist and shows only Pricelist / Ranked Weapons / More as primary navigation.
 
