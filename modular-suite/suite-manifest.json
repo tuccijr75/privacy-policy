@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "8.0.0-alpha.54",
+  "suiteVersion": "8.0.0-alpha.55",
   "status": "non-production",
   "baseVersion": "7.5.3",
   "branch": "crm-v8-modular-suite",
@@ -47,6 +47,13 @@
       "status": "implemented-non-production"
     },
     {
+      "id": "trade-manager",
+      "name": "MM Trade Manager",
+      "role": "trade-value-record-inventory-reconciliation",
+      "version": "0.1.0-alpha.2",
+      "status": "implemented-non-production"
+    },
+    {
       "id": "business-intelligence",
       "name": "MM Business Intelligence",
       "role": "analytics-finance-exports"
@@ -58,6 +65,7 @@
     "faction-armory",
     "customers",
     "inventory-roi",
+    "trade-manager",
     "business-intelligence"
   ],
   "productionPromotionRequires": [
