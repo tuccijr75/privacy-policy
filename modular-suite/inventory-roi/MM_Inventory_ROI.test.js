@@ -7,7 +7,12 @@ const db=logic.ensureInventorySlice({marketIntel:{marketPulse:{settings:{ttlMs:4
 logic.importSalesEntries(db,[{id:'s1',timestamp:Math.floor((now-2*86400000)/1000),details:{id:1226},data:{buyer:{id:123,name:'Buyer'},item_id:26,item_name:'AK-47',quantity:2,cost_each:150,cost_total:300}}]);
 logic.updateShopSnapshot(db,{bazaar:[{id:26,name:'AK-47',quantity:1,price:160}],inventory:[{id:26,name:'AK-47',quantity:5}]});
 const row=logic.inventoryRoiRows(db,now).find(r=>r.id==='26');assert(row);
-assert.strictEqual(row.ownedQty,6);assert.strictEqual(row.restockStatus,'ON TARGET');assert.strictEqual(row.pricingStatus,'MARKET EVIDENCE READY');assert.strictEqual(row.pulse.floorPrice,170);assert.strictEqual(row.pulse.sourceTimestamp,now-120000);assert.strictEqual(row.pulse.fetchedAt,now-60000);
+assert.strictEqual(row.ownedQty,6);assert.strictEqual(row.restockStatus,'ON TARGET');assert.strictEqual(row.pricingStatus,'PRICE TOO LOW');assert.strictEqual(row.pricing.recommendedPrice,170);assert.strictEqual(row.pulse.floorPrice,170);assert.strictEqual(row.pulse.sourceTimestamp,now-120000);assert.strictEqual(row.pulse.fetchedAt,now-60000);
+const low=logic.pricingRecommendation({bazaarPrice:90,bazaarQty:1,avgCost:50,pulse:logic.marketPulseEvidence(db,'26',now)});assert.strictEqual(low.state,'PRICE TOO LOW');
+const high=logic.pricingRecommendation({bazaarPrice:190,bazaarQty:1,avgCost:50,pulse:logic.marketPulseEvidence(db,'26',now)});assert.strictEqual(high.state,'PRICE TOO HIGH');
+const undercut=logic.pricingRecommendation({personalQty:5,avgCost:100,pulse:logic.marketPulseEvidence(db,'26',now)});assert.strictEqual(undercut.state,'UNDERCUT OPPORTUNITY');assert.strictEqual(undercut.recommendedPrice,169);
+const hold=logic.pricingRecommendation({personalQty:5,avgCost:175,pulse:logic.marketPulseEvidence(db,'26',now)});assert.strictEqual(hold.state,'HOLD');assert.strictEqual(hold.recommendedPrice,0);
+const weak=logic.pricingRecommendation({personalQty:5,avgCost:100,pulse:{...logic.marketPulseEvidence(db,'26',now),confidencePct:20}});assert.strictEqual(weak.state,'INSUFFICIENT EVIDENCE');
 const stale=logic.marketPulseEvidence(db,'26',now+60*60*1000);assert.strictEqual(stale.stale,true);assert.strictEqual(stale.status,'STALE');
 const missing=logic.marketPulseEvidence(db,'999',now);assert.strictEqual(missing.status,'MISSING');
 const summary=logic.dashboardSummary(db,now);assert.strictEqual(summary.ownedUnits,6);assert.strictEqual(summary.listedUnits,1);assert.strictEqual(summary.pulseFreshCount,1);
@@ -18,9 +23,11 @@ const userSource=fs.readFileSync(__dirname+'/MM_Inventory_Manager_ROI_Tracker.us
 assert(!/async\s+function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml must remain synchronous because render concatenates its return value directly into HTML');
 assert(/function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml declaration missing');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.8';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.9';"));
 assert(userSource.includes('Bazaar / Inventory Dashboard'));
 assert(userSource.includes('Market Pulse is read-only context from MM_Acquisitions.'));
+assert(userSource.includes('Pricing recommendations are explainable decision support only'));
+assert(userSource.includes("tile('RECOMMENDED'"));
 assert(userSource.includes('MM_Torn_Core.js?v=8.0.0-alpha.13'));
 assert(userSource.includes('// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js'));
 assert(userSource.includes('// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js'));
