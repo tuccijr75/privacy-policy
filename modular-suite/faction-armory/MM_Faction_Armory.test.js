@@ -781,7 +781,7 @@ assert(userSourceValue.includes("data-edit-override"),'every member must expose 
 assert(userSourceValue.includes("data-clear-override"),'manual override must be individually clearable');
 assert(userSourceValue.includes("row.readinessStatus!=='WAR READY'?'<button data-war-ready="),'every non-WAR-READY member must expose an individual War Ready decision');
 assert(!userSourceValue.includes("Member is not currently eligible for War Ready approval."),'manual War Ready must not retain the automatic eligibility gate');
-assert(userSourceValue.includes("Source/API data remains preserved underneath."),'manual override UX must state source preservation');
+assert(userSourceValue.includes('API/source equipment stays unchanged underneath.'),'equipment override UX must state source preservation');
 assert(userSourceValue.includes("'Override JSON'"),'leadership export must disclose manual overrides');
 
 
