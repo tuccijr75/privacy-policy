@@ -3215,6 +3215,8 @@
       budgetCap:acquisitionBudget
     });
     const inventory=Object.values(state.factionInventory?.current||{});
+    const xanax=stockMode==='war'?minimums.xanax:null;
+    const currentWar=state.factionInventory?.warPlanning?.currentWar||null;
     const coverage=logic.coverageComparison(state.factionInventory||{},{
       mode:'war',procurementMode,budgetCap:acquisitionBudget,savedKeyIds:savedKeyIds()
     });
@@ -3240,9 +3242,16 @@
       {Metric:'Armory member API keys saved',Value:savedKeyIds().length},
       {Metric:'Inventory rows',Value:inventory.length},
       {Metric:'Observed inventory days',Value:Number(minimums.observedDays.toFixed(1))},
-      {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
-      {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length},
-      {Metric:'Minimum proposal approval status',Value:'PROVISIONAL — LEADERSHIP APPROVAL REQUIRED'},
+      {Metric:'Minimums ordered shortfalls',Value:minimums.actionable.length},
+      {Metric:'Minimums held shortfalls',Value:minimums.held?.length||0},
+      {Metric:'Minimums data-required',Value:minimums.dataRequired.length},
+      {Metric:'Current ranked-war rival',Value:currentWar?.opponentFactionName||''},
+      {Metric:'Current ranked-war ID',Value:currentWar?.warId||''},
+      {Metric:'Xanax posture',Value:xanax?.policy?.investmentPosture?.toUpperCase?.()||''},
+      {Metric:'Xanax leadership ceiling',Value:xanax?num(xanax.leadershipCeiling):''},
+      {Metric:'Xanax matchup target',Value:xanax?num(xanax.recommendedTarget):''},
+      {Metric:'Xanax rival estimates',Value:xanax?String(xanax.opponentEstimatedCount)+' / '+String(xanax.opponentMemberCount):''},
+      {Metric:'Minimum proposal approval status',Value:'LIVE MANAGER CONTROL — PURCHASE REMAINS MANUAL'},
       {Metric:'Open manager / leadership inputs',Value:minimumOpenInputs(minimums).filter(r=>!['READY','COMPLETE','MATURE','READY TO DESIGN'].includes(r.status)).length}
     ];
     const memberHeaders=['Member ID','Member','Level','Torn Age Days','API Saved','Stats Source','Estimate Confidence','Readiness','War Ready','War Ready Reason','Any Member Message','Last Member Message At','Build Message','Build Message At','Build Message Count','Data Request','Data Request At','Procurement Disposition','Procurement Pass At','Procurement Pass Reason','Baseline Pass','Approved At','Approval Mode','Equipment Decisions','Manual Override','Override Updated At','Override Reason','Override JSON','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
@@ -3277,8 +3286,26 @@
     });
     const invHeaders=['Category','Item ID','Item','Owned','Available','Loaned','Damage','Accuracy','Armor'];
     const invData=inventory.map(r=>({'Category':r.category,'Item ID':r.itemId,'Item':r.name,'Owned':num(r.amountOwned),'Available':num(r.availableCount),'Loaned':num(r.loanedCount),'Damage':num(r.damage),'Accuracy':num(r.accuracy),'Armor':num(r.armorRating)}));
-    const minHeaders=['Category','Item / Pool','Current','Loaned','Proposed Min','Proposed Max','Shortfall','Data Required','Rationale'];
-    const minData=minimums.proposals.map(r=>({'Category':r.category,'Item / Pool':r.item,'Current':num(r.current),'Loaned':num(r.loaned),'Proposed Min':r.dataRequired?'':num(r.recommendedMin),'Proposed Max':r.dataRequired?'':num(r.recommendedMax),'Shortfall':r.dataRequired?'':num(r.shortfall),'Data Required':r.dataRequired?'YES':'NO','Rationale':r.rationale}));
+    const minHeaders=['Category','Item / Pool','Have','Loaned','Suggested Min','Manual Min','Effective Min','Shortfall','Order Enabled','Status','Data Required','Updated At','Rationale'];
+    const minData=minimums.proposals.map(r=>({
+      'Category':r.category,'Item / Pool':r.item,'Have':num(r.current),'Loaned':num(r.loaned),
+      'Suggested Min':r.suggestedMin==null?'':num(r.suggestedMin),
+      'Manual Min':r.manualMin==null?'':num(r.manualMin),
+      'Effective Min':r.dataRequired?'':num(r.effectiveMin),
+      'Shortfall':r.dataRequired?'':num(r.shortfall),
+      'Order Enabled':r.orderEnabled?'YES':'NO',
+      'Status':r.status,
+      'Data Required':r.dataRequired?'YES':'NO',
+      'Updated At':r.minimumOverrideUpdatedAt||'',
+      'Rationale':r.rationale
+    }));
+    const xanaxHeaders=['Member ID','Member','Stats Total','Stats Source','Tier','Credible Rival Targets','Leadership Ceiling','Recommended Xanax','Manual Xanax','Credible Targets'];
+    const xanaxData=(xanax?.members||[]).map(r=>({
+      'Member ID':r.memberId,'Member':r.memberName,'Stats Total':num(r.statsTotal),'Stats Source':r.statsEstimated?'ESTIMATED':'VERIFIED',
+      'Tier':r.tier,'Credible Rival Targets':num(r.credibleTargets),'Leadership Ceiling':num(r.ceiling),
+      'Recommended Xanax':num(r.recommended),'Manual Xanax':r.manualOverride==null?'':num(r.manualOverride),
+      'Credible Targets':(r.targetNames||[]).join(' | ')
+    }));
     const inputHeaders=['Priority','Topic','Status','What We Need / Why'];
     const inputData=minimumOpenInputs(minimums).map(r=>({'Priority':r.priority,'Topic':r.topic,'Status':r.status,'What We Need / Why':r.detail}));
     const xml='<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>'+
@@ -3287,6 +3314,7 @@
       xmlSheet('Members',memberHeaders,memberData)+
       xmlSheet('Inventory',invHeaders,invData)+
       xmlSheet('Minimums',minHeaders,minData)+
+      (stockMode==='war'?xmlSheet('Xanax',xanaxHeaders,xanaxData):'')+
       xmlSheet('Open Inputs',inputHeaders,inputData)+
       xmlSheet('Coverage',['Member ID','Member','Readiness','Procurement','Slot','Member Has','Has Score','Need Target','Need Floor','Ready','Route','Assigned Loan','Owned Alternative','Faction Qualifying Available','Faction Qualifying Items'],coverage.memberCoverage.map(r=>({
         'Member ID':r.memberId,'Member':r.memberName,'Readiness':r.readinessStatus,'Procurement':r.acquisitionDisposition,
