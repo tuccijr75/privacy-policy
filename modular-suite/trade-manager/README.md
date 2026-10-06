@@ -83,7 +83,7 @@ No stable/customer publication is authorized by this foundation.
 
 ## TornPDA
 
-TornPDA uses a self-contained `0.1.0-alpha.3-pda.2` bundle. The bundle:
+TornPDA uses a self-contained `0.1.0-alpha.3-pda.3` bundle. The bundle:
 
 - uses lexical `PDA_storage` for durable shared state;
 - uses `PDA_httpGet` only as a thin GET fallback when the runtime does not provide `GM_xmlhttpRequest`;
@@ -92,3 +92,9 @@ TornPDA uses a self-contained `0.1.0-alpha.3-pda.2` bundle. The bundle:
 - bundles exact read-only snapshots of Core from immutable commit `b6d2202ad507c6b138919e2d37e461cfc422b382` and trade-aware Inventory FIFO logic from immutable commit `bb32ea39494ef4465a58acd76c4c3993cc8568b4`, matching the desktop dependencies.
 
 The vendored Core/FIFO files are PDA packaging artifacts, not second mutable sources of shared contracts or Inventory truth.
+
+## Live QA fixes
+
+- zero-result ongoing refresh now renders `No ongoing trades found` after a successful API read;
+- every successful manual completed sync updates the persisted sync timestamp, including zero-new-record/idempotent runs;
+- desktop `0.1.0-alpha.3`; PDA `0.1.0-alpha.3-pda.3`.
