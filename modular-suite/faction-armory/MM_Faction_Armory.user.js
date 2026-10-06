@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.23
+// @version      8.0.0-alpha.24
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.23';
+  const VERSION='8.0.0-alpha.24';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -48,6 +48,7 @@
   let loadError='';
   let busy=false;
   let selectedCategory='all';
+  let selectedBuildMemberId='';
   let stockMode=String(GM_getValue(STOCK_MODE_KEY,'war')||'war').toLowerCase()==='peace'?'peace':'war';
   let procurementMode=['budget','standard','ideal'].includes(String(GM_getValue(PROCUREMENT_MODE_KEY,'budget')||'').toLowerCase())?String(GM_getValue(PROCUREMENT_MODE_KEY,'budget')).toLowerCase():'budget';
   let acquisitionBudget=Math.max(0,Number(GM_getValue(ACQUISITION_BUDGET_KEY,15000000))||15000000);
@@ -1455,7 +1456,118 @@
     }).join(''):card('No faction roster is cached yet. Use Refresh Faction.'));
   }
 
+  function quickBuildSelectedMember(rows){
+    const members=Array.isArray(rows)?rows:[];
+    const current=members.find(row=>asId(row.memberId)===asId(selectedBuildMemberId));
+    const selected=current||members.find(row=>row.hasStats)||members[0]||null;
+    if(selected)selectedBuildMemberId=asId(selected.memberId);
+    return selected;
+  }
+
+  function quickBuildRoute(item){
+    if(!item)return '—';
+    if(item.ready||item.route==='OWNED')return 'KEEP';
+    if(item.route==='LOANED')return 'LOANED';
+    if(item.route==='ISSUE')return 'ISSUE';
+    if(item.route==='ACQUIRE')return 'ACQUIRE';
+    if(item.route==='REVIEW')return 'REVIEW';
+    return String(item.route||item.decision||'REVIEW');
+  }
+
+  function quickBuildMessage(member){
+    const row=member||null;
+    const build=row?.buildAssessment||null;
+    if(!row||!build)throw new Error('Build data is not available for this member.');
+    const statPrefix=row.statsEstimated?'Estimated ':'';
+    const lines=(build.items||[]).map(item=>
+      String(item.slot||'slot').toUpperCase()+': '+
+      (item.currentName?String(item.currentName)+' → ':'')+
+      String(item.targetName||item.suggestedName||'review')+
+      ' · '+quickBuildRoute(item)
+    );
+    const body=[
+      String(row.memberName||'Faction member')+',',
+      '',
+      'Faction build review based on your current level and battle-stat profile.',
+      'Level: '+num(row.level),
+      statPrefix+'battle stats: STR '+fmt(row.stats?.strength)+' / DEF '+fmt(row.stats?.defense)+' / SPD '+fmt(row.stats?.speed)+' / DEX '+fmt(row.stats?.dexterity)+' · total '+fmt(row.statProfile?.total),
+      'Build style: '+String(build.buildStyle||'UNKNOWN')+' · offense need '+String(build.offensiveNeed||'balanced')+' · defense style '+String(build.defensiveStyle||'balanced'),
+      '',
+      'TARGET BUILD',
+      ...(lines.length?lines:['No evidence-backed slot recommendation is available yet.']),
+      '',
+      row.statsEstimated
+        ? 'Your battle stats are currently estimated from public data. Send your actual readiness data before any final equipment issue or purchase.'
+        : 'Known stronger personal equipment is kept. Unknown or special gear is marked REVIEW rather than replaced automatically.',
+      '',
+      'Faction stock changes the route (ISSUE vs ACQUIRE); it does not lower the build standard.',
+      '',
+      '— Manic Mike'
+    ].join('\n');
+    openArmoryMessage({
+      playerId:row.memberId,
+      playerName:row.memberName,
+      subject:'OBSIDIAN FORCE faction build review',
+      body,
+      kind:'member-build',
+      memberId:row.memberId
+    });
+  }
+
   function buildsHtml(){
+    const rows=memberRows();
+    if(!rows.length)return card('No member roster is loaded.');
+    const selected=quickBuildSelectedMember(rows);
+    const build=selected?.buildAssessment||null;
+    const options=rows.map(row=>
+      '<option value="'+esc(row.memberId)+'" '+(asId(row.memberId)===asId(selected?.memberId)?'selected':'')+'>'+
+        esc(row.memberName)+' · Lv '+num(row.level)+' · '+
+        (row.hasStats?(row.statsEstimated?'~':'')+fmt(row.statProfile?.total)+' stats':'stats missing')+
+      '</option>'
+    ).join('');
+    const slots=build?.items||[];
+    const quickRows=slots.length?slots.map(item=>{
+      const route=quickBuildRoute(item);
+      const routeClass=route==='KEEP'||route==='LOANED'?'mm-fa-good':route==='ISSUE'?'mm-fa-warn':route==='REVIEW'?'mm-fa-warn':'mm-fa-bad';
+      const target=item.targetName||item.suggestedName||'Review';
+      return '<div class="mm-fa-row">'+
+        '<div class="mm-fa-main"><b>'+esc(String(item.slot||'').toUpperCase())+'</b>'+
+          '<div class="mm-fa-muted">'+(item.currentName?'Current: '+esc(item.currentName)+' · ':'')+'Target: '+esc(target)+'</div>'+
+        '</div>'+
+        '<div class="mm-fa-tiles">'+tile('ROUTE',route,{cls:routeClass})+
+          (item.factionOptionName?tile('FACTION',item.factionOptionName+' x'+num(item.factionAvailableCount),{wide:true}):'')+
+        '</div>'+
+      '</div>';
+    }).join(''):'<div class="mm-fa-muted">No build can be calculated until member stats are available.</div>';
+    const s=selected?.stats||{};
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head"><div><b>Quick Build</b> <span class="mm-fa-muted">select member → review target → message</span></div>'+
+        '<div class="mm-fa-actions">'+
+          '<select id="mm-fa-quick-build-member" class="mm-fa-input" style="width:250px;max-width:100%;">'+options+'</select>'+
+          '<button id="mm-fa-quick-build-message" '+(build?'':'disabled')+' style="'+button(Boolean(build))+'">Message Build</button>'+
+        '</div>'+
+      '</div>'+
+      (selected?'<div class="mm-fa-tiles">'+
+        tile('LEVEL',num(selected.level))+
+        tile('STR',(selected.statsEstimated?'~':'')+fmt(s.strength))+
+        tile('DEF',(selected.statsEstimated?'~':'')+fmt(s.defense))+
+        tile('SPD',(selected.statsEstimated?'~':'')+fmt(s.speed))+
+        tile('DEX',(selected.statsEstimated?'~':'')+fmt(s.dexterity))+
+        tile('TOTAL',(selected.statsEstimated?'~':'')+fmt(selected.statProfile?.total))+
+        tile('BUILD',build?.buildStyle||'UNKNOWN',{wide:true})+
+        tile('OFFENSE',build?.offensiveNeed||'balanced')+
+        tile('DEFENSE',build?.defensiveStyle||'balanced')+
+      '</div>':'')+
+      (selected?.statsEstimated?'<div class="mm-fa-warn mm-fa-mini" style="margin-top:5px;">Planning estimate only. Collect actual member battle stats before final equipment allocation.</div>':'')+
+      '<div style="margin-top:5px;">'+quickRows+'</div>'+
+      '<div class="mm-fa-muted" style="margin-top:5px;">Faction inventory affects ISSUE vs ACQUIRE only. It never lowers the readiness target, and stronger known personal gear stays KEEP.</div>'+
+    '</div>'+
+    '<details class="mm-fa-build-member"><summary><span class="mm-fa-build-summary-main"><b>Advanced / Full Roster Builds</b></span><span class="mm-fa-muted">detailed stats, alternatives and readiness evidence</span></summary>'+
+      '<div class="mm-fa-build-body">'+advancedBuildsHtml()+'</div>'+
+    '</details>';
+  }
+
+  function advancedBuildsHtml(){
     const rows=memberRows();
     if(!rows.length)return card('No member roster is loaded.');
     return '<div class="mm-fa-card mm-fa-compact"><b>War-ready build baseline</b> <span class="mm-fa-muted">Each slot shows HAS stats versus the required floor/target average, plus multiple qualifying alternatives grouped by current acquisition cost. Adequate owned/equipped gear is still kept.</span></div>'+
@@ -1523,6 +1635,7 @@
     }).join('');
   }
 
+
   function coverageHtml(){
     const coverage=logic.coverageComparison(state?.factionInventory||{},{
       mode:'war',procurementMode,budgetCap:acquisitionBudget,savedKeyIds:savedKeyIds()
@@ -1584,6 +1697,9 @@
     const categories=logic.categories;
     const itemRow=row=>'<div class="mm-fa-row">'+
       '<div class="mm-fa-main"><b>'+esc(row.name)+'</b> <span class="mm-fa-muted">ID '+esc(row.itemId)+'</span>'+
+        (row.category==='weapons'
+          ? '<div class="mm-fa-muted">API type '+esc(row.type||'—')+' · subtype '+esc(row.subType||'—')+' · slot '+esc(row.slot||'—')+' · weaponType '+esc(row.weaponType||'—')+'</div>'
+          : '')+
         (row.loans?.length?'<div class="mm-fa-muted">'+row.loans.map(l=>esc(l.memberName)+' x'+num(l.amount)).join(' | ')+'</div>':'')+
       '</div>'+
       '<div class="mm-fa-tiles">'+tile('OWNED',fmt(row.amountOwned))+tile('AVAILABLE',fmt(row.availableCount))+tile('LOANED',fmt(row.loanedCount))+'</div>'+
@@ -1592,14 +1708,22 @@
     const categoryHtml=categories.map(cat=>{
       const rows=current.filter(row=>row.category===cat).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
       if(cat==='weapons'){
-        const slots=['primary','secondary','melee'];
-        const nested=slots.map(slot=>{
-          const list=rows.filter(row=>logic.equipmentSlot(row)===slot);
-          return '<details class="mm-fa-details"><summary><b>'+esc(slot.toUpperCase())+'</b> · '+list.length+' item types · '+list.reduce((sum,r)=>sum+num(r.availableCount),0)+' available</summary>'+
+        const standard=['primary','secondary','melee'];
+        const slotOf=row=>logic.equipmentSlot(row);
+        const unclassified=rows.filter(row=>!standard.includes(slotOf(row)));
+        const buckets=[...standard,...(unclassified.length?['unclassified']:[])];
+        const nested=buckets.map(slot=>{
+          const list=slot==='unclassified'?unclassified:rows.filter(row=>slotOf(row)===slot);
+          return '<details class="mm-fa-details" '+(slot==='unclassified'?'open':'')+'><summary><b>'+esc(slot.toUpperCase())+'</b> · '+list.length+' item types · '+list.reduce((sum,r)=>sum+num(r.availableCount),0)+' available</summary>'+
             (list.length?list.map(itemRow).join(''):'<div class="mm-fa-muted" style="padding:4px;">No '+esc(slot)+' weapons currently recorded in faction inventory.</div>')+
           '</details>';
         }).join('');
-        return '<details class="mm-fa-build-member"><summary><span class="mm-fa-build-summary-main"><b>WEAPONS</b><span class="mm-fa-pill">'+rows.length+' types</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.availableCount),0)+' available</span></summary><div class="mm-fa-build-body">'+nested+'</div></details>';
+        const source=fi.sourceCategorySummary?.weapons||{};
+        const sourceText='Torn weapons source: '+num(source.rows)+' returned row'+(num(source.rows)===1?'':'s')+
+          (num(source.metadataTotal)?' · metadata total '+num(source.metadataTotal):'')+
+          (unclassified.length?' · '+unclassified.length+' unclassified':' · all classified');
+        return '<details class="mm-fa-build-member" open><summary><span class="mm-fa-build-summary-main"><b>WEAPONS</b><span class="mm-fa-pill">'+rows.length+' types</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.availableCount),0)+' available</span></summary>'+
+          '<div class="mm-fa-build-body"><div class="mm-fa-muted" style="margin-bottom:4px;">'+esc(sourceText)+(rows.length===0?' · Torn returned no weapon inventory rows in the latest refresh.':'')+'</div>'+nested+'</div></details>';
       }
       return '<details class="mm-fa-build-member"><summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' types</span></span><span class="mm-fa-muted">'+rows.reduce((s,r)=>s+num(r.availableCount),0)+' available</span></summary>'+
         '<div class="mm-fa-build-body">'+(rows.length?rows.map(itemRow).join(''):'<div class="mm-fa-muted">No stock.</div>')+'</div></details>';
@@ -1608,13 +1732,65 @@
     return '<div class="mm-fa-card mm-fa-compact"><div class="mm-fa-module-head"><div><b>Faction inventory</b> <span class="mm-fa-muted">'+current.length+' item rows · '+when(fi.lastSyncAt)+'</span></div><button id="mm-fa-refresh-faction" style="'+button(true)+'">Refresh Faction</button></div></div>'+categoryHtml;
   }
 
+  function minimumOpenInputs(proposal){
+    const members=memberRows();
+    const inventory=Object.values(state?.factionInventory?.current||{});
+    const weaponRows=inventory.filter(row=>row.category==='weapons');
+    const unclassifiedWeapons=weaponRows.filter(row=>!['primary','secondary','melee'].includes(logic.equipmentSlot(row)));
+    const bloodKnown=members.filter(row=>String(row.profile?.bloodType||'').trim()).length;
+    const verifiedStats=members.filter(row=>row.hasVerifiedStats).length;
+    const inputs=[
+      {
+        priority:'HIGH',
+        topic:'Filled blood-bag mix',
+        status:bloodKnown===members.length&&members.length?'READY TO DESIGN':'DATA REQUIRED',
+        detail:bloodKnown+'/'+members.length+' member blood types known. Set the filled-bag mix from actual compatibility/war participation; do not guess from current stock.'
+      },
+      {
+        priority:'HIGH',
+        topic:'Usage-history maturity',
+        status:proposal.observedDays>=7?'MATURE':'COLLECTING',
+        detail:proposal.observedDays.toFixed(1)+' observed inventory days. Keep proposed quantities provisional until at least 7 days of representative movement exist.'
+      },
+      {
+        priority:'HIGH',
+        topic:'Weapon inventory classification',
+        status:weaponRows.length?(unclassifiedWeapons.length?'REVIEW':'READY'):'REFRESH / VERIFY',
+        detail:weaponRows.length+' weapon item row(s) cached; '+unclassifiedWeapons.length+' unclassified. Unclassified rows remain visible in Stock and must be resolved before slot-pool approval.'
+      },
+      {
+        priority:'MEDIUM',
+        topic:'Member battle-stat coverage',
+        status:verifiedStats===members.length&&members.length?'COMPLETE':'IN PROGRESS',
+        detail:verifiedStats+'/'+members.length+' members have verified private battle stats. Public estimates may support planning but not final allocation.'
+      },
+      {
+        priority:'MEDIUM',
+        topic:'Preferred external suppliers',
+        status:'WAITING — LEADERSHIP',
+        detail:'Sourcing order is approved; named preferred external partners still need to be supplied when Leadership has them.'
+      },
+      {
+        priority:'LOW',
+        topic:'High-value gear boundary',
+        status:'MANAGER PROPOSAL NEEDED',
+        detail:'Special/RW gear stays Leadership-controlled. After weapon values/bonuses are visible, propose an explicit value/bonus threshold for routine-vs-Leadership allocation.'
+      }
+    ];
+    return inputs;
+  }
+
   function minimumsHtml(){
     const proposal=logic.minimumProposal(state?.factionInventory||{},{
       mode:stockMode,
       procurementMode
     });
+    const inputs=minimumOpenInputs(proposal);
     const categories=[...new Set(proposal.proposals.map(row=>String(row.category||'other')))];
     const modeLabel=stockMode==='war'?'WAR · '+proposal.participants+' CURRENT MEMBERS':'PEACE';
+    const numeric=proposal.proposals.filter(row=>!row.dataRequired);
+    const shortRows=numeric.filter(row=>num(row.shortfall)>0);
+    const dataRows=proposal.proposals.filter(row=>row.dataRequired);
     const groups=categories.map(cat=>{
       const rows=proposal.proposals.filter(row=>String(row.category||'other')===cat)
         .sort((a,b)=>(b.shortfall||0)-(a.shortfall||0)||String(a.item).localeCompare(String(b.item)));
@@ -1627,11 +1803,23 @@
         ).join('')+'</div>'+
       '</details>';
     }).join('');
+    const inputHtml=inputs.map(row=>
+      '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.priority)+' · '+esc(row.topic)+'</b><div class="mm-fa-muted">'+esc(row.detail)+'</div></div>'+
+      '<span class="'+(row.status==='READY'||row.status==='COMPLETE'||row.status==='MATURE'||row.status==='READY TO DESIGN'?'mm-fa-good':row.status.includes('WAITING')||row.status==='COLLECTING'||row.status==='IN PROGRESS'?'mm-fa-warn':'mm-fa-bad')+'">'+esc(row.status)+'</span></div>'
+    ).join('');
     return '<div class="mm-fa-card mm-fa-compact">'+
-      '<div class="mm-fa-module-head"><div><b>Inventory minimums</b> <span class="mm-fa-muted">'+modeLabel+' · '+procurementMode.toUpperCase()+' equipment baseline · '+proposal.observedDays.toFixed(1)+'d history · '+proposal.confidence+'</span></div>'+
+      '<div class="mm-fa-module-head"><div><b>Manager Minimums Proposal</b> <span class="mm-fa-muted">'+modeLabel+' · '+procurementMode.toUpperCase()+' · '+proposal.observedDays.toFixed(1)+'d history · '+proposal.confidence+'</span></div>'+
       '<div class="mm-fa-actions"><button data-stock-mode="peace" style="'+button(stockMode==='peace')+'">Peace</button><button data-stock-mode="war" style="'+button(stockMode==='war')+'">War</button><button id="mm-fa-export" style="'+button(true)+'">Leadership Excel</button></div></div>'+
-      '<div class="mm-fa-muted">'+esc(proposal.assumptions)+'</div>'+
-    '</div>'+groups;
+      '<div class="mm-fa-tiles">'+
+        tile('PROPOSED LINES',proposal.proposals.length)+
+        tile('BELOW MIN',shortRows.length,{cls:shortRows.length?'mm-fa-warn':''})+
+        tile('DATA REQUIRED',dataRows.length,{cls:dataRows.length?'mm-fa-warn':''})+
+        tile('CONFIDENCE',proposal.confidence)+
+      '</div>'+
+      '<div class="mm-fa-muted" style="margin-top:5px;"><b>Our recommendation:</b> '+esc(proposal.assumptions)+' These are Inventory Manager numbers for Leadership approval—not open-ended quantity questions.</div>'+
+    '</div>'+
+    '<details class="mm-fa-build-member" open><summary><span class="mm-fa-build-summary-main"><b>WHAT WE STILL NEED TO FIGURE OUT</b><span class="mm-fa-pill">'+inputs.filter(row=>!['READY','COMPLETE','MATURE','READY TO DESIGN'].includes(row.status)).length+' open</span></span><span class="mm-fa-muted">manager inputs / leadership dependencies</span></summary><div class="mm-fa-build-body">'+inputHtml+'</div></details>'+
+    groups;
   }
 
   function sharedItemRecordByName(name){
@@ -2036,6 +2224,15 @@
     );
     root.querySelector('#mm-fa-close')?.addEventListener('click',close);
     root.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>{activeView=b.dataset.view||'members';render();}));
+    root.querySelector('#mm-fa-quick-build-member')?.addEventListener('change',event=>{
+      selectedBuildMemberId=asId(event.currentTarget.value);
+      render();
+    });
+    root.querySelector('#mm-fa-quick-build-message')?.addEventListener('click',()=>{
+      const row=memberRows().find(item=>item.memberId===asId(selectedBuildMemberId));
+      try{quickBuildMessage(row);}
+      catch(error){statusText='Build message could not be prepared: '+(error?.message||String(error));render();}
+    });
     root.querySelectorAll('[data-cat]').forEach(b=>b.addEventListener('click',()=>{selectedCategory=b.dataset.cat||'all';render();}));
     root.querySelectorAll('[data-stock-mode]').forEach(b=>b.addEventListener('click',()=>{
       stockMode=b.dataset.stockMode==='peace'?'peace':'war';
@@ -2291,7 +2488,9 @@
       {Metric:'Inventory rows',Value:inventory.length},
       {Metric:'Observed inventory days',Value:Number(minimums.observedDays.toFixed(1))},
       {Metric:'Minimum proposal shortfalls',Value:minimums.actionable.length},
-      {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length}
+      {Metric:'Minimum proposal data-required',Value:minimums.dataRequired.length},
+      {Metric:'Minimum proposal approval status',Value:'PROVISIONAL — LEADERSHIP APPROVAL REQUIRED'},
+      {Metric:'Open manager / leadership inputs',Value:minimumOpenInputs(minimums).filter(r=>!['READY','COMPLETE','MATURE','READY TO DESIGN'].includes(r.status)).length}
     ];
     const memberHeaders=['Member ID','Member','Level','Torn Age Days','API Saved','Stats Source','Estimate Confidence','Readiness','War Ready','Procurement Disposition','Procurement Pass At','Procurement Pass Reason','Baseline Pass','Approved At','Approval Mode','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
     const memberData=members.map(r=>{
@@ -2314,12 +2513,15 @@
     const invData=inventory.map(r=>({'Category':r.category,'Item ID':r.itemId,'Item':r.name,'Owned':num(r.amountOwned),'Available':num(r.availableCount),'Loaned':num(r.loanedCount),'Damage':num(r.damage),'Accuracy':num(r.accuracy),'Armor':num(r.armorRating)}));
     const minHeaders=['Category','Item / Pool','Current','Loaned','Proposed Min','Proposed Max','Shortfall','Data Required','Rationale'];
     const minData=minimums.proposals.map(r=>({'Category':r.category,'Item / Pool':r.item,'Current':num(r.current),'Loaned':num(r.loaned),'Proposed Min':r.dataRequired?'':num(r.recommendedMin),'Proposed Max':r.dataRequired?'':num(r.recommendedMax),'Shortfall':r.dataRequired?'':num(r.shortfall),'Data Required':r.dataRequired?'YES':'NO','Rationale':r.rationale}));
+    const inputHeaders=['Priority','Topic','Status','What We Need / Why'];
+    const inputData=minimumOpenInputs(minimums).map(r=>({'Priority':r.priority,'Topic':r.topic,'Status':r.status,'What We Need / Why':r.detail}));
     const xml='<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>'+
       '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'+
       xmlSheet('Summary',summaryHeaders,summary)+
       xmlSheet('Members',memberHeaders,memberData)+
       xmlSheet('Inventory',invHeaders,invData)+
       xmlSheet('Minimums',minHeaders,minData)+
+      xmlSheet('Open Inputs',inputHeaders,inputData)+
       xmlSheet('Coverage',['Member ID','Member','Readiness','Procurement','Slot','Member Has','Has Score','Need Target','Need Floor','Ready','Route','Assigned Loan','Owned Alternative','Faction Qualifying Available','Faction Qualifying Items'],coverage.memberCoverage.map(r=>({
         'Member ID':r.memberId,'Member':r.memberName,'Readiness':r.readinessStatus,'Procurement':r.acquisitionDisposition,
         'Slot':r.slot,'Member Has':r.memberHas,'Has Score':num(r.memberHasScore),'Need Target':r.needTarget,'Need Floor':num(r.needFloor),
