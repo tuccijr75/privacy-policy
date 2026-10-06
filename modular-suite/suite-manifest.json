@@ -43,7 +43,7 @@
       "id": "faction-armory",
       "name": "MM Faction Armory",
       "role": "faction-inventory-builds-readiness",
-      "version": "8.0.0-alpha.24.2",
+      "version": "8.0.0-alpha.24.3",
       "status": "implemented-non-production"
     },
     {
