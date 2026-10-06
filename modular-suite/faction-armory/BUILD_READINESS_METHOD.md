@@ -114,6 +114,20 @@ Each standard slot resolves to one of these routes:
 - **ACQUIRE** — faction stock does not cover the requirement; add the generally available target to the acquisition plan.
 - **REVIEW** — current gear exists but cannot be safely scored yet.
 
+## Leadership decisions and manual overrides
+
+Automatic readiness is advisory evidence, not an irreversible gate.
+
+Leadership may mark any individual faction member **WAR READY**. That manual decision:
+- applies only to that member;
+- persists until Leadership explicitly reopens readiness;
+- excludes the member from War acquisition planning;
+- does not rewrite or hide the automatic build baseline.
+
+Member source/API data also supports a separate manual-override layer. The override is a partial object merged over the stored profile at read time. The original source profile remains stored underneath. This permits explicit correction of any readiness input without fabricating API provenance. Active overrides are shown in the UI and Leadership export and can be cleared per member.
+
+A confirmed empty Torn combat-equipment response is valid evidence and is labeled **NO COMBAT GEAR EQUIPPED**. It is not treated as missing data.
+
 ## Acquisition plan
 
 The Acquire screen aggregates all member requirements into a single list:
