@@ -140,7 +140,7 @@ assert(pdaSource.includes('position:fixed;right:10px;bottom:86px;'));
 assert(pdaSource.includes('MMTornInventoryRoiLogic'));
 assert(pdaSource.includes('function fifoLedger'));
 assert(pdaSource.includes('MM Torn Core (pinned immutable snapshot b6d2202)'));
-assert(pdaSource.includes('Inventory FIFO logic (pinned immutable snapshot 4ef4197)'));
+assert(pdaSource.includes('Inventory FIFO logic (pinned immutable snapshot bb32ea3)'));
 assert(pdaSource.includes('final trade actions remain manual'));
 
 const adapterSource=fs.readFileSync(__dirname+'/MM_Trade_Manager.pda.adapter.js','utf8');
