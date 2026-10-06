@@ -949,7 +949,10 @@ assert(userSourceValue.includes("'Funding Status'"),'Leadership export must disc
 assert(userSourceValue.includes("'Price Evidence'"),'Leadership export must disclose price evidence quality');
 console.log('MM Faction Armory alpha.24.8 acquisition-accuracy regressions: PASS');
 
-const priceSourceBlock=sourceSection('  function priceTimestampMs(value){','\n  function handoffAcquisition(row,preferredSource=\'Best\'){');
+const priceSourceStart=userSourceValue.indexOf('  function priceTimestampMs(value){');
+const priceSourceEnd=userSourceValue.indexOf("\n  function handoffAcquisition(row,preferredSource='Best'){",priceSourceStart);
+assert(priceSourceStart>=0&&priceSourceEnd>priceSourceStart,'acquisition price-source function block must be present');
+const priceSourceBlock=userSourceValue.slice(priceSourceStart,priceSourceEnd);
 const priceSnapshotFactory=new Function('num','sharedItemRecordByName','state',
   'return (()=>{'+priceSourceBlock+'; return acquisitionSourceSnapshot;})();'
 );
