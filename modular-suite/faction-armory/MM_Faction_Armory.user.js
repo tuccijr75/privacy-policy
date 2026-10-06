@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.1
+// @version      8.0.0-alpha.24.2
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.1';
+  const VERSION='8.0.0-alpha.24.2';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -751,9 +751,12 @@
     const stats=battleStats(statsData);
     const total=Object.values(stats).reduce((a,b)=>a+b,0);
     if(!total)throw new Error('Battle stats parsed as zero; no profile was changed.');
+    const rawEquipment=Array.isArray(equipData?.equipment)?equipData.equipment:null;
+    if(!rawEquipment)throw new Error('Equipment response was malformed; no profile was changed.');
     const items=equipmentItems(equipData);
+    if(rawEquipment.length&&!items.length)throw new Error('Equipped combat items were returned but could not be normalized; no profile was changed.');
+    const equipmentEmptyConfirmed=rawEquipment.length===0;
     const summary=equipmentSummary(items);
-    if(!summary)throw new Error('No equipped items could be parsed; no profile was changed.');
     const supply=memberSupply(inventory,ammoData,items);
     const ownedEquipment=ownedEquipmentFromInventory(inventory);
     const verifiedAt=new Date().toISOString();
@@ -765,7 +768,7 @@
       const previous=fi.memberReadiness.profiles[memberId]||{};
       fi.memberReadiness.profiles[memberId]={
         ...previous,memberId,stats,
-        equipment:{...(previous.equipment||{}),summary,items,rawImported:false},
+        equipment:{...(previous.equipment||{}),summary,items,rawImported:false,emptyConfirmed:equipmentEmptyConfirmed},
         ownedEquipment,
         supplyReadiness:supply,
         medicalStatus:supply.medicalKnown?'API INVENTORY':String(previous.medicalStatus||'UNKNOWN'),
@@ -1403,7 +1406,7 @@
     (rows.length?rows.map(row=>{
       const s=row.stats||{};
       const source=String(row.profile?.source||'');
-      const gear=String(row.equipmentSummary||'');
+      const gear=String(row.equipmentSummary||'')||(row.profile?.equipment?.emptyConfirmed?'No combat equipment equipped (API confirmed)':'');
       const entry=vault?.entries?.[row.memberId];
       const statusClass=readinessStatusClass(row.readinessStatus);
       const med=row.profile?.supplyReadiness?.medical||{};
