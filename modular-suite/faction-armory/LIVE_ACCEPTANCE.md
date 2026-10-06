@@ -1,7 +1,22 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.3**
+Status: **NON-PRODUCTION / alpha.24.4**
 
+
+## Alpha.24.4 faction-message wording + contact tracking
+
+- Member-facing build messages translate internal `ISSUE` routes to **BORROW FROM VAULT**. Internal route semantics remain unchanged.
+- Removed the two explanatory paragraphs requested by the owner from build messages:
+  - the stronger/unknown personal-gear paragraph;
+  - the faction-stock ISSUE-vs-ACQUIRE paragraph.
+- Member build messages, readiness reminders, and leader acquisition reports sign:
+  - **Manic Mike**
+  - **Inventory Manager**
+- Member contact tracking records only trusted Torn-confirmed sends. Opening Compose or clicking Send without confirmation does not mark a message sent.
+- Members show overall contact state plus separate **BUILD MSG** and **DATA REQUEST** status.
+- Quick Build member selection shows **MSG SENT / MSG NOT SENT** and the selected member shows last confirmed build-message time/count.
+- Leadership export includes overall member-message status, last confirmed message time, build-message sent/time/count, and data-request sent/time.
+- Existing pre-alpha.24.4 readiness-reminder sent timestamps remain recognized through the legacy reminder record.
 
 ## Alpha.24.3 leadership override + manual data control
 
