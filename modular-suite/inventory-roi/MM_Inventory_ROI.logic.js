@@ -58,6 +58,7 @@
   function pricingRecommendation({bazaarPrice=0,bazaarQty=0,personalQty=0,avgCost=0,avgSoldPrice30=0,pulse={}}={}){
     const listingPrice=Math.max(0,n(bazaarPrice));
     const availableQty=Math.max(0,n(personalQty));
+    const totalQty=Math.max(0,n(bazaarQty)+availableQty);
     const cost=Math.max(0,n(avgCost));
     const historical=Math.max(0,n(avgSoldPrice30));
     const floor=Math.max(0,n(pulse?.floorPrice));
@@ -71,6 +72,9 @@
       fetchedAt:n(pulse?.fetchedAt),confidencePct:confidence,liquidityScore:liquidity,
       explanation:''
     };
+    if(!(totalQty>0)){
+      return {...base,state:'OUT OF STOCK',explanation:'No owned or listed units are available, so listing-price guidance is withheld.'};
+    }
     if(!pulse?.available){
       return {...base,explanation:'No current Market Pulse evidence is available for this item.'};
     }
