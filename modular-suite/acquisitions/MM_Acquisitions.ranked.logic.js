@@ -164,6 +164,31 @@
     };
   }
 
+  function auctionBidMaturity(listing,{fairValue=0,now=Date.now(),minFairFraction=.20,minBids=3,matureHours=2}={}){
+    const row=normalizedHistoryRow(listing);
+    const isAuction=lower(row.source)==='auction';
+    if(!isAuction)return {isAuction:false,provisional:false,fairFraction:0,hoursRemaining:0,reason:''};
+    const price=Math.max(0,num(listing?.price??row.price));
+    const fair=Math.max(0,num(fairValue));
+    const endMs=Math.max(0,num(row.endsAt))*1000;
+    const hoursRemaining=endMs>now?(endMs-now)/3600000:0;
+    const fairFraction=fair>0&&price>0?price/fair:0;
+    const bids=Math.max(0,num(row.bids));
+    const provisional=Boolean(
+      fair>0&&price>0&&
+      fairFraction<Math.max(.01,num(minFairFraction)||.20)&&
+      bids<Math.max(1,Math.round(num(minBids)||3))&&
+      hoursRemaining>Math.max(0,num(matureHours)||2)
+    );
+    const reason=provisional
+      ?'early-low-bid'
+      :fair<=0?'no-fair-value'
+        :hoursRemaining<=Math.max(0,num(matureHours)||2)?'near-close'
+          :bids>=Math.max(1,Math.round(num(minBids)||3))?'bid-activity'
+            :'meaningful-bid';
+    return {isAuction:true,provisional,fairFraction,hoursRemaining,bids,reason};
+  }
+
   function evaluateListing(listing,history,settings={}){
     const row=normalizedHistoryRow(listing);
     const ask=num(listing?.price??row.price);
@@ -204,6 +229,13 @@
         ?roiScore*.34+liquidity*.27+confidence*.17+marginScore*.08+pulseVelocityScore*.14
         :roiScore*.40+liquidity*.30+confidence*.20+marginScore*.10
     )));
+    const auctionBid=auctionBidMaturity(row,{
+      fairValue,
+      now,
+      minFairFraction:settings.auctionMinFairFraction,
+      minBids:settings.auctionMinBids,
+      matureHours:settings.auctionMatureHours
+    });
     const endMs=Math.max(0,num(row.endsAt))*1000;
     const hoursRemaining=endMs>now?(endMs-now)/3600000:0;
     const auctionUrgencyScore=isAuction&&endMs>now
@@ -217,7 +249,7 @@
         confidence*.35+liquidity*.25+auctionUrgencyScore*.25+auctionDiscountScore*.15
       )))
       :0;
-    const sortScore=isAuction?auctionWatchScore:investmentScore;
+    const sortScore=isAuction?(auctionBid.provisional?0:auctionWatchScore):investmentScore;
     const bonuses=normalizeBonuses(row.bonuses);
     const lowTier=(settings.lowTierBonuses||['Achilles','Conserve'])
       .map(lower).some(title=>bonuses.some(b=>lower(b.title)===title));
@@ -237,7 +269,11 @@
       pulseSourceTimestamp:pulseUsable?Math.max(0,num(pulse?.sourceTimestamp)):0,
       pulseFetchedAt:pulseUsable?pulseFetchedAt:0,
       pulseUpstreamCacheDelayMs:pulseUsable?Math.max(0,num(pulse?.upstreamCacheDelayMs)):0,
-      hoursRemaining,sortScore,isAuction,lowTier,valuationSource,
+      hoursRemaining,sortScore,isAuction,
+      auctionBidProvisional:Boolean(auctionBid.provisional),
+      auctionBidFairFraction:Number(auctionBid.fairFraction||0),
+      auctionBidMaturityReason:String(auctionBid.reason||''),
+      lowTier,valuationSource,
       history:historyValue
     };
   }
@@ -254,7 +290,7 @@
   Object.defineProperty(globalThis,'MMTornRankedProfitLogic',{
     value:Object.freeze({
       normalizeBonuses,bonusSignature,normalizeRarity,bunkerBuckUnits,quantile,robustPrices,
-      normalizedHistoryRow,comparableHistory,salesVolume,historyValuation,evaluateListing,rankListings
+      normalizedHistoryRow,comparableHistory,salesVolume,historyValuation,auctionBidMaturity,evaluateListing,rankListings
     }),
     configurable:true,enumerable:false,writable:false
   });
