@@ -895,7 +895,8 @@ assert(userSourceValue.includes('WAR_OPPONENT_INTEL_MAX_AGE_MS=6*60*60*1000'),'o
 assert(userSourceValue.includes('War Stock Control'),'Minimums must expose the live stock control surface');
 assert(userSourceValue.includes('Xanax War Estimator'),'War mode must expose the rival-weighted Xanax estimator');
 assert(userSourceValue.includes('Save Minimum'),'stock minimums must be directly editable');
-assert(userSourceValue.includes("Hold / Don't Order"),'each minimum must allow an explicit no-order decision');
+assert(userSourceValue.includes('data-toggle-min-order'),'each minimum must expose an explicit order/hold control');
+assert(userSourceValue.includes('HOLD / DO NOT ORDER'),'order/hold state must propagate through the control handler');
 assert(userSourceValue.includes('Refresh Rival'),'operator must be able to refresh rival-dependent estimates');
 assert(userSourceValue.includes('Save Xanax Policy'),'Xanax posture/thresholds/caps must be adjustable');
 assert(userSourceValue.includes("xmlSheet('Xanax'"),'Leadership export must contain the current Xanax estimator');
