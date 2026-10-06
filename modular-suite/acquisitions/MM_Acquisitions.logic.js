@@ -428,7 +428,8 @@
       if(!/^\d+$/.test(id)||!(targetBuy>0))continue;
       const base=market.get(id)||{};
       const catalog=db?.procurement?.catalog?.[id]||{};
-      const buyPrice=Math.max(0,Number(base?.lowestPrice||0));
+      const rawBazaarBuy=Math.max(0,Number(base?.lowestPrice||0));
+      const bazaarBuy=!freshness.stale?rawBazaarBuy:0;
       const bazaarAverage=Math.max(0,Number(base?.bazaarAverage||0));
       const marketReference=Math.max(0,Number(base?.marketPrice||catalog?.marketPrice||0));
       const sellerCount=Math.max(0,Number(base?.totalBazaars||0));
@@ -436,17 +437,23 @@
       const snapAge=ageSeconds(snap?.fetchedAt,nowMs);
       const itemMarketFresh=Boolean(snap?.fetchedAt)&&snapAge<=rules.maxListingAgeSec;
       const itemMarketAsk=itemMarketFresh?Math.max(0,Number(snap?.itemMarket?.lowest||0)):0;
-      const bazaarExit=!freshness.stale&&sellerCount>0&&Number(base?.lowestPrice||0)>0&&bazaarAverage>0
+      const buyOptions=[
+        {source:'Bazaar observed',price:bazaarBuy,ageSeconds:freshness.ageSeconds},
+        {source:'Item Market',price:itemMarketAsk,ageSeconds:snapAge}
+      ].filter(option=>option.price>0).sort((x,y)=>x.price-y.price);
+      const buy=buyOptions[0]||{source:'Unknown',price:0,ageSeconds:Infinity};
+      const buyPrice=Math.max(0,Number(buy.price||0));
+      const bazaarExit=bazaarBuy>0&&sellerCount>0&&bazaarAverage>0
         ?Math.floor(bazaarAverage*(1-Number(settings.bazaarExitHaircutPct||0)/100))
         :0;
       const itemMarketNet=itemMarketAsk>0?Math.floor(itemMarketAsk*(1-ITEM_MARKET_FEE_RATE)):0;
       const exitOptions=[
         {route:'Bazaar',value:bazaarExit},
         {route:'Item Market Net',value:itemMarketNet}
-      ].filter(x=>x.value>0).sort((a,b)=>b.value-a.value);
+      ].filter(x=>x.value>0).sort((x,y)=>y.value-x.value);
       const exit=exitOptions[0]||{route:'Unknown',value:0};
       const profit=buyPrice>0&&exit.value>0?exit.value-buyPrice:0;
-      const roiPct=buyPrice>0?profit/buyPrice*100:0;
+      const roiPct=buyPrice>0&&exit.value>0?profit/buyPrice*100:0;
       const targetDiscountPct=targetBuy>0&&buyPrice>0?(targetBuy-buyPrice)/targetBuy*100:0;
       const history=intelHistoryStats(intel,id);
       const p=personal[id]||{};
@@ -476,13 +483,18 @@
         itemType:String(catalog?.type||''),
         targetBuy,buyPrice,bazaarAverage,marketPrice:marketReference,sellerCount,
         marketReference,
+        rawBazaarPrice:rawBazaarBuy,
+        bazaarLivePrice:bazaarBuy,
         itemMarketLivePrice:itemMarketAsk,
-        buySource:buyPrice>0?'Bazaar observed':'Unknown',
+        buySource:String(buy.source||'Unknown'),
+        buyAgeSeconds:Number(buy.ageSeconds??Infinity),
         bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,targetDiscountPct,
         confidence,liquidity,score,economicScore,history,
         ...pulse,
         personalSold7d:sales7,personalSold30d:sales30,
         freshness,
+        itemMarketFresh,
+        itemMarketAgeSeconds:snapAge,
         hasMarketEvidence:Boolean(buyPrice>0&&exit.value>0),
         profitable:Boolean(profit>0),
         qualifies:Boolean(
@@ -491,12 +503,12 @@
         )
       });
     }
-    return rows.sort((a,b)=>
-      Number(b.qualifies)-Number(a.qualifies)||
-      Number(b.profitable)-Number(a.profitable)||
-      b.score-a.score||
-      b.profit-a.profit||
-      b.roiPct-a.roiPct
+    return rows.sort((x,y)=>
+      Number(y.qualifies)-Number(x.qualifies)||
+      Number(y.profitable)-Number(x.profitable)||
+      y.score-x.score||
+      y.profit-x.profit||
+      y.roiPct-x.roiPct
     );
   }
 
