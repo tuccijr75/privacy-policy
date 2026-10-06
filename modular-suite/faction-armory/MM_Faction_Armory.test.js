@@ -341,7 +341,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.24.3';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.24.4';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@67c6282894d1a6767047c4e19c42cb53683804ac/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
@@ -353,7 +353,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.24.3';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.24.4';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -361,7 +361,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.24.3';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.24.4';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -460,7 +460,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.3';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.4';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
@@ -713,6 +713,24 @@ assert.strictEqual(overrideRows[0].equipmentSummary,'MELEE: Macana','manual equi
 assert.strictEqual(overrideRows[0].equipmentEmptyConfirmed,false);
 assert.deepStrictEqual(logic.manualOverrideValues(overrideFaction.memberReadiness.profiles['888']).stats,{strength:2500});
 console.log('MM Faction Armory alpha.24.3 leadership/manual-override regressions: PASS');
+
+assert(userSourceValue.includes("return route==='ISSUE'?'BORROW FROM VAULT':route;"),'member-facing build messages must translate ISSUE to BORROW FROM VAULT without changing internal route semantics');
+assert(!userSourceValue.includes('Known stronger personal equipment is kept. Unknown or special gear is marked REVIEW rather than replaced automatically.'),'removed member-message explanation must not remain');
+assert(!userSourceValue.includes('Faction stock changes the route (ISSUE vs ACQUIRE); it does not lower the build standard.'),'removed faction-stock explanation must not remain in faction messages');
+assert((userSourceValue.match(/Inventory Manager/g)||[]).length>=3,'member reminders, build messages and leader reports must sign with Inventory Manager under Manic Mike');
+assert(userSourceValue.includes("MEMBER_MESSAGE_LOG_KEY='mm_faction_armory_member_message_log_v1'"),'confirmed member messages must use a dedicated durable local message log');
+assert(userSourceValue.includes('function memberMessageStatus'),'message tracking must expose per-member/per-kind status');
+assert(userSourceValue.includes('function memberAnyMessageStatus'),'member list must expose whether any confirmed faction message was sent');
+assert(userSourceValue.includes('function recordConfirmedMemberMessage'),'message state must be recorded through the trusted confirmation path');
+assert(userSourceValue.includes("if(payload.memberId)recordConfirmedMemberMessage(payload);"),'member message must not be marked sent until trusted Torn confirmation');
+assert(userSourceValue.includes("MSG NOT SENT"),'Quick Build/member UI must expose unsent members');
+assert(userSourceValue.includes("tile('BUILD MSG'"),'Members UI must expose confirmed build-message status');
+assert(userSourceValue.includes("tile('DATA REQUEST'"),'Members UI must expose confirmed data-request status');
+assert(userSourceValue.includes("'Any Member Message'"),'Leadership export must include overall member-message status');
+assert(userSourceValue.includes("'Build Message Count'"),'Leadership export must include confirmed build-message count');
+assert(userSourceValue.includes("'Data Request At'"),'Leadership export must include data-request timestamp');
+console.log('MM Faction Armory alpha.24.4 faction-message tracking regressions: PASS');
+
 
 assert(userSourceValue.includes("async function setMemberManualOverrides"),'Members UI must provide a persistent manual data override write path');
 assert(userSourceValue.includes("data-edit-override"),'every member must expose manual data override editing');
