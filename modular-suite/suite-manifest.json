@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "8.0.0-alpha.56",
+  "suiteVersion": "8.0.0-alpha.57",
   "status": "non-production",
   "baseVersion": "7.5.3",
   "branch": "crm-v8-modular-suite",
@@ -36,7 +36,7 @@
       "id": "inventory-roi",
       "name": "MM_Inventory Manager/ROI Tracker",
       "role": "inventory-listing-sales-velocity-fifo-roi",
-      "version": "8.0.0-alpha.13",
+      "version": "8.0.0-alpha.14",
       "status": "implemented-non-production"
     },
     {
