@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.5
+// @version      8.0.0-alpha.24.6
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.5';
+  const VERSION='8.0.0-alpha.24.6';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -1733,23 +1733,34 @@
       const route=factionMessageRoute(item);
       const actionItem=quickBuildActionItem(item);
       const current=String(item.currentName||'');
-      return String(item.slot||'slot').toUpperCase()+': '+route+' · '+actionItem+
-        (current&&current!==actionItem&&route!=='KEEP'?' · current '+current:'');
+      let wording='One option to consider';
+      if(route==='KEEP')wording='Your current setup looks good';
+      else if(route==='BORROW FROM VAULT')wording='One option is to BORROW FROM VAULT';
+      else if(route==='OWNED / EQUIP')wording='You may already own a suitable option';
+      else if(route==='LOANED / VERIFY')wording='You could use the assigned faction loan';
+      else if(route==='ACQUIRE')wording='A possible replacement to consider';
+      else if(route==='REVIEW')wording='This slot may be worth reviewing';
+      return String(item.slot||'slot').toUpperCase()+': '+wording+' — '+actionItem+
+        (current&&current!==actionItem&&route!=='KEEP'?' · currently '+current:'');
     });
     const body=[
-      String(row.memberName||'Faction member')+',',
+      'Hi '+String(row.memberName||'Faction member')+',',
       '',
-      'Faction build review based on your current level and battle-stat profile.',
+      'I am putting together optional war-prep suggestions for faction members who want help getting ready. This is not an order, and you do not need to change anything if you are comfortable with your current setup.',
+      '',
+      'Based on the information I currently have:',
       'Level: '+num(row.level),
       statPrefix+'battle stats: STR '+fmt(row.stats?.strength)+' / DEF '+fmt(row.stats?.defense)+' / SPD '+fmt(row.stats?.speed)+' / DEX '+fmt(row.stats?.dexterity)+' · total '+fmt(row.statProfile?.total),
       'Build style: '+String(build.buildStyle||'UNKNOWN')+' · offense need '+String(build.offensiveNeed||'balanced')+' · defense style '+String(build.defensiveStyle||'balanced'),
       '',
-      'TARGET BUILD',
-      ...(lines.length?lines:['No evidence-backed slot recommendation is available yet.']),
+      'OPTIONAL WAR-PREP SUGGESTIONS',
+      ...(lines.length?lines:['I do not have enough information yet to make a useful equipment suggestion.']),
       ...(row.statsEstimated?[
         '',
-        'Your battle stats are currently estimated from public data. Send your actual readiness data before any final vault borrowing or purchase.'
+        'Some of this is based on estimated public data, so treat it as a rough starting point. If you want a more accurate recommendation, you can send your current readiness data whenever convenient.'
       ]:[]),
+      '',
+      'Use whatever is helpful and ignore anything that is not. My goal is simply to make sure anyone who wants help has useful options available before the war.',
       '',
       '— Manic Mike',
       'Inventory Manager'
@@ -1757,7 +1768,7 @@
     openArmoryMessage({
       playerId:row.memberId,
       playerName:row.memberName,
-      subject:'OBSIDIAN FORCE faction build review',
+      subject:'OBSIDIAN FORCE optional war-prep suggestions',
       body,
       kind:'member-build',
       memberId:row.memberId
