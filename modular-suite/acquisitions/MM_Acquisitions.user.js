@@ -9,7 +9,7 @@
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@0200ec9287b4105ba78644c5d0b9f5260b056261/modular-suite/acquisitions/MM_Acquisitions.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@64269ee21590d11289c15331947576e4e6795b4f/modular-suite/acquisitions/MM_Acquisitions.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@3b033e03b26faf17466fed7122adcb9c34077a0b/modular-suite/acquisitions/MM_Acquisitions.live.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@7439f1289a0ac281515e2954b6c2a349d2aa6815/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6c2ababdb06ee105191e74126c457ac3b7fea53f/modular-suite/acquisitions/MM_Acquisitions.torn-intel.js
