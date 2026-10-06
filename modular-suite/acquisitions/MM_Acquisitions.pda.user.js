@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.29-pda.16
+// @version      8.0.0-alpha.30-pda.17
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -2015,7 +2015,6 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
 
 /* ===== Acquisitions logic (bundled) ===== */
-
 (() => {
   'use strict';
 
@@ -2412,6 +2411,62 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       );
   }
 
+  function rankTravelDestinations(db,nowMs=Date.now()) {
+    const demand=db?.operations?.inventoryRoi?.restockDemand||{};
+    const byCountry=new Map();
+    for(const row of rankCachedTravel(db,nowMs)){
+      const country=String(row?.country||row?.countryCode||'Unknown').trim()||'Unknown';
+      let group=byCountry.get(country);
+      if(!group){
+        group={
+          country,itemCount:0,profitableItemCount:0,totalObservedStock:0,
+          totalAvailableProfit:0,totalAcquisitionCost:0,
+          bestLiquidityAdjustedProfitPerHour:0,bestSourceProfitPerHour:0,
+          bestRoiPct:0,bestItem:null,pulseFreshItems:0,pulseConfidenceMax:0,
+          restockMatchCount:0,restockDemandUnits:0,items:[]
+        };
+        byCountry.set(country,group);
+      }
+      const stock=Math.max(0,Number(row?.stock||0));
+      const profit=Math.max(0,Number(row?.profit||0));
+      const shopCost=Math.max(0,Number(row?.shopCost||0));
+      const roiPct=shopCost>0&&profit>0?profit/shopCost*100:0;
+      const adjustedPerHour=Math.max(0,Number(row?.liquidityAdjustedProfitPerHour||0));
+      const sourcePerHour=Math.max(0,Number(row?.sourceProfitPerHour||0));
+      const itemId=asId(row?.itemId);
+      const restock=demand?.[itemId];
+      const restockUnits=restock&&String(restock?.status||'OPEN')==='OPEN'?Math.max(0,Number(restock?.deficit||0)):0;
+      group.itemCount++;
+      if(profit>0)group.profitableItemCount++;
+      group.totalObservedStock+=stock;
+      group.totalAvailableProfit+=profit*stock;
+      group.totalAcquisitionCost+=shopCost*stock;
+      group.bestLiquidityAdjustedProfitPerHour=Math.max(group.bestLiquidityAdjustedProfitPerHour,adjustedPerHour);
+      group.bestSourceProfitPerHour=Math.max(group.bestSourceProfitPerHour,sourcePerHour);
+      group.bestRoiPct=Math.max(group.bestRoiPct,roiPct);
+      if(row?.pulseFreshness&&!row.pulseFreshness.stale)group.pulseFreshItems++;
+      group.pulseConfidenceMax=Math.max(group.pulseConfidenceMax,Math.max(0,Number(row?.pulseConfidencePct||0)));
+      if(restockUnits>0){group.restockMatchCount++;group.restockDemandUnits+=restockUnits;}
+      group.items.push({...row,roiPct,restockDemandUnits:restockUnits});
+      if(!group.bestItem||
+        adjustedPerHour>Number(group.bestItem?.liquidityAdjustedProfitPerHour||0)||
+        (adjustedPerHour===Number(group.bestItem?.liquidityAdjustedProfitPerHour||0)&&profit>Number(group.bestItem?.profit||0))){
+        group.bestItem={...row,roiPct,restockDemandUnits:restockUnits};
+      }
+    }
+    return [...byCountry.values()]
+      .map(group=>({
+        ...group,
+        pulseCoveragePct:group.itemCount?group.pulseFreshItems/group.itemCount*100:0
+      }))
+      .sort((a,b)=>
+        Number(b.bestLiquidityAdjustedProfitPerHour||0)-Number(a.bestLiquidityAdjustedProfitPerHour||0)||
+        Number(b.totalAvailableProfit||0)-Number(a.totalAvailableProfit||0)||
+        Number(b.profitableItemCount||0)-Number(a.profitableItemCount||0)||
+        String(a.country).localeCompare(String(b.country))
+      );
+  }
+
   const api = Object.freeze({
     businessRules,
     freshnessInfo,
@@ -2419,14 +2474,14 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     pulseSignals,pulseFields,
     rankCachedOpportunities,
     rankPricelistUniverse,
-    rankCachedTravel
+    rankCachedTravel,
+    rankTravelDestinations
   });
 
   Object.defineProperty(globalThis,'MMTornAcquisitionsLogic',{
     value:api,configurable:true,enumerable:false,writable:false
   });
 })();
-
 
 ;globalThis.__MM_ACQ_PDA_STAGE='logic';
 
@@ -4194,7 +4249,6 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
 
 /* ===== Acquisitions UI ===== */
-
 (() => {
   'use strict';
 
@@ -5260,6 +5314,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   function travelHtml(){
     if(!state)return card('<b>No cached travel state available.</b>');
     const ranked=logic.rankCachedTravel(state);
+    const destinationRanked=logic.rankTravelDestinations?.(state)||[];
     const allTravelRows=Array.isArray(state?.travelIntel?.rows)?state.travelIntel.rows:[];
     const feed=readTravelFeed();
     const captureAge=feed?.capturedAt?age(new Date(Number(feed.capturedAt)).toISOString()):'none';
@@ -5272,19 +5327,23 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const destination=normalizeTravelLocation(ctx?.destination||'');
     let scope='Next trip from Torn';
     let scopedRows=ranked;
+    let scopedDestinations=destinationRanked;
     let scopedRestock=allTravelRows.filter(row=>Number(row?.stock||0)<=0&&Number(row?.shopCost||0)>0);
     if(ctx?.mode==='abroad'&&current){
       scope='Items available where you are now · '+String(ctx.country||'current destination');
       scopedRows=ranked.filter(r=>normalizeTravelLocation(r.country)===current);
+      scopedDestinations=destinationRanked.filter(r=>normalizeTravelLocation(r.country)===current);
       scopedRestock=scopedRestock.filter(r=>normalizeTravelLocation(r.country)===current);
     }else if(ctx?.mode==='traveling'&&destination&&destination!=='torn'){
       scope='Items to consider when you arrive · '+String(ctx.destination||'destination');
       scopedRows=ranked.filter(r=>normalizeTravelLocation(r.country)===destination);
+      scopedDestinations=destinationRanked.filter(r=>normalizeTravelLocation(r.country)===destination);
       scopedRestock=scopedRestock.filter(r=>normalizeTravelLocation(r.country)===destination);
     }else if(ctx?.mode==='traveling'){
       scope='You are traveling · showing next-trip ideas';
     }
     const stale=freshness==='STALE'||freshness==='UNKNOWN';
+    const destinations=(stale?[]:scopedDestinations).slice(0,10);
     const rows=(stale?[]:scopedRows).slice(0,20);
     const restockRows=(stale?[]:scopedRestock).slice().sort((a,b)=>{
       const ar=restockRecord(a?.countryCode||a?.country,a?.itemId);
@@ -5304,6 +5363,19 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       '<div style="font-size:10px;margin-top:5px;"><b style="color:'+freshnessColor+';">'+esc(freshness)+'</b> · '+esc(scope)+' · '+esc(provider)+'</div>'+
       '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:10px;color:#888;">Travel data details</summary><div style="font-size:10px;color:#888;margin-top:4px;">Provider source observed '+esc(sourceAge)+' · local fetch '+esc(age(state.travelIntel?.lastSyncAt))+' · TornW3B browser capture '+esc(captureAge)+' · '+esc(travelContextLabel(ctx))+'</div><button id="mm-acq-travel-import" style="'+button()+'margin-top:5px;">Import TornW3B Fallback Capture</button></details>'+
       (stale?'<div style="margin-top:6px;padding:6px;border:1px solid #7d3b3b;border-radius:5px;color:#ffb3b3;font-size:11px;"><b>Refresh needed.</b> Old travel stock is hidden until it is refreshed.</div>':'')
+    )+
+    card(
+      '<div><b>Destination ranking</b><div style="font-size:10px;color:#888;margin-top:3px;">Countries are ordered by the best liquidity-adjusted profit/hour available there, then total observed profit opportunity. Components stay visible; there is no hidden country score.</div></div>'+
+      (destinations.length?destinations.map((d,i)=>{
+        const best=d.bestItem||{};
+        const bestRoi=Number(best.roiPct||0);
+        const restock=Number(d.restockMatchCount||0)>0?' · <b style="color:#ffd18a;">RESTOCK MATCH '+Number(d.restockMatchCount||0)+'</b> ('+Number(d.restockDemandUnits||0).toLocaleString()+' needed)':'';
+        return '<div style="border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
+          '<div><b>#'+(i+1)+' '+esc(d.country)+'</b>'+restock+
+          '<div style="color:#aaa;margin-top:2px;">Best item <b>'+esc(best.itemName||'—')+'</b> · adjusted profit velocity <b>'+money(d.bestLiquidityAdjustedProfitPerHour||0)+'/hr</b> · source profit velocity '+money(d.bestSourceProfitPerHour||0)+'/hr</div>'+
+          '<div style="color:#888;margin-top:2px;">'+Number(d.itemCount||0)+' profitable item(s) · observed stock '+Number(d.totalObservedStock||0).toLocaleString()+' · available gross opportunity '+money(d.totalAvailableProfit||0)+' · best ROI '+bestRoi.toFixed(1)+'% · fresh Pulse '+Number(d.pulseCoveragePct||0).toFixed(0)+'% · max confidence '+Number(d.pulseConfidenceMax||0).toFixed(0)+'%</div>'+
+          '</div></div>';
+      }).join(''):(stale?'<div style="font-size:11px;color:#888;margin-top:6px;">Refresh travel stock to rank destinations.</div>':'<div style="font-size:11px;color:#888;margin-top:6px;">No destination currently has a supported profitable in-stock opportunity.</div>'))
     )+
     card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b>In-stock travel opportunities</b><div style="font-size:10px;color:#888;">Profit is shown only when Acquisitions has separate resale evidence. A foreign stock row by itself does not fabricate a resale price.</div></div></div>'+
@@ -6316,7 +6388,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.29-pda.16 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.30-pda.17 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
