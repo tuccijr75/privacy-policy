@@ -356,8 +356,8 @@ def build(pda_revision: int) -> str:
 
     body = replace_once(
         body,
-        "function initializeAcquisitions(){createLauncher();installChannel();startAutoRefresh();}",
-        "globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';function initializeAcquisitions(){createLauncher();installChannel();startAutoRefresh();}",
+        "  function initializeAcquisitions(){",
+        "  globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';\n  function initializeAcquisitions(){",
         "PDA ready/open bridge",
     )
     pieces.append("\n/* ===== Acquisitions UI ===== */\n")
