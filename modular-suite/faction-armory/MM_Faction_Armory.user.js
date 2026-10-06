@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24
+// @version      8.0.0-alpha.24.1
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24';
+  const VERSION='8.0.0-alpha.24.1';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -1466,12 +1466,25 @@
 
   function quickBuildRoute(item){
     if(!item)return '—';
-    if(item.ready||item.route==='OWNED')return 'KEEP';
-    if(item.route==='LOANED')return 'LOANED';
+    if(item.ready)return 'KEEP';
+    if(item.route==='OWNED')return 'OWNED / EQUIP';
+    if(item.route==='LOANED')return 'LOANED / VERIFY';
     if(item.route==='ISSUE')return 'ISSUE';
     if(item.route==='ACQUIRE')return 'ACQUIRE';
     if(item.route==='REVIEW')return 'REVIEW';
     return String(item.route||item.decision||'REVIEW');
+  }
+
+  function quickBuildActionItem(item){
+    if(!item)return '';
+    const route=quickBuildRoute(item);
+    if(route==='KEEP')return String(item.currentName||item.suggestedName||item.targetName||'Current gear');
+    if(route==='OWNED / EQUIP')return String(item.ownedOptionName||item.suggestedName||item.targetName||'Owned gear');
+    if(route==='LOANED / VERIFY')return String(item.assignedLoanName||item.suggestedName||item.targetName||'Assigned faction loan');
+    if(route==='ISSUE')return String(item.factionOptionName||item.suggestedName||item.targetName||'Faction stock');
+    if(route==='ACQUIRE')return String(item.suggestedName||item.targetName||'Acquire qualifying gear');
+    if(route==='REVIEW')return String(item.currentName||item.suggestedName||item.targetName||'Review current gear');
+    return String(item.suggestedName||item.currentName||item.targetName||'Review');
   }
 
   function quickBuildMessage(member){
@@ -1479,12 +1492,13 @@
     const build=row?.buildAssessment||null;
     if(!row||!build)throw new Error('Build data is not available for this member.');
     const statPrefix=row.statsEstimated?'Estimated ':'';
-    const lines=(build.items||[]).map(item=>
-      String(item.slot||'slot').toUpperCase()+': '+
-      (item.currentName?String(item.currentName)+' → ':'')+
-      String(item.targetName||item.suggestedName||'review')+
-      ' · '+quickBuildRoute(item)
-    );
+    const lines=(build.items||[]).map(item=>{
+      const route=quickBuildRoute(item);
+      const actionItem=quickBuildActionItem(item);
+      const current=String(item.currentName||'');
+      return String(item.slot||'slot').toUpperCase()+': '+route+' · '+actionItem+
+        (current&&current!==actionItem&&route!=='KEEP'?' · current '+current:'');
+    });
     const body=[
       String(row.memberName||'Faction member')+',',
       '',
@@ -1528,11 +1542,11 @@
     const slots=build?.items||[];
     const quickRows=slots.length?slots.map(item=>{
       const route=quickBuildRoute(item);
-      const routeClass=route==='KEEP'||route==='LOANED'?'mm-fa-good':route==='ISSUE'?'mm-fa-warn':route==='REVIEW'?'mm-fa-warn':'mm-fa-bad';
-      const target=item.targetName||item.suggestedName||'Review';
+      const routeClass=route==='KEEP'?'mm-fa-good':route==='ACQUIRE'?'mm-fa-bad':'mm-fa-warn';
+      const actionItem=quickBuildActionItem(item);
       return '<div class="mm-fa-row">'+
         '<div class="mm-fa-main"><b>'+esc(String(item.slot||'').toUpperCase())+'</b>'+
-          '<div class="mm-fa-muted">'+(item.currentName?'Current: '+esc(item.currentName)+' · ':'')+'Target: '+esc(target)+'</div>'+
+          '<div class="mm-fa-muted">'+(item.currentName?'Current: '+esc(item.currentName)+' · ':'')+'Action: '+esc(route)+' '+esc(actionItem)+'</div>'+
         '</div>'+
         '<div class="mm-fa-tiles">'+tile('ROUTE',route,{cls:routeClass})+
           (item.factionOptionName?tile('FACTION',item.factionOptionName+' x'+num(item.factionAvailableCount),{wide:true}):'')+
