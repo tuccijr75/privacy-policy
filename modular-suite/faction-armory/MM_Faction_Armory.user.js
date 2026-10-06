@@ -2535,15 +2535,12 @@
   function leaderAcquisitionReport(){
     const members=memberRows();
     const isWar=stockMode==='war';
-    const plan=logic.acquisitionPlan(state?.factionInventory||{},{
-      mode:stockMode,
-      procurementMode,
-      budgetCap:acquisitionBudget
-    });
+    const plan=acquisitionAccuracyPlan();
     const minimums=logic.minimumProposal(state?.factionInventory||{},{
       mode:stockMode,
       procurementMode
     });
+    const fi=state?.factionInventory||{};
     const procurementPasses=members.filter(row=>row.procurementPassCurrent);
     const nonReady=new Map(
       members.filter(row=>row.readinessStatus!=='WAR READY'&&!row.procurementPassCurrent).map(row=>[row.memberId,row])
@@ -2551,110 +2548,148 @@
     const memberNeeds=isWar
       ? plan.assignments.filter(row=>row.route==='ACQUIRE'&&nonReady.has(row.memberId))
       : [];
+    const acquisitionMemberCount=new Set(memberNeeds.map(row=>asId(row.memberId)).filter(Boolean)).size;
     const minNeeds=(minimums?.actionable||[]).filter(row=>num(row.shortfall)>0&&(isWar?row.kind!=='equipment':true));
     const heldNeeds=(minimums?.held||[]).filter(row=>num(row.shortfall)>0&&(isWar?row.kind!=='equipment':true));
-    const priceRows=plan.list.map(row=>({row,band:acquisitionPriceBand(row)}));
-    const priced=priceRows.filter(item=>item.band.priced);
-    const plannedTotal=priced.reduce((sum,item)=>sum+item.band.planningTotal,0);
-    const lowTotal=priced.reduce((sum,item)=>sum+item.band.lowTotal,0);
-    const highTotal=priced.reduce((sum,item)=>sum+item.band.highTotal,0);
-    const unpriced=priceRows.filter(item=>!item.band.priced);
-
+    const unpriced=plan.list.filter(row=>num(row.qty)>0&&!num(row.planningUnit));
+    const referenceOnly=plan.list.filter(row=>num(row.qty)>0&&num(row.planningUnit)>0&&row.priceEvidence!=='LIVE CACHED SOURCE');
+    const stamp=value=>{
+      const parsed=Date.parse(String(value||''));
+      return parsed?new Date(parsed).toISOString():'unavailable';
+    };
     const lines=[
-      isWar?'FACTION ARMORY WAR ACQUISITION REPORT':'FACTION ARMORY PEACE MINIMUMS REPORT',
+      isWar?'FACTION ARMORY WAR ACQUISITION SNAPSHOT':'FACTION ARMORY PEACE MINIMUMS SNAPSHOT',
       'Mode: '+stockMode.toUpperCase()+' / '+procurementMode.toUpperCase(),
-      'Current roster: '+members.length+' members'
+      'Generated: '+new Date().toISOString(),
+      'Roster: '+members.length+' members · fetched '+stamp(fi.memberReadiness?.lastRosterSyncAt),
+      'Faction inventory: Torn source '+stamp(fi.inventoryTimestamp)+' · locally fetched '+stamp(fi.lastSyncAt),
+      'Market reference cache: '+stamp(fi.equipmentMarketCatalog?.fetchedAt)
     ];
 
     if(isWar){
       lines.push(
         'Approved War Ready: '+members.filter(row=>row.readinessStatus==='WAR READY').length,
         'Procurement Pass / Excluded: '+procurementPasses.length,
-        'Active acquisition members: '+nonReady.size,
-        'Scope: WAR — active member equipment, two equipment spares per slot, and approved war-stock shortfalls.',
-        minimums?.xanax
-          ? 'Xanax: '+minimums.xanax.policy.investmentPosture.toUpperCase()+' vs '+(minimums.xanax.opponentFactionName||'unresolved rival')+
-            ' · matchup target '+fmt(minimums.xanax.recommendedTarget)+' · leadership ceiling '+fmt(minimums.xanax.leadershipCeiling)
-          : 'Xanax: estimator unavailable.',
-        '',
-        'INDIVIDUAL MEMBER WAR BUILD NEEDS'
+        'Non-ready / not-passed review pool: '+nonReady.size,
+        'Members currently driving ACQUIRE equipment routes: '+acquisitionMemberCount,
+        'Scope: WAR — unresolved member equipment, two equipment spares per slot, and enabled war-stock shortfalls.'
       );
-
+      const xanax=minimums?.xanax;
+      const xanaxRow=minimums?.proposals?.find(row=>String(row.item||'').toLowerCase()==='xanax')||null;
+      if(xanax?.ready){
+        lines.push(
+          'Xanax: '+xanax.policy.investmentPosture.toUpperCase()+' vs '+(xanax.opponentFactionName||'rival')+
+          ' · matchup target '+fmt(xanax.recommendedTarget)+
+          ' · leadership ceiling '+fmt(xanax.leadershipCeiling)+
+          ' · rival estimates '+fmt(xanax.opponentEstimatedCount)+'/'+fmt(xanax.opponentMemberCount)+
+          ' · rival cache '+stamp(xanax.opponentFetchedAt)
+        );
+      }else if(xanaxRow?.manualMin!=null){
+        lines.push('Xanax: rival estimate unavailable; automatic target disabled · manual effective minimum '+fmt(xanaxRow.effectiveMin)+'.');
+      }else{
+        lines.push('Xanax: rival estimate unavailable; automatic acquisition target disabled.');
+      }
+      lines.push('','INDIVIDUAL MEMBER WAR BUILD NEEDS');
       if(memberNeeds.length){
         for(const need of memberNeeds){
           const row=nonReady.get(need.memberId);
           lines.push(
             '- '+need.memberName+' ['+need.memberId+'] · '+String(need.slot||'').toUpperCase()+
-            ' → '+need.item+(row?.statsEstimated?' (balanced public estimate)':'')
+            ' → '+need.item+(row?.statsEstimated?' (public-stat estimate; not verified private battle stats)':'')
           );
         }
       }else{
-        lines.push('- No member build equipment currently requires purchase.');
+        lines.push('- No member build equipment currently requires acquisition.');
       }
 
       lines.push('','WAR STOCK SHORTFALLS');
       if(minNeeds.length){
         for(const need of minNeeds){
-          lines.push('- '+need.item+' · have '+fmt(need.current)+' / min '+fmt(need.effectiveMin)+' · acquire '+fmt(need.shortfall));
+          lines.push('- '+need.item+' · have '+fmt(need.current)+' / effective min '+fmt(need.effectiveMin)+' · short '+fmt(need.shortfall)+' · ORDER ENABLED');
         }
       }else{
-        lines.push('- No approved war-stock shortfalls currently require acquisition.');
+        lines.push('- No enabled war-stock shortfall currently requires acquisition.');
       }
       if(heldNeeds.length){
         lines.push('','SHORTFALLS ON HOLD');
-        for(const need of heldNeeds)lines.push('- '+need.item+' · short '+fmt(need.shortfall)+' · HOLD / DO NOT ORDER');
+        for(const need of heldNeeds)lines.push('- '+need.item+' · have '+fmt(need.current)+' / effective min '+fmt(need.effectiveMin)+' · short '+fmt(need.shortfall)+' · HOLD / DO NOT ORDER');
       }
     }else{
       lines.push(
-        'Scope: PEACE ONLY — replenish faction minimum stock. Member build/equipment gaps are deferred until War mode.',
+        'Scope: PEACE — enabled faction minimum-stock replenishment only. Member equipment gaps are not added in Peace mode.',
         '',
         'MINIMUM STOCK SHORTFALLS'
       );
       if(minNeeds.length){
         for(const need of minNeeds){
-          lines.push(
-            '- '+need.category+' · '+need.item+' · short '+fmt(need.shortfall)+
-            ' (target '+fmt(need.recommendedMin)+')'
-          );
+          lines.push('- '+need.category+' · '+need.item+' · have '+fmt(need.current)+' / effective min '+fmt(need.effectiveMin)+' · short '+fmt(need.shortfall));
         }
       }else{
-        lines.push('- No current Peace minimum-stock shortfalls.');
+        lines.push('- No enabled Peace minimum-stock shortfalls.');
+      }
+      if(heldNeeds.length){
+        lines.push('','SHORTFALLS ON HOLD');
+        for(const need of heldNeeds)lines.push('- '+need.item+' · short '+fmt(need.shortfall)+' · HOLD / DO NOT ORDER');
       }
     }
 
-    lines.push('',isWar?'WAR ACQUISITION LIST / PRICE RANGE':'PEACE MINIMUM REPLENISHMENT / PRICE RANGE');
-    if(priceRows.length){
-      for(const item of priceRows){
-        const row=item.row;
-        const band=item.band;
+    lines.push('',isWar?'ACQUISITION PLAN':'PEACE REPLENISHMENT PLAN');
+    if(plan.list.length){
+      for(const row of plan.list){
+        const manual=row.manualQtyOverride!=null?' · manual planned qty (system '+fmt(row.systemQty)+')':'';
+        if(!num(row.planningUnit)){
+          lines.push(
+            '- '+row.item+' · planned x'+fmt(row.qty)+' · buy now x0 · defer x'+fmt(row.deferredQty)+manual+
+            ' · PRICE UNRESOLVED — excluded from budget-funded estimate'+
+            (row.reasons?' · '+row.reasons:'')
+          );
+          continue;
+        }
+        const quote=row.quote||{};
+        const evidence=row.priceEvidence==='LIVE CACHED SOURCE'
+          ?'cached live-source evidence'
+          :row.priceEvidence==='TORN MARKET REFERENCE'
+            ?'Torn market reference only'
+            :'Armory static reference only';
         lines.push(
-          '- '+row.item+' x'+fmt(row.qty)+(row.manualQtyOverride!=null?' (manual; system '+fmt(row.systemQty)+')':'')+' · '+
-          (band.priced
-            ? '$'+fmt(band.planningUnit)+' each via '+band.planningSource+' · $'+fmt(band.planningTotal)+' planned line total'+
-              (band.low!==band.high?' · source range $'+fmt(band.low)+'–$'+fmt(band.high):'')
-            : 'price unresolved')+
+          '- '+row.item+
+          ' · planned x'+fmt(row.qty)+
+          ' · buy now x'+fmt(row.fundedQty)+
+          ' · defer x'+fmt(row.deferredQty)+manual+
+          ' · $'+fmt(row.planningUnit)+' each via '+(row.planningSource||'planning reference')+
+          ' ('+evidence+')'+
+          ' · buy-now est $'+fmt(row.fundedEstimatedValue)+
+          ' · full-line est $'+fmt(row.plannedKnownCost)+
+          (quote.liveRange&&num(quote.low)>0&&num(quote.high)>0&&num(quote.low)!==num(quote.high)
+            ?' · cached live range $'+fmt(quote.low)+'–$'+fmt(quote.high):'')+
           (row.reasons?' · '+row.reasons:'')
         );
       }
     }else{
-      lines.push(isWar?'- No War acquisition is currently required.':'- No Peace minimum replenishment is currently required.');
+      lines.push(isWar?'- No War acquisition is currently required.':'- No Peace replenishment is currently required.');
     }
 
-    lines.push('',isWar?'PLANNED WAR ACQUISITION ESTIMATE':'PLANNED PEACE MINIMUM REPLENISHMENT ESTIMATE');
-    lines.push(priced.length?'$'+fmt(plannedTotal):'$0 known');
-    if(priced.length&&lowTotal!==highTotal){
-      lines.push('Cross-source diagnostic range: $'+fmt(lowTotal)+' – $'+fmt(highTotal)+' (not the planned estimate).');
-    }
+    lines.push(
+      '',
+      'BUDGET-FUNDED BUY-NOW ESTIMATE',
+      '$'+fmt(plan.fundedEstimatedValue)+' / $'+fmt(plan.budgetCap)+' cap',
+      'Remaining budget on displayed planning basis: $'+fmt(plan.remainingBudget),
+      '',
+      'FULL PLANNED PRICED ESTIMATE',
+      '$'+fmt(plan.fullPlannedKnownCost),
+      'Known priced amount deferred by budget: $'+fmt(plan.deferredEstimatedValue)
+    );
     if(unpriced.length){
-      lines.push(
-        'Unpriced requirements: '+
-        unpriced.map(item=>item.row.item+' x'+fmt(item.row.qty)).join(', ')
-      );
+      lines.push('Unpriced requirements excluded from dollar totals: '+unpriced.map(row=>row.item+' x'+fmt(row.qty)).join(', '));
+    }
+    if(referenceOnly.length){
+      lines.push('Reference-only priced rows (not verified listings): '+referenceOnly.map(row=>row.item+' x'+fmt(row.qty)).join(', '));
     }
     lines.push(
       '',
-      'Price range uses currently cached reference / Item Market / Bazaar / overseas values. '+
-      'MM_Acquisitions should verify live availability and price before purchase.',
+      'Accuracy note: cached live Bazaar / Item Market / overseas evidence is preferred over reference values. '+
+      'Reference-only values are labeled and used only when no cached live buyable source is available. '+
+      'These are planning estimates, not purchase quotes. MM_Acquisitions must verify live availability and price before any manual purchase.',
       '',
       '— Manic Mike',
       'Inventory Manager'
@@ -2676,32 +2711,28 @@
   }
 
   function acquireHtml(){
-    const plan=logic.acquisitionPlan(state?.factionInventory||{},{
-      mode:stockMode,
-      procurementMode,
-      budgetCap:acquisitionBudget
-    });
+    const plan=acquisitionAccuracyPlan();
     const categories=[...new Set(plan.list.map(row=>row.category))];
     const groups=categories.map(cat=>{
       const rows=plan.list.filter(row=>row.category===cat);
       return '<details class="mm-fa-build-member" open>'+
         '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+
         '</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+
-        rows.reduce((sum,row)=>sum+num(row.qty),0)+' planned</span></summary>'+
+        rows.reduce((sum,row)=>sum+num(row.qty),0)+' planned · '+rows.reduce((sum,row)=>sum+num(row.fundedQty),0)+' buy now</span></summary>'+
         '<div class="mm-fa-build-body">'+rows.map(row=>{
           const live=acquisitionSourceSnapshot(row);
+          const quote=row.quote||{};
           const best=live.best;
-          const band=acquisitionPriceBand(row);
+          const priceNote=best
+            ?'Lowest cached buyable-source evidence: '+esc(best.source)+(best.country?' · '+esc(best.country):'')+' · $'+fmt(best.price)
+            :num(row.planningUnit)
+              ?'No cached buyable-source price; planning fallback: '+esc(row.planningSource||row.priceEvidence)+' · $'+fmt(row.planningUnit)
+              :'No planning price resolved — excluded from budget-funded quantity until pricing is refreshed.';
           return '<div class="mm-fa-row">'+
             '<div class="mm-fa-main"><b>'+esc(row.item)+'</b>'+
               '<div class="mm-fa-muted">'+esc(row.source||'General Torn availability')+
                 (row.reasons?' · '+esc(row.reasons):'')+'</div>'+
-              '<div class="mm-fa-mini" style="margin-top:3px;">'+
-                (best
-                  ? 'Lowest observed source: '+esc(best.source)+(best.country?' · '+esc(best.country):'')+
-                    ' · $'+fmt(best.price)
-                  : 'No live market/travel price cached yet — MM_Acquisitions will verify before routing.')+
-              '</div>'+
+              '<div class="mm-fa-mini" style="margin-top:3px;">'+priceNote+'</div>'+
               '<div class="mm-fa-actions" style="margin-top:4px;">'+
                 '<label class="mm-fa-muted">Planned qty <input class="mm-fa-input" data-acq-qty-input="'+esc(row.item)+'" data-acq-qty-category="'+esc(row.category)+'" type="number" min="0" step="1" value="'+Math.round(num(row.qty))+'" style="width:72px;"></label>'+
                 '<button data-save-acq-qty="'+esc(row.item)+'" data-acq-qty-category="'+esc(row.category)+'" style="'+button(row.manualQtyOverride!=null)+'">Save Qty</button>'+
@@ -2717,14 +2748,17 @@
               tile('PLANNED',fmt(row.qty),{cls:row.manualQtyOverride!=null?'mm-fa-warn':''})+
               tile('BUY NOW',fmt(row.fundedQty),{cls:row.fundedQty?'mm-fa-good':''})+
               (row.deferredQty?tile('DEFER',fmt(row.deferredQty),{cls:'mm-fa-warn'}):'')+
-              (row.marketValue?tile('REF EACH','$'+fmt(row.marketValue)):'')+
+              tile('FUNDING',row.fundingStatus,{cls:row.fundingStatus==='PRICE UNKNOWN'?'mm-fa-warn':''})+
               (live.itemMarketPrice?tile('ITEM MKT','$'+fmt(live.itemMarketPrice)):'')+
               (live.bazaarPrice?tile('BAZAAR','$'+fmt(live.bazaarPrice)):'')+
               (live.travelPrice?tile('OVERSEAS','$'+fmt(live.travelPrice)+(live.travelCountry?' · '+live.travelCountry:''),{wide:true}):'')+
-              (band.priced?tile('PLAN EACH','$'+fmt(band.planningUnit)+' · '+band.planningSource,{wide:true}):'')+
-              (band.priced?tile('PLAN LINE','$'+fmt(band.planningTotal)):'')+
-              (band.priced&&band.low!==band.high?tile('SOURCE RANGE','$'+fmt(band.low)+' – $'+fmt(band.high),{wide:true}):'')+
-              (row.fundedEstimatedValue?tile('STATIC-CAP COST','$'+fmt(row.fundedEstimatedValue)):'')+
+              (num(row.planningUnit)?tile('PLAN EACH','$'+fmt(row.planningUnit)+' · '+row.planningSource,{wide:true}):'')+
+              (num(row.planningUnit)?tile('PRICE EVIDENCE',row.priceEvidence,{wide:true}):tile('PRICE EVIDENCE','UNPRICED',{wide:true,cls:'mm-fa-warn'}))+
+              (num(row.fundedEstimatedValue)?tile('BUY-NOW EST','$'+fmt(row.fundedEstimatedValue)):'')+
+              (num(row.plannedKnownCost)?tile('FULL LINE EST','$'+fmt(row.plannedKnownCost)):'')+
+              (num(row.deferredEstimatedValue)?tile('DEFERRED EST','$'+fmt(row.deferredEstimatedValue),{cls:'mm-fa-warn'}):'')+
+              (quote.liveRange&&num(quote.low)>0&&num(quote.high)>0&&num(quote.low)!==num(quote.high)
+                ?tile('CACHED LIVE RANGE','$'+fmt(quote.low)+' – $'+fmt(quote.high),{wide:true}):'')+
             '</div>'+
           '</div>';
         }).join('')+
@@ -2754,8 +2788,10 @@
         tile('CURRENT MEMBERS',fmt(plan.participants))+
         tile('PROCUREMENT PASSES',fmt(memberRows().filter(row=>row.procurementPassCurrent).length))+
         tile('BUDGET CAP','$'+fmt(plan.budgetCap))+
-        tile('BUY NOW','$'+fmt(plan.fundedEstimatedValue),{cls:'mm-fa-good'})+
-        tile('KNOWN DEFERRED','$'+fmt(plan.deferredEstimatedValue),{cls:plan.deferredEstimatedValue?'mm-fa-warn':''})+
+        tile('BUY-NOW EST','$'+fmt(plan.fundedEstimatedValue),{cls:'mm-fa-good'})+
+        tile('FULL PLAN EST','$'+fmt(plan.fullPlannedKnownCost))+
+        tile('DEFERRED EST','$'+fmt(plan.deferredEstimatedValue),{cls:plan.deferredEstimatedValue?'mm-fa-warn':''})+
+        tile('UNPRICED UNITS',fmt(plan.unpricedUnits),{cls:plan.unpricedUnits?'mm-fa-warn':''})+
         tile('FUNDED UNITS',fmt(plan.fundedUnits))+
         tile('UNRESOLVED SLOTS',fmt(plan.unresolvedCount),{cls:plan.unresolvedCount?'mm-fa-warn':''})+
       '</div>'+
@@ -2767,10 +2803,11 @@
       '</div>'+
       '<div class="mm-fa-muted" style="margin-top:4px;">'+
         (stockMode==='war'
-          ? 'War mode: acquire only non-War-Ready member equipment plus war equipment spares. Routine minimum-stock replenishment waits for Peace mode. '
-          : 'Peace mode: replenish faction minimum stock only. Individual member equipment needs are deferred until War mode. ')+
-        'Approved War Ready and current Procurement Pass members generate no individual equipment acquisition. Manual item quantities override planning/output only; they do not rewrite readiness or inventory facts. Members without private stats use a clearly labeled balanced public estimate; faction loans are counted before purchases. '+
-        'Cached Item Market, Bazaar, overseas, and reference prices provide low/high planning estimates; MM_Acquisitions performs live source verification before purchase.'+
+          ? 'War mode includes non-War-Ready member equipment, two equipment spares per slot, and enabled war-stock shortfalls. '
+          : 'Peace mode replenishes enabled faction minimum-stock shortfalls only; member equipment gaps are deferred until War mode. ')+
+        'Approved War Ready and current Procurement Pass members generate no individual equipment acquisition. Manual planned quantities change procurement output only; they do not rewrite readiness or inventory facts. '+
+        'Cached live Item Market, Bazaar and overseas evidence is preferred for budget planning. Torn market/static references are fallback-only and visibly labeled. Unpriced rows are not treated as budget-funded. '+
+        'MM_Acquisitions must still verify live availability and price before any manual purchase.'+
       '</div>'+
       (plan.unresolvedCount
         ? '<details class="mm-fa-details"><summary>Unresolved build slots</summary><div class="mm-fa-muted" style="margin-top:3px;">'+
