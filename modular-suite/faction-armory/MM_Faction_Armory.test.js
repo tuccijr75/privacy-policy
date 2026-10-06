@@ -344,7 +344,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.24.8';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.24.9';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@1e24b83e6507e4e029da3fbbc8aae518f1de42ee/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
@@ -356,7 +356,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.24.8';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.24.9';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -364,7 +364,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.24.8';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.24.9';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -463,7 +463,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.8';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.9';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
@@ -942,11 +942,61 @@ assert(userSourceValue.includes('function acquisitionAccuracyPlan'),'screen/repo
 assert(userSourceValue.includes('const plan=acquisitionAccuracyPlan();'),'Acquire and leader paths must consume the reconciled plan');
 assert(userSourceValue.includes('const acquisition=acquisitionAccuracyPlan();'),'Leadership export must consume the reconciled plan');
 assert(userSourceValue.includes('PRICE UNRESOLVED — excluded from budget-funded estimate'),'leader snapshot must explicitly exclude unpriced rows from funded dollar totals');
-assert(userSourceValue.includes('cached live Bazaar / Item Market / overseas evidence is preferred over reference values'),'leader snapshot must state source-priority semantics');
-assert(userSourceValue.includes('No planning price resolved — excluded from budget-funded quantity until pricing is refreshed.'),'Acquire must fail closed on unpriced budget allocation');
+assert(userSourceValue.includes('only fresh cached Bazaar / Item Market / overseas evidence is eligible as live planning evidence'),'leader snapshot must state fresh-source eligibility semantics');
+assert(userSourceValue.includes('Stale cached sources are disclosed but excluded.'),'leader snapshot must disclose stale-source rejection');
+assert(userSourceValue.includes('No fresh planning price resolved — excluded from budget-funded quantity until pricing is refreshed.'),'Acquire must fail closed when only stale/unpriced evidence exists');
 assert(userSourceValue.includes("'Funding Status'"),'Leadership export must disclose each row funding status');
 assert(userSourceValue.includes("'Price Evidence'"),'Leadership export must disclose price evidence quality');
 console.log('MM Faction Armory alpha.24.8 acquisition-accuracy regressions: PASS');
+
+const priceSourceBlock=sourceSection('  function priceTimestampMs(value){','\n  function handoffAcquisition(row,preferredSource=\'Best\'){');
+const priceSnapshotFactory=new Function('num','sharedItemRecordByName','state',
+  'return (()=>{'+priceSourceBlock+'; return acquisitionSourceSnapshot;})();'
+);
+const numLocal=value=>{const v=Number(value);return Number.isFinite(v)?v:0;};
+const nowPrice=Date.now();
+const staleAt=new Date(nowPrice-20*60*1000).toISOString();
+const freshAt=new Date(nowPrice-30*1000).toISOString();
+const priceRecord={itemId:'900',marketPrice:200,fetchedAt:freshAt};
+let priceState={
+  businessRules:{maxListingAgeSec:180},
+  procurement:{marketSnapshots:{'900':{
+    fetchedAt:staleAt,
+    itemMarket:{lowest:50},
+    bazaar:{lowest:45}
+  }}},
+  marketIntel:{details:{'900':{organicListings:[
+    {price:40,quantity:2,lastChecked:nowPrice-10*60*1000}
+  ]}}},
+  travelIntel:{
+    sourceUpdatedAt:staleAt,lastSyncAt:staleAt,
+    rows:[{itemId:'900',itemName:'Test Item',stock:5,shopCost:30,country:'Japan'}]
+  }
+};
+let priceSnapshot=priceSnapshotFactory(numLocal,()=>priceRecord,priceState)({item:'Test Item',marketValue:300});
+assert.strictEqual(priceSnapshot.liveCandidates.length,0,'stale cached sources must not remain eligible live candidates');
+assert.strictEqual(priceSnapshot.bestPlanning.source,'Torn Market Reference','stale cheap cached sources must not undercut a reference fallback');
+assert.strictEqual(priceSnapshot.bestPlanning.price,200);
+assert.strictEqual(priceSnapshot.staleSources.length,3,'Item Market, Bazaar and Overseas stale evidence must remain visible diagnostically');
+
+priceState={
+  ...priceState,
+  procurement:{marketSnapshots:{'900':{
+    fetchedAt:freshAt,
+    itemMarket:{lowest:120},
+    bazaar:{lowest:45}
+  }}}
+};
+priceSnapshot=priceSnapshotFactory(numLocal,()=>priceRecord,priceState)({item:'Test Item',marketValue:300});
+assert.strictEqual(priceSnapshot.bestPlanning.source,'Item Market','fresh Item Market must remain eligible');
+assert.strictEqual(priceSnapshot.bestPlanning.price,120,'stale Bazaar/Travel prices must not undercut fresh Item Market evidence');
+assert(priceSnapshot.staleSources.some(source=>source.source==='Bazaar'));
+assert(priceSnapshot.staleSources.some(source=>source.source==='Overseas'));
+assert(userSourceValue.includes("Math.max(30,num(state?.businessRules?.maxListingAgeSec)||180)*1000"),'Armory market cache freshness must consume Acquisitions/business-rules max listing age');
+assert(userSourceValue.includes('const travelMaxAgeMs=15*60*1000'),'Armory travel planning must match the Acquisitions stale cutoff');
+assert(userSourceValue.includes("tile('STALE IGNORED'"),'Acquire must visibly disclose stale price evidence rejected from planning');
+console.log('MM Faction Armory alpha.24.9 stale-price evidence regressions: PASS');
+
 
 
 
