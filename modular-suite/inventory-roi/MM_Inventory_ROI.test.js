@@ -30,8 +30,8 @@ const tradeDb=logic.ensureInventorySlice({
   procurement:{acquisitions:[{id:'ta1',itemId:'26',itemName:'AK-47',quantity:5,unitCost:100,acquiredAt:new Date(now-10*86400000).toISOString(),source:'Bazaar'}]},
   sales:{},
   operations:{tradeManager:{},inventoryRoi:{tradeReconciliation:{
-    't1':{tradeId:'t1',completedAt:now-5*86400000,status:'PENDING',evidence:{confidence:'TRUSTED_COMPLETION'},effects:[{direction:'OUT',itemId:'26',quantity:2,basisKnown:true,basisTotal:200,unitCost:100,basisMethod:'FIFO_AT_TRADE_SYNC'}]},
-    't2':{tradeId:'t2',completedAt:now-4*86400000,status:'PENDING',evidence:{confidence:'TRUSTED_COMPLETION'},effects:[{direction:'IN',itemId:'26',quantity:3,basisKnown:true,basisTotal:450,unitCost:150,basisMethod:'RESIDUAL_CONSIDERATION_PRO_RATA_REFERENCE'}]}
+    '1001':{tradeId:'1001',completedAt:now-5*86400000,status:'PENDING',evidence:{confidence:'TRUSTED_COMPLETION'},effects:[{direction:'OUT',itemId:'26',quantity:2,basisKnown:true,basisTotal:200,unitCost:100,basisMethod:'FIFO_AT_TRADE_SYNC'}]},
+    '1002':{tradeId:'1002',completedAt:now-4*86400000,status:'PENDING',evidence:{confidence:'TRUSTED_COMPLETION'},effects:[{direction:'IN',itemId:'26',quantity:3,basisKnown:true,basisTotal:450,unitCost:150,basisMethod:'RESIDUAL_CONSIDERATION_PRO_RATA_REFERENCE'}]}
   },listings:{'26':{id:'26',name:'AK-47',quantity:0,price:200}},inventory:{'26':{id:'26',name:'AK-47',quantity:6}},listingPlans:{}}}
 });
 let tradeLedger=logic.fifoLedger(tradeDb,'26');
@@ -77,7 +77,7 @@ assert(userSource.includes('CURRENT COST COVERAGE'));
 assert(userSource.includes("logic.replaceRestockDemand(draft,rows,Date.now())"));
 assert(userSource.includes("tile('RECOMMENDED'"));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@4ef4197cb0fc19e4c29b5864dd4d003732d58deb/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@bb32ea39494ef4465a58acd76c4c3993cc8568b4/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js'));
 assert(!userSource.includes('// @updateURL'));
 assert(!userSource.includes('// @downloadURL'));
 assert(userSource.includes('core?.ensureSharedState'),'fresh-install Core bootstrap missing');
