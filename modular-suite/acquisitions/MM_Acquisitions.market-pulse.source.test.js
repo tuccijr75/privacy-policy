@@ -15,10 +15,12 @@ for(const [name,source] of [
   ['desktop',desktop],['pda',pda],['pulse',pulse],['logic',logic],['live',live],['ranked',ranked]
 ])assert.doesNotThrow(()=>new vm.Script(source,{filename:name+'.js'}),name+' must parse');
 
-assert(desktop.includes('// @version      8.0.0-alpha.27'));
+assert(desktop.includes('// @version      8.0.0-alpha.28'));
 const requireLines=desktop.split(/\r?\n/).filter(line=>line.startsWith('// @require'));
-assert.strictEqual(requireLines.length,6,'desktop dependency count');
+assert.strictEqual(requireLines.length,7,'desktop dependency count');
 assert(requireLines.some(line=>line.includes('/MM_Acquisitions.market-pulse.js')),'desktop must require Market Pulse');
+assert(requireLines.some(line=>line.includes('/MM_Acquisitions.torn-intel.js')),'desktop must require Torn Intel restock module');
+assert(desktop.includes('// @connect      torn-intel.com'),'desktop must allow Torn Intel requests');
 assert(requireLines.some(line=>line.includes('b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js')),'desktop must pin fresh-install Core');
 for(const line of requireLines){
   assert(!line.includes('raw.githubusercontent.com'),'production-style dependency metadata must not use raw.githubusercontent.com');
@@ -26,26 +28,29 @@ for(const line of requireLines){
   assert(match,'MM-owned desktop dependencies must use immutable full-SHA jsDelivr URLs');
 }
 
-assert(pda.includes('// @version      8.0.0-alpha.27-pda.14'));
+assert(pda.includes('// @version      8.0.0-alpha.28-pda.15'));
 assert(desktop.includes('async function readSharedState()'),'desktop must bootstrap/read shared state through helper');
 assert(desktop.includes('core?.ensureSharedState'),'desktop must opt into fresh-install Core bootstrap');
 const pdaHeader=pda.slice(0,pda.indexOf('// ==/UserScript=='));
 assert(!pdaHeader.includes('@require'),'PDA metadata must contain no @require');
 for(const token of [
   '/* ===== Market Pulse engine (bundled) ===== */','MMTornMarketPulse','MMTornAcquisitionsLogic',
-  'MMTornAcquisitionsLive','MMTornRankedProfitLogic','MMTornAcquisitionLedger','PDA_storage','PDA_httpGet'
+  'MMTornAcquisitionsLive','MMTornRankedProfitLogic','MMTornRestockIntel','MMTornAcquisitionLedger','PDA_storage','PDA_httpGet'
 ])assert(pda.includes(token),'PDA bundle missing '+token);
 const sectionOrder=[
   'MM Torn Core (bundled)','TornPDA platform/state adapter','Market Pulse engine (bundled)',
-  'Acquisitions logic (bundled)','Acquisitions live service (bundled)','Ranked profit logic (bundled)','Purchase ledger logic (bundled)','Acquisitions UI'
+  'Acquisitions logic (bundled)','Acquisitions live service (bundled)','Ranked profit logic (bundled)','Torn Intel restock intelligence (bundled)','Purchase ledger logic (bundled)','Acquisitions UI'
 ].map(token=>pda.indexOf('===== '+token+' ====='));
 for(let i=0;i<sectionOrder.length;i++)assert(sectionOrder[i]>=0,'PDA section missing at index '+i);
 for(let i=1;i<sectionOrder.length;i++)assert(sectionOrder[i]>sectionOrder[i-1],'PDA dependency order must be preserved');
 
 assert(builder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(builder.includes('"MMTornMarketPulse"'));
-assert(builder.includes('default=14'));
+assert(builder.includes('default=15'));
 assert(builder.includes('MM_Acquisitions.market-pulse.js'));
+assert(builder.includes('MM_Acquisitions.torn-intel.js'));
+assert(builder.includes('"MMTornRestockIntel"'));
+assert(pdaHeader.includes('// @connect      torn-intel.com'),'PDA metadata must allow Torn Intel requests');
 
 for(const re of [
   /\bsellerId\b/i,/\bsellerName\b/i,/\blast_action\b/i,/\battackability\b/i,
@@ -70,9 +75,15 @@ assert(desktop.includes('GO TO BAZAAR')&&desktop.includes('GO TO ITEM MARKET'),'
 assert(desktop.includes('GO TO BAZAAR')&&desktop.includes('GO TO ITEM MARKET'),'desktop must expose direct market alternatives for travel items');
 assert(!desktop.includes('torn.marches.cafe'),'verified-sales evidence must not add a third-party market trust surface');
 assert(desktop.includes('Complete the purchase manually on Torn.')||desktop.includes('final purchase manual'),'desktop manual purchase boundary must remain explicit');
+assert(desktop.includes("TORN_INTEL_KEY='mm_acquisitions_torn_intel_client_key_v1'"),'desktop must isolate Torn Intel client key');
+assert(desktop.includes("'X-Torn-Intel-Key':key"),'history must use Torn Intel client-key header');
+assert(desktop.includes('Restock Watch'),'desktop must expose integrated restock watch');
+assert(desktop.includes('Torn Intel observed history'),'desktop must label ETA provenance');
+assert(desktop.includes('EARLY BID · WATCH ONLY'),'desktop must quarantine immature auction bids');
+assert(desktop.includes("if(row.auctionBidProvisional&&rankedSource!=='auction')return false;"),'All Sources must suppress provisional auction bids');
 assert(pda.includes('Complete the purchase manually on Torn.')||pda.includes('final purchase manual'),'PDA manual purchase boundary must remain explicit');
-assert(acceptance.includes('8.0.0-alpha.27'),'acceptance sheet must match desktop candidate');
-assert(acceptance.includes('8.0.0-alpha.27-pda.14'),'acceptance sheet must match PDA candidate');
+assert(acceptance.includes('8.0.0-alpha.28'),'acceptance sheet must match desktop candidate');
+assert(acceptance.includes('8.0.0-alpha.28-pda.15'),'acceptance sheet must match PDA candidate');
 assert(acceptance.includes('Verified Sales'),'acceptance sheet must cover official completed-sale evidence');
 assert(acceptance.includes('Cross-tab ownership'),'acceptance sheet must cover one-engine lease behavior');
 assert(acceptance.includes('manual-action boundary'),'acceptance sheet must preserve manual final actions');
