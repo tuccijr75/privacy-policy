@@ -951,8 +951,9 @@
     }
 
     if(mode==='war'){
-      // War acquisition is member-readiness equipment only. Routine minimum-stock
-      // replenishment is intentionally deferred until Peace mode.
+      // War acquisition combines active member equipment needs with approved
+      // war-stock shortfalls. Minimums remain the single source of truth for
+      // meds/temporaries/drugs; Acquire consumes the derived shortfall only.
       for(const member of selected){
         if(member?.readinessStatus==='WAR READY'||member?.procurementPassCurrent)continue;
         if(!member?.hasStats){
@@ -1013,13 +1014,23 @@
           if(!factionPick)addRequirement(target,1,'War spare '+slot,'equipment');
         }
       }
+
+      const warMinimums=minimumProposal(factionInventory,{mode:'war',participants,procurementMode});
+      for(const row of warMinimums.actionable){
+        if(row.kind==='equipment'||n(row.shortfall)<=0)continue;
+        addRequirement({
+          name:row.item,
+          source:'Faction Armory war-stock minimum',
+          marketValue:n(row.marketValue)
+        },n(row.shortfall),'War stock minimum: have '+n(row.current)+' / min '+n(row.effectiveMin),'provisions');
+      }
     }else{
       // Peace acquisition is minimum-stock replenishment only. Individual member
       // build gaps are deliberately ignored until War mode is selected.
       const minimums=minimumProposal(factionInventory,{mode:'peace',participants,procurementMode});
       const neutral=battleProfile({strength:1,defense:1,speed:1,dexterity:1});
-      for(const row of minimums.proposals){
-        if(row.dataRequired||n(row.shortfall)<=0)continue;
+      for(const row of minimums.actionable){
+        if(n(row.shortfall)<=0)continue;
         if(row.kind==='equipment'){
           const target=generalTargetForSlot(String(row.slot||''),neutral,procurementMode);
           if(target)addRequirement(target,n(row.shortfall),'Peace minimum '+String(row.slot||'equipment')+' pool','equipment');
@@ -1029,8 +1040,8 @@
         addRequirement({
           name:row.item,
           source:'General Torn supply / faction procurement',
-          marketValue:0
-        },n(row.shortfall),'Peace inventory minimum','provisions');
+          marketValue:n(row.marketValue)
+        },n(row.shortfall),'Peace inventory minimum: have '+n(row.current)+' / min '+n(row.effectiveMin),'provisions');
       }
     }
 
