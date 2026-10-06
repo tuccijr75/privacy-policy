@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.27-pda.14
+// @version      8.0.0-alpha.28-pda.15
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -13,6 +13,7 @@
 // @grant        GM_deleteValue
 // @connect      api.torn.com
 // @connect      weav3r.dev
+// @connect      torn-intel.com
 // ==/UserScript==
 
 
@@ -34,15 +35,11 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 4 4M9 7.5v6M6.8 9.2h4.4M6.8 11.8h4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
       b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;';
       b.addEventListener('click',()=>{
-        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){
-          globalThis.__MM_ACQ_OPEN__();
-          return;
-        }
+        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){globalThis.__MM_ACQ_OPEN__();return;}
         const stage=String(globalThis.__MM_ACQ_PDA_STAGE||'unknown');
         let d=document.getElementById('mm-acq-pda-boot-diagnostic');
         if(!d){
-          d=document.createElement('div');
-          d.id='mm-acq-pda-boot-diagnostic';
+          d=document.createElement('div');d.id='mm-acq-pda-boot-diagnostic';
           d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';
           document.body.appendChild(d);
         }
@@ -2173,7 +2170,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       const discoveryBuy = itemMarketBuy || aggregateBuy;
       const discoverySource = itemMarketBuy > 0 ? 'Item Market' : (aggregateBuy > 0 ? 'Bazaar aggregate' : 'Unknown');
       const bazaarAverage = Number(base.bazaarAverage || 0);
-      const marketPrice = Number(base.marketPrice || snap?.itemMarket?.median || snap?.itemMarket?.third || 0);
+      const marketReference = Number(base.marketPrice || 0);
 
       if (!(discoveryBuy > 1) || discoveryBuy < rules.minPrice || discoveryBuy > rules.maxPrice) continue;
       const sellerCount = Number(base.totalBazaars || 0);
@@ -2186,8 +2183,12 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       const freshListings = freshOrganicListings(db, detail?.organicListings || [], nowMs);
       const bazaarListing = freshListings[0] || null;
 
-      const bazaarExit = bazaarAverage ? Math.floor(bazaarAverage * (1 - Number(settings.bazaarExitHaircutPct || 0) / 100)) : 0;
-      const itemMarketNet = marketPrice ? Math.floor(marketPrice * (1 - ITEM_MARKET_FEE_RATE)) : 0;
+      const bazaarExit = !globalFresh.stale&&sellerCount>0&&aggregateBuy>0&&bazaarAverage
+        ?Math.floor(bazaarAverage * (1 - Number(settings.bazaarExitHaircutPct || 0) / 100))
+        :0;
+      const itemMarketNet = itemMarketFresh&&itemMarketBuy>0
+        ?Math.floor(itemMarketBuy * (1 - ITEM_MARKET_FEE_RATE))
+        :0;
       const traderExit = Number(organicTrader?.price || 0);
       const exits = [
         { route:'Bazaar', value:bazaarExit },
@@ -2323,10 +2324,16 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       const catalog=db?.procurement?.catalog?.[id]||{};
       const buyPrice=Math.max(0,Number(base?.lowestPrice||0));
       const bazaarAverage=Math.max(0,Number(base?.bazaarAverage||0));
-      const marketPrice=Math.max(0,Number(base?.marketPrice||catalog?.marketPrice||0));
+      const marketReference=Math.max(0,Number(base?.marketPrice||catalog?.marketPrice||0));
       const sellerCount=Math.max(0,Number(base?.totalBazaars||0));
-      const bazaarExit=bazaarAverage>0?Math.floor(bazaarAverage*(1-Number(settings.bazaarExitHaircutPct||0)/100)):0;
-      const itemMarketNet=marketPrice>0?Math.floor(marketPrice*(1-ITEM_MARKET_FEE_RATE)):0;
+      const snap=db?.procurement?.marketSnapshots?.[id]||{};
+      const snapAge=ageSeconds(snap?.fetchedAt,nowMs);
+      const itemMarketFresh=Boolean(snap?.fetchedAt)&&snapAge<=rules.maxListingAgeSec;
+      const itemMarketAsk=itemMarketFresh?Math.max(0,Number(snap?.itemMarket?.lowest||0)):0;
+      const bazaarExit=!freshness.stale&&sellerCount>0&&Number(base?.lowestPrice||0)>0&&bazaarAverage>0
+        ?Math.floor(bazaarAverage*(1-Number(settings.bazaarExitHaircutPct||0)/100))
+        :0;
+      const itemMarketNet=itemMarketAsk>0?Math.floor(itemMarketAsk*(1-ITEM_MARKET_FEE_RATE)):0;
       const exitOptions=[
         {route:'Bazaar',value:bazaarExit},
         {route:'Item Market Net',value:itemMarketNet}
@@ -2361,7 +2368,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         id,
         name:String(targetRow?.name||base?.itemName||catalog?.name||('Item '+id)),
         itemType:String(catalog?.type||''),
-        targetBuy,buyPrice,bazaarAverage,marketPrice,sellerCount,
+        targetBuy,buyPrice,bazaarAverage,marketPrice:marketReference,sellerCount,
+        marketReference,
+        itemMarketLivePrice:itemMarketAsk,
         buySource:buyPrice>0?'Bazaar observed':'Unknown',
         bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,targetDiscountPct,
         confidence,liquidity,score,economicScore,history,
@@ -3137,16 +3146,21 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     }
 
     async function importTravelRows(rows,capturedAt=Date.now()) {
-      const safeRows=(Array.isArray(rows)?rows:[]).map(row=>({...row,source:String(row?.source||'TornW3B Travel Stock')}));
+      const safeRows=(Array.isArray(rows)?rows:[]).map(row=>({...row,source:String(row?.source||'Travel Stock')}));
       if(!safeRows.length)throw new Error('No travel rows to import.');
       const at=Number(capturedAt||Date.now());
+      const sourceNames=[...new Set(safeRows.map(row=>String(row?.source||'').trim()).filter(Boolean))];
+      const sourceLabel=sourceNames.length===1?sourceNames[0]:(sourceNames.length?'Mixed travel sources':'Travel Stock');
+      const sourceTimes=safeRows.map(row=>Date.parse(String(row?.sourceUpdatedAt||''))||Number(row?.observedAt||0)).filter(value=>Number.isFinite(value)&&value>0);
+      const newestSourceAt=sourceTimes.length?Math.max(...sourceTimes):0;
       await core.updateDomainState('market',draft=>{
         const travel=draft.travelIntel || (draft.travelIntel={});
         travel.rows=safeRows;
         travel.lastSyncAt=new Date(at).toISOString();
-        travel.source='TornW3B Travel Stock';
+        travel.source=sourceLabel;
+        travel.sourceUpdatedAt=newestSourceAt?new Date(newestSourceAt).toISOString():'';
         travel.diagnostics=Array.isArray(travel.diagnostics)?travel.diagnostics:[];
-        travel.diagnostics.unshift({at:nowIso(),text:'MM Acquisitions Travel import: '+safeRows.length+' rows.'});
+        travel.diagnostics.unshift({at:nowIso(),text:'MM Acquisitions Travel import: '+safeRows.length+' rows from '+sourceLabel+'.'});
         travel.diagnostics=travel.diagnostics.slice(0,30);
         recordTravelSnapshots(travel,safeRows,at);
         return draft;
@@ -3674,6 +3688,31 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     };
   }
 
+  function auctionBidMaturity(listing,{fairValue=0,now=Date.now(),minFairFraction=.20,minBids=3,matureHours=2}={}){
+    const row=normalizedHistoryRow(listing);
+    const isAuction=lower(row.source)==='auction';
+    if(!isAuction)return {isAuction:false,provisional:false,fairFraction:0,hoursRemaining:0,reason:''};
+    const price=Math.max(0,num(listing?.price??row.price));
+    const fair=Math.max(0,num(fairValue));
+    const endMs=Math.max(0,num(row.endsAt))*1000;
+    const hoursRemaining=endMs>now?(endMs-now)/3600000:0;
+    const fairFraction=fair>0&&price>0?price/fair:0;
+    const bids=Math.max(0,num(row.bids));
+    const provisional=Boolean(
+      fair>0&&price>0&&
+      fairFraction<Math.max(.01,num(minFairFraction)||.20)&&
+      bids<Math.max(1,Math.round(num(minBids)||3))&&
+      hoursRemaining>Math.max(0,num(matureHours)||2)
+    );
+    const reason=provisional
+      ?'early-low-bid'
+      :fair<=0?'no-fair-value'
+        :hoursRemaining<=Math.max(0,num(matureHours)||2)?'near-close'
+          :bids>=Math.max(1,Math.round(num(minBids)||3))?'bid-activity'
+            :'meaningful-bid';
+    return {isAuction:true,provisional,fairFraction,hoursRemaining,bids,reason};
+  }
+
   function evaluateListing(listing,history,settings={}){
     const row=normalizedHistoryRow(listing);
     const ask=num(listing?.price??row.price);
@@ -3714,6 +3753,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         ?roiScore*.34+liquidity*.27+confidence*.17+marginScore*.08+pulseVelocityScore*.14
         :roiScore*.40+liquidity*.30+confidence*.20+marginScore*.10
     )));
+    const auctionBid=auctionBidMaturity(row,{
+      fairValue,
+      now,
+      minFairFraction:settings.auctionMinFairFraction,
+      minBids:settings.auctionMinBids,
+      matureHours:settings.auctionMatureHours
+    });
     const endMs=Math.max(0,num(row.endsAt))*1000;
     const hoursRemaining=endMs>now?(endMs-now)/3600000:0;
     const auctionUrgencyScore=isAuction&&endMs>now
@@ -3727,7 +3773,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         confidence*.35+liquidity*.25+auctionUrgencyScore*.25+auctionDiscountScore*.15
       )))
       :0;
-    const sortScore=isAuction?auctionWatchScore:investmentScore;
+    const sortScore=isAuction?(auctionBid.provisional?0:auctionWatchScore):investmentScore;
     const bonuses=normalizeBonuses(row.bonuses);
     const lowTier=(settings.lowTierBonuses||['Achilles','Conserve'])
       .map(lower).some(title=>bonuses.some(b=>lower(b.title)===title));
@@ -3747,7 +3793,11 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       pulseSourceTimestamp:pulseUsable?Math.max(0,num(pulse?.sourceTimestamp)):0,
       pulseFetchedAt:pulseUsable?pulseFetchedAt:0,
       pulseUpstreamCacheDelayMs:pulseUsable?Math.max(0,num(pulse?.upstreamCacheDelayMs)):0,
-      hoursRemaining,sortScore,isAuction,lowTier,valuationSource,
+      hoursRemaining,sortScore,isAuction,
+      auctionBidProvisional:Boolean(auctionBid.provisional),
+      auctionBidFairFraction:Number(auctionBid.fairFraction||0),
+      auctionBidMaturityReason:String(auctionBid.reason||''),
+      lowTier,valuationSource,
       history:historyValue
     };
   }
@@ -3764,13 +3814,334 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   Object.defineProperty(globalThis,'MMTornRankedProfitLogic',{
     value:Object.freeze({
       normalizeBonuses,bonusSignature,normalizeRarity,bunkerBuckUnits,quantile,robustPrices,
-      normalizedHistoryRow,comparableHistory,salesVolume,historyValuation,evaluateListing,rankListings
+      normalizedHistoryRow,comparableHistory,salesVolume,historyValuation,auctionBidMaturity,evaluateListing,rankListings
     }),
     configurable:true,enumerable:false,writable:false
   });
 })();
 
 ;globalThis.__MM_ACQ_PDA_STAGE='ranked';
+
+
+/* ===== Torn Intel restock intelligence (bundled) ===== */
+
+(() => {
+  'use strict';
+
+  const TRAVEL_TABLE_URL='https://torn-intel.com/api/v1/foreign-stock/travel-table';
+  const HISTORY_URL='https://torn-intel.com/api/v1/public/foreign-stock/history';
+  const KEYED_COOLDOWN_MS=65_000;
+  const MAX_TRANSITION_GAP_MS=5*60_000;
+  const MIN_ETA_CYCLES=3;
+  const MAX_STORED_CYCLES=60;
+  const MAX_STORED_KEYS=120;
+  const RESTOCK_RETENTION_MS=30*86400000;
+
+  const COUNTRY_NAMES=Object.freeze({
+    mex:'Mexico',
+    cay:'Cayman Islands',
+    can:'Canada',
+    haw:'Hawaii',
+    uni:'United Kingdom',
+    arg:'Argentina',
+    swi:'Switzerland',
+    jap:'Japan',
+    chi:'China',
+    uae:'United Arab Emirates',
+    sou:'South Africa'
+  });
+
+  const COUNTRY_ALIASES=Object.freeze({
+    mexico:'mex',
+    'cayman islands':'cay',
+    cayman:'cay',
+    canada:'can',
+    hawaii:'haw',
+    'united kingdom':'uni',
+    uk:'uni',
+    england:'uni',
+    argentina:'arg',
+    switzerland:'swi',
+    japan:'jap',
+    china:'chi',
+    uae:'uae',
+    'united arab emirates':'uae',
+    'south africa':'sou'
+  });
+
+  const num=value=>{
+    const n=Number(value);
+    return Number.isFinite(n)?n:0;
+  };
+  const text=value=>String(value??'').trim();
+  const clone=value=>value==null?value:JSON.parse(JSON.stringify(value));
+
+  function countryCode(value){
+    const raw=text(value).toLowerCase().replaceAll('.','');
+    if(COUNTRY_NAMES[raw])return raw;
+    return COUNTRY_ALIASES[raw]||'';
+  }
+
+  function countryName(value){
+    const code=countryCode(value);
+    return code?COUNTRY_NAMES[code]:text(value);
+  }
+
+  function restockKey(country,itemId){
+    const code=countryCode(country);
+    const id=text(itemId);
+    return code&&/^\d+$/.test(id)?code+'|'+id:'';
+  }
+
+  function percentile(values,p){
+    const rows=(values||[]).map(num).filter(Number.isFinite).sort((a,b)=>a-b);
+    if(!rows.length)return NaN;
+    if(rows.length===1)return rows[0];
+    const pos=(rows.length-1)*Math.max(0,Math.min(1,num(p)));
+    const lo=Math.floor(pos),hi=Math.ceil(pos),frac=pos-lo;
+    return rows[lo]+(rows[hi]-rows[lo])*frac;
+  }
+
+  function normalizeTravelTable(data,fetchedAt=Date.now()){
+    const stocks=data?.stocks&&typeof data.stocks==='object'?data.stocks:{};
+    const rows=[];
+    for(const [rawCode,pack] of Object.entries(stocks)){
+      const code=countryCode(rawCode);
+      if(!code)continue;
+      const sourceAt=Math.max(0,num(pack?.update))*1000;
+      const list=Array.isArray(pack?.stocks)?pack.stocks:[];
+      for(const row of list){
+        const id=text(row?.id);
+        const name=text(row?.name);
+        if(!/^\d+$/.test(id)||!name)continue;
+        rows.push({
+          country:COUNTRY_NAMES[code],
+          countryCode:code,
+          itemId:id,
+          itemName:name,
+          stock:Math.max(0,Math.round(num(row?.quantity))),
+          shopCost:Math.max(0,num(row?.cost)),
+          profit:0,
+          sourceProfitPerHour:0,
+          homeMarket:0,
+          source:'Torn Intel Travel Table',
+          sourceUpdatedAt:sourceAt?new Date(sourceAt).toISOString():'',
+          observedAt:sourceAt||Number(fetchedAt)||Date.now(),
+          fetchedAt:Number(fetchedAt)||Date.now()
+        });
+      }
+    }
+    return rows;
+  }
+
+  function liveExitEvidence(state,itemId,now=Date.now()){
+    const id=text(itemId);
+    const rules=state?.businessRules||{};
+    const maxAgeMs=Math.max(30,num(rules.maxListingAgeSec)||180)*1000;
+    const snap=state?.procurement?.marketSnapshots?.[id]||{};
+    const snapAt=Date.parse(String(snap?.fetchedAt||''))||0;
+    const snapFresh=Boolean(snapAt&&now-snapAt<=maxAgeMs);
+    const itemMarketAsk=snapFresh?Math.max(0,num(snap?.itemMarket?.lowest)):0;
+    const itemMarketNet=itemMarketAsk>0?Math.floor(itemMarketAsk*.95):0;
+
+    const intel=state?.marketIntel?.marketplace?.[id]||{};
+    const intelAt=Date.parse(String(state?.marketIntel?.marketplaceGeneratedAt||''))||0;
+    const intelFresh=Boolean(intelAt&&now-intelAt<=Math.max(maxAgeMs,300_000));
+    const hasBazaar=Number(intel?.totalBazaars||0)>0&&Number(intel?.lowestPrice||0)>0;
+    const bazaarAverage=intelFresh&&hasBazaar?Math.max(0,num(intel?.bazaarAverage)):0;
+
+    const choices=[
+      {route:'Item Market Net',value:itemMarketNet,at:snapAt},
+      {route:'Bazaar aggregate',value:bazaarAverage,at:intelAt}
+    ].filter(row=>row.value>0).sort((a,b)=>b.value-a.value);
+    return choices[0]||{route:'Unknown',value:0,at:0};
+  }
+
+  function enrichTravelRows(rows,state,now=Date.now()){
+    const previous=Array.isArray(state?.travelIntel?.rows)?state.travelIntel.rows:[];
+    const oldByKey=new Map();
+    for(const row of previous){
+      const key=restockKey(row?.countryCode||row?.country,row?.itemId);
+      if(key)oldByKey.set(key,row);
+    }
+
+    return (rows||[]).map(row=>{
+      const key=restockKey(row?.countryCode||row?.country,row?.itemId);
+      const old=oldByKey.get(key)||{};
+      const exit=liveExitEvidence(state,row?.itemId,now);
+      const liveProfit=Number(exit.value||0)>0&&Number(row?.shopCost||0)>0
+        ?Math.max(0,Number(exit.value)-Number(row.shopCost))
+        :0;
+      const preservedProfit=Math.max(0,num(old?.profit));
+      const preservedPerHour=Math.max(0,num(old?.sourceProfitPerHour));
+      const profit=liveProfit>0?liveProfit:preservedProfit;
+      return {
+        ...old,
+        ...row,
+        profit,
+        sourceProfitPerHour:preservedPerHour,
+        homeMarket:Math.max(0,Number(exit.value||0)||num(old?.homeMarket)),
+        resaleSource:exit.value>0?String(exit.route||''):String(old?.resaleSource||''),
+        profitSource:exit.value>0?'MM live market evidence':(preservedProfit>0?'previous travel feed':''),
+        source:'Torn Intel Travel Table'
+      };
+    });
+  }
+
+  function normalizeHistory(raw){
+    const points=Array.isArray(raw?.points)?raw.points:(Array.isArray(raw)?raw:[]);
+    const normalized=points.map(row=>({
+      t:Date.parse(String(row?.t??row?.timestamp??'')),
+      quantity:Math.max(0,num(row?.quantity)),
+      cost:Math.max(0,num(row?.cost)),
+      marketValue:Math.max(0,num(row?.marketValue??row?.market_value))
+    })).filter(row=>Number.isFinite(row.t)&&row.t>0).sort((a,b)=>a.t-b.t);
+    const dedup=[];
+    for(const row of normalized){
+      if(dedup.length&&dedup[dedup.length-1].t===row.t)dedup[dedup.length-1]=row;
+      else dedup.push(row);
+    }
+    return dedup;
+  }
+
+  function deriveRestockModel(rawPoints,now=Date.now(),options={}){
+    const maxGap=Math.max(60_000,num(options.maxTransitionGapMs)||MAX_TRANSITION_GAP_MS);
+    const minCycles=Math.max(1,Math.round(num(options.minEtaCycles)||MIN_ETA_CYCLES));
+    const points=normalizeHistory(Array.isArray(rawPoints)?{points:rawPoints}:rawPoints);
+    const cycles=[];
+    let zeroStart=null;
+    let zeroStartGap=0;
+    let previous=null;
+    let hasSeenPositive=false;
+
+    for(const row of points){
+      if(row.quantity>0){
+        if(zeroStart!==null){
+          const restockGap=previous?row.t-previous.t:Infinity;
+          const delay=row.t-zeroStart;
+          const ambiguous=zeroStartGap>maxGap||restockGap>maxGap;
+          if(delay>0)cycles.push({
+            emptyObservedAt:zeroStart,
+            restockedAt:row.t,
+            delayMs:delay,
+            ambiguous,
+            emptyTransitionGapMs:zeroStartGap,
+            restockTransitionGapMs:restockGap
+          });
+          zeroStart=null;
+          zeroStartGap=0;
+        }
+        hasSeenPositive=true;
+      }else if(row.quantity===0&&zeroStart===null&&hasSeenPositive){
+        zeroStart=row.t;
+        zeroStartGap=previous?row.t-previous.t:Infinity;
+      }
+      previous=row;
+    }
+
+    const usableCycles=cycles.filter(c=>!c.ambiguous);
+    const delays=usableCycles.map(c=>c.delayMs);
+    const medianDelayMs=percentile(delays,.5);
+    const p25DelayMs=percentile(delays,.25);
+    const p75DelayMs=percentile(delays,.75);
+    const iqrMs=p75DelayMs-p25DelayMs;
+    let confidence='INSUFFICIENT';
+    if(delays.length>=minCycles){
+      const ratio=Number.isFinite(medianDelayMs)&&medianDelayMs>0?iqrMs/medianDelayMs:Infinity;
+      if(delays.length>=6&&ratio<=.20)confidence='HIGH';
+      else if(ratio<=.40)confidence='MEDIUM';
+      else confidence='LOW';
+    }else if(delays.length>0)confidence='LOW';
+
+    const latest=points.length?points[points.length-1]:null;
+    const currentEmpty=Boolean(latest&&latest.quantity===0);
+    const currentEmptyObservedAt=currentEmpty?zeroStart:null;
+    let eta=null;
+    if(currentEmpty&&currentEmptyObservedAt&&delays.length>=minCycles&&Number.isFinite(medianDelayMs)){
+      eta={
+        centerAt:currentEmptyObservedAt+medianDelayMs,
+        earlyAt:currentEmptyObservedAt+p25DelayMs,
+        lateAt:currentEmptyObservedAt+p75DelayMs,
+        remainingMs:currentEmptyObservedAt+medianDelayMs-now,
+        overdueByP75Ms:now-(currentEmptyObservedAt+p75DelayMs)
+      };
+    }
+
+    return {
+      pointCount:points.length,
+      cycles,
+      usableCycles,
+      rejectedCycles:cycles.length-usableCycles.length,
+      medianDelayMs,
+      p25DelayMs,
+      p75DelayMs,
+      iqrMs,
+      confidence,
+      latest,
+      currentEmpty,
+      currentEmptyObservedAt,
+      eta
+    };
+  }
+
+  function modelRecord({country,itemId,itemName='',model,fetchedAt=Date.now(),source='Torn Intel History'}={}){
+    const key=restockKey(country,itemId);
+    if(!key||!model)return null;
+    const cycles=(model.usableCycles||[]).slice(-MAX_STORED_CYCLES).map(row=>({
+      emptyObservedAt:Number(row.emptyObservedAt||0),
+      restockedAt:Number(row.restockedAt||0),
+      delayMs:Number(row.delayMs||0)
+    }));
+    return {
+      key,
+      countryCode:countryCode(country),
+      country:countryName(country),
+      itemId:text(itemId),
+      itemName:text(itemName),
+      source,
+      fetchedAt:new Date(Number(fetchedAt)||Date.now()).toISOString(),
+      sourceNewestAt:model.latest?.t?new Date(Number(model.latest.t)).toISOString():'',
+      pointCount:Number(model.pointCount||0),
+      usableCycles:Number(model.usableCycles?.length||0),
+      rejectedCycles:Number(model.rejectedCycles||0),
+      medianDelayMs:Number.isFinite(model.medianDelayMs)?Number(model.medianDelayMs):0,
+      p25DelayMs:Number.isFinite(model.p25DelayMs)?Number(model.p25DelayMs):0,
+      p75DelayMs:Number.isFinite(model.p75DelayMs)?Number(model.p75DelayMs):0,
+      confidence:String(model.confidence||'INSUFFICIENT'),
+      currentEmpty:Boolean(model.currentEmpty),
+      currentEmptyObservedAt:model.currentEmptyObservedAt?new Date(Number(model.currentEmptyObservedAt)).toISOString():'',
+      etaAt:model.eta?.centerAt?new Date(Number(model.eta.centerAt)).toISOString():'',
+      etaEarlyAt:model.eta?.earlyAt?new Date(Number(model.eta.earlyAt)).toISOString():'',
+      etaLateAt:model.eta?.lateAt?new Date(Number(model.eta.lateAt)).toISOString():'',
+      cycles
+    };
+  }
+
+  function pruneRestockRecords(records,now=Date.now()){
+    const source=records&&typeof records==='object'?records:{};
+    const cutoff=now-RESTOCK_RETENTION_MS;
+    const rows=Object.entries(source)
+      .filter(([,row])=>(Date.parse(String(row?.fetchedAt||''))||0)>=cutoff)
+      .sort((a,b)=>(Date.parse(String(b[1]?.fetchedAt||''))||0)-(Date.parse(String(a[1]?.fetchedAt||''))||0))
+      .slice(0,MAX_STORED_KEYS);
+    return Object.fromEntries(rows.map(([key,row])=>[key,clone(row)]));
+  }
+
+  const api=Object.freeze({
+    TRAVEL_TABLE_URL,HISTORY_URL,KEYED_COOLDOWN_MS,MAX_TRANSITION_GAP_MS,MIN_ETA_CYCLES,
+    MAX_STORED_CYCLES,MAX_STORED_KEYS,RESTOCK_RETENTION_MS,COUNTRY_NAMES,
+    countryCode,countryName,restockKey,percentile,
+    normalizeTravelTable,liveExitEvidence,enrichTravelRows,
+    normalizeHistory,deriveRestockModel,modelRecord,pruneRestockRecords
+  });
+
+  Object.defineProperty(globalThis,'MMTornRestockIntel',{
+    value:api,configurable:true,enumerable:false,writable:false
+  });
+})();
+
+
+;globalThis.__MM_ACQ_PDA_STAGE='torn-intel';
 
 
 /* ===== Purchase ledger logic (bundled) ===== */
@@ -3830,6 +4201,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const ROOT_ID='mm-acquisitions';
   const LAUNCHER_ID='mm-acquisitions-launcher';
   const API_KEY='mm_acquisitions_api_v1';
+  const TORN_INTEL_KEY='mm_acquisitions_torn_intel_client_key_v1';
+  const TORN_INTEL_LAST_KEYED_AT='mm_acquisitions_torn_intel_last_keyed_at_v1';
   const TRAVEL_FEED_KEY='mm_acquisitions_travel_feed_v1';
   const TRAVEL_RETURN_KEY='mm_acquisitions_travel_return_v1';
   const WEAV_WATCH_LEASE_KEY='mm_acquisitions_weav_watch_lease_v1';
@@ -3894,6 +4267,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const live=globalThis.MMTornAcquisitionsLive;
   const rankedLogic=globalThis.MMTornRankedProfitLogic;
   const ledger=globalThis.MMTornAcquisitionLedger;
+  const restockIntel=globalThis.MMTornRestockIntel;
 
   async function readSharedState(){
     if(core?.ensureSharedState)return core.ensureSharedState();
@@ -3905,6 +4279,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     .replaceAll('"','&quot;').replaceAll("'",'&#039;');
   const money=value=>'$'+Math.max(0,Number(value)||0).toLocaleString('en-US',{maximumFractionDigits:0});
   const apiKey=()=>{const saved=String(GM_getValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(__MM_PDA_API_KEY||'').trim();const unresolved='###PDA-'+'APIKEY###';return pda&&pda!==unresolved?pda:'';};
+  const tornIntelKey=()=>String(GM_getValue(TORN_INTEL_KEY,'')||'').trim();
 
   function button(primary=false){
     return 'border:1px solid '+(primary?'#9a7b35':'#555')+';background:'+(primary?'#4b3b18':'#232323')+';color:#eee;border-radius:6px;padding:7px 10px;cursor:pointer;font:12px Arial,sans-serif;';
@@ -4193,19 +4568,41 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     setTimeout(capture,700);
   }
 
-  function gmJson(url){
+  function responseHeaders(raw){
+    const out={};
+    String(raw||'').split(/\r?\n/).forEach(line=>{
+      const index=line.indexOf(':');
+      if(index>0)out[line.slice(0,index).trim().toLowerCase()]=line.slice(index+1).trim();
+    });
+    return out;
+  }
+
+  function gmJsonResponse(url,{headers={}}={}){
     return new Promise((resolve,reject)=>{
+      const started=Date.now();
       GM_xmlhttpRequest({
-        method:'GET',url,timeout:20000,headers:{Accept:'application/json'},
+        method:'GET',url,timeout:20000,headers:{Accept:'application/json',...headers},
         onload:r=>{
-          if(r.status<200||r.status>=300)return reject(new Error('HTTP '+r.status));
           let data;
-          try{data=JSON.parse(r.responseText);}catch{return reject(new Error('Invalid JSON response.'));}
-          if(data?.error){
-            const msg=data.error?.error||data.error?.message||data.error||'API error';
-            return reject(new Error(String(msg)));
+          try{data=JSON.parse(String(r.responseText||''));}
+          catch{return reject(new Error('Invalid JSON response (HTTP '+Number(r.status||0)+').'));}
+          if(r.status<200||r.status>=300){
+            const msg=data?.resolution||data?.message||data?.error?.message||data?.error||('HTTP '+r.status);
+            const error=new Error(String(msg));
+            error.status=Number(r.status||0);
+            error.code=String(data?.code||'');
+            return reject(error);
           }
-          resolve(data);
+          if(data?.error&&typeof data.error!=='object'){
+            return reject(new Error(String(data.error)));
+          }
+          resolve({
+            data,
+            status:Number(r.status||0),
+            headers:responseHeaders(r.responseHeaders),
+            fetchedAt:Date.now(),
+            elapsedMs:Date.now()-started
+          });
         },
         ontimeout:()=>reject(new Error('Request timed out.')),
         onerror:error=>{
@@ -4214,6 +4611,11 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         }
       });
     });
+  }
+
+  async function gmJson(url,options={}){
+    const response=await gmJsonResponse(url,options);
+    return response.data;
   }
 
   function weavRequest(path,params={}){
@@ -4267,6 +4669,101 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     onState:next=>{state=next;}
   }):null;
 
+  function durationMs(value){
+    const ms=Math.max(0,Number(value)||0);
+    const total=Math.round(ms/1000);
+    const d=Math.floor(total/86400);
+    const h=Math.floor((total%86400)/3600);
+    const m=Math.floor((total%3600)/60);
+    if(d>0)return d+'d '+h+'h';
+    if(h>0)return h+'h '+m+'m';
+    return Math.max(1,m)+'m';
+  }
+
+  function restockRecord(country,itemId){
+    if(!restockIntel)return null;
+    const key=restockIntel.restockKey(country,itemId);
+    return key?(state?.travelIntel?.restockEta?.[key]||null):null;
+  }
+
+  function restockEtaSummary(row){
+    if(!restockIntel)return 'Restock model unavailable.';
+    const record=restockRecord(row?.countryCode||row?.country,row?.itemId);
+    if(!record)return 'No restock history loaded.';
+    const stock=Math.max(0,Number(row?.stock||0));
+    const confidence=String(record?.confidence||'INSUFFICIENT');
+    const cycles=Math.max(0,Number(record?.usableCycles||0));
+    if(stock>0)return 'In stock · '+cycles+' usable cycles · '+confidence+' confidence · history '+age(record?.sourceNewestAt||'');
+    const etaAt=Date.parse(String(record?.etaAt||''))||0;
+    const early=Date.parse(String(record?.etaEarlyAt||''))||0;
+    const late=Date.parse(String(record?.etaLateAt||''))||0;
+    if(etaAt){
+      const remaining=etaAt-Date.now();
+      const center=remaining>=0?('about '+durationMs(remaining)):('median passed '+durationMs(-remaining)+' ago');
+      const window=early&&late?' · window '+new Date(early).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+'–'+new Date(late).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):'';
+      return 'Restock '+center+window+' · '+confidence+' · '+cycles+' cycles';
+    }
+    return cycles<restockIntel.MIN_ETA_CYCLES
+      ?'Out of stock · '+cycles+' usable cycles; need '+restockIntel.MIN_ETA_CYCLES+' for ETA.'
+      :'Out of stock · sellout start is outside or ambiguous in the 48h history window.';
+  }
+
+  async function refreshTornIntelTravel({silent=false}={}){
+    if(!restockIntel)throw new Error('Torn Intel module did not load.');
+    const before=state||await readSharedState();
+    const response=await gmJsonResponse(restockIntel.TRAVEL_TABLE_URL);
+    const normalized=restockIntel.normalizeTravelTable(response.data,response.fetchedAt);
+    if(!normalized.length)throw new Error('Torn Intel Travel Table returned no readable stock rows.');
+    const enriched=restockIntel.enrichTravelRows(normalized,before,Date.now());
+    state=await service.importTravelRows(enriched,response.fetchedAt);
+    if(!silent)statusText='Torn Intel travel stock updated: '+enriched.length+' item/country rows.';
+    return {rows:enriched,response,state};
+  }
+
+  async function refreshRestockEta(country,itemId,itemName=''){
+    if(!restockIntel)throw new Error('Torn Intel module did not load.');
+    const key=tornIntelKey();
+    if(!key)throw new Error('Save the free Torn Intel client key in Setup / Advanced before loading restock history.');
+    const code=restockIntel.countryCode(country);
+    const id=String(itemId||'').trim();
+    if(!code||!/^\d+$/.test(id))throw new Error('Restock history needs a supported country and Torn item ID.');
+
+    const previousCall=Math.max(0,Number(GM_getValue(TORN_INTEL_LAST_KEYED_AT,0))||0);
+    const wait=restockIntel.KEYED_COOLDOWN_MS-(Date.now()-previousCall);
+    if(previousCall&&wait>0)throw new Error('Torn Intel history rate-limit guard: retry in '+durationMs(wait)+'.');
+
+    const url=new URL(restockIntel.HISTORY_URL);
+    url.searchParams.set('itemId',id);
+    url.searchParams.set('country',code);
+    url.searchParams.set('hours','48');
+    GM_setValue(TORN_INTEL_LAST_KEYED_AT,Date.now());
+
+    const response=await gmJsonResponse(url.toString(),{headers:{'X-Torn-Intel-Key':key}});
+    const model=restockIntel.deriveRestockModel(response.data,Date.now());
+    const record=restockIntel.modelRecord({
+      country:code,itemId:id,itemName,model,fetchedAt:response.fetchedAt
+    });
+    if(!record)throw new Error('Torn Intel history could not be converted into a restock model.');
+
+    await core.updateDomainState('market',draft=>{
+      const travel=draft.travelIntel || (draft.travelIntel={});
+      const records=travel.restockEta&&typeof travel.restockEta==='object'?travel.restockEta:{};
+      records[record.key]=record;
+      travel.restockEta=restockIntel.pruneRestockRecords(records,Date.now());
+      travel.restockEtaUpdatedAt=new Date(response.fetchedAt).toISOString();
+      travel.restockEtaSource='Torn Intel observed history';
+      travel.diagnostics=Array.isArray(travel.diagnostics)?travel.diagnostics:[];
+      travel.diagnostics.unshift({
+        at:new Date().toISOString(),
+        text:'Restock ETA refreshed for '+record.country+' / '+record.itemName+' using '+record.pointCount+' history points and '+record.usableCycles+' usable cycles.'
+      });
+      travel.diagnostics=travel.diagnostics.slice(0,30);
+      return draft;
+    });
+    state=await readSharedState();
+    return record;
+  }
+
   async function importTravelCapture({silent=false}={}){
     const feed=await loadTravelFeed();
     if(!feed?.rows?.length) {
@@ -4284,20 +4781,27 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   async function updateTravelData(){
     if(busy||watchRunning)return;
     busy=true;
-    statusText='Refreshing TornW3B Travel Stock…';
+    statusText='Refreshing Torn Intel Travel Stock…';
     render();
     try{
-      const html=await gmText('https://weav3r.dev/travel-stock');
-      const rows=live.parseTravelStockHtml(html);
-      const feed=await writeTravelFeed(rows,Date.now());
-      state=await service.importTravelRows(feed.rows,feed.capturedAt);
-      statusText='Travel updated: '+rows.length+' current routes.';
-    }catch(error){
-      busy=false;
-      statusText='Direct refresh blocked; opening live TornW3B page for capture…';
+      const result=await refreshTornIntelTravel({silent:true});
+      statusText='Travel updated from Torn Intel: '+Number(result?.rows?.length||0)+' current item/country rows.';
+    }catch(tornIntelError){
+      statusText='Torn Intel refresh unavailable; trying TornW3B fallback…';
       render();
-      await beginTravelCapture();
-      return;
+      try{
+        const html=await gmText('https://weav3r.dev/travel-stock');
+        const rows=live.parseTravelStockHtml(html);
+        const feed=await writeTravelFeed(rows,Date.now());
+        state=await service.importTravelRows(feed.rows,feed.capturedAt);
+        statusText='Travel updated from TornW3B fallback: '+rows.length+' current routes.';
+      }catch(fallbackError){
+        busy=false;
+        statusText='Direct travel refresh unavailable; opening TornW3B fallback page for capture…';
+        render();
+        await beginTravelCapture();
+        return;
+      }
     }
     busy=false;
     render();
@@ -4305,7 +4809,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   async function reloadCachedState(){
     loadError='';
-    if(!core||!pulse||!logic||!live||!rankedLogic||!ledger||!service||!pulseEngine){
+    if(!core||!pulse||!logic||!live||!rankedLogic||!ledger||!restockIntel||!service||!pulseEngine){
       loadError='MM Acquisitions dependencies did not load.';
       state=null;
       render();
@@ -4743,55 +5247,86 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   function travelHtml(){
     if(!state)return card('<b>No cached travel state available.</b>');
     const ranked=logic.rankCachedTravel(state);
+    const allTravelRows=Array.isArray(state?.travelIntel?.rows)?state.travelIntel.rows:[];
     const feed=readTravelFeed();
     const captureAge=feed?.capturedAt?age(new Date(Number(feed.capturedAt)).toISOString()):'none';
     const syncedAt=Date.parse(state.travelIntel?.lastSyncAt||'')||0;
-    const travelAgeMs=syncedAt?Math.max(0,Date.now()-syncedAt):Infinity;
+    const sourceAt=Date.parse(state.travelIntel?.sourceUpdatedAt||'')||syncedAt;
+    const travelAgeMs=sourceAt?Math.max(0,Date.now()-sourceAt):Infinity;
     const freshness=!Number.isFinite(travelAgeMs)?'UNKNOWN':travelAgeMs<=TRAVEL_FRESH_MS?'FRESH':travelAgeMs<=TRAVEL_STALE_MS?'AGING':'STALE';
     const ctx=travelContext;
     const current=normalizeTravelLocation(ctx?.country||'');
     const destination=normalizeTravelLocation(ctx?.destination||'');
     let scope='Next trip from Torn';
     let scopedRows=ranked;
+    let scopedRestock=allTravelRows.filter(row=>Number(row?.stock||0)<=0&&Number(row?.shopCost||0)>0);
     if(ctx?.mode==='abroad'&&current){
       scope='Items available where you are now · '+String(ctx.country||'current destination');
       scopedRows=ranked.filter(r=>normalizeTravelLocation(r.country)===current);
+      scopedRestock=scopedRestock.filter(r=>normalizeTravelLocation(r.country)===current);
     }else if(ctx?.mode==='traveling'&&destination&&destination!=='torn'){
       scope='Items to consider when you arrive · '+String(ctx.destination||'destination');
       scopedRows=ranked.filter(r=>normalizeTravelLocation(r.country)===destination);
+      scopedRestock=scopedRestock.filter(r=>normalizeTravelLocation(r.country)===destination);
     }else if(ctx?.mode==='traveling'){
       scope='You are traveling · showing next-trip ideas';
     }
     const stale=freshness==='STALE'||freshness==='UNKNOWN';
     const rows=(stale?[]:scopedRows).slice(0,20);
+    const restockRows=(stale?[]:scopedRestock).slice().sort((a,b)=>{
+      const ar=restockRecord(a?.countryCode||a?.country,a?.itemId);
+      const br=restockRecord(b?.countryCode||b?.country,b?.itemId);
+      const ae=Date.parse(String(ar?.etaAt||''))||Number.MAX_SAFE_INTEGER;
+      const be=Date.parse(String(br?.etaAt||''))||Number.MAX_SAFE_INTEGER;
+      return ae-be||String(a?.country||'').localeCompare(String(b?.country||''))||String(a?.itemName||'').localeCompare(String(b?.itemName||''));
+    }).slice(0,20);
     const freshnessColor=freshness==='FRESH'?'#9fe3a8':freshness==='AGING'?'#ffd18a':'#ff9b9b';
+    const provider=String(state?.travelIntel?.source||'Travel source');
+    const sourceAge=age(state?.travelIntel?.sourceUpdatedAt||'');
     return armoryRequestHtml()+card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
-        '<div><b>Travel Deals</b><div style="font-size:10px;color:#888;">Buy overseas and resell in Torn. Start near the top of the list. Travel and purchases remain manual.</div></div>'+
-        '<button id="mm-acq-travel-update" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Travel Prices</button>'+
+        '<div><b>Travel Deals</b><div style="font-size:10px;color:#888;">Current foreign stock uses Torn Intel when available; TornW3B remains the fallback. Travel and purchases remain manual.</div></div>'+
+        '<button id="mm-acq-travel-update" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Travel Stock</button>'+
       '</div>'+
-      '<div style="font-size:10px;margin-top:5px;"><b style="color:'+freshnessColor+';">'+esc(freshness)+'</b> · '+esc(scope)+'</div>'+
-      '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:10px;color:#888;">Travel data details</summary><div style="font-size:10px;color:#888;margin-top:4px;">Last browser capture: '+esc(captureAge)+' · saved travel data: '+esc(age(state.travelIntel?.lastSyncAt))+' · '+esc(travelContextLabel(ctx))+'</div><button id="mm-acq-travel-import" style="'+button()+'margin-top:5px;">Import Browser Capture</button></details>'+
-      (stale?'<div style="margin-top:6px;padding:6px;border:1px solid #7d3b3b;border-radius:5px;color:#ffb3b3;font-size:11px;"><b>Refresh needed.</b> Old travel prices are hidden until they are refreshed.</div>':'')
+      '<div style="font-size:10px;margin-top:5px;"><b style="color:'+freshnessColor+';">'+esc(freshness)+'</b> · '+esc(scope)+' · '+esc(provider)+'</div>'+
+      '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:10px;color:#888;">Travel data details</summary><div style="font-size:10px;color:#888;margin-top:4px;">Provider source observed '+esc(sourceAge)+' · local fetch '+esc(age(state.travelIntel?.lastSyncAt))+' · TornW3B browser capture '+esc(captureAge)+' · '+esc(travelContextLabel(ctx))+'</div><button id="mm-acq-travel-import" style="'+button()+'margin-top:5px;">Import TornW3B Fallback Capture</button></details>'+
+      (stale?'<div style="margin-top:6px;padding:6px;border:1px solid #7d3b3b;border-radius:5px;color:#ffb3b3;font-size:11px;"><b>Refresh needed.</b> Old travel stock is hidden until it is refreshed.</div>':'')
     )+
-    card(rows.length?rows.map((r,i)=>
-      '<div style="border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
-        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-          '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.itemName)+'</b><div style="margin-top:2px;">Buy in <b>'+esc(r.country)+'</b> · stock <b>'+Number(r.stock||0).toLocaleString()+'</b></div>'+
-            '<div style="color:#aaa;margin-top:2px;">Estimated profit <b>'+money(r.profit||0)+'</b> each · about <b>'+money(r.sourceProfitPerHour||0)+'/hr</b></div>'+
-            pulseLine(r,r.itemId,r.profit)+
+    card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b>In-stock travel opportunities</b><div style="font-size:10px;color:#888;">Profit is shown only when Acquisitions has separate resale evidence. A foreign stock row by itself does not fabricate a resale price.</div></div></div>'+
+      (rows.length?rows.map((r,i)=>{
+        const profitKnown=Number(r?.profit||0)>0;
+        const hourlyKnown=Number(r?.sourceProfitPerHour||0)>0;
+        return '<div style="border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
+          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+            '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.itemName)+'</b><div style="margin-top:2px;">Buy in <b>'+esc(r.country)+'</b> · stock <b>'+Number(r.stock||0).toLocaleString()+'</b> · foreign cost <b>'+money(r.shopCost||0)+'</b></div>'+
+              '<div style="color:#aaa;margin-top:2px;">'+(profitKnown?('Estimated profit <b>'+money(r.profit||0)+'</b> each'+(hourlyKnown?' · about <b>'+money(r.sourceProfitPerHour||0)+'/hr</b>':'')):'Resale/profit needs current market verification.')+'</div>'+
+              '<div style="font-size:10px;color:#777;margin-top:2px;">'+esc(restockEtaSummary(r))+'</div>'+
+              pulseLine(r,r.itemId,r.profit)+
+            '</div>'+
+            '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
+              '<button data-restock-eta="1" data-restock-country="'+esc(r.countryCode||r.country||'')+'" data-restock-id="'+esc(r.itemId||'')+'" data-restock-name="'+esc(r.itemName||'')+'" style="'+button()+'">RESTOCK HISTORY</button>'+
+              '<button data-travel-compare="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">Check All Prices</button>'+
+              '<button data-travel-source="Bazaar" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">GO TO BAZAAR</button>'+
+              '<button data-travel-source="Item Market" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">GO TO ITEM MARKET</button>'+
+              '<button data-travel-agency="1" style="'+button(true)+'">GO TO TRAVEL AGENCY</button>'+
+            '</div>'+
           '</div>'+
-          '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
-            '<button data-travel-compare="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">Check All Prices</button>'+
-            '<button data-travel-source="Bazaar" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">GO TO BAZAAR</button>'+
-            '<button data-travel-source="Item Market" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">GO TO ITEM MARKET</button>'+
-            '<button data-travel-agency="1" style="'+button(true)+'">GO TO TRAVEL AGENCY</button>'+
-          '</div>'+
-        '</div>'+
-      '</div>'
-    ).join(''):(stale
-      ?'<div style="font-size:11px;color:#888;">Refresh travel prices to see recommendations.</div>'
-      :'<div style="font-size:11px;color:#888;">No profitable travel deals match your current trip.</div>'));
+        '</div>';
+      }).join(''):(stale
+        ?'<div style="font-size:11px;color:#888;margin-top:6px;">Refresh travel stock to see recommendations.</div>'
+        :'<div style="font-size:11px;color:#888;margin-top:6px;">No profitable in-stock travel deals match your current trip.</div>'))
+    )+
+    card(
+      '<div><b>Restock Watch</b><div style="font-size:10px;color:#888;margin-top:3px;">Out-of-stock foreign items. Restock estimates are MM calculations from Torn Intel observed history, not Torn Intel\'s private prediction. History calls are on-demand and rate-limited.</div></div>'+
+      (!tornIntelKey()?'<div style="font-size:10px;color:#d8b96a;margin-top:5px;">Save the free Torn Intel client key under More → Setup / Advanced to calculate ETAs.</div>':'')+
+      (restockRows.length?restockRows.map(r=>
+        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+          '<div><b>'+esc(r.itemName)+'</b> · '+esc(r.country)+' · <span style="color:#ffb3b3;">OUT OF STOCK</span><div style="font-size:10px;color:#888;margin-top:2px;">Foreign cost '+money(r.shopCost||0)+' · '+esc(restockEtaSummary(r))+'</div></div>'+
+          '<button data-restock-eta="1" data-restock-country="'+esc(r.countryCode||r.country||'')+'" data-restock-id="'+esc(r.itemId||'')+'" data-restock-name="'+esc(r.itemName||'')+'" '+(busy?'disabled':'')+' style="'+button(Boolean(restockRecord(r.countryCode||r.country,r.itemId)?.etaAt))+(busy?'opacity:.5;':'')+'white-space:nowrap;">ESTIMATE RESTOCK</button>'+
+        '</div>'
+      ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No out-of-stock items in the current travel scope.</div>')
+    );
   }
 
   async function compareTravelItem(itemId,itemName){
@@ -4826,6 +5361,31 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       }
     }catch(error){
       statusText='Could not open '+preferredSource+': '+(error?.message||String(error));
+    }finally{
+      busy=false;
+      render();
+    }
+  }
+
+  async function runRestockEta(country,itemId,itemName=''){
+    if(busy)return;
+    if(!tornIntelKey()){
+      statusText='Save the free Torn Intel client key in Setup / Advanced before loading restock history.';
+      activeView='settings';
+      render();
+      return;
+    }
+    busy=true;
+    statusText='Loading Torn Intel observed history for '+String(itemName||('item '+itemId))+'…';
+    render();
+    try{
+      const record=await refreshRestockEta(country,itemId,itemName);
+      const etaAt=Date.parse(String(record?.etaAt||''))||0;
+      statusText=etaAt
+        ?('Restock model updated: '+String(record.confidence||'UNKNOWN')+' confidence · '+Number(record.usableCycles||0)+' usable cycles · ETA '+new Date(etaAt).toLocaleString()+'.')
+        :('Restock history updated: '+Number(record?.usableCycles||0)+' usable cycles · '+String(record?.confidence||'INSUFFICIENT')+' confidence. No active ETA is currently justified.');
+    }catch(error){
+      statusText='Restock history failed: '+(error?.message||String(error));
     }finally{
       busy=false;
       render();
@@ -5142,6 +5702,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       if(source==='auction'){
         const endsAt=Number(row.endsAt||0);
         if(endsAt>0&&endsAt*1000<=Date.now())return false;
+        if(row.auctionBidProvisional&&rankedSource!=='auction')return false;
       }else{
         const observed=Date.parse(row.lastUpdated||'')||0;
         if(!observed||Date.now()-observed>cfg.maxLiveAgeHours*3600000)return false;
@@ -5227,7 +5788,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const itemMarketCount=liveMarketRows.filter(row=>['item market','market'].includes(String(row?.source||'').toLowerCase())).length;
     return card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-        '<div><b style="font-size:15px;">Ranked Weapons</b><div style="font-size:10px;color:#aaa;margin-top:3px;">Look for weapons below BB/AH value with positive ROI and useful sales traffic. No bonus is excluded.</div></div>'+
+        '<div><b style="font-size:15px;">Ranked Weapons</b><div style="font-size:10px;color:#aaa;margin-top:3px;">Look for weapons below BB/AH value with positive ROI and useful sales traffic. No bonus is excluded. Very early low auction bids are hidden from All Sources so a $1/$119 opening bid is not presented as a buy-price profit opportunity; choose Auction to inspect them.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
           '<button id="mm-acq-rw-pricelist-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Update BB Rate</button>'+
           '<button id="mm-acq-rw-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Weapons</button>'+
@@ -5263,9 +5824,10 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         const bidHeadroom=bidCeiling>0?bidCeiling-Number(row.price||0):0;
         const underBb=Number(row.bbFloor||0)>0&&Number(row.price||0)<Number(row.bbFloor||0);
         const belowFair=Number(row.fairValue||0)>0&&Number(row.price||0)<Number(row.fairValue||0);
-        const good=belowFair&&Number(row.roiPct||0)>0;
-        const decision=underBb?'UNDER BB VALUE':good?(isAuction?'WATCH / BID CANDIDATE':'INVESTMENT CANDIDATE'):'REVIEW';
-        const decisionColor=underBb?'#9fe3a8':good?'#d8d48a':'#aaa';
+        const provisional=Boolean(isAuction&&row.auctionBidProvisional);
+        const good=!provisional&&belowFair&&Number(row.roiPct||0)>0;
+        const decision=provisional?'EARLY BID · WATCH ONLY':underBb?'UNDER BB VALUE':good?(isAuction?'WATCH / BID CANDIDATE':'INVESTMENT CANDIDATE'):'REVIEW';
+        const decisionColor=provisional?'#ffcf7a':underBb?'#9fe3a8':good?'#d8d48a':'#aaa';
         const actionLabel=isAuction
           ?(String(row.url||'').startsWith('https://www.torn.com/')?'GO TO AUCTION':'OPEN AUCTION FINDER')
           :sourceLower.includes('bazaar')?'GO TO BAZAAR':'GO TO ITEM MARKET';
@@ -5277,7 +5839,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
               '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(115px,1fr));gap:5px;margin-top:6px;">'+
                 '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">'+(isAuction?'CURRENT BID':'CURRENT PRICE')+'</div><b>'+money(row.price)+'</b></div>'+
                 '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">ESTIMATED VALUE</div><b>'+money(row.fairValue)+'</b></div>'+
-                '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">EST. PROFIT / ROI</div><b style="color:'+(Number(row.profit||0)>0?'#9fe3a8':'#ffaaaa')+';">'+(Number(row.profit||0)>=0?'+':'-')+money(Math.abs(Number(row.profit||0)))+' / '+Number(row.roiPct||0).toFixed(1)+'%</b></div>'+
+                '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">'+(provisional?'BID STATUS':'EST. PROFIT / ROI')+'</div>'+(provisional?'<b style="color:#ffcf7a;">PROVISIONAL</b><div style="font-size:9px;color:#777;">early bid is not a purchase price</div>':'<b style="color:'+(Number(row.profit||0)>0?'#9fe3a8':'#ffaaaa')+';">'+(Number(row.profit||0)>=0?'+':'-')+money(Math.abs(Number(row.profit||0)))+' / '+Number(row.roiPct||0).toFixed(1)+'%</b>')+'</div>'+
                 '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">SALES 7 / 30 / 90 DAYS</div><b>'+Number(row.volume7||0)+' / '+Number(row.volume30||0)+' / '+Number(row.volume90||0)+'</b></div>'+
               '</div>'+
               (isAuction?'<div style="color:#d8b96a;margin-top:5px;">'+(targetRoi>0?'Max bid for '+targetRoi.toFixed(1)+'% ROI':'Break-even bid ceiling')+' <b>'+money(bidCeiling)+'</b> · headroom <b>'+(bidHeadroom>=0?'+':'-')+money(Math.abs(bidHeadroom))+'</b> · '+Number(row.bids||0)+' bids · ends in '+esc(futureDuration(row.endsAt))+'</div>':'')+
@@ -5610,6 +6172,17 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       '</div>'+
       '<div style="font-size:10px;color:#888;margin-top:7px;">While Acquisitions is open and visible, stale purchase logs and opportunity data refresh automatically with guarded intervals. Weav3r generation is checked once per minute. Verify & Buy and final purchase remain manual.</div>'
     )+
+    card(
+      '<b>Setup · Torn Intel travel/restock</b>'+
+      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">Current foreign stock can use Torn Intel without this key. The free approved Torn Intel client key is used only for on-demand 48-hour history / Restock ETA calls. It is stored only in this userscript\'s Tampermonkey GM storage and is never copied into shared state or diagnostics.</div>'+
+      '<div style="display:grid;grid-template-columns:minmax(160px,1fr) auto auto auto;gap:5px;align-items:center;">'+
+        '<input id="mm-acq-ti-key" type="password" autocomplete="off" placeholder="'+(tornIntelKey()?'Torn Intel client key saved — enter to replace':'Torn Intel client key')+'" style="'+inputCss()+'">'+
+        '<button id="mm-acq-ti-save" style="'+button(true)+'">Save</button>'+
+        '<button id="mm-acq-ti-clear" style="'+button()+'">Clear</button>'+
+        '<button id="mm-acq-ti-test-live" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Test Live Stock</button>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:6px;">Travel provider: '+esc(String(state?.travelIntel?.source||'not synced'))+' · source observed '+esc(age(state?.travelIntel?.sourceUpdatedAt||''))+' · cached restock models '+Object.keys(state?.travelIntel?.restockEta||{}).length+'. Request/approve a client key at torn-intel.com/developers if Restock ETA is needed.</div>'
+    )+
     '<details style="margin-bottom:7px;"><summary style="cursor:pointer;border:1px solid #353535;background:#171717;border-radius:8px;padding:9px;"><b>Advanced settings</b> · optional</summary><div style="margin-top:7px;">'+
     card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
@@ -5695,7 +6268,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.27-pda.14 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.28-pda.15 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -5775,6 +6348,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       statusText='Travel import failed: '+(error?.message||String(error));
       render();
     }));
+    root.querySelectorAll('[data-restock-eta]').forEach(b=>b.addEventListener('click',()=>runRestockEta(
+      b.dataset.restockCountry||'',b.dataset.restockId||'',b.dataset.restockName||''
+    )));
     root.querySelectorAll('[data-acquire-item]').forEach(b=>b.addEventListener('click',()=>acquire(b.dataset.acquireItem)));
     root.querySelectorAll('[data-pricelist-verify]').forEach(b=>b.addEventListener('click',()=>{
       const item=catalogRows().find(row=>row.id===String(b.dataset.pricelistVerify||''));
@@ -5838,6 +6414,28 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     root.querySelectorAll('[data-item-route]').forEach(b=>b.addEventListener('click',()=>routeCatalogItem(b.dataset.itemRoute||'Best')));
     root.querySelectorAll('[data-item-alt-source]').forEach(b=>b.addEventListener('click',()=>routeCatalogItem(b.dataset.itemAltSource||'Best')));
     root.querySelectorAll('[data-item-travel]').forEach(b=>b.addEventListener('click',()=>{location.href='https://www.torn.com/travelagency.php';}));
+    root.querySelector('#mm-acq-ti-save')?.addEventListener('click',()=>{
+      const value=String(root.querySelector('#mm-acq-ti-key')?.value||'').trim();
+      if(value)GM_setValue(TORN_INTEL_KEY,value);
+      statusText=value?'Torn Intel client key saved for on-demand Restock ETA history.':'Enter a Torn Intel client key to save.';
+      render();
+    });
+    root.querySelector('#mm-acq-ti-clear')?.addEventListener('click',()=>{
+      GM_deleteValue(TORN_INTEL_KEY);
+      GM_deleteValue(TORN_INTEL_LAST_KEYED_AT);
+      statusText='Torn Intel client key cleared. Live stock refresh can still use the anonymous browser lane.';
+      render();
+    });
+    root.querySelector('#mm-acq-ti-test-live')?.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Testing Torn Intel live foreign stock…';render();
+      try{
+        const result=await refreshTornIntelTravel({silent:true});
+        statusText='Torn Intel live stock PASS: '+Number(result?.rows?.length||0)+' item/country rows imported.';
+      }catch(error){
+        statusText='Torn Intel live stock failed: '+(error?.message||String(error));
+      }finally{busy=false;render();}
+    });
     root.querySelector('#mm-acq-save-key')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-acq-api')?.value||'').trim();
       if(value)GM_setValue(API_KEY,value);
