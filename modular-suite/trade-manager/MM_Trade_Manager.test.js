@@ -98,3 +98,18 @@ assert.strictEqual(Object.keys(bounded.operations.tradeManager.trades).length,lo
 assert.strictEqual(Object.keys(bounded.operations.inventoryRoi.tradeReconciliation).length,logic.MAX_RECONCILIATIONS);
 
 console.log('MM Trade Manager logic tests: PASS');
+
+const userSource=fs.readFileSync(__dirname+'/MM_Trade_Manager.user.js','utf8');
+new Function(userSource);
+assert(userSource.includes('// @version      0.1.0-alpha.1'));
+assert(userSource.includes('/user/trades'));
+assert(userSource.includes("'/user/'+encodeURIComponent(tradeId)+'/trade'"));
+assert(userSource.includes("if(!evaluation.recordable)"));
+assert(userSource.includes("logic.recordCompletedTrades(draft,records,Date.now())"));
+assert(userSource.includes("id:'trade-manager'"));
+assert(userSource.includes('final trade actions remain manual'));
+assert(userSource.includes('The active Trade Chat Assistant remains a separate chat/forum workflow.'));
+assert(!userSource.includes('// @updateURL'));
+assert(!userSource.includes('// @downloadURL'));
+assert(!/trade\.php#step=(?:view|logview)/.test(userSource),'API trade IDs must not be assumed to equal Torn UI trade IDs');
+console.log('MM Trade Manager userscript contract tests: PASS');
