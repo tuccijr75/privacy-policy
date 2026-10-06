@@ -504,7 +504,7 @@ assert(userSourceValue.includes("leaderBaseLabel+(stockMode==='war'?' · War Nee
 assert((userSourceValue.match(/data-stock-mode="war"/g)||[]).length>=2,'War/Peace selection must be available on Acquire as well as Minimums');
 assert(userSourceValue.includes('function leaderAcquisitionReport'),'leader acquisition report must be generated from live Armory state');
 assert(userSourceValue.includes('BUDGET-FUNDED BUY-NOW ESTIMATE'),'leader snapshot must expose a budget-funded estimate based on the same planning prices as Acquire');
-assert(userSourceValue.includes('CACHED LIVE RANGE'),'Acquire rows must expose live-source range only when live cached sources exist');
+assert(userSourceValue.includes('FRESH LIVE RANGE'),'Acquire rows must expose live-source range only when fresh cached sources exist');
 assert(userSourceValue.includes('PRICE EVIDENCE'),'Acquire rows must disclose whether the planning price is live-source or reference-only evidence');
 assert(userSourceValue.includes('#mce_0'),'Armory messaging must use the shared current Torn TinyMCE compose contract');
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'),'Armory must load the expanded logic contract');
