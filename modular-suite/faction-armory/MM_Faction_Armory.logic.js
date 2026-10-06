@@ -423,7 +423,13 @@
     return base;
   }
 
-  function readinessFloorScore(item,bias='balanced'){
+  function readinessScore(item){
+    // Readiness is objective: neutral expected output for weapons and raw armor for armor.
+    // Member battle style may rank qualifying alternatives, but must never move the pass/fail line.
+    return equipmentScore(item,'balanced');
+  }
+
+  function readinessFloorScore(item,_bias='balanced'){
     const enriched=enrichCatalogItem(item)||{};
     const slot=equipmentSlot(enriched);
     if(['helmet','body','gloves','pants','boots'].includes(slot)){
@@ -432,10 +438,7 @@
     const damage=n(enriched.baselineDamage)||n(enriched.damage);
     const accuracy=n(enriched.baselineAccuracy)||n(enriched.accuracy);
     if(!damage||!accuracy)return 0;
-    const base=damage*(accuracy/100);
-    if(bias==='accuracy')return base*(1+Math.max(-0.10,Math.min(0.10,(accuracy-57.5)/100)));
-    if(bias==='damage')return base*(1+Math.max(-0.10,Math.min(0.10,(damage-62.5)/100)));
-    return base;
+    return damage*(accuracy/100);
   }
 
   function generalCandidates(slot,{includePremium=false}={}){
@@ -451,7 +454,7 @@
       .filter(item=>item.slot===slot)
       .map(item=>{
         const score=equipmentScore(item,need);
-        const minimumScore=readinessFloorScore(item,need);
+        const minimumScore=readinessFloorScore(item);
         const floorDeltaPct=threshold>0?((minimumScore-threshold)/threshold)*100:0;
         return {
           ...clone(item),
@@ -625,7 +628,7 @@
       const premiumOption=premiumOptionForSlot(slot,bp);
       targets[slot]=target;
       premium[slot]=premiumOption;
-      floors[slot]={score:target?readinessFloorScore(target,bp.offensiveNeed):0};
+      floors[slot]={score:target?readinessFloorScore(target):0};
     }
     return {
       priority:readinessPriority({...memberRow,statProfile:bp},rosterRows),
@@ -637,7 +640,7 @@
       targets,
       premium,
       procurementMode,
-      methodology:'Objective generally-available '+procurementMode+' baseline; member-owned gear and faction inventory affect route only, not readiness.'
+      methodology:'Objective generally-available '+procurementMode+' baseline; neutral gear performance determines readiness, while member style ranks qualifying alternatives. Member-owned gear and faction inventory affect route only.'
     };
   }
 
@@ -679,18 +682,22 @@
       const currentItem=current[slot]||null;
       const target=standard.targets[slot]||null;
       const premium=standard.premium[slot]||null;
-      const floor=target?readinessFloorScore(target,profile.offensiveNeed):0;
-      const currentScore=currentItem?equipmentScore(currentItem,profile.offensiveNeed):0;
+      const floor=target?readinessFloorScore(target):0;
+      const currentScore=currentItem?readinessScore(currentItem):0;
       const recommendationOptions=equipmentOptionsForSlot(slot,profile,floor);
       const ownedOptions=(owned[slot]||[]).map(item=>({
-        ...item,score:equipmentScore(item,profile.offensiveNeed)
-      })).filter(item=>item.score>=floor&&item.score>0).sort((a,b)=>b.score-a.score);
+        ...item,
+        score:equipmentScore(item,profile.offensiveNeed),
+        readinessScore:readinessScore(item)
+      })).filter(item=>item.readinessScore>=floor&&item.readinessScore>0).sort((a,b)=>b.score-a.score);
       const ownedOption=ownedOptions[0]||null;
       const assignedLoan=assignedLoans[slot]||null;
-      const assignedLoanScore=assignedLoan?equipmentScore(assignedLoan,profile.offensiveNeed):0;
+      const assignedLoanScore=assignedLoan?readinessScore(assignedLoan):0;
       const factionOptions=(faction[slot]||[]).map(item=>({
-        ...item,score:equipmentScore(item,profile.offensiveNeed)
-      })).filter(item=>item.score>=floor&&item.score>0).sort((a,b)=>
+        ...item,
+        score:equipmentScore(item,profile.offensiveNeed),
+        readinessScore:readinessScore(item)
+      })).filter(item=>item.readinessScore>=floor&&item.readinessScore>0).sort((a,b)=>
         (n(a.marketValue)||Number.MAX_SAFE_INTEGER)-(n(b.marketValue)||Number.MAX_SAFE_INTEGER) ||
         a.score-b.score
       );
@@ -841,9 +848,9 @@
     };
 
     function allocateFaction(slot,target,bias){
-      const floor=target?readinessFloorScore(target,bias):0;
+      const floor=target?readinessFloorScore(target):0;
       const candidates=(poolState[slot]||[])
-        .filter(item=>item.remaining>0&&equipmentScore(item,bias)>=floor)
+        .filter(item=>item.remaining>0&&readinessScore(item)>=floor)
         .sort((a,b)=>
           (n(a.marketValue)||Number.MAX_SAFE_INTEGER)-(n(b.marketValue)||Number.MAX_SAFE_INTEGER) ||
           equipmentScore(a,bias)-equipmentScore(b,bias)
@@ -1565,6 +1572,7 @@
     equipmentStatProfile,
     equipmentScore,
     equipmentValueMetrics,
+    readinessScore,
     readinessFloorScore,
     estimateBalancedBattleStats,
     generalCandidates,
