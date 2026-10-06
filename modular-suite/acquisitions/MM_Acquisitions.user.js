@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.31
+// @version      8.0.0-alpha.32
 // @description  Pricelist procurement and ranked-weapon investment assistant with direct Bazaar, Item Market, auction and travel routing; final actions remain manual.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -9,7 +9,7 @@
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@3957e080066298ab168b4288e71dda58049dd791/modular-suite/acquisitions/MM_Acquisitions.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@81072278d4201b7cc54d42144441c1edf459c37b/modular-suite/acquisitions/MM_Acquisitions.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@3b033e03b26faf17466fed7122adcb9c34077a0b/modular-suite/acquisitions/MM_Acquisitions.live.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@7439f1289a0ac281515e2954b6c2a349d2aa6815/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6c2ababdb06ee105191e74126c457ac3b7fea53f/modular-suite/acquisitions/MM_Acquisitions.torn-intel.js
@@ -1322,6 +1322,9 @@
     const marketplace=state?.marketIntel?.marketplace||{};
     const snapshots=state?.procurement?.marketSnapshots||{};
     const travelRows=Array.isArray(state?.travelIntel?.rows)?state.travelIntel.rows:[];
+    const travelEvidenceAt=String(state?.travelIntel?.sourceUpdatedAt||state?.travelIntel?.lastSyncAt||'');
+    const travelEvidenceMs=Date.parse(travelEvidenceAt)||0;
+    const travelFresh=Boolean(travelEvidenceMs&&Date.now()-travelEvidenceMs<=TRAVEL_STALE_MS);
     const rankedById=new Map((logic?.rankPricelistUniverse?.(state)||[]).map(row=>[String(row.id),row]));
     const q=String(pricelistQuery||'').trim().toLowerCase();
     const rows=[];
@@ -1335,14 +1338,17 @@
       const name=String(target?.name||market?.itemName||cat?.name||('Item '+id));
       const targetBuy=Math.max(0,Number(target?.buyPrice||0));
       if(!(targetBuy>0))continue;
-      const bazaarPrice=Math.max(0,Number(market?.lowestPrice||0));
-      const itemMarketPrice=Math.max(0,Number(snap?.itemMarket?.lowest||0));
+      const rawBazaarPrice=Math.max(0,Number(market?.lowestPrice||0));
+      const rawItemMarketPrice=Math.max(0,Number(snap?.itemMarket?.lowest||0));
+      const bazaarPrice=Math.max(0,Number(model?.bazaarLivePrice||0));
+      const itemMarketPrice=Math.max(0,Number(model?.itemMarketLivePrice||0));
       const travelMatches=travelRows.filter(row=>Number(row?.stock||0)>0&&(
         String(row?.itemId||'')===id||
         String(row?.itemName||'').trim().toLowerCase()===name.trim().toLowerCase()
       ));
-      const travel=travelMatches.slice().sort((a,b)=>(Number(a?.shopCost||0)||Number.MAX_SAFE_INTEGER)-(Number(b?.shopCost||0)||Number.MAX_SAFE_INTEGER))[0]||null;
-      const travelPrice=Math.max(0,Number(travel?.shopCost||0));
+      const travel=travelMatches.slice().sort((a,b)=>(Number(a?.shopCost||0)||Number.MAX_SAFE_INTEGER)-(Number(b?.shopCost)||Number.MAX_SAFE_INTEGER))[0]||null;
+      const rawTravelPrice=Math.max(0,Number(travel?.shopCost||0));
+      const travelPrice=travelFresh?rawTravelPrice:0;
       const sources=[
         {source:'Bazaar',price:bazaarPrice},
         {source:'Item Market',price:itemMarketPrice},
@@ -1356,17 +1362,22 @@
       const profit=currentPrice>0&&exit>0?exit-currentPrice:0;
       const roiPct=currentPrice>0&&exit>0?profit/currentPrice*100:0;
       const status=currentPrice<=0?'unpriced':underRate?'within':'above';
+      const staleSources=[];
+      if(rawBazaarPrice>0&&!bazaarPrice)staleSources.push({source:'Bazaar',price:rawBazaarPrice});
+      if(rawItemMarketPrice>0&&!itemMarketPrice)staleSources.push({source:'Item Market',price:rawItemMarketPrice});
+      if(rawTravelPrice>0&&!travelPrice)staleSources.push({source:'Travel',price:rawTravelPrice});
       if(q&&!name.toLowerCase().includes(q)&&id!==q)continue;
       if(pricelistStatus!=='all'&&status!==pricelistStatus)continue;
       rows.push({
         id,name,type:String(cat?.type||model?.itemType||''),
         targetBuy,bazaarPrice,itemMarketPrice,travelPrice,
-        travelCountry:String(travel?.country||''),travelStock:Math.max(0,Number(travel?.stock||0)),
+        rawBazaarPrice,rawItemMarketPrice,rawTravelPrice,staleSources,
+        travelCountry:String(travel?.country||''),travelStock:travelPrice>0?Math.max(0,Number(travel?.stock||0)):0,
         cheapestSource:String(cheapest?.source||''),currentPrice,savings,underRate,status,
         estimatedResale:exit,estimatedProfit:profit,roiPct,
         bazaarUpdatedAt:String(state?.marketIntel?.marketplaceGeneratedAt||''),
         itemMarketUpdatedAt:String(snap?.fetchedAt||''),
-        travelUpdatedAt:String(state?.travelIntel?.lastSyncAt||'')
+        travelUpdatedAt:travelEvidenceAt
       });
     }
     rows.sort((a,b)=>{
@@ -1438,7 +1449,7 @@
           '<button id="mm-acq-pricelist-market-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Market Prices</button>'+
         '</div>'+
       '</div>'+
-      '<div style="font-size:10px;color:#888;margin-top:5px;">'+allItems.toLocaleString()+' priced items · source '+esc(sourceName)+' · updated '+esc(age(state?.procurement?.pricelist?.lastSyncAt||''))+' · '+withinCount.toLocaleString()+' currently at/under buy rate in this filtered view.</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:5px;">'+allItems.toLocaleString()+' priced items · source '+esc(sourceName)+' · updated '+esc(age(state?.procurement?.pricelist?.lastSyncAt||''))+' · '+withinCount.toLocaleString()+' at/under buy rate on fresh-enough cached source evidence in this filtered view.</div>'+
       '<div style="display:grid;grid-template-columns:minmax(160px,1fr) minmax(130px,.7fr) minmax(130px,.7fr) auto;gap:5px;margin-top:8px;">'+
         '<input id="mm-acq-pl-query" value="'+esc(pricelistQuery)+'" placeholder="Item name or ID" style="'+inputCss()+'width:100%;">'+
         '<select id="mm-acq-pl-status" style="'+inputCss()+'width:100%;">'+
@@ -1451,7 +1462,7 @@
           '<option value="savings"'+(pricelistSort==='savings'?' selected':'')+'>Best savings first</option>'+
           '<option value="name"'+(pricelistSort==='name'?' selected':'')+'>Name A-Z</option>'+
           '<option value="buy-rate"'+(pricelistSort==='buy-rate'?' selected':'')+'>Highest buy rate</option>'+
-          '<option value="price"'+(pricelistSort==='price'?' selected':'')+'>Lowest current price</option>'+
+          '<option value="price"'+(pricelistSort==='price'?' selected':'')+'>Lowest fresh cached price</option>'+
         '</select>'+
         '<button id="mm-acq-pl-filter" style="'+button()+'">Apply</button>'+
       '</div>'
@@ -1466,19 +1477,26 @@
         const statusLabel=row.status==='within'?'AT / UNDER BUY RATE':row.status==='above'?'ABOVE BUY RATE':'CHECK PRICE';
         const statusColor=row.status==='within'?'#9fe3a8':row.status==='above'?'#ffb3b3':'#ffd18a';
         const sourceBits=[
-          row.bazaarPrice>0?'Bazaar '+money(row.bazaarPrice):'Bazaar —',
-          row.itemMarketPrice>0?'Item Market '+money(row.itemMarketPrice):'Item Market —',
-          row.travelPrice>0?('Travel '+money(row.travelPrice)+(row.travelCountry?' · '+row.travelCountry:'')):'Travel —'
+          row.bazaarPrice>0
+            ?'Bazaar '+money(row.bazaarPrice)
+            :row.rawBazaarPrice>0?'Bazaar '+money(row.rawBazaarPrice)+' (stale ignored)':'Bazaar —',
+          row.itemMarketPrice>0
+            ?'Item Market '+money(row.itemMarketPrice)
+            :row.rawItemMarketPrice>0?'Item Market '+money(row.rawItemMarketPrice)+' (stale ignored)':'Item Market —',
+          row.travelPrice>0
+            ?('Travel '+money(row.travelPrice)+(row.travelCountry?' · '+row.travelCountry:''))
+            :row.rawTravelPrice>0?'Travel '+money(row.rawTravelPrice)+' (stale ignored)':'Travel —'
         ];
         return '<div style="border-top:1px solid #303030;padding:9px 0;font-size:11px;">'+
           '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
             '<div style="min-width:0;flex:1 1 360px;">'+
               '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;"><b>'+esc(row.name)+'</b> <span style="color:#777;">['+esc(row.id)+']</span><b style="font-size:10px;color:'+statusColor+';">'+statusLabel+'</b></div>'+
               '<div style="margin-top:4px;">Pricelist buy rate <b>'+money(row.targetBuy)+'</b>'+
-                (row.currentPrice>0?' · Cheapest now <b>'+esc(row.cheapestSource)+' '+money(row.currentPrice)+'</b>':' · Current price needs a live check')+
+                (row.currentPrice>0?' · Best fresh cache <b>'+esc(row.cheapestSource)+' '+money(row.currentPrice)+'</b>':' · No fresh-enough cached buy price')+
                 (row.currentPrice>0?' · Difference <b style="color:'+statusColor+';">'+(row.savings>=0?'-':'+')+money(Math.abs(row.savings))+' vs buy rate</b>':'')+
               '</div>'+
               '<div style="color:#aaa;margin-top:3px;">'+esc(sourceBits.join(' · '))+'</div>'+
+              '<div style="font-size:10px;color:#777;margin-top:3px;">Cached prices are screening evidence only. Check Prices re-verifies the source before routing; final purchase remains manual.</div>'+
               (row.estimatedResale>0&&row.currentPrice>0?'<div style="color:#aaa;margin-top:3px;">Estimated resale <b>'+money(row.estimatedResale)+'</b> · estimated profit <b style="color:'+(row.estimatedProfit>=0?'#9fe3a8':'#ffaaaa')+';">'+(row.estimatedProfit>=0?'+':'-')+money(Math.abs(row.estimatedProfit))+'</b> · ROI <b>'+Number(row.roiPct||0).toFixed(1)+'%</b></div>':'')+
             '</div>'+
             '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
@@ -2192,7 +2210,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.31 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.32 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
