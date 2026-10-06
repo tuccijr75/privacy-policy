@@ -134,8 +134,8 @@ assert(logic&&rankedLogic,'Acquisitions logic modules must load after Market Pul
   const db={
     businessRules:{minRoiPct:0,minDemandPerDay:0,minPrice:1,maxPrice:10000,minAbsoluteProfit:1,minSellerCount:1,minConfidencePct:0,maxListingAgeSec:300},
     marketIntel:{marketplaceGeneratedAt:nowIso,settings:{bazaarExitHaircutPct:0},marketplace:{
-      '1':{itemId:'1',itemName:'High Margin Slow',marketPrice:1264,bazaarAverage:0,lowestPrice:1000,totalBazaars:3},
-      '2':{itemId:'2',itemName:'Lower Margin Fast',marketPrice:1179,bazaarAverage:0,lowestPrice:1000,totalBazaars:3}
+      '1':{itemId:'1',itemName:'High Margin Slow',marketPrice:1264,bazaarAverage:1264,lowestPrice:1000,totalBazaars:3},
+      '2':{itemId:'2',itemName:'Lower Margin Fast',marketPrice:1179,bazaarAverage:1179,lowestPrice:1000,totalBazaars:3}
     },details:{},traders:{},history:{},marketPulse:{items:{}}},
     procurement:{catalog:{'1':{name:'High Margin Slow'},'2':{name:'Lower Margin Fast'}},marketSnapshots:{
       '1':{fetchedAt:nowIso,itemMarket:{lowest:1000,median:1264,third:1264,listings:3,totalQty:3,depth1Pct:1},bazaar:{}},
