@@ -741,6 +741,8 @@
       let route='ACQUIRE';
       let ready=false;
       let suggested=target;
+      const equipmentDecision=memberRow?.profile?.equipmentDecisions?.[slot]&&typeof memberRow.profile.equipmentDecisions[slot]==='object'
+        ? memberRow.profile.equipmentDecisions[slot]:null;
 
       if(currentItem&&currentScore>0&&(!floor||currentScore>=floor)){
         decision='WAR READY — KEEP';
@@ -771,6 +773,38 @@
         decision='REVIEW';
         route='REVIEW';
         suggested=currentItem;
+      }
+
+      if(equipmentDecision?.action==='accept-current'&&currentItem){
+        decision='LEADERSHIP ACCEPTED — KEEP';
+        route='KEEP';
+        ready=true;
+        suggested=currentItem;
+      }else if(equipmentDecision?.action==='replacement'&&String(equipmentDecision?.itemName||'').trim()){
+        const replacementName=String(equipmentDecision.itemName).trim();
+        const replacement=enrichCatalogItem({
+          name:replacementName,
+          slot,
+          source:'Leadership manual replacement'
+        })||{name:replacementName,slot,source:'Leadership manual replacement'};
+        const ownedMatch=(owned[slot]||[]).find(item=>String(item?.name||'').trim().toLowerCase()===replacementName.toLowerCase())||null;
+        const loanMatch=assignedLoan&&String(assignedLoan?.name||'').trim().toLowerCase()===replacementName.toLowerCase()?assignedLoan:null;
+        const factionMatch=(faction[slot]||[]).find(item=>String(item?.name||'').trim().toLowerCase()===replacementName.toLowerCase()&&n(item.availableCount)>0)||null;
+        suggested=ownedMatch||loanMatch||factionMatch||replacement;
+        if(ownedMatch){
+          decision='LEADERSHIP REPLACEMENT — OWNED / EQUIP';
+          route='OWNED';
+        }else if(loanMatch){
+          decision='LEADERSHIP REPLACEMENT — LOANED / VERIFY';
+          route='LOANED';
+        }else if(factionMatch){
+          decision='LEADERSHIP REPLACEMENT — BORROW FROM VAULT';
+          route='ISSUE';
+        }else{
+          decision='LEADERSHIP REPLACEMENT — ACQUIRE';
+          route='ACQUIRE';
+        }
+        ready=false;
       }
 
       const currentMarketValue=n(currentItem?.marketValue);
@@ -821,7 +855,13 @@
         recommendationOptions,
         currentItem:clone(currentItem),
         targetItem:clone(target),
-        suggestedItem:clone(suggested)
+        suggestedItem:clone(suggested),
+        equipmentDecision:clone(equipmentDecision),
+        manualDecisionActive:Boolean(equipmentDecision?.action),
+        manualDecisionAction:String(equipmentDecision?.action||''),
+        manualDecisionItemName:String(equipmentDecision?.itemName||''),
+        manualDecisionReason:String(equipmentDecision?.reason||''),
+        manualDecisionUpdatedAt:String(equipmentDecision?.updatedAt||'')
       });
     }
 
