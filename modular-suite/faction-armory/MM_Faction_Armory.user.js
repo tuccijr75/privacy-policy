@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.3
+// @version      8.0.0-alpha.24.4
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.3';
+  const VERSION='8.0.0-alpha.24.4';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -36,6 +36,7 @@
   const PUBLIC_INTEL_MAX_AGE_MS=24*60*60*1000;
   const ARMORY_COMPOSE_KEY='mm_faction_armory_compose_v1';
   const REMINDER_SENT_KEY='mm_faction_armory_reminder_sent_v1';
+  const MEMBER_MESSAGE_LOG_KEY='mm_faction_armory_member_message_log_v1';
   const ARMORY_COMPOSE_TTL_MS=2*60*1000;
   const ARMORY_SEND_CONFIRM_MS=15*1000;
 
@@ -964,18 +965,76 @@
     return raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
   }
 
-  function reminderSent(memberId){
-    return Boolean(reminderSentMap()[asId(memberId)]?.sentAt);
+  function memberMessageLogMap(){
+    const raw=GM_getValue(MEMBER_MESSAGE_LOG_KEY,{});
+    return raw&&typeof raw==='object'&&!Array.isArray(raw)?raw:{};
   }
 
-  function recordReminderSent(memberId,memberName){
+  function memberMessageStatus(memberId,kind='member-build'){
     const id=asId(memberId);
+    const entry=memberMessageLogMap()[id];
+    const row=entry?.kinds?.[String(kind||'member-build')];
+    if(row?.sentAt)return {
+      sent:true,
+      sentAt:String(row.sentAt),
+      count:Math.max(1,Number(row.count)||1),
+      subject:String(row.subject||'')
+    };
+    if(kind==='member-data-reminder'){
+      const legacy=reminderSentMap()[id];
+      if(legacy?.sentAt)return {sent:true,sentAt:String(legacy.sentAt),count:1,subject:'Faction readiness information needed'};
+    }
+    return {sent:false,sentAt:'',count:0,subject:''};
+  }
+
+  function memberAnyMessageStatus(memberId){
+    const id=asId(memberId);
+    const entry=memberMessageLogMap()[id];
+    const rows=entry?.kinds&&typeof entry.kinds==='object'?Object.values(entry.kinds):[];
+    const confirmed=rows.filter(row=>row?.sentAt).sort((a,b)=>(Date.parse(b.sentAt)||0)-(Date.parse(a.sentAt)||0));
+    if(confirmed.length)return {
+      sent:true,
+      sentAt:String(confirmed[0].sentAt),
+      count:confirmed.reduce((sum,row)=>sum+Math.max(1,Number(row.count)||1),0)
+    };
+    const legacy=reminderSentMap()[id];
+    return legacy?.sentAt?{sent:true,sentAt:String(legacy.sentAt),count:1}:{sent:false,sentAt:'',count:0};
+  }
+
+  function recordConfirmedMemberMessage(payload){
+    const id=asId(payload?.memberId||payload?.playerId);
     if(!id)return;
-    const map=reminderSentMap();
-    map[id]={memberId:id,memberName:String(memberName||id),sentAt:new Date().toISOString()};
-    GM_setValue(REMINDER_SENT_KEY,map);
+    const at=new Date().toISOString();
+    const kind=String(payload?.kind||'generic');
+    const map=memberMessageLogMap();
+    const prior=map[id]&&typeof map[id]==='object'?map[id]:{memberId:id,kinds:{}};
+    prior.memberId=id;
+    prior.memberName=String(payload?.playerName||prior.memberName||id);
+    prior.kinds=prior.kinds&&typeof prior.kinds==='object'?prior.kinds:{};
+    const previous=prior.kinds[kind]&&typeof prior.kinds[kind]==='object'?prior.kinds[kind]:{};
+    prior.kinds[kind]={
+      kind,
+      sentAt:at,
+      count:Math.max(0,Number(previous.count)||0)+1,
+      subject:String(payload?.subject||previous.subject||'')
+    };
+    prior.lastSentAt=at;
+    prior.lastKind=kind;
+    map[id]=prior;
+    GM_setValue(MEMBER_MESSAGE_LOG_KEY,map);
+
+    if(kind==='member-data-reminder'){
+      const reminders=reminderSentMap();
+      reminders[id]={memberId:id,memberName:prior.memberName,sentAt:at};
+      GM_setValue(REMINDER_SENT_KEY,reminders);
+    }
+
     const root=document.getElementById(ROOT_ID);
     if(root&&root.style.display!=='none')render();
+  }
+
+  function reminderSent(memberId){
+    return memberMessageStatus(memberId,'member-data-reminder').sent;
   }
 
   function readinessReminderMessage(row){
@@ -992,7 +1051,10 @@
       '',
       'A Limited Access API key is read-only. It cannot log in as you, spend money, sell/move items, attack, or change your account settings.',
       '',
-      'Thanks — this is only for faction readiness and equipment planning.'
+      'Thanks — this is only for faction readiness and equipment planning.',
+      '',
+      '— Manic Mike',
+      'Inventory Manager'
     ].join('\n');
   }
 
@@ -1135,7 +1197,7 @@
       const transcriptConfirmed=Boolean(fingerprint&&armoryDeliveryFingerprintCount(fingerprint)>baselineCount);
 
       if(successText||transcriptConfirmed){
-        if(payload.kind==='member-data-reminder')recordReminderSent(payload.memberId,payload.playerName);
+        if(payload.memberId)recordConfirmedMemberMessage(payload);
         GM_deleteValue(ARMORY_COMPOSE_KEY);
         return;
       }
@@ -1458,9 +1520,12 @@
       const entry=vault?.entries?.[row.memberId];
       const statusClass=readinessStatusClass(row.readinessStatus);
       const med=row.profile?.supplyReadiness?.medical||{};
+      const buildMessage=memberMessageStatus(row.memberId,'member-build');
+      const dataReminder=memberMessageStatus(row.memberId,'member-data-reminder');
+      const anyMessage=memberAnyMessageStatus(row.memberId);
       return '<details class="mm-fa-build-member">'+
         '<summary>'+
-          '<span class="mm-fa-build-summary-main"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(row.manualOverrideActive?'<span class="mm-fa-pill mm-fa-warn">MANUAL OVERRIDE</span>':'')+(row.procurementPassCurrent?'<span class="mm-fa-pill mm-fa-good">PROCUREMENT PASS</span>':'')+(row.procurementPassStale?'<span class="mm-fa-pill mm-fa-warn">PASS NEEDS REVIEW</span>':'')+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</span>'+
+          '<span class="mm-fa-build-summary-main"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(anyMessage.sent?'<span class="mm-fa-pill mm-fa-good">MSG SENT</span>':'<span class="mm-fa-pill mm-fa-warn">NO MSG SENT</span>')+(row.manualOverrideActive?'<span class="mm-fa-pill mm-fa-warn">MANUAL OVERRIDE</span>':'')+(row.procurementPassCurrent?'<span class="mm-fa-pill mm-fa-good">PROCUREMENT PASS</span>':'')+(row.procurementPassStale?'<span class="mm-fa-pill mm-fa-warn">PASS NEEDS REVIEW</span>':'')+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</span>'+
           '<span class="mm-fa-muted">'+(row.statsEstimated?'~'+fmt(row.statProfile.total)+' estimated stats':row.hasStats?fmt(row.statProfile.total)+' stats':'stats missing')+'</span>'+
         '</summary>'+
         '<div class="mm-fa-build-body">'+
@@ -1492,6 +1557,8 @@
             (row.manualOverrideActive?tile('DATA OVERRIDE',when(row.manualOverrideUpdatedAt)+(row.manualOverrideReason?' · '+row.manualOverrideReason:''),{wide:true}):'')+
             (row.procurementPassAt?tile('PASS',when(row.procurementPassAt)+(row.procurementPassReason?' · '+row.procurementPassReason:''),{wide:true}):'')+
             tile('LOANS',row.loans?row.loans+' units':'—')+
+            tile('BUILD MSG',buildMessage.sent?'SENT '+when(buildMessage.sentAt)+' · x'+buildMessage.count:'NOT SENT',{cls:buildMessage.sent?'mm-fa-good':'mm-fa-warn',wide:true})+
+            tile('DATA REQUEST',dataReminder.sent?'SENT '+when(dataReminder.sentAt):'NOT SENT',{cls:dataReminder.sent?'mm-fa-good':'',wide:true})+
             (source?tile('SOURCE',(row.manualOverrideActive?'MANUAL OVERRIDE over ':'')+source+' · '+when(row.profile?.verifiedAt),{wide:true}):tile('SOURCE',row.manualOverrideActive?'MANUAL OVERRIDE over no source profile':'No current profile',{wide:true}))+
           '</div>'+
           (entry?.lastError?'<div class="mm-fa-bad mm-fa-mini" style="margin-top:3px;">API error: '+esc(entry.lastError)+'</div>':'')+
@@ -1529,6 +1596,11 @@
     return String(item.route||item.decision||'REVIEW');
   }
 
+  function factionMessageRoute(item){
+    const route=quickBuildRoute(item);
+    return route==='ISSUE'?'BORROW FROM VAULT':route;
+  }
+
   function quickBuildActionItem(item){
     if(!item)return '';
     const route=quickBuildRoute(item);
@@ -1547,7 +1619,7 @@
     if(!row||!build)throw new Error('Build data is not available for this member.');
     const statPrefix=row.statsEstimated?'Estimated ':'';
     const lines=(build.items||[]).map(item=>{
-      const route=quickBuildRoute(item);
+      const route=factionMessageRoute(item);
       const actionItem=quickBuildActionItem(item);
       const current=String(item.currentName||'');
       return String(item.slot||'slot').toUpperCase()+': '+route+' · '+actionItem+
@@ -1563,14 +1635,13 @@
       '',
       'TARGET BUILD',
       ...(lines.length?lines:['No evidence-backed slot recommendation is available yet.']),
+      ...(row.statsEstimated?[
+        '',
+        'Your battle stats are currently estimated from public data. Send your actual readiness data before any final vault borrowing or purchase.'
+      ]:[]),
       '',
-      row.statsEstimated
-        ? 'Your battle stats are currently estimated from public data. Send your actual readiness data before any final equipment issue or purchase.'
-        : 'Known stronger personal equipment is kept. Unknown or special gear is marked REVIEW rather than replaced automatically.',
-      '',
-      'Faction stock changes the route (ISSUE vs ACQUIRE); it does not lower the build standard.',
-      '',
-      '— Manic Mike'
+      '— Manic Mike',
+      'Inventory Manager'
     ].join('\n');
     openArmoryMessage({
       playerId:row.memberId,
@@ -1587,12 +1658,14 @@
     if(!rows.length)return card('No member roster is loaded.');
     const selected=quickBuildSelectedMember(rows);
     const build=selected?.buildAssessment||null;
-    const options=rows.map(row=>
-      '<option value="'+esc(row.memberId)+'" '+(asId(row.memberId)===asId(selected?.memberId)?'selected':'')+'>'+
+    const options=rows.map(row=>{
+      const sent=memberMessageStatus(row.memberId,'member-build');
+      return '<option value="'+esc(row.memberId)+'" '+(asId(row.memberId)===asId(selected?.memberId)?'selected':'')+'>'+
         esc(row.memberName)+' · Lv '+num(row.level)+' · '+
         (row.hasStats?(row.statsEstimated?'~':'')+fmt(row.statProfile?.total)+' stats':'stats missing')+
-      '</option>'
-    ).join('');
+        ' · '+(sent.sent?'MSG SENT':'MSG NOT SENT')+
+      '</option>';
+    }).join('');
     const slots=build?.items||[];
     const quickRows=slots.length?slots.map(item=>{
       const route=quickBuildRoute(item);
@@ -1608,6 +1681,7 @@
       '</div>';
     }).join(''):'<div class="mm-fa-muted">No build can be calculated until member stats are available.</div>';
     const s=selected?.stats||{};
+    const selectedBuildMessage=selected?memberMessageStatus(selected.memberId,'member-build'):{sent:false,sentAt:'',count:0};
     return '<div class="mm-fa-card mm-fa-compact">'+
       '<div class="mm-fa-module-head"><div><b>Quick Build</b> <span class="mm-fa-muted">select member → review target → message</span></div>'+
         '<div class="mm-fa-actions">'+
@@ -1625,6 +1699,7 @@
         tile('BUILD',build?.buildStyle||'UNKNOWN',{wide:true})+
         tile('OFFENSE',build?.offensiveNeed||'balanced')+
         tile('DEFENSE',build?.defensiveStyle||'balanced')+
+        tile('BUILD MESSAGE',selectedBuildMessage.sent?'SENT '+when(selectedBuildMessage.sentAt)+' · x'+selectedBuildMessage.count:'NOT SENT',{cls:selectedBuildMessage.sent?'mm-fa-good':'mm-fa-warn',wide:true})+
       '</div>':'')+
       (selected?.statsEstimated?'<div class="mm-fa-warn mm-fa-mini" style="margin-top:5px;">Planning estimate only. Collect actual member battle stats before final equipment allocation.</div>':'')+
       '<div style="margin-top:5px;">'+quickRows+'</div>'+
@@ -2096,7 +2171,10 @@
     lines.push(
       '',
       'Price range uses currently cached reference / Item Market / Bazaar / overseas values. '+
-      'MM_Acquisitions should verify live availability and price before purchase.'
+      'MM_Acquisitions should verify live availability and price before purchase.',
+      '',
+      '— Manic Mike',
+      'Inventory Manager'
     );
     return lines.join('\n');
   }
