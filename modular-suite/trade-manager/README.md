@@ -80,3 +80,15 @@ No trade API requests run on ordinary Torn page load. Opening the panel reads sh
 - shared dock order decision during integrated workflow acceptance.
 
 No stable/customer publication is authorized by this foundation.
+
+## TornPDA
+
+TornPDA uses a self-contained `0.1.0-alpha.1-pda.1` bundle. The bundle:
+
+- uses lexical `PDA_storage` for durable shared state;
+- uses `PDA_httpGet` only as a thin GET fallback when the runtime does not provide `GM_xmlhttpRequest`;
+- keeps the injected PDA API key lexical and does not expose it on `globalThis`;
+- uses a PDA-safe launcher above native bottom chrome;
+- bundles an exact read-only snapshot of Inventory FIFO logic from immutable commit `4ef4197cb0fc19e4c29b5864dd4d003732d58deb`, matching the desktop dependency.
+
+The vendored FIFO file is a PDA packaging artifact, not a second mutable source of Inventory truth.
