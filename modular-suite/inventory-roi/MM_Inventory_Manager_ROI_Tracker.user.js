@@ -1,14 +1,12 @@
 // ==UserScript==
 // @name         MM_Inventory Manager/ROI Tracker
 // @namespace    manic-mike.torn.inventory-roi
-// @version      8.0.0-alpha.10
+// @version      8.0.0-alpha.11
 // @description  Connected Bazaar/inventory dashboard with sales velocity, FIFO ROI, Market Pulse context and restock readiness.
-// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js
-// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js
 // @match        https://www.torn.com/*
 // @run-at       document-idle
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.13
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js?v=8.0.0-alpha.1
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@4ef4197cb0fc19e4c29b5864dd4d003732d58deb/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -19,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.10';
+  const VERSION='8.0.0-alpha.11';
   const ROOT_ID='mm-inventory-roi';
   const LAUNCHER_ID='mm-inventory-roi-launcher';
   const STYLE_ID='mm-inventory-roi-style';
@@ -37,6 +35,11 @@
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornInventoryRoiLogic;
+
+  async function readSharedState(){
+    if(core?.ensureSharedState)return core.ensureSharedState();
+    return core.readLegacyState();
+  }
   if(!core||!logic){
     console.error('[MM Inventory Manager/ROI Tracker] Core/logic dependency missing.');
     return;
@@ -181,7 +184,7 @@
   }
 
   async function reloadState(){
-    state=await core.readLegacyState();
+    state=await readSharedState();
     render();
   }
 
@@ -191,11 +194,11 @@
       const out=mutator(draft);
       return out===undefined?draft:out;
     });
-    state=await core.readLegacyState();
+    state=await readSharedState();
   }
 
   async function syncRestockDemand(){
-    const snapshot=await core.readLegacyState();
+    const snapshot=await readSharedState();
     logic.ensureInventorySlice(snapshot);
     const rows=logic.restockDemandRows(snapshot);
     let outcome={changed:false,count:rows.length};
@@ -203,13 +206,13 @@
       outcome=logic.replaceRestockDemand(draft,rows,Date.now());
       return draft;
     });
-    if(outcome.changed)state=await core.readLegacyState();
+    if(outcome.changed)state=await readSharedState();
     return outcome;
   }
 
   async function refreshSales({backfill=false}={}){
     if(!apiKey())throw new Error('Save a Torn API key in Settings first.');
-    if(!state)state=await core.readLegacyState();
+    if(!state)state=await readSharedState();
     const bm=state?.operations?.inventoryRoi||{};
     const needsBackfill=backfill||!bm.salesBackfillCompleteAt;
     const lookback=needsBackfill?SALES_BACKFILL_MS:SALES_LOOKBACK_MS;
@@ -260,7 +263,7 @@
 
   async function autoRefreshInventory({force=false}={}){
     if(autoSyncRunning||!apiKey())return null;
-    if(!state)state=await core.readLegacyState();
+    if(!state)state=await readSharedState();
     const bm=state?.operations?.inventoryRoi||{},now=Date.now();
     const salesAt=Date.parse(bm.lastSalesAt||'')||0;
     const shopAt=Date.parse(bm.lastShopRefresh?.at||bm.lastBazaarAt||'')||0;
