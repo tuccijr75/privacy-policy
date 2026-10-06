@@ -1,7 +1,9 @@
 'use strict';
-require('./MM_Acquisitions.torn-intel.js');
-const ti=globalThis.MMTornRestockIntel;
-if(!ti)throw new Error('MMTornRestockIntel unavailable.');
+const fs=require('fs');const vm=require('vm');const assert=require('assert');
+const sandbox={globalThis:{}};vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(__dirname+'/MM_Acquisitions.torn-intel.js','utf8'),sandbox,{filename:'MM_Acquisitions.torn-intel.js'});
+const ti=sandbox.globalThis.MMTornRestockIntel;
+assert(ti,'MMTornRestockIntel unavailable.');
 
 const table={
   stocks:{
