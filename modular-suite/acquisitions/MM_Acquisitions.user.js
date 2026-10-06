@@ -361,19 +361,41 @@
     setTimeout(capture,700);
   }
 
-  function gmJson(url){
+  function responseHeaders(raw){
+    const out={};
+    String(raw||'').split(/\r?\n/).forEach(line=>{
+      const index=line.indexOf(':');
+      if(index>0)out[line.slice(0,index).trim().toLowerCase()]=line.slice(index+1).trim();
+    });
+    return out;
+  }
+
+  function gmJsonResponse(url,{headers={}}={}){
     return new Promise((resolve,reject)=>{
+      const started=Date.now();
       GM_xmlhttpRequest({
-        method:'GET',url,timeout:20000,headers:{Accept:'application/json'},
+        method:'GET',url,timeout:20000,headers:{Accept:'application/json',...headers},
         onload:r=>{
-          if(r.status<200||r.status>=300)return reject(new Error('HTTP '+r.status));
           let data;
-          try{data=JSON.parse(r.responseText);}catch{return reject(new Error('Invalid JSON response.'));}
-          if(data?.error){
-            const msg=data.error?.error||data.error?.message||data.error||'API error';
-            return reject(new Error(String(msg)));
+          try{data=JSON.parse(String(r.responseText||''));}
+          catch{return reject(new Error('Invalid JSON response (HTTP '+Number(r.status||0)+').'));}
+          if(r.status<200||r.status>=300){
+            const msg=data?.resolution||data?.message||data?.error?.message||data?.error||('HTTP '+r.status);
+            const error=new Error(String(msg));
+            error.status=Number(r.status||0);
+            error.code=String(data?.code||'');
+            return reject(error);
           }
-          resolve(data);
+          if(data?.error&&typeof data.error!=='object'){
+            return reject(new Error(String(data.error)));
+          }
+          resolve({
+            data,
+            status:Number(r.status||0),
+            headers:responseHeaders(r.responseHeaders),
+            fetchedAt:Date.now(),
+            elapsedMs:Date.now()-started
+          });
         },
         ontimeout:()=>reject(new Error('Request timed out.')),
         onerror:error=>{
@@ -382,6 +404,11 @@
         }
       });
     });
+  }
+
+  async function gmJson(url,options={}){
+    const response=await gmJsonResponse(url,options);
+    return response.data;
   }
 
   function weavRequest(path,params={}){
