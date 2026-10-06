@@ -2138,6 +2138,9 @@
       statusText='Travel import failed: '+(error?.message||String(error));
       render();
     }));
+    root.querySelectorAll('[data-restock-eta]').forEach(b=>b.addEventListener('click',()=>runRestockEta(
+      b.dataset.restockCountry||'',b.dataset.restockId||'',b.dataset.restockName||''
+    )));
     root.querySelectorAll('[data-acquire-item]').forEach(b=>b.addEventListener('click',()=>acquire(b.dataset.acquireItem)));
     root.querySelectorAll('[data-pricelist-verify]').forEach(b=>b.addEventListener('click',()=>{
       const item=catalogRows().find(row=>row.id===String(b.dataset.pricelistVerify||''));
@@ -2201,6 +2204,28 @@
     root.querySelectorAll('[data-item-route]').forEach(b=>b.addEventListener('click',()=>routeCatalogItem(b.dataset.itemRoute||'Best')));
     root.querySelectorAll('[data-item-alt-source]').forEach(b=>b.addEventListener('click',()=>routeCatalogItem(b.dataset.itemAltSource||'Best')));
     root.querySelectorAll('[data-item-travel]').forEach(b=>b.addEventListener('click',()=>{location.href='https://www.torn.com/travelagency.php';}));
+    root.querySelector('#mm-acq-ti-save')?.addEventListener('click',()=>{
+      const value=String(root.querySelector('#mm-acq-ti-key')?.value||'').trim();
+      if(value)GM_setValue(TORN_INTEL_KEY,value);
+      statusText=value?'Torn Intel client key saved for on-demand Restock ETA history.':'Enter a Torn Intel client key to save.';
+      render();
+    });
+    root.querySelector('#mm-acq-ti-clear')?.addEventListener('click',()=>{
+      GM_deleteValue(TORN_INTEL_KEY);
+      GM_deleteValue(TORN_INTEL_LAST_KEYED_AT);
+      statusText='Torn Intel client key cleared. Live stock refresh can still use the anonymous browser lane.';
+      render();
+    });
+    root.querySelector('#mm-acq-ti-test-live')?.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Testing Torn Intel live foreign stock…';render();
+      try{
+        const result=await refreshTornIntelTravel({silent:true});
+        statusText='Torn Intel live stock PASS: '+Number(result?.rows?.length||0)+' item/country rows imported.';
+      }catch(error){
+        statusText='Torn Intel live stock failed: '+(error?.message||String(error));
+      }finally{busy=false;render();}
+    });
     root.querySelector('#mm-acq-save-key')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-acq-api')?.value||'').trim();
       if(value)GM_setValue(API_KEY,value);
