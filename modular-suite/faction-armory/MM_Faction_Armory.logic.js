@@ -9,6 +9,12 @@
   const STANDARD_SLOTS=Object.freeze([
     'primary','secondary','melee','helmet','body','gloves','pants','boots'
   ]);
+  // Torn /user/equipment exposes an authoritative numeric equipment slot. Preserve
+  // that signal so valid equipped gear does not depend on our curated name catalog.
+  const EQUIPMENT_SLOT_BY_NUMBER=Object.freeze({
+    1:'primary',2:'secondary',3:'melee',4:'body',5:'temporary',
+    6:'helmet',7:'pants',8:'boots',9:'gloves'
+  });
   const CRITICAL_MEDICAL=new Set([
     'First Aid Kit','Morphine','Small First Aid Kit','Ipecac Syrup','Empty Blood Bag'
   ]);
@@ -198,6 +204,9 @@
     ...ALTERNATIVE_EQUIPMENT_CATALOG
   ]);
   const CATALOG_BY_NAME=new Map(EQUIPMENT_OPTION_CATALOG.map(item=>[String(item.name).toLowerCase(),item]));
+  const CATALOG_NAME_ALIASES=new Map([
+    ['metal nunchaku','metal nunchakus']
+  ]);
 
 
   const asId=value=>String(value??'').trim();
@@ -216,7 +225,9 @@
   }
 
   function catalogItemByName(name){
-    return CATALOG_BY_NAME.get(String(name||'').trim().toLowerCase())||null;
+    const key=String(name||'').trim().toLowerCase();
+    const canonical=CATALOG_NAME_ALIASES.get(key)||key;
+    return CATALOG_BY_NAME.get(canonical)||null;
   }
 
   function weaponSlot(item){
@@ -238,6 +249,8 @@
   }
 
   function equipmentSlot(item){
+    const numericSlot=Number(item?.slotId??item?.slot_id??item?.slot);
+    if(Number.isInteger(numericSlot)&&EQUIPMENT_SLOT_BY_NUMBER[numericSlot])return EQUIPMENT_SLOT_BY_NUMBER[numericSlot];
     const catalog=catalogItemByName(item?.name);
     if(catalog)return catalog.slot;
     return armorSlot(item)||weaponSlot(item)||'';
@@ -844,7 +857,7 @@
       // War acquisition is member-readiness equipment only. Routine minimum-stock
       // replenishment is intentionally deferred until Peace mode.
       for(const member of selected){
-        if(member?.readinessStatus==='WAR READY')continue;
+        if(member?.readinessStatus==='WAR READY'||member?.procurementPassCurrent)continue;
         if(!member?.hasStats){
           for(const slot of STANDARD_SLOTS)unresolved.push({memberId:member.memberId,memberName:member.memberName,slot,current:'',reason:'Current battle stats are missing; acquisition deferred.'});
           continue;
@@ -916,12 +929,21 @@
       if(/Xanax/.test(row.item))return 90;
       return 100;
     };
-    const list=[...requirements.values()].map(row=>({
-      ...row,
-      reasons:[...row.reasons].join(' | '),
-      estimatedValue:row.marketValue?row.marketValue*row.qty:0,
-      priority:priorityFor(row)
-    })).sort((a,b)=>a.priority-b.priority||String(a.category).localeCompare(String(b.category))||String(a.item).localeCompare(String(b.item)));
+    const list=[...requirements.values()].map(row=>{
+      const systemQty=n(row.qty);
+      const override=acquisitionQuantityOverride(factionInventory,mode,procurementMode,row);
+      const qty=override.active?override.qty:systemQty;
+      return {
+        ...row,
+        systemQty,
+        qty,
+        quantityOverrideKey:override.key,
+        manualQtyOverride:override.active?qty:null,
+        reasons:[...row.reasons].join(' | '),
+        estimatedValue:row.marketValue?row.marketValue*qty:0,
+        priority:priorityFor(row)
+      };
+    }).sort((a,b)=>a.priority-b.priority||String(a.category).localeCompare(String(b.category))||String(a.item).localeCompare(String(b.item)));
 
     let remainingBudget=budgetCap;
     for(const row of list){
@@ -941,6 +963,11 @@
     return {
       mode,participants,procurementMode,budgetCap,remainingBudget,
       assignments,
+      skippedMembers:selected.filter(member=>member?.readinessStatus==='WAR READY'||member?.procurementPassCurrent).map(member=>({
+        memberId:member.memberId,
+        memberName:member.memberName,
+        reason:member.readinessStatus==='WAR READY'?'WAR READY':'PROCUREMENT PASS'
+      })),
       unresolved,
       unresolvedCount:unresolved.length,
       list,
@@ -951,6 +978,64 @@
       fundedEstimatedValue:list.reduce((sum,row)=>sum+n(row.fundedEstimatedValue),0),
       deferredEstimatedValue:list.reduce((sum,row)=>sum+n(row.estimatedValue)-n(row.fundedEstimatedValue),0)
     };
+  }
+
+  function coverageComparison(factionInventory={},options={}){
+    const procurementMode=['budget','standard','ideal'].includes(String(options?.procurementMode||'').toLowerCase())
+      ?String(options.procurementMode).toLowerCase():'budget';
+    const mode=String(options?.mode||'war').toLowerCase()==='peace'?'peace':'war';
+    const rows=memberRows(factionInventory,options?.savedKeyIds||[],{procurementMode});
+    const plan=acquisitionPlan(factionInventory,{mode,procurementMode,budgetCap:options?.budgetCap??15000000});
+    const pools=availableFactionCandidates(factionInventory);
+    const memberCoverage=[];
+    for(const member of rows){
+      const suppressed=member.readinessStatus==='WAR READY'||member.procurementPassCurrent;
+      const build=member.buildAssessment||compareMemberBuild(member,factionInventory,rows,{procurementMode});
+      for(const item of build.items){
+        const qualifying=(pools[item.slot]||[]).filter(candidate=>
+          equipmentScore(candidate,build.offensiveNeed)>=n(item.readinessFloor)
+        );
+        memberCoverage.push({
+          memberId:member.memberId,
+          memberName:member.memberName,
+          readinessStatus:member.readinessStatus,
+          acquisitionDisposition:member.acquisitionDisposition,
+          slot:item.slot,
+          memberHas:item.currentName||'',
+          memberHasScore:n(item.currentScore),
+          memberHasStats:clone(item.currentStats),
+          needTarget:item.targetName||'',
+          needFloor:n(item.readinessFloor),
+          needStats:clone(item.targetStats),
+          ready:Boolean(item.ready),
+          route:suppressed?(member.readinessStatus==='WAR READY'?'WAR READY':'PROCUREMENT PASS'):item.route,
+          assignedLoan:item.assignedLoanName||'',
+          ownedAlternative:item.ownedOptionName||'',
+          factionAvailableQualifying:qualifying.reduce((sum,row)=>sum+n(row.availableCount),0),
+          factionQualifyingItems:qualifying.map(row=>String(row.name||'')).filter(Boolean)
+        });
+      }
+    }
+
+    const factionCoverage=STANDARD_SLOTS.map(slot=>{
+      const stock=Object.values(factionInventory?.current||{}).filter(item=>equipmentSlot(item)===slot);
+      const activeMemberRows=memberCoverage.filter(row=>row.slot===slot&&!['WAR READY','PROCUREMENT PASS'].includes(row.route));
+      const assignments=plan.assignments.filter(row=>row.slot===slot);
+      const buyRows=plan.list.filter(row=>row.category==='equipment'&&equipmentSlot({name:row.item})===slot);
+      return {
+        slot,
+        owned:stock.reduce((sum,row)=>sum+n(row.amountOwned),0),
+        available:stock.reduce((sum,row)=>sum+n(row.availableCount),0),
+        loaned:stock.reduce((sum,row)=>sum+n(row.loanedCount),0),
+        memberGaps:activeMemberRows.filter(row=>!row.ready&&!['OWNED','LOANED'].includes(row.route)).length,
+        issueAssignments:assignments.filter(row=>row.route==='ISSUE').length,
+        acquireAssignments:assignments.filter(row=>row.route==='ACQUIRE').length,
+        systemBuyQty:buyRows.reduce((sum,row)=>sum+n(row.systemQty),0),
+        plannedBuyQty:buyRows.reduce((sum,row)=>sum+n(row.qty),0)
+      };
+    });
+
+    return {mode,procurementMode,members:rows,memberCoverage,factionCoverage,plan};
   }
 
   function loanMap(factionInventory={}){
@@ -981,6 +1066,33 @@
     const approvedVerifiedAt=String(approval.verifiedAt||'');
     const approvedMode=String(approval.procurementMode||'budget').toLowerCase();
     return Boolean(verifiedAt&&approvedVerifiedAt===verifiedAt&&approvedMode===String(procurementMode||'budget').toLowerCase());
+  }
+
+  function procurementPassIsCurrent(profile={}){
+    const pass=profile?.procurementPass;
+    if(!pass||String(pass.status||'')!=='PASS')return false;
+    // Missing-data passes bind to the current lack of private verification. Any later
+    // private refresh changes verifiedAt and forces a fresh leadership decision.
+    return String(pass.verifiedAt||'')===String(profile?.verifiedAt||'');
+  }
+
+  function acquisitionOverrideKey(mode='war',procurementMode='budget',row={}){
+    return [
+      String(mode||'war').toLowerCase()==='peace'?'peace':'war',
+      ['budget','standard','ideal'].includes(String(procurementMode||'').toLowerCase())?String(procurementMode).toLowerCase():'budget',
+      String(row?.category||'equipment').trim().toLowerCase(),
+      String(row?.item||'').trim().toLowerCase()
+    ].join('|');
+  }
+
+  function acquisitionQuantityOverride(factionInventory={},mode='war',procurementMode='budget',row={}){
+    const key=acquisitionOverrideKey(mode,procurementMode,row);
+    const entry=factionInventory?.acquisitionPlanning?.quantityOverrides?.[key];
+    const raw=entry&&typeof entry==='object'?entry.qty:entry;
+    if(raw==null||raw==='')return {key,active:false,qty:null,entry:null};
+    const value=Number(raw);
+    if(!Number.isFinite(value)||value<0)return {key,active:false,qty:null,entry};
+    return {key,active:true,qty:Math.floor(value),entry};
   }
 
   function memberRows(factionInventory={},savedKeyIds=[],options={}){
@@ -1041,7 +1153,11 @@
         loans:loan.amount,
         loanItems:loan.items,
         dataReadinessStatus:dataStatus,
-        readinessStatus:dataStatus
+        readinessStatus:dataStatus,
+        procurementPassCurrent:procurementPassIsCurrent(profile),
+        procurementPassStale:Boolean(profile?.procurementPass&&!procurementPassIsCurrent(profile)),
+        procurementPassAt:procurementPassIsCurrent(profile)?String(profile?.procurementPass?.approvedAt||''):'',
+        procurementPassReason:procurementPassIsCurrent(profile)?String(profile?.procurementPass?.reason||''):''
       };
     });
 
@@ -1056,6 +1172,7 @@
       return {
         ...row,
         readinessStatus:status,
+        acquisitionDisposition:status==='WAR READY'?'WAR READY':row.procurementPassCurrent?'PROCUREMENT PASS':'ACTIVE',
         buildWarReady:Boolean(build.warReady),
         buildAssessment:build,
         readinessApprovedAt:status==='WAR READY'?String(row.profile?.readinessApproval?.approvedAt||''):'',
@@ -1406,6 +1523,7 @@
     equipmentOptionCatalog:EQUIPMENT_OPTION_CATALOG,
     loanCategories:LOAN_CATEGORIES,
     standardSlots:STANDARD_SLOTS,
+    equipmentSlotByNumber:EQUIPMENT_SLOT_BY_NUMBER,
     armorSlot,
     weaponSlot,
     equipmentSlot,
@@ -1429,6 +1547,10 @@
     availableFactionCandidates,
     compareMemberBuild,
     acquisitionPlan,
+    acquisitionOverrideKey,
+    acquisitionQuantityOverride,
+    procurementPassIsCurrent,
+    coverageComparison,
     loanMap,
     memberRows,
     observedDays,
