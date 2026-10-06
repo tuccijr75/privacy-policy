@@ -1,8 +1,8 @@
 # MM_Acquisitions Acceptance
 
 Candidate:
-- Desktop: 8.0.0-alpha.24
-- TornPDA: 8.0.0-alpha.24-pda.11
+- Desktop: 8.0.0-alpha.25
+- TornPDA: 8.0.0-alpha.25-pda.12
 - Branch: crm-v8-acquisitions-alpha22-clarity
 - Base: crm-v8-acquisitions-ranked-profit
 - Stable/customer publication: not approved
@@ -27,6 +27,22 @@ Run this once after the source candidate is complete. Record each finding as PAS
 Do not complete a purchase, bid, travel purchase, transfer, or other irreversible action as part of this acceptance pass.
 
 ## Desktop
+
+### Panel and section persistence
+
+- Open Acquisitions and expand Data status, a glossary/details section, or Advanced settings.
+- Wait through at least one automatic refresh and perform an action that updates status.
+- Confirm the expanded section remains expanded and the current scroll position is retained.
+- Click the Acquisitions dock icon while the panel is already open.
+- Confirm the panel stays open.
+- Navigate from Acquisitions to Bazaar or Item Market and confirm Acquisitions reopens on the Torn destination page.
+- Confirm only the explicit × button closes the panel and keeps it closed across subsequent Torn navigation.
+
+PASS:
+- normal refreshes do not collapse sections;
+- the dock launcher does not toggle the app closed;
+- Torn navigation does not unexpectedly lose the app.
+
 
 ### 1. Boot and dock
 
@@ -178,7 +194,7 @@ PASS:
 
 ## TornPDA
 
-Install 8.0.0-alpha.24-pda.11.
+Install 8.0.0-alpha.25-pda.12.
 
 ### Boot
 
