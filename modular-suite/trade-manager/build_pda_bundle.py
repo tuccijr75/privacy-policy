@@ -9,7 +9,7 @@ from pathlib import Path
 HERE=Path(__file__).resolve().parent
 CORE=HERE/"vendor"/"MM_Torn_Core.b6d2202.js"
 ADAPTER=HERE/"MM_Trade_Manager.pda.adapter.js"
-INVENTORY=HERE/"vendor"/"MM_Inventory_ROI.logic.4ef4197.js"
+INVENTORY=HERE/"vendor"/"MM_Inventory_ROI.logic.bb32ea3.js"
 LOGIC=HERE/"MM_Trade_Manager.logic.js"
 MAIN=HERE/"MM_Trade_Manager.user.js"
 DEFAULT_OUTPUT=HERE/"MM_Trade_Manager.pda.user.js"
