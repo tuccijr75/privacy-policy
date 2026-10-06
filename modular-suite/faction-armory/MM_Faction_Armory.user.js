@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.6
+// @version      8.0.0-alpha.24.7
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@81f40c0aa93888169419b082254d413108b4f783/modular-suite/faction-armory/MM_Faction_Armory.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@aa30a90489e9dec6b9b67f1d6bece4bb71a93b39/modular-suite/faction-armory/MM_Faction_Armory.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.6';
+  const VERSION='8.0.0-alpha.24.7';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -34,6 +34,7 @@
   const AUTO_MEMBER_BATCH=2;
   const PUBLIC_INTEL_BATCH=20;
   const PUBLIC_INTEL_MAX_AGE_MS=24*60*60*1000;
+  const WAR_OPPONENT_INTEL_MAX_AGE_MS=6*60*60*1000;
   const ARMORY_COMPOSE_KEY='mm_faction_armory_compose_v1';
   const REMINDER_SENT_KEY='mm_faction_armory_reminder_sent_v1';
   const MEMBER_MESSAGE_LOG_KEY='mm_faction_armory_member_message_log_v1';
@@ -353,6 +354,131 @@
       coLeaderId,
       coLeaderName:String(byId.get(coLeaderId)?.memberName||coLeaderId),
       fetchedAt:new Date().toISOString()
+    };
+  }
+
+  function currentRankedWarFromResponse(data,factionId){
+    const ranked=data?.wars?.ranked??data?.ranked??data?.data?.wars?.ranked??null;
+    if(!ranked||typeof ranked!=='object')return null;
+    const factions=Array.isArray(ranked.factions)?ranked.factions:[];
+    const ownId=asId(factionId);
+    const own=factions.find(row=>asId(row?.id)===ownId)||null;
+    const opponent=factions.find(row=>asId(row?.id)!==ownId)||null;
+    if(!opponent)return null;
+    return {
+      warId:asId(ranked?.war_id??ranked?.id),
+      start:Number(ranked?.start||0)||0,
+      end:ranked?.end==null?null:Number(ranked.end)||null,
+      target:num(ranked?.target),
+      winner:ranked?.winner==null?'':asId(ranked.winner),
+      ownFactionId:ownId,
+      ownFactionName:String(own?.name||''),
+      ownScore:num(own?.score),
+      opponentFactionId:asId(opponent?.id),
+      opponentFactionName:String(opponent?.name||opponent?.id||''),
+      opponentScore:num(opponent?.score),
+      fetchedAt:new Date().toISOString(),
+      source:'Torn /faction/wars'
+    };
+  }
+
+  async function fetchOpponentPublicIntel(member,key){
+    const id=asId(member?.memberId);
+    if(!id)throw new Error('Opponent member ID is required.');
+    const data=await apiRequest('/user/'+encodeURIComponent(id)+'/profile',key);
+    const profile=publicProfileRoot(data);
+    const intel={
+      memberId:id,
+      memberName:String(profile?.name||member?.memberName||id),
+      level:num(profile?.level??member?.level),
+      rank:String(profile?.rank||''),
+      ageDays:num(profile?.age),
+      fetchedAt:new Date().toISOString(),
+      source:'Torn public profile'
+    };
+    const estimate=logic.estimateBalancedBattleStats(member,intel);
+    return {
+      ...intel,
+      statEstimate:estimate,
+      estimatedTotal:num(estimate?.total),
+      estimateConfidence:String(estimate?.confidence||'LOW')
+    };
+  }
+
+  async function refreshWarPlanning(key,leadership,warsData,{force=false}={}){
+    const war=currentRankedWarFromResponse(warsData,leadership?.factionId);
+    if(!war){
+      await core.updateDomainState('faction',draft=>{
+        const fi=draft.factionInventory;
+        fi.warPlanning=fi.warPlanning&&typeof fi.warPlanning==='object'?fi.warPlanning:{schema:1};
+        fi.warPlanning.schema=1;
+        fi.warPlanning.currentWar=null;
+        fi.warPlanning.lastWarCheckAt=new Date().toISOString();
+        return draft;
+      });
+      state=await core.readLegacyState();
+      return {war:null,opponentMembers:0,estimated:0,refreshed:0};
+    }
+
+    const opponentData=await apiRequest('/faction/'+encodeURIComponent(war.opponentFactionId)+'/members',key);
+    const roster=factionMembersFromResponse(opponentData);
+    const latest=await core.readLegacyState();
+    const previous=latest?.factionInventory?.warPlanning?.opponent;
+    const sameOpponent=asId(previous?.factionId)===war.opponentFactionId;
+    const priorMembers=sameOpponent&&previous?.members&&typeof previous.members==='object'?previous.members:{};
+    const now=Date.now();
+    const refreshCandidates=roster.filter(member=>{
+      const prior=priorMembers[member.memberId];
+      const fetched=Date.parse(prior?.fetchedAt||'')||0;
+      return force||!prior||!n(prior?.estimatedTotal)||now-fetched>=WAR_OPPONENT_INTEL_MAX_AGE_MS||num(prior?.level)!==num(member.level);
+    });
+    const results=await mapLimit(refreshCandidates,3,member=>fetchOpponentPublicIntel(member,key));
+    const refreshed=new Map(results.filter(row=>row.status==='fulfilled').map(row=>[asId(row.value.memberId),row.value]));
+    const members={};
+    for(const member of roster){
+      const id=asId(member.memberId);
+      const fresh=refreshed.get(id);
+      const prior=priorMembers[id];
+      members[id]=fresh||prior||{
+        ...member,
+        statEstimate:null,
+        estimatedTotal:0,
+        estimateConfidence:'NONE',
+        fetchedAt:'',
+        source:'Torn faction member only'
+      };
+      members[id].memberId=id;
+      members[id].memberName=String(members[id].memberName||member.memberName||id);
+      members[id].level=num(members[id].level??member.level);
+      members[id].status=String(member.status||members[id].status||'');
+    }
+
+    await core.updateDomainState('faction',draft=>{
+      const fi=draft.factionInventory;
+      fi.warPlanning=fi.warPlanning&&typeof fi.warPlanning==='object'?fi.warPlanning:{schema:1};
+      fi.warPlanning.schema=1;
+      fi.warPlanning.currentWar=war;
+      fi.warPlanning.lastWarCheckAt=new Date().toISOString();
+      fi.warPlanning.opponent={
+        factionId:war.opponentFactionId,
+        factionName:war.opponentFactionName,
+        warId:war.warId,
+        members,
+        fetchedAt:new Date().toISOString(),
+        source:'Torn /faction/{id}/members + public user profile estimates',
+        failedProfiles:results.filter(row=>row.status==='rejected').length
+      };
+      fi.warPlanning.xanaxPolicy=fi.warPlanning.xanaxPolicy&&typeof fi.warPlanning.xanaxPolicy==='object'
+        ?fi.warPlanning.xanaxPolicy:{investmentPosture:'conserve'};
+      return draft;
+    });
+    state=await core.readLegacyState();
+    return {
+      war,
+      opponentMembers:roster.length,
+      estimated:Object.values(members).filter(row=>num(row.estimatedTotal)>0).length,
+      refreshed:refreshed.size,
+      failed:results.filter(row=>row.status==='rejected').length
     };
   }
 
