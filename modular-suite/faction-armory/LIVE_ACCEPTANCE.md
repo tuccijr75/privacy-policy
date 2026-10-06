@@ -1,6 +1,11 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.1**
+Status: **NON-PRODUCTION / alpha.24.2**
+
+
+## Alpha.24.2 confirmed-empty equipment correction
+
+Live alpha.24.1 testing reproduced a saved-member refresh failure for NedFlanders69: Torn returned a valid equipment response with no combat equipment rows, but Armory rejected it as a parse failure and retained the older clothing-only cache. Alpha.24.2 treats a valid empty `equipment: []` response as fresh evidence, clears stale combat-equipment rows, and displays **No combat equipment equipped (API confirmed)**. A non-empty equipment array that normalizes to zero still fails closed.
 
 ## Historical acceptance notes
 
