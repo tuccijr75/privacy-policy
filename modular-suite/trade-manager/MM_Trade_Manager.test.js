@@ -128,6 +128,7 @@ assert(pdaSource.includes('mm_trade_manager_pda_state_v1'));
 assert(pdaSource.includes('position:fixed;right:10px;bottom:86px;'));
 assert(pdaSource.includes('MMTornInventoryRoiLogic'));
 assert(pdaSource.includes('function fifoLedger'));
+assert(pdaSource.includes('MM Torn Core (pinned immutable snapshot b6d2202)'));
 assert(pdaSource.includes('Inventory FIFO logic (pinned immutable snapshot 4ef4197)'));
 assert(pdaSource.includes('final trade actions remain manual'));
 
@@ -138,11 +139,15 @@ assert(adapterSource.includes('async function ensureSharedState()'));
 assert(adapterSource.includes('async function updateDomainState(domain,updater)'));
 
 const builderSource=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
+assert(builderSource.includes('MM_Torn_Core.b6d2202.js'));
 assert(builderSource.includes('MM_Inventory_ROI.logic.4ef4197.js'));
 assert(builderSource.includes('default=1'));
 assert(builderSource.includes('PDA lexical API key fallback'));
 assert(builderSource.includes('PDA metadata must not contain @require'));
 
+const coreVendorSource=fs.readFileSync(__dirname+'/vendor/MM_Torn_Core.b6d2202.js','utf8');
+assert(coreVendorSource.includes("const CORE_VERSION = '8.0.0-alpha.14'"));
+assert(coreVendorSource.includes('async function ensureSharedState'));
 const vendorSource=fs.readFileSync(__dirname+'/vendor/MM_Inventory_ROI.logic.4ef4197.js','utf8');
 assert(vendorSource.includes('function fifoLedger'));
 assert(vendorSource.includes('MMTornInventoryRoiLogic'));
