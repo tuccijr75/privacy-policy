@@ -19,6 +19,7 @@ PULSE = HERE / "MM_Acquisitions.market-pulse.js"
 LOGIC = HERE / "MM_Acquisitions.logic.js"
 LIVE = HERE / "MM_Acquisitions.live.js"
 RANKED = HERE / "MM_Acquisitions.ranked.logic.js"
+TORN_INTEL = HERE / "MM_Acquisitions.torn-intel.js"
 PURCHASE = HERE / "MM_Acquisitions.purchase.logic.js"
 MAIN = HERE / "MM_Acquisitions.user.js"
 DEFAULT_OUTPUT = HERE / "MM_Acquisitions.pda.user.js"
@@ -30,6 +31,7 @@ SECTIONS = [
     ("Acquisitions logic (bundled)", LOGIC),
     ("Acquisitions live service (bundled)", LIVE),
     ("Ranked profit logic (bundled)", RANKED),
+    ("Torn Intel restock intelligence (bundled)", TORN_INTEL),
     ("Purchase ledger logic (bundled)", PURCHASE),
 ]
 
@@ -75,6 +77,7 @@ def metadata(version: str) -> str:
 // @grant        GM_deleteValue
 // @connect      api.torn.com
 // @connect      weav3r.dev
+// @connect      torn-intel.com
 // ==/UserScript==
 
 """
@@ -135,6 +138,7 @@ def build(pda_revision: int) -> str:
         "logic",
         "live",
         "ranked",
+        "torn-intel",
         "ledger",
     ]
     for (stage, (title, path)) in zip(stage_names, SECTIONS):
@@ -373,6 +377,7 @@ def build(pda_revision: int) -> str:
         "MMTornAcquisitionsLogic",
         "MMTornAcquisitionsLive",
         "MMTornRankedProfitLogic",
+        "MMTornRestockIntel",
         "MMTornAcquisitionLedger",
         "PDA_storage",
         "PDA_httpGet",
@@ -384,7 +389,7 @@ def build(pda_revision: int) -> str:
 
 def cli() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pda-revision", type=int, default=14)
+    parser.add_argument("--pda-revision", type=int, default=15)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.pda_revision < 1:
