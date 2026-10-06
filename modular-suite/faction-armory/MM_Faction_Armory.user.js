@@ -562,7 +562,10 @@
   }
 
   function equipmentMarketCatalogFromResponse(data,fetchedAt=Date.now()){
-    const wanted=new Set((logic?.equipmentOptionCatalog||[]).map(item=>String(item?.name||'').trim().toLowerCase()).filter(Boolean));
+    const wanted=new Set([
+      ...(logic?.equipmentOptionCatalog||[]).map(item=>String(item?.name||'').trim().toLowerCase()),
+      ...(logic?.warStockItemDefs||[]).map(item=>String(item?.name||'').trim().toLowerCase())
+    ].filter(Boolean));
     const byName={},byId={};
     for(const raw of tornItemsRows(data)){
       const name=String(raw?.name??raw?.item_name??raw?.item?.name??'').trim();
@@ -582,11 +585,12 @@
     if(!key){activeView='settings';statusText='Save a faction-compatible API key first.';render();return;}
     busy=true;statusText='Refreshing all 9 armory categories + roster…';render();
     try{
-      const [categoryResults,membersData,basicData,tornItemsData]=await Promise.all([
+      const [categoryResults,membersData,basicData,tornItemsData,warsData]=await Promise.all([
         mapLimit(logic.categories,3,fetchFactionCategory),
         apiRequest('/faction/members',key),
         apiRequest('/faction/basic',key),
-        apiRequest('/torn/items?cat=All&sort=ASC',key).catch(()=>null)
+        apiRequest('/torn/items?cat=All&sort=ASC',key).catch(()=>null),
+        apiRequest('/faction/wars',key).catch(()=>null)
       ]);
       const failures=categoryResults.map((x,i)=>({x,cat:logic.categories[i]})).filter(r=>r.x.status==='rejected');
       if(failures.length)throw new Error(failures.map(r=>r.cat+': '+(r.x.reason?.message||String(r.x.reason))).join(' | '));
@@ -625,11 +629,26 @@
       let publicIntel={attempted:0,updated:0,failed:0};
       try{publicIntel=await refreshMissingPublicIntel(rosterRows,key);}
       catch(error){console.warn('[MM Faction Armory] public member intel refresh failed',error);}
+      let warIntel={war:null,opponentMembers:0,estimated:0,refreshed:0,failed:0};
+      if(warsData){
+        try{warIntel=await refreshWarPlanning(key,leadership,warsData);}
+        catch(error){
+          console.warn('[MM Faction Armory] rival war intel refresh failed',error);
+          await core.updateDomainState('faction',draft=>{
+            const fi=draft.factionInventory;
+            fi.warPlanning=fi.warPlanning&&typeof fi.warPlanning==='object'?fi.warPlanning:{schema:1};
+            fi.warPlanning.lastError=String(error?.message||error);
+            fi.warPlanning.lastWarCheckAt=new Date().toISOString();
+            return draft;
+          });
+        }
+      }
       state=await core.readLegacyState();
       const pricedOptions=Object.keys(state?.factionInventory?.equipmentMarketCatalog?.byName||{}).length;
       statusText='Faction refreshed: '+Object.keys(current).length+' item rows · '+rosterRows.length+' current members'+
-        (pricedOptions?' · '+pricedOptions+' equipment market references':'')+
-        (publicIntel.attempted?' · public estimates '+publicIntel.updated+'/'+publicIntel.attempted+(publicIntel.failed?' ('+publicIntel.failed+' failed)':''):'')+'.';
+        (pricedOptions?' · '+pricedOptions+' market references':'')+
+        (publicIntel.attempted?' · public estimates '+publicIntel.updated+'/'+publicIntel.attempted+(publicIntel.failed?' ('+publicIntel.failed+' failed)':''):'')+
+        (warIntel.war?' · rival '+warIntel.war.opponentFactionName+' '+warIntel.estimated+'/'+warIntel.opponentMembers+' estimated':' · no current ranked rival')+'.';
     }catch(error){
       statusText='Faction refresh failed: '+(error?.message||String(error));
     }finally{busy=false;render();}
