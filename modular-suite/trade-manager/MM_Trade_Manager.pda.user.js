@@ -16,7 +16,7 @@
 const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
 
 
-/* ===== MM Torn Core (bundled) ===== */
+/* ===== MM Torn Core (pinned immutable snapshot b6d2202) ===== */
 
 (() => {
   'use strict';
