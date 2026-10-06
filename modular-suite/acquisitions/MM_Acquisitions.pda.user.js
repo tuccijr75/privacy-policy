@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.25-pda.12
+// @version      8.0.0-alpha.26-pda.13
 // @description  Easy TornPDA buying workflow: find items, compare Bazaar, Item Market and travel prices, then open a source and buy manually.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -3778,12 +3778,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const CATALOG_STALE_MS=24*60*60*1000;
   const ITEM_PAGE_SIZE=75;
   const RANKED_PAGE_SIZE=30;
+  const PRICELIST_PAGE_SIZE=40;
   const RANKED_LIVE_STALE_MS=300_000;
   const PRICELIST_STALE_MS=3600_000;
   const DEFAULT_PRICELIST_USER_ID='4054377';
   const PANEL_OPEN_KEY='mm_acquisitions_panel_open_v1';
 
-  let activeView='home';
+  let activeView='pricelist';
   let state=null;
   let loadError='';
   let statusText='Ready.';
@@ -3804,6 +3805,10 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   let itemPage=0;
   let itemSelection=null;
   let itemSources=null;
+  let pricelistQuery='';
+  let pricelistStatus='all';
+  let pricelistSort='savings';
+  let pricelistPage=0;
   let verifiedSalesItemId='';
   let rankedType='all';
   let rankedSource='all';
@@ -4582,40 +4587,27 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     }catch(error){console.warn('[MM_Acquisitions] channel unavailable',error);}
   }
 
-  function homeHtml(){
+  function moreHtml(){
     const keyReady=Boolean(apiKey());
-    const catalogCount=Object.keys(state?.procurement?.catalog||{}).length;
     return armoryRequestHtml()+
       card(
-        '<div><b style="font-size:15px;">Start here</b><div style="font-size:11px;color:#aaa;margin-top:3px;">You do not need to understand the advanced market terms to use Acquisitions.</div></div>'+
-        '<div style="margin-top:9px;display:grid;gap:7px;">'+
-          '<div style="border:1px solid #333;border-radius:7px;padding:8px;"><b>1. Choose what you want to buy.</b><div style="font-size:10px;color:#888;margin-top:2px;">Search for one item, browse suggested deals, look at ranked weapons, or check travel deals.</div></div>'+
-          '<div style="border:1px solid #333;border-radius:7px;padding:8px;"><b>2. Let Acquisitions compare prices.</b><div style="font-size:10px;color:#888;margin-top:2px;">It compares Bazaar, Item Market, Torn shops, and overseas travel when data is available.</div></div>'+
-          '<div style="border:1px solid #333;border-radius:7px;padding:8px;"><b>3. Open the source you want.</b><div style="font-size:10px;color:#888;margin-top:2px;">After Check Prices, use GO TO BAZAAR for player bazaars or GO TO ITEM MARKET for Torn\'s Item Market. You still make the final purchase yourself.</div></div>'+
-        '</div>'+
-        '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;">'+
-          '<button data-home-view="items" style="'+button(true)+'">Find One Item</button>'+
-          '<button data-home-view="deals" style="'+button()+'">Show Best Deals</button>'+
-          '<button data-home-view="ranked" style="'+button()+'">Ranked Weapons</button>'+
-          '<button data-home-view="travel" style="'+button()+'">Travel Deals</button>'+
-          (!keyReady?'<button data-home-view="settings" style="'+button()+'">Setup API Key</button>':'')+
+        '<div><b style="font-size:15px;">More tools</b><div style="font-size:11px;color:#aaa;margin-top:3px;">These support the two main workflows. Normal use should start in <b>Pricelist</b> or <b>Ranked Weapons</b>.</div></div>'+
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;margin-top:9px;">'+
+          '<button data-more-view="items" style="'+button()+'padding:10px;"><b>Find One Item</b><br><span style="font-size:9px;font-weight:400;">Compare one specific item</span></button>'+
+          '<button data-more-view="deals" style="'+button()+'padding:10px;"><b>Best Deals</b><br><span style="font-size:9px;font-weight:400;">General market suggestions</span></button>'+
+          '<button data-more-view="travel" style="'+button()+'padding:10px;"><b>Travel Deals</b><br><span style="font-size:9px;font-weight:400;">Overseas opportunities</span></button>'+
+          '<button data-more-view="settings" style="'+button(!keyReady)+'padding:10px;"><b>Setup / Advanced</b><br><span style="font-size:9px;font-weight:400;">API key and optional rules</span></button>'+
         '</div>'
       )+
       card(
-        '<b>Ready check</b>'+
-        '<div style="font-size:11px;margin-top:5px;">Torn API key: <b style="color:'+(keyReady?'#9fe3a8':'#ffb3b3')+';">'+(keyReady?'Ready':'Needs setup')+'</b> · Item catalog: <b>'+(catalogCount?catalogCount.toLocaleString()+' items':'not loaded yet')+'</b></div>'+
-        (!keyReady?'<div style="font-size:10px;color:#ffd18a;margin-top:5px;">Go to Setup once, save your Torn API key, then return here.</div>':'<div style="font-size:10px;color:#888;margin-top:5px;">For normal use, start with <b>Find One Item</b>. Use Best Deals when you want the app to suggest what to check.</div>')
-      )+
-      card(
-        '<details><summary style="cursor:pointer;"><b>What do these words mean?</b></summary>'+
+        '<details><summary style="cursor:pointer;"><b>What do the main terms mean?</b></summary>'+
           '<div style="font-size:11px;color:#aaa;margin-top:7px;line-height:1.55;">'+
-            '<b>Bazaar:</b> items sold by another Torn player.<br>'+
-            '<b>Item Market:</b> Torn\'s normal item market listings.<br>'+
-            '<b>Travel:</b> buy the item overseas, then bring it back to Torn.<br>'+
-            '<b>Profit:</b> estimated resale money minus your buy price.<br>'+
-            '<b>ROI / return on cost:</b> estimated profit as a percent of what you paid.<br>'+
-            '<b>Market activity:</b> evidence that listing quantities are moving. It suggests demand; it does not prove a specific sale.<br>'+
-            '<b>Completed Sales:</b> finished Auction House sales from the official Torn API, used mainly for ranked weapons.'+
+            '<b>Pricelist buy rate:</b> the most the customer normally wants to pay for that item.<br>'+
+            '<b>BB value:</b> the ranked weapon\'s Bunker Buck floor using the configured pricelist BB rate.<br>'+
+            '<b>AH value:</b> value estimated from completed Auction House sales.<br>'+
+            '<b>ROI:</b> estimated profit as a percent of the purchase price.<br>'+
+            '<b>Traffic 7/30/90:</b> how many comparable completed ranked-weapon sales were observed in those periods.<br>'+
+            '<b>Market activity:</b> supporting demand evidence from listing movement; it is not a confirmed individual sale.'+
           '</div>'+
         '</details>'
       );
@@ -4768,6 +4760,183 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     }
   }
 
+  function pricelistRows(){
+    const list=state?.procurement?.pricelist?.items||{};
+    const catalog=state?.procurement?.catalog||{};
+    const marketplace=state?.marketIntel?.marketplace||{};
+    const snapshots=state?.procurement?.marketSnapshots||{};
+    const travelRows=Array.isArray(state?.travelIntel?.rows)?state.travelIntel.rows:[];
+    const rankedById=new Map((logic?.rankPricelistUniverse?.(state)||[]).map(row=>[String(row.id),row]));
+    const q=String(pricelistQuery||'').trim().toLowerCase();
+    const rows=[];
+    for(const [rawId,target] of Object.entries(list)){
+      const id=String(rawId);
+      if(!/^\d+$/.test(id))continue;
+      const cat=catalog[id]||{};
+      const market=marketplace[id]||{};
+      const snap=snapshots[id]||{};
+      const model=rankedById.get(id)||{};
+      const name=String(target?.name||market?.itemName||cat?.name||('Item '+id));
+      const targetBuy=Math.max(0,Number(target?.buyPrice||0));
+      if(!(targetBuy>0))continue;
+      const bazaarPrice=Math.max(0,Number(market?.lowestPrice||0));
+      const itemMarketPrice=Math.max(0,Number(snap?.itemMarket?.lowest||0));
+      const travelMatches=travelRows.filter(row=>Number(row?.stock||0)>0&&(
+        String(row?.itemId||'')===id||
+        String(row?.itemName||'').trim().toLowerCase()===name.trim().toLowerCase()
+      ));
+      const travel=travelMatches.slice().sort((a,b)=>(Number(a?.shopCost||0)||Number.MAX_SAFE_INTEGER)-(Number(b?.shopCost||0)||Number.MAX_SAFE_INTEGER))[0]||null;
+      const travelPrice=Math.max(0,Number(travel?.shopCost||0));
+      const sources=[
+        {source:'Bazaar',price:bazaarPrice},
+        {source:'Item Market',price:itemMarketPrice},
+        {source:'Travel',price:travelPrice,country:String(travel?.country||'')}
+      ].filter(row=>row.price>0).sort((a,b)=>a.price-b.price);
+      const cheapest=sources[0]||null;
+      const currentPrice=Math.max(0,Number(cheapest?.price||0));
+      const savings=currentPrice>0?targetBuy-currentPrice:0;
+      const underRate=currentPrice>0&&currentPrice<=targetBuy;
+      const exit=Math.max(0,Number(model?.bestExit||0));
+      const profit=currentPrice>0&&exit>0?exit-currentPrice:0;
+      const roiPct=currentPrice>0&&exit>0?profit/currentPrice*100:0;
+      const status=currentPrice<=0?'unpriced':underRate?'within':'above';
+      if(q&&!name.toLowerCase().includes(q)&&id!==q)continue;
+      if(pricelistStatus!=='all'&&status!==pricelistStatus)continue;
+      rows.push({
+        id,name,type:String(cat?.type||model?.itemType||''),
+        targetBuy,bazaarPrice,itemMarketPrice,travelPrice,
+        travelCountry:String(travel?.country||''),travelStock:Math.max(0,Number(travel?.stock||0)),
+        cheapestSource:String(cheapest?.source||''),currentPrice,savings,underRate,status,
+        estimatedResale:exit,estimatedProfit:profit,roiPct,
+        bazaarUpdatedAt:String(state?.marketIntel?.marketplaceGeneratedAt||''),
+        itemMarketUpdatedAt:String(snap?.fetchedAt||''),
+        travelUpdatedAt:String(state?.travelIntel?.lastSyncAt||'')
+      });
+    }
+    rows.sort((a,b)=>{
+      if(pricelistSort==='name')return a.name.localeCompare(b.name);
+      if(pricelistSort==='buy-rate')return b.targetBuy-a.targetBuy||a.name.localeCompare(b.name);
+      if(pricelistSort==='price')return (a.currentPrice||Number.MAX_SAFE_INTEGER)-(b.currentPrice||Number.MAX_SAFE_INTEGER)||a.name.localeCompare(b.name);
+      return Number(b.underRate)-Number(a.underRate)||b.savings-a.savings||b.estimatedProfit-a.estimatedProfit||a.name.localeCompare(b.name);
+    });
+    return rows;
+  }
+
+  async function refreshPricelistMarket(){
+    if(busy)return;
+    busy=true;
+    statusText='Refreshing current Bazaar/reference market data for the pricelist…';
+    render();
+    try{
+      const result=await service.refreshGlobal();
+      state=result?.state||await core.readLegacyState();
+      statusText='Pricelist market data refreshed. Use Check Prices on an item for exact live Bazaar / Item Market verification.';
+    }catch(error){
+      statusText='Pricelist market refresh failed: '+(error?.message||String(error));
+    }finally{
+      busy=false;
+      render();
+    }
+  }
+
+  async function routePricelistSource(itemId,itemName,source){
+    if(busy)return;
+    const id=String(itemId||'');
+    const name=String(itemName||'').trim();
+    if(source==='Travel'){
+      GM_setValue(PANEL_OPEN_KEY,true);
+      location.href='https://www.torn.com/travelagency.php';
+      return;
+    }
+    busy=true;
+    statusText='Verifying '+source+' for '+name+'…';
+    render();
+    try{
+      await refreshTravelContext({force:true,silent:true});
+      const result=await service.routeProcurementRequest({itemId:id,itemName:name,preferredSource:source});
+      state=result?.state||await core.readLegacyState();
+      statusText=result?.routed
+        ?('Opened '+result.source+' for '+name+'. Complete the purchase manually on Torn.')
+        :(source+' is not currently available for '+name+'. Use Check Prices for the full comparison.');
+    }catch(error){
+      statusText='Could not open '+source+' for '+name+': '+(error?.message||String(error));
+    }finally{
+      busy=false;
+      render();
+    }
+  }
+
+  function pricelistHtml(){
+    const rows=pricelistRows();
+    const allItems=Object.values(state?.procurement?.pricelist?.items||{}).filter(row=>Number(row?.buyPrice||0)>0).length;
+    const pages=Math.max(1,Math.ceil(rows.length/PRICELIST_PAGE_SIZE));
+    pricelistPage=Math.max(0,Math.min(pricelistPage,pages-1));
+    const visible=rows.slice(pricelistPage*PRICELIST_PAGE_SIZE,(pricelistPage+1)*PRICELIST_PAGE_SIZE);
+    const withinCount=rows.filter(row=>row.underRate).length;
+    const sourceName=String(state?.procurement?.pricelist?.source||'TornW3B Pricelist');
+    return card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+        '<div><b style="font-size:15px;">Customer Pricelist</b><div style="font-size:10px;color:#aaa;margin-top:3px;">This is the main non-ranked workflow. Look for <b style="color:#9fe3a8;">AT / UNDER BUY RATE</b>, then choose where to buy.</div></div>'+
+        '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
+          '<button id="mm-acq-pricelist-refresh-main" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Refresh Pricelist</button>'+
+          '<button id="mm-acq-pricelist-market-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Market Prices</button>'+
+        '</div>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:5px;">'+allItems.toLocaleString()+' priced items · source '+esc(sourceName)+' · updated '+esc(age(state?.procurement?.pricelist?.lastSyncAt||''))+' · '+withinCount.toLocaleString()+' currently at/under buy rate in this filtered view.</div>'+
+      '<div style="display:grid;grid-template-columns:minmax(160px,1fr) minmax(130px,.7fr) minmax(130px,.7fr) auto;gap:5px;margin-top:8px;">'+
+        '<input id="mm-acq-pl-query" value="'+esc(pricelistQuery)+'" placeholder="Item name or ID" style="'+inputCss()+'width:100%;">'+
+        '<select id="mm-acq-pl-status" style="'+inputCss()+'width:100%;">'+
+          '<option value="all"'+(pricelistStatus==='all'?' selected':'')+'>All items</option>'+
+          '<option value="within"'+(pricelistStatus==='within'?' selected':'')+'>At / under buy rate</option>'+
+          '<option value="above"'+(pricelistStatus==='above'?' selected':'')+'>Above buy rate</option>'+
+          '<option value="unpriced"'+(pricelistStatus==='unpriced'?' selected':'')+'>Need price check</option>'+
+        '</select>'+
+        '<select id="mm-acq-pl-sort" style="'+inputCss()+'width:100%;">'+
+          '<option value="savings"'+(pricelistSort==='savings'?' selected':'')+'>Best savings first</option>'+
+          '<option value="name"'+(pricelistSort==='name'?' selected':'')+'>Name A-Z</option>'+
+          '<option value="buy-rate"'+(pricelistSort==='buy-rate'?' selected':'')+'>Highest buy rate</option>'+
+          '<option value="price"'+(pricelistSort==='price'?' selected':'')+'>Lowest current price</option>'+
+        '</select>'+
+        '<button id="mm-acq-pl-filter" style="'+button()+'">Apply</button>'+
+      '</div>'
+    )+
+    card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;font-size:10px;color:#888;align-items:center;">'+
+        '<span>'+rows.length.toLocaleString()+' matches · page '+(pricelistPage+1)+'/'+pages+'</span>'+
+        '<span><button id="mm-acq-pl-prev" '+(pricelistPage<=0?'disabled':'')+' style="'+button()+(pricelistPage<=0?'opacity:.4;':'')+'padding:4px 7px;">Prev</button> '+
+        '<button id="mm-acq-pl-next" '+(pricelistPage>=pages-1?'disabled':'')+' style="'+button()+(pricelistPage>=pages-1?'opacity:.4;':'')+'padding:4px 7px;">Next</button></span>'+
+      '</div>'+
+      (visible.length?visible.map(row=>{
+        const statusLabel=row.status==='within'?'AT / UNDER BUY RATE':row.status==='above'?'ABOVE BUY RATE':'CHECK PRICE';
+        const statusColor=row.status==='within'?'#9fe3a8':row.status==='above'?'#ffb3b3':'#ffd18a';
+        const sourceBits=[
+          row.bazaarPrice>0?'Bazaar '+money(row.bazaarPrice):'Bazaar —',
+          row.itemMarketPrice>0?'Item Market '+money(row.itemMarketPrice):'Item Market —',
+          row.travelPrice>0?('Travel '+money(row.travelPrice)+(row.travelCountry?' · '+row.travelCountry:'')):'Travel —'
+        ];
+        return '<div style="border-top:1px solid #303030;padding:9px 0;font-size:11px;">'+
+          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+            '<div style="min-width:0;flex:1 1 360px;">'+
+              '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;"><b>'+esc(row.name)+'</b> <span style="color:#777;">['+esc(row.id)+']</span><b style="font-size:10px;color:'+statusColor+';">'+statusLabel+'</b></div>'+
+              '<div style="margin-top:4px;">Pricelist buy rate <b>'+money(row.targetBuy)+'</b>'+
+                (row.currentPrice>0?' · Cheapest now <b>'+esc(row.cheapestSource)+' '+money(row.currentPrice)+'</b>':' · Current price needs a live check')+
+                (row.currentPrice>0?' · Difference <b style="color:'+statusColor+';">'+(row.savings>=0?'-':'+')+money(Math.abs(row.savings))+' vs buy rate</b>':'')+
+              '</div>'+
+              '<div style="color:#aaa;margin-top:3px;">'+esc(sourceBits.join(' · '))+'</div>'+
+              (row.estimatedResale>0&&row.currentPrice>0?'<div style="color:#aaa;margin-top:3px;">Estimated resale <b>'+money(row.estimatedResale)+'</b> · estimated profit <b style="color:'+(row.estimatedProfit>=0?'#9fe3a8':'#ffaaaa')+';">'+(row.estimatedProfit>=0?'+':'-')+money(Math.abs(row.estimatedProfit))+'</b> · ROI <b>'+Number(row.roiPct||0).toFixed(1)+'%</b></div>':'')+
+            '</div>'+
+            '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
+              '<button data-pricelist-check="'+esc(row.id)+'" data-pricelist-name="'+esc(row.name)+'" style="'+button()+'">Check Prices</button>'+
+              '<button data-pricelist-source="Bazaar" data-pricelist-id="'+esc(row.id)+'" data-pricelist-name="'+esc(row.name)+'" style="'+button(row.cheapestSource==='Bazaar')+'">GO TO BAZAAR</button>'+
+              '<button data-pricelist-source="Item Market" data-pricelist-id="'+esc(row.id)+'" data-pricelist-name="'+esc(row.name)+'" style="'+button(row.cheapestSource==='Item Market')+'">GO TO ITEM MARKET</button>'+
+              (row.travelPrice>0?'<button data-pricelist-source="Travel" data-pricelist-id="'+esc(row.id)+'" data-pricelist-name="'+esc(row.name)+'" style="'+button(row.cheapestSource==='Travel')+'">GO TO TRAVEL AGENCY</button>':'')+
+            '</div>'+
+          '</div>'+
+        '</div>';
+      }).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No pricelist items match this filter.</div>')
+    );
+  }
+
   function rankedSettings(){
     const saved=state?.procurement?.ranked?.settings||{};
     const pricelist=state?.procurement?.pricelist||{};
@@ -4840,6 +5009,12 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       statusText='Ranked live feed updated: '+bazaarCount.toLocaleString()+' Bazaar + '+itemMarketCount.toLocaleString()+' Item Market + '+Number(result?.auction?.length||0).toLocaleString()+' Auction.';
     }catch(error){statusText='Ranked live refresh failed: '+(error?.message||String(error));}
     finally{busy=false;render();}
+  }
+
+  async function ensurePricelistFresh(){
+    if(busy)return;
+    const at=Date.parse(state?.procurement?.pricelist?.lastSyncAt||'')||0;
+    if(!at||Date.now()-at>=PRICELIST_STALE_MS)await refreshPricelist();
   }
 
   async function ensureRankedFresh(){
@@ -4943,11 +5118,18 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(!row)return;
     const source=String(row.source||'').toLowerCase();
     if(source==='auction'){
+      const direct=String(row.url||'');
+      if(/^https:\/\/www\.torn\.com\//i.test(direct)){
+        GM_setValue(PANEL_OPEN_KEY,true);
+        location.href=direct;
+        return;
+      }
       const url=new URL('https://weav3r.dev/ranked-weapons');
       url.searchParams.set('listing','auction');
       if(row.itemName)url.searchParams.set('weaponName',String(row.itemName));
       if(row.rarity)url.searchParams.set('rarity',String(row.rarity).toLowerCase());
       if(row.bonuses?.[0]?.title)url.searchParams.set('bonus1',String(row.bonuses[0].title));
+      GM_setValue(PANEL_OPEN_KEY,true);
       location.href=url.toString();
       return;
     }
@@ -4972,22 +5154,22 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const bazaarCount=liveMarketRows.filter(row=>String(row?.source||'').toLowerCase()==='bazaar').length;
     const itemMarketCount=liveMarketRows.filter(row=>['item market','market'].includes(String(row?.source||'').toLowerCase())).length;
     return card(
-      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
-        '<div><b>Ranked Weapons</b><div style="font-size:10px;color:#888;">Use this page only for ranked weapons. Refresh the list, then open a listing or load completed sales when you want more evidence.</div></div>'+
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+        '<div><b style="font-size:15px;">Ranked Weapons</b><div style="font-size:10px;color:#aaa;margin-top:3px;">Look for weapons below BB/AH value with positive ROI and useful sales traffic. No bonus is excluded.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
-          '<button id="mm-acq-rw-pricelist-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Update Pricelist</button>'+
+          '<button id="mm-acq-rw-pricelist-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Update BB Rate</button>'+
           '<button id="mm-acq-rw-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Weapons</button>'+
-          '<button id="mm-acq-rw-analyze-visible" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Load Sales for Visible</button>'+
+          '<button id="mm-acq-rw-analyze-visible" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Load Completed Sales</button>'+
         '</div>'+
       '</div>'+
-      '<div style="font-size:10px;color:#888;margin-top:5px;">BB '+money(cfg.bbRate)+'/buck · Pricelist '+Number(priceList.pricedCount||0).toLocaleString()+' priced · Live <b>'+bazaarCount.toLocaleString()+' Bazaar</b> + <b>'+itemMarketCount.toLocaleString()+' Item Market</b> + <b>'+Number(ranked.liveAuction?.length||0).toLocaleString()+' Auction</b> · AH history '+historyCount+' weapon types · updated '+esc(age(ranked.lastLiveAt))+'</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:5px;">BB rate '+money(cfg.bbRate)+'/buck · '+bazaarCount.toLocaleString()+' Bazaar · '+itemMarketCount.toLocaleString()+' Item Market · '+Number(ranked.liveAuction?.length||0).toLocaleString()+' Auction · completed-sale history '+historyCount+' weapon types · updated '+esc(age(ranked.lastLiveAt))+'</div>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:5px;margin-top:8px;">'+
-        '<select id="mm-acq-rw-type" style="'+inputCss()+'width:100%;"><option value="all">All types</option><option value="primary"'+(rankedType==='primary'?' selected':'')+'>Primary</option><option value="secondary"'+(rankedType==='secondary'?' selected':'')+'>Secondary</option><option value="melee"'+(rankedType==='melee'?' selected':'')+'>Melee</option></select>'+
+        '<select id="mm-acq-rw-type" style="'+inputCss()+'width:100%;"><option value="all">All weapon types</option><option value="primary"'+(rankedType==='primary'?' selected':'')+'>Primary</option><option value="secondary"'+(rankedType==='secondary'?' selected':'')+'>Secondary</option><option value="melee"'+(rankedType==='melee'?' selected':'')+'>Melee</option></select>'+
         '<select id="mm-acq-rw-source" style="'+inputCss()+'width:100%;"><option value="all">All sources</option><option value="bazaar"'+(rankedSource==='bazaar'?' selected':'')+'>Bazaar</option><option value="item-market"'+(rankedSource==='item-market'?' selected':'')+'>Item Market</option><option value="auction"'+(rankedSource==='auction'?' selected':'')+'>Auction</option></select>'+
         '<select id="mm-acq-rw-rarity" style="'+inputCss()+'width:100%;"><option value="all">All rarity</option><option value="yellow"'+(rankedRarity==='yellow'?' selected':'')+'>Yellow</option><option value="orange"'+(rankedRarity==='orange'?' selected':'')+'>Orange</option><option value="red"'+(rankedRarity==='red'?' selected':'')+'>Red</option></select>'+
         '<input id="mm-acq-rw-weapon" value="'+esc(rankedWeapon)+'" placeholder="Weapon name" style="'+inputCss()+'width:100%;">'+
         '<input id="mm-acq-rw-bonus" value="'+esc(rankedBonus)+'" placeholder="Bonus name" style="'+inputCss()+'width:100%;">'+
-        '<input id="mm-acq-rw-roi" type="number" min="0" step="1" value="'+Number(rankedMinRoi||0)+'" placeholder="Min ROI %" style="'+inputCss()+'width:100%;">'+
+        '<input id="mm-acq-rw-roi" type="number" min="0" step="1" value="'+Number(rankedMinRoi||0)+'" placeholder="Minimum ROI %" style="'+inputCss()+'width:100%;">'+
       '</div>'+
       '<button id="mm-acq-rw-filter" style="'+button()+'margin-top:6px;">Apply Filters</button>'
     )+
@@ -5002,34 +5184,44 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         const globalIndex=rankedPage*RANKED_PAGE_SIZE+localIndex;
         const bonus=row.bonuses.map(b=>b.title+' '+Number(b.value||0).toFixed(0)+'%').join(' + ')||'No bonus data';
         const historyLoaded=Number(row.history?.samples||0)>0;
-        const profitable=row.profit>0;
         const isAuction=String(row.source||'').toLowerCase()==='auction';
+        const sourceLower=String(row.source||'').toLowerCase();
         const targetRoi=Math.max(Number(rankedMinRoi||0),Number(cfg.minRoiPct||0));
         const bidCeiling=row.fairValue>0?Math.floor(Number(row.fairValue)/(1+targetRoi/100)):0;
         const bidHeadroom=bidCeiling>0?bidCeiling-Number(row.price||0):0;
         const underBb=Number(row.bbFloor||0)>0&&Number(row.price||0)<Number(row.bbFloor||0);
-        const priceLine=isAuction
-          ?'<div>Current bid <b>'+money(row.price)+'</b> · Fair <b>'+money(row.fairValue)+'</b> · '+(targetRoi>0?'Max bid @ '+targetRoi.toFixed(1)+'% ROI ':'Break-even ceiling ')+'<b>'+money(bidCeiling)+'</b> · Headroom <b style="color:'+(bidHeadroom>0?'#9fe3a8':'#ffaaaa')+';">'+(bidHeadroom>=0?'+':'-')+money(Math.abs(bidHeadroom))+'</b></div>'
-          :'<div>Ask <b>'+money(row.price)+'</b> · Fair <b>'+money(row.fairValue)+'</b> · Profit <b style="color:'+(profitable?'#9fe3a8':'#ffaaaa')+';">'+(row.profit>=0?'+':'-')+money(Math.abs(row.profit))+'</b> · ROI <b>'+Number(row.roiPct||0).toFixed(1)+'%</b></div>';
-        const auctionLine=isAuction
-          ?'<div style="color:#d8b96a;">Provisional ROI at current bid '+Number(row.roiPct||0).toFixed(1)+'% · '+Number(row.bids||0)+' bids · ends in '+esc(futureDuration(row.endsAt))+(underBb?' · UNDER BB FLOOR':'')+'</div>'
-          :'';
-        return '<div style="border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
-          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">'+
-            '<div style="min-width:0;"><b>'+esc(row.itemName)+'</b> · '+esc(row.weaponType)+' · '+esc(row.rarity.toUpperCase())+' · '+esc(row.source)+
-              '<div>'+esc(bonus)+'</div>'+
-              priceLine+auctionLine+
-              '<div style="color:#888;">'+esc(row.valuationSource)+' · BB '+Number(row.bbUnits||0)+' ('+money(row.bbFloor)+') · AH median '+money(row.auctionValue)+' · '+esc(row.history?.cohort||'BASE')+' n='+Number(row.history?.samples||0)+' · confidence '+Number(row.history?.confidence||0)+'%</div>'+
-              '<div style="color:#888;">Traffic 7/30/90d '+Number(row.volume7||0)+'/'+Number(row.volume30||0)+'/'+Number(row.volume90||0)+' · liquidity '+Number(row.liquidityScore||0)+'/100 (AH '+Number(row.auctionHistoryLiquidityScore||0)+'/100) · '+(isAuction?'watch '+Number(row.auctionWatchScore||0)+'/100 · urgency '+Number(row.auctionUrgencyScore||0)+'/100 · bid discount '+Number(row.auctionDiscountScore||0)+'/100':'investment '+Number(row.investmentScore||0)+'/100')+'</div>'+pulseLine(row,row.itemId,row.profit)+
+        const belowFair=Number(row.fairValue||0)>0&&Number(row.price||0)<Number(row.fairValue||0);
+        const good=belowFair&&Number(row.roiPct||0)>0;
+        const decision=underBb?'UNDER BB VALUE':good?(isAuction?'WATCH / BID CANDIDATE':'INVESTMENT CANDIDATE'):'REVIEW';
+        const decisionColor=underBb?'#9fe3a8':good?'#d8d48a':'#aaa';
+        const actionLabel=isAuction
+          ?(String(row.url||'').startsWith('https://www.torn.com/')?'GO TO AUCTION':'OPEN AUCTION FINDER')
+          :sourceLower.includes('bazaar')?'GO TO BAZAAR':'GO TO ITEM MARKET';
+        return '<div style="border-top:1px solid #303030;padding:9px 0;font-size:11px;">'+
+          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+            '<div style="min-width:0;flex:1 1 410px;">'+
+              '<div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;"><b>'+esc(row.itemName)+'</b> · '+esc(row.weaponType)+' · '+esc(row.rarity.toUpperCase())+' · '+esc(row.source)+' <b style="font-size:10px;color:'+decisionColor+';">'+decision+'</b></div>'+
+              '<div style="color:#aaa;margin-top:2px;">'+esc(bonus)+'</div>'+
+              '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(115px,1fr));gap:5px;margin-top:6px;">'+
+                '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">'+(isAuction?'CURRENT BID':'CURRENT PRICE')+'</div><b>'+money(row.price)+'</b></div>'+
+                '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">ESTIMATED VALUE</div><b>'+money(row.fairValue)+'</b></div>'+
+                '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">EST. PROFIT / ROI</div><b style="color:'+(Number(row.profit||0)>0?'#9fe3a8':'#ffaaaa')+';">'+(Number(row.profit||0)>=0?'+':'-')+money(Math.abs(Number(row.profit||0)))+' / '+Number(row.roiPct||0).toFixed(1)+'%</b></div>'+
+                '<div style="background:#131313;border:1px solid #333;border-radius:5px;padding:6px;"><div style="font-size:9px;color:#777;">SALES 7 / 30 / 90 DAYS</div><b>'+Number(row.volume7||0)+' / '+Number(row.volume30||0)+' / '+Number(row.volume90||0)+'</b></div>'+
+              '</div>'+
+              (isAuction?'<div style="color:#d8b96a;margin-top:5px;">'+(targetRoi>0?'Max bid for '+targetRoi.toFixed(1)+'% ROI':'Break-even bid ceiling')+' <b>'+money(bidCeiling)+'</b> · headroom <b>'+(bidHeadroom>=0?'+':'-')+money(Math.abs(bidHeadroom))+'</b> · '+Number(row.bids||0)+' bids · ends in '+esc(futureDuration(row.endsAt))+'</div>':'')+
+              '<details style="margin-top:5px;"><summary style="cursor:pointer;font-size:10px;color:#888;">Valuation details</summary>'+
+                '<div style="color:#888;margin-top:4px;">'+esc(row.valuationSource)+' · BB value '+Number(row.bbUnits||0)+' bucks = '+money(row.bbFloor)+' · AH median '+money(row.auctionValue)+' · completed-sale sample '+Number(row.history?.samples||0)+' · confidence '+Number(row.history?.confidence||0)+'% · liquidity '+Number(row.liquidityScore||0)+'/100 · '+(isAuction?'watch score '+Number(row.auctionWatchScore||0)+'/100':'investment score '+Number(row.investmentScore||0)+'/100')+'</div>'+
+                pulseLine(row,row.itemId,row.profit)+
+              '</details>'+
             '</div>'+
             '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
-              '<button data-rw-history="'+esc(row.itemId)+'" '+(busy?'disabled':'')+' style="'+button(!historyLoaded)+(busy?'opacity:.5;':'')+'padding:5px 7px;">'+(historyLoaded?'Refresh Sales':'Load Sales')+'</button>'+
-              (historyLoaded?'<a href="#mm-acq-verified-sales" data-sales-view="'+esc(row.itemId)+'" style="'+button(false)+'text-decoration:none;display:inline-block;padding:5px 7px;">Verified Sales ('+Number(row.history?.samples||0)+') ↓</a>':'')+
-              '<button data-rw-open="'+globalIndex+'" style="'+button(true)+'padding:5px 7px;">Open</button>'+
+              '<button data-rw-history="'+esc(row.itemId)+'" '+(busy?'disabled':'')+' style="'+button(!historyLoaded)+(busy?'opacity:.5;':'')+'padding:6px 8px;">'+(historyLoaded?'Refresh Sales':'Load Completed Sales')+'</button>'+
+              (historyLoaded?'<a href="#mm-acq-verified-sales" data-sales-view="'+esc(row.itemId)+'" style="'+button(false)+'text-decoration:none;display:inline-block;padding:6px 8px;">Completed Sales ('+Number(row.history?.samples||0)+')</a>':'')+
+              '<button data-rw-open="'+globalIndex+'" style="'+button(true)+'padding:7px 9px;">'+actionLabel+'</button>'+
             '</div>'+
           '</div>'+
         '</div>';
-      }).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No ranked listings match these filters. Refresh Ranked or loosen the filters.</div>')
+      }).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No ranked listings match these filters. Refresh Weapons or loosen the filters.</div>')
     );
   }
 
@@ -5431,24 +5623,23 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.25-pda.12 · SIMPLE BUYING WORKFLOW</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.26-pda.13 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:7px;">'+
-          '<button data-acq-view="home" style="'+button(activeView==='home')+'">Home</button>'+
-          '<button data-acq-view="items" style="'+button(activeView==='items')+'">Find Item</button>'+
-          '<button data-acq-view="deals" style="'+button(activeView==='deals')+'">Best Deals</button>'+
+          '<button data-acq-view="pricelist" style="'+button(activeView==='pricelist')+'">Pricelist</button>'+
           '<button data-acq-view="ranked" style="'+button(activeView==='ranked')+'">Ranked Weapons</button>'+
-          '<button data-acq-view="travel" style="'+button(activeView==='travel')+'">Travel Deals</button>'+
-          '<button data-acq-view="settings" style="'+button(activeView==='settings')+'">Setup</button>'+
+          '<button data-acq-view="more" style="'+button(['more','items','deals','travel','settings'].includes(activeView))+'">More</button>'+
         '</div>'+
-        '<div style="padding:7px 8px;background:#17140c;border:1px solid #5b4a22;border-radius:6px;color:#e0c56b;margin-bottom:6px;font-size:10px;line-height:1.4;"><b>To open Bazaar or Item Market:</b> Find Item → Check Prices → click <b>GO TO BAZAAR</b> or <b>GO TO ITEM MARKET</b>.</div>'+
+        (['items','deals','travel','settings'].includes(activeView)
+          ?'<div style="margin-bottom:6px;"><button data-more-back="1" style="'+button()+'padding:5px 8px;">← More tools</button></div>'
+          :'')+
         '<div style="padding:5px 7px;background:#151515;border:1px solid #333;border-radius:5px;color:#d7ad4b;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(statusText)+'</div>'+
         sourceStrip()+
         (loadError?card('<b style="color:#ffaaaa;">Cannot read shared CRM state</b><div style="font-size:11px;margin-top:4px;">'+esc(loadError)+'</div>'):'')+
         '<div id="mm-acq-content" style="max-height:calc(100vh - 240px);overflow:auto;padding-right:2px;">'+
-          (activeView==='home'?homeHtml():activeView==='settings'?settingsHtml():activeView==='travel'?travelHtml():activeView==='ranked'?rankedHtml():activeView==='items'?itemsHtml():dealsHtml())+
+          (activeView==='pricelist'?pricelistHtml():activeView==='ranked'?rankedHtml():activeView==='more'?moreHtml():activeView==='settings'?settingsHtml():activeView==='travel'?travelHtml():activeView==='items'?itemsHtml():dealsHtml())+
         '</div>'+
       '</div>';
 
@@ -5461,18 +5652,46 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     restorePanelUiState(root);
     root.querySelector('#mm-acq-close')?.addEventListener('click',close);
     root.querySelectorAll('[data-acq-view]').forEach(b=>b.addEventListener('click',()=>{
-      activeView=b.dataset.acqView||'home';
+      activeView=b.dataset.acqView||'pricelist';
       render();
-      if(activeView==='travel'&&apiKey())refreshTravelContext({force:false,silent:true}).then(()=>render());
-      if(activeView==='items'||activeView==='ranked')ensureItemCatalog();
-      if(activeView==='ranked')setTimeout(ensureRankedFresh,80);
+      if(activeView==='pricelist')setTimeout(ensurePricelistFresh,80);
+      if(activeView==='ranked'){ensureItemCatalog();setTimeout(ensureRankedFresh,80);}
     }));
-    root.querySelectorAll('[data-home-view]').forEach(b=>b.addEventListener('click',()=>{
-      activeView=String(b.dataset.homeView||'items');
+    root.querySelectorAll('[data-more-view]').forEach(b=>b.addEventListener('click',()=>{
+      activeView=String(b.dataset.moreView||'items');
       render();
-      if(activeView==='items'||activeView==='ranked')ensureItemCatalog();
-      if(activeView==='ranked')setTimeout(ensureRankedFresh,80);
+      if(activeView==='items')ensureItemCatalog();
       if(activeView==='travel'&&apiKey())refreshTravelContext({force:false,silent:true}).then(()=>render());
+    }));
+    root.querySelectorAll('[data-more-back]').forEach(b=>b.addEventListener('click',()=>{activeView='more';render();}));
+    root.querySelector('#mm-acq-pricelist-refresh-main')?.addEventListener('click',refreshPricelist);
+    root.querySelector('#mm-acq-pricelist-market-refresh')?.addEventListener('click',refreshPricelistMarket);
+    root.querySelector('#mm-acq-pl-filter')?.addEventListener('click',()=>{
+      pricelistQuery=String(root.querySelector('#mm-acq-pl-query')?.value||'').trim();
+      pricelistStatus=String(root.querySelector('#mm-acq-pl-status')?.value||'all');
+      pricelistSort=String(root.querySelector('#mm-acq-pl-sort')?.value||'savings');
+      pricelistPage=0;
+      render();
+    });
+    root.querySelector('#mm-acq-pl-query')?.addEventListener('keydown',event=>{
+      if(event.key==='Enter'){
+        event.preventDefault();
+        pricelistQuery=String(root.querySelector('#mm-acq-pl-query')?.value||'').trim();
+        pricelistPage=0;
+        render();
+      }
+    });
+    root.querySelector('#mm-acq-pl-prev')?.addEventListener('click',()=>{pricelistPage=Math.max(0,pricelistPage-1);render();});
+    root.querySelector('#mm-acq-pl-next')?.addEventListener('click',()=>{pricelistPage++;render();});
+    root.querySelectorAll('[data-pricelist-source]').forEach(b=>b.addEventListener('click',()=>routePricelistSource(b.dataset.pricelistId,b.dataset.pricelistName,b.dataset.pricelistSource)));
+    root.querySelectorAll('[data-pricelist-check]').forEach(b=>b.addEventListener('click',()=>{
+      const id=String(b.dataset.pricelistCheck||'');
+      const name=String(b.dataset.pricelistName||'');
+      const item=catalogRows().find(row=>row.id===id)||{id,name,type:'',subType:'',pricelistBuyPrice:Number(state?.procurement?.pricelist?.items?.[id]?.buyPrice||0)};
+      itemQuery=name;
+      itemSelection=item;
+      activeView='items';
+      findCatalogPriceByItem(item);
     }));
     root.querySelectorAll('#mm-acq-reload').forEach(b=>b.addEventListener('click',reloadCachedState));
     root.querySelector('#mm-acq-live-refresh')?.addEventListener('click',refreshOpportunities);
@@ -5576,7 +5795,10 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     GM_setValue(PANEL_OPEN_KEY,true);
     core?.setDockLauncherActive?.('acquisitions',true);
     render();
-    reloadCachedState().then(()=>autoRefreshAcquisitions({force:false}));
+    reloadCachedState().then(()=>{
+      if(activeView==='pricelist')setTimeout(ensurePricelistFresh,40);
+      return autoRefreshAcquisitions({force:false});
+    });
     if(apiKey())refreshTravelContext({force:false,silent:true}).then(()=>render());
     startWatcher();
     startAutoRefresh();
