@@ -15,17 +15,20 @@ for(const [name,source] of [
   ['desktop',desktop],['pda',pda],['pulse',pulse],['logic',logic],['live',live],['ranked',ranked]
 ])assert.doesNotThrow(()=>new vm.Script(source,{filename:name+'.js'}),name+' must parse');
 
-assert(desktop.includes('// @version      8.0.0-alpha.26'));
+assert(desktop.includes('// @version      8.0.0-alpha.27'));
 const requireLines=desktop.split(/\r?\n/).filter(line=>line.startsWith('// @require'));
 assert.strictEqual(requireLines.length,6,'desktop dependency count');
 assert(requireLines.some(line=>line.includes('/MM_Acquisitions.market-pulse.js')),'desktop must require Market Pulse');
+assert(requireLines.some(line=>line.includes('b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js')),'desktop must pin fresh-install Core');
 for(const line of requireLines){
   assert(!line.includes('raw.githubusercontent.com'),'production-style dependency metadata must not use raw.githubusercontent.com');
   const match=line.match(/cdn\.jsdelivr\.net\/gh\/tuccijr75\/privacy-policy@([0-9a-f]{40})\//i);
   assert(match,'MM-owned desktop dependencies must use immutable full-SHA jsDelivr URLs');
 }
 
-assert(pda.includes('// @version      8.0.0-alpha.26-pda.13'));
+assert(pda.includes('// @version      8.0.0-alpha.27-pda.14'));
+assert(desktop.includes('async function readSharedState()'),'desktop must bootstrap/read shared state through helper');
+assert(desktop.includes('core?.ensureSharedState'),'desktop must opt into fresh-install Core bootstrap');
 const pdaHeader=pda.slice(0,pda.indexOf('// ==/UserScript=='));
 assert(!pdaHeader.includes('@require'),'PDA metadata must contain no @require');
 for(const token of [
@@ -68,8 +71,8 @@ assert(desktop.includes('GO TO BAZAAR')&&desktop.includes('GO TO ITEM MARKET'),'
 assert(!desktop.includes('torn.marches.cafe'),'verified-sales evidence must not add a third-party market trust surface');
 assert(desktop.includes('Complete the purchase manually on Torn.')||desktop.includes('final purchase manual'),'desktop manual purchase boundary must remain explicit');
 assert(pda.includes('Complete the purchase manually on Torn.')||pda.includes('final purchase manual'),'PDA manual purchase boundary must remain explicit');
-assert(acceptance.includes('8.0.0-alpha.26'),'acceptance sheet must match desktop candidate');
-assert(acceptance.includes('8.0.0-alpha.26-pda.13'),'acceptance sheet must match PDA candidate');
+assert(acceptance.includes('8.0.0-alpha.27'),'acceptance sheet must match desktop candidate');
+assert(acceptance.includes('8.0.0-alpha.27-pda.14'),'acceptance sheet must match PDA candidate');
 assert(acceptance.includes('Verified Sales'),'acceptance sheet must cover official completed-sale evidence');
 assert(acceptance.includes('Cross-tab ownership'),'acceptance sheet must cover one-engine lease behavior');
 assert(acceptance.includes('manual-action boundary'),'acceptance sheet must preserve manual final actions');
