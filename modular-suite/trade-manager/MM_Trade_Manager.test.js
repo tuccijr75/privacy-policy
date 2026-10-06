@@ -112,11 +112,14 @@ console.log('MM Trade Manager logic tests: PASS');
 
 const userSource=fs.readFileSync(__dirname+'/MM_Trade_Manager.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      0.1.0-alpha.2'));
+assert(userSource.includes('// @version      0.1.0-alpha.3'));
 assert(userSource.includes('/user/trades'));
 assert(userSource.includes("'/user/'+encodeURIComponent(tradeId)+'/trade'"));
 assert(userSource.includes("if(!evaluation.recordable)"));
 assert(userSource.includes("logic.recordCompletedTrades(draft,records,Date.now())"));
+assert(userSource.includes('let liveTradesLoaded=false;'));
+assert(userSource.includes("liveTradesLoaded?'No ongoing trades found.'"));
+assert(!userSource.includes('if(records.length){\n      state=await core.updateDomainState'));
 assert(userSource.includes("id:'trade-manager'"));
 assert(userSource.includes('final trade actions remain manual'));
 assert(userSource.includes('The active Trade Chat Assistant remains a separate chat/forum workflow.'));
@@ -129,7 +132,7 @@ console.log('MM Trade Manager userscript contract tests: PASS');
 const pdaSource=fs.readFileSync(__dirname+'/MM_Trade_Manager.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      0.1.0-alpha.2-pda.2'));
+assert(pdaSource.includes('// @version      0.1.0-alpha.3-pda.3'));
 assert(!pdaHeader.includes('@require'));
 assert(pdaSource.includes("const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';"));
 assert(pdaSource.includes("const unresolved='###PDA-'+'APIKEY###'"));
@@ -152,7 +155,7 @@ assert(adapterSource.includes('async function updateDomainState(domain,updater)'
 const builderSource=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
 assert(builderSource.includes('MM_Torn_Core.b6d2202.js'));
 assert(builderSource.includes('MM_Inventory_ROI.logic.bb32ea3.js'));
-assert(builderSource.includes('default=1'));
+assert(builderSource.includes('default=3'));
 assert(builderSource.includes('PDA lexical API key fallback'));
 assert(builderSource.includes('PDA metadata must not contain @require'));
 
