@@ -6,7 +6,7 @@
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@4ef4197cb0fc19e4c29b5864dd4d003732d58deb/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@bb32ea39494ef4465a58acd76c4c3993cc8568b4/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e079ed17073fde52bc75204be5e5613d4b77655c/modular-suite/trade-manager/MM_Trade_Manager.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
