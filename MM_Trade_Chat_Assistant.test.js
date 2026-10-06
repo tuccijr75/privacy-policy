@@ -9,6 +9,9 @@ assert(source.includes('function tradeTranscriptOccurrenceCount(message)'),'must
 assert(source.includes('const transcriptBaseline = tradeTranscriptOccurrenceCount(message);'),'must capture transcript baseline before filling');
 assert(source.indexOf('const transcriptBaseline = tradeTranscriptOccurrenceCount(message);') < source.indexOf('if (!insertTradeMessage(composer, message))'),'baseline must be captured before the draft enters the composer');
 assert(source.includes('transcriptCount > baselineTranscriptCount'),'confirmation requires a new transcript occurrence');
+assert(source.includes('if (!trustedSendAttemptAt)'),'transcript evidence alone must not advance sent state without a trusted human Send attempt');
+assert(source.includes('No trusted human Send interaction has been observed for this filled message.'),'missing trusted Send evidence must fail closed visibly');
+assert((source.match(/trustedSendAttemptAt = Date\.now\(\);/g)||[]).length===2,'only trusted Enter or Send-button paths may record the send attempt');
 assert(source.includes("(!composer || !composer.value.trim()) && transcriptCount > baselineTranscriptCount"),'confirmation requires cleared/missing composer plus new transcript evidence');
 assert(source.includes('function recordConfirmedAssistedPost()'),'sent state must have a confirmation-only recorder');
 assert(source.includes("setNote('Send interaction detected, but the exact message is not confirmed in the Torn Trade transcript. Sent state and timer were not advanced.'"),'failed confirmation must explicitly retain sent/timer state');
