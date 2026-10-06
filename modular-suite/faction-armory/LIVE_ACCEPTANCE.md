@@ -7,6 +7,11 @@ Status: **NON-PRODUCTION / alpha.24.2**
 
 Live alpha.24.1 testing reproduced a saved-member refresh failure for NedFlanders69: Torn returned a valid equipment response with no combat equipment rows, but Armory rejected it as a parse failure and retained the older clothing-only cache. Alpha.24.2 treats a valid empty `equipment: []` response as fresh evidence, clears stale combat-equipment rows, and displays **No combat equipment equipped (API confirmed)**. A non-empty equipment array that normalizes to zero still fails closed.
 
+
+### Objective readiness correction
+
+Live Morpheus2126 data exposed a second false-positive upgrade path: his Metal Nunchaku (DMG 62.13 / ACC 60.18) exceeded the neutral budget melee floor, but the member-style accuracy adjustment was being applied to the readiness threshold itself. Alpha.24.2 now uses neutral performance for readiness pass/fail and uses member style only to rank already-qualifying alternatives. Exact Morpheus live-stat regression is covered and must resolve Melee as **KEEP**.
+
 ## Historical acceptance notes
 
 Earlier alpha sections below retain their original fixture assumptions for traceability. Fixed 20-member / 20-participant language in those historical sections is **superseded by alpha.19**; current War planning derives its population from the live faction roster.
