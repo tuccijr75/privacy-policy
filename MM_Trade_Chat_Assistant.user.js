@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Chat Assistant
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.2.0-alpha.8
+// @version      0.2.0-alpha.9
 // @description  Manual-send Trade Chat rotation assistant for MM Torn Systems.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/mm-trade-chat-assistant/MM_Trade_Chat_Assistant.user.js
@@ -67,9 +67,11 @@
   let panel = null;
   let lastComposer = null;
   let lastFilledMessage = '';
+  let baselineTranscriptCount = 0;
   let sessionId = 0;
   let sessionFilled = false;
   let submitArmed = false;
+  let deliveryVerificationInFlight = false;
   let forumStatus = loadForumStatus();
   let forumCheckPromise = null;
 
@@ -224,6 +226,27 @@
     ));
 
     return roots.find((root) => isVisible(root) && isTradeChatRoot(root)) || null;
+  }
+
+  function normalizedTradeText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function tradeTranscriptOccurrenceCount(message) {
+    const root = findTradeRoot();
+    const needle = normalizedTradeText(message);
+    if (!root || !needle) return 0;
+    const text = normalizedTradeText(root.innerText || root.textContent || '');
+    if (!text) return 0;
+    let count = 0;
+    let offset = 0;
+    while (offset <= text.length - needle.length) {
+      const index = text.indexOf(needle, offset);
+      if (index < 0) break;
+      count += 1;
+      offset = index + needle.length;
+    }
+    return count;
   }
 
   function findTradeComposer() {
@@ -485,8 +508,10 @@
 
     lastComposer = composer;
     lastFilledMessage = message;
+    baselineTranscriptCount = tradeTranscriptOccurrenceCount(message);
     sessionFilled = true;
     submitArmed = false;
+    deliveryVerificationInFlight = false;
     render();
     return { ok: true };
   }
@@ -517,9 +542,9 @@
     );
   }
 
-  function completeAssistedPost() {
+  function recordConfirmedAssistedPost() {
     const now = Date.now();
-    if (now - state.lastSentAt < 3000) return;
+    if (now - state.lastSentAt < 3000) return false;
 
     state.lastSentAt = now;
     state.lastCompletedAt = now;
@@ -529,39 +554,60 @@
 
     lastComposer = null;
     lastFilledMessage = '';
+    baselineTranscriptCount = 0;
     sessionFilled = true;
     submitArmed = false;
+    deliveryVerificationInFlight = false;
 
     render();
     closePanel();
     setTimeout(minimizeTradeChat, 120);
+    return true;
+  }
+
+  async function verifyAssistedPost({retries=18,delayMs=150}={}) {
+    if (deliveryVerificationInFlight || !sessionFilled || !lastFilledMessage) return false;
+    deliveryVerificationInFlight = true;
+    try {
+      for (let attempt = 0; attempt <= retries; attempt += 1) {
+        const composer = findTradeComposer();
+        const transcriptCount = tradeTranscriptOccurrenceCount(lastFilledMessage);
+        if ((!composer || !composer.value.trim()) && transcriptCount > baselineTranscriptCount) {
+          setNote('Torn transcript confirmed the exact Trade message. Timer advanced.', true);
+          return recordConfirmedAssistedPost();
+        }
+        if (attempt < retries) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      setNote('Send interaction detected, but the exact message is not confirmed in the Torn Trade transcript. Sent state and timer were not advanced.', false);
+      return false;
+    } finally {
+      deliveryVerificationInFlight = false;
+    }
   }
 
   function handleComposerKeydown(event) {
-    if (!sessionFilled || !lastComposer || event.target !== lastComposer) return;
+    if (!event.isTrusted || !sessionFilled || !lastComposer || event.target !== lastComposer) return;
     if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey) {
       submitArmed = true;
     }
   }
 
   function handleTradeClick(event) {
-    if (!sessionFilled || !lastComposer) return;
+    if (!event.isTrusted || !sessionFilled || !lastComposer) return;
     const root = findTradeRoot();
     const button = event.target && event.target.closest && event.target.closest('button,[role="button"]');
     if (!root || !button || !root.contains(button)) return;
     if (button.closest && button.closest('#' + APP_ID)) return;
+    const label = buttonText(button);
+    if (!(label === 'send' || /^send\b/.test(label))) return;
     submitArmed = true;
   }
 
   function handleComposerInput(event) {
     if (!sessionFilled || !submitArmed || !lastComposer || event.target !== lastComposer) return;
     if (lastComposer.value.trim()) return;
-
-    const completedComposer = lastComposer;
-    setTimeout(() => {
-      if (completedComposer.value.trim()) return;
-      completeAssistedPost();
-    }, 150);
+    submitArmed = false;
+    void verifyAssistedPost();
   }
 
   function handleForumPostClick(event) {
@@ -776,12 +822,12 @@
       '</select></div>',
       '<div class="mmta-actions">',
       '<button type="button" data-act="fill">Fill Trade</button>',
-      '<button type="button" data-act="sent">Mark Sent</button>',
+      '<button type="button" data-act="verify">Verify Delivery</button>',
       '<button type="button" data-act="skip">Next Copy</button>',
       '<button type="button" data-act="toggle"></button>',
       '<button type="button" data-act="forum">Open Forum Thread</button>',
       '</div>',
-      '<div class="mmta-note" data-role="note">One fill per opened session. Send remains manual.</div>',
+      '<div class="mmta-note" data-role="note">One fill per opened session. Send remains manual; completion advances only after the exact message appears in Torn Trade transcript.</div>',
       '</div>',
     ].join('');
 
@@ -808,8 +854,8 @@
         setNote('Rotated to the next copy.', true);
         return;
       }
-      if (action === 'sent') {
-        completeAssistedPost();
+      if (action === 'verify') {
+        void verifyAssistedPost({ retries: 4, delayMs: 150 });
         return;
       }
       if (action === 'forum') {
@@ -885,6 +931,8 @@
     submitArmed = false;
     lastComposer = null;
     lastFilledMessage = '';
+    baselineTranscriptCount = 0;
+    deliveryVerificationInFlight = false;
 
     root.style.display = 'block';
     root.style.zIndex = '2147483647';
