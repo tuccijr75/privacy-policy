@@ -487,7 +487,7 @@ assert(userSourceValue.includes('armorySentConfirmationTexts'),'send confirmatio
 assert(!userSourceValue.includes('const leftCompose='),'leaving Compose alone must not count as successful delivery');
 assert(userSourceValue.includes('fingerprintBaselineCount'),'send detector must compare post-send transcript against a pre-send baseline');
 assert(userSourceValue.includes('Message Faction Leader'),'Acquire must expose leader-message output');
-assert(userSourceValue.includes("stockMode==='war'?'FACTION ARMORY WAR ACQUISITION REPORT':'FACTION ARMORY PEACE MINIMUMS REPORT'"),'leader report title must follow War/Peace scope');
+assert(userSourceValue.includes("isWar?'FACTION ARMORY WAR ACQUISITION REPORT':'FACTION ARMORY PEACE MINIMUMS REPORT'"),'leader report title must follow War/Peace scope');
 assert(userSourceValue.includes("const memberNeeds=isWar"),'member-build needs must be War-only in the leader report');
 assert(userSourceValue.includes("const minNeeds=isWar?[]"),'minimum-stock section must be Peace-only');
 assert(userSourceValue.includes('Routine minimum-stock replenishment is deferred until Peace mode.'),'War report must explicitly defer minimums');
@@ -498,7 +498,7 @@ assert(userSourceValue.includes("subject:'Faction Armory '+stockMode.toUpperCase
 assert(userSourceValue.includes("leaderBaseLabel+(stockMode==='war'?' · War Needs':' · Peace / Minimums')"),'leader button must expose the active report scope');
 assert((userSourceValue.match(/data-stock-mode="war"/g)||[]).length>=2,'War/Peace selection must be available on Acquire as well as Minimums');
 assert(userSourceValue.includes('function leaderAcquisitionReport'),'leader acquisition report must be generated from live Armory state');
-assert(userSourceValue.includes('ESTIMATED TOTAL ACQUISITION COST'),'leader report must contain total low/high acquisition cost');
+assert(userSourceValue.includes('ESTIMATED WAR ACQUISITION COST'),'leader report must contain scoped total low/high acquisition cost');
 assert(userSourceValue.includes('PRICE RANGE'),'Acquire rows must expose low/high price estimates');
 assert(userSourceValue.includes('#mce_0'),'Armory messaging must use the shared current Torn TinyMCE compose contract');
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'),'Armory must load the expanded logic contract');
