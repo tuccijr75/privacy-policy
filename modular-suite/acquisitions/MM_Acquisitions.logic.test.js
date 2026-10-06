@@ -110,6 +110,7 @@ function baseDb(){
 
 {
   const db=baseDb();
+  db.procurement.pricelist={items:{'1':{itemId:'1',name:'Item 1',buyPrice:1200}}};
   db.marketIntel.marketplaceGeneratedAt=new Date(now-301000).toISOString();
   db.marketIntel.marketplace['1'].lowestPrice=100;
   db.marketIntel.marketplace['1'].bazaarAverage=1500;
@@ -128,6 +129,7 @@ function baseDb(){
 
 {
   const db=baseDb();
+  db.procurement.pricelist={items:{'1':{itemId:'1',name:'Item 1',buyPrice:1200}}};
   db.marketIntel.marketplaceGeneratedAt=new Date(now-301000).toISOString();
   db.procurement.marketSnapshots['1'].fetchedAt=new Date(now-181000).toISOString();
   const row=logic.rankPricelistUniverse(db,now).find(x=>x.id==='1');
