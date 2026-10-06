@@ -16,12 +16,12 @@
 const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
 
 
-/* ===== MM Torn Core (bundled) ===== */
+/* ===== MM Torn Core (pinned immutable snapshot b6d2202) ===== */
 
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.13';
+  const CORE_VERSION = '8.0.0-alpha.14';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -189,7 +189,33 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
     return merged;
   }
 
-  function openLegacyDb() {
+  function createEmptySharedState(at = new Date().toISOString()) {
+    const createdAt = String(at || new Date().toISOString());
+    return {
+      schema: LEGACY.schema,
+      customers: {},
+      sales: {},
+      coupons: {},
+      refunds: {},
+      subscribers: {},
+      removedCustomers: {},
+      notificationHistory: [],
+      businessRules: {},
+      syncState: {},
+      procurement: {},
+      operations: {},
+      marketIntel: {},
+      travelIntel: {},
+      factionInventory: {},
+      meta: {
+        createdAt,
+        createdBy: 'MM Torn Core',
+        bootstrap: 'fresh-install'
+      }
+    };
+  }
+
+  function openLegacyDb({ allowCreate = false } = {}) {
     if (typeof indexedDB === 'undefined') {
       return Promise.reject(new Error('IndexedDB is unavailable in this runtime.'));
     }
@@ -198,10 +224,49 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error('Legacy IndexedDB open failed.'));
       request.onupgradeneeded = () => {
-        try { request.transaction?.abort(); } catch {}
-        reject(new Error('Legacy IndexedDB does not exist; read-only Core will not create it.'));
+        if (!allowCreate) {
+          try { request.transaction?.abort(); } catch {}
+          reject(new Error('Legacy IndexedDB does not exist; read-only Core will not create it.'));
+          return;
+        }
+        try {
+          const db = request.result;
+          if (db.objectStoreNames.contains(LEGACY.store)) {
+            throw new Error(`Existing IndexedDB unexpectedly entered bootstrap upgrade with store '${LEGACY.store}' already present.`);
+          }
+          const store = db.createObjectStore(LEGACY.store);
+          store.put(createEmptySharedState(), LEGACY.key);
+        } catch (error) {
+          try { request.transaction?.abort(); } catch {}
+          reject(error);
+        }
       };
     });
+  }
+
+  async function ensureSharedState() {
+    const db = await openLegacyDb({ allowCreate: true });
+    try {
+      if (!db.objectStoreNames.contains(LEGACY.store)) {
+        throw new Error(`Shared IndexedDB store '${LEGACY.store}' is missing; refusing destructive repair.`);
+      }
+      const value = await new Promise((resolve, reject) => {
+        const tx = db.transaction(LEGACY.store, 'readonly');
+        const req = tx.objectStore(LEGACY.store).get(LEGACY.key);
+        req.onsuccess = () => resolve(req.result ?? null);
+        req.onerror = () => reject(req.error || new Error('Shared IndexedDB bootstrap read failed.'));
+      });
+      if (value == null) {
+        throw new Error('Shared IndexedDB exists but main state is missing; refusing to overwrite existing storage.');
+      }
+      const validation = validateLegacyState(value);
+      if (!validation.ok) {
+        throw new Error('Shared state failed validation: ' + validation.errors.join('; '));
+      }
+      return deepClone(value);
+    } finally {
+      try { db.close(); } catch {}
+    }
   }
 
   async function readLegacyState() {
@@ -236,7 +301,7 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
     const key = String(domain || '').toLowerCase();
     if (!WRITABLE_DOMAIN_PATHS[key]) throw new Error(`Domain is not writable through Core: ${domain}`);
 
-    const db = await openLegacyDb();
+    const db = await openLegacyDb({ allowCreate: true });
     try {
       if (!db.objectStoreNames.contains(LEGACY.store)) {
         throw new Error(`Legacy IndexedDB store '${LEGACY.store}' is missing.`);
@@ -1111,6 +1176,8 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
     freshnessSnapshot,
     getDomainSlice,
     applyDomainSlice,
+    createEmptySharedState,
+    ensureSharedState,
     readLegacyState,
     inspectLegacyState,
     updateDomainState,
