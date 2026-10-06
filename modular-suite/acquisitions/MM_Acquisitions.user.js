@@ -462,6 +462,101 @@
     onState:next=>{state=next;}
   }):null;
 
+  function durationMs(value){
+    const ms=Math.max(0,Number(value)||0);
+    const total=Math.round(ms/1000);
+    const d=Math.floor(total/86400);
+    const h=Math.floor((total%86400)/3600);
+    const m=Math.floor((total%3600)/60);
+    if(d>0)return d+'d '+h+'h';
+    if(h>0)return h+'h '+m+'m';
+    return Math.max(1,m)+'m';
+  }
+
+  function restockRecord(country,itemId){
+    if(!restockIntel)return null;
+    const key=restockIntel.restockKey(country,itemId);
+    return key?(state?.travelIntel?.restockEta?.[key]||null):null;
+  }
+
+  function restockEtaSummary(row){
+    if(!restockIntel)return 'Restock model unavailable.';
+    const record=restockRecord(row?.countryCode||row?.country,row?.itemId);
+    if(!record)return 'No restock history loaded.';
+    const stock=Math.max(0,Number(row?.stock||0));
+    const confidence=String(record?.confidence||'INSUFFICIENT');
+    const cycles=Math.max(0,Number(record?.usableCycles||0));
+    if(stock>0)return 'In stock · '+cycles+' usable cycles · '+confidence+' confidence · history '+age(record?.sourceNewestAt||'');
+    const etaAt=Date.parse(String(record?.etaAt||''))||0;
+    const early=Date.parse(String(record?.etaEarlyAt||''))||0;
+    const late=Date.parse(String(record?.etaLateAt||''))||0;
+    if(etaAt){
+      const remaining=etaAt-Date.now();
+      const center=remaining>=0?('about '+durationMs(remaining)):('median passed '+durationMs(-remaining)+' ago');
+      const window=early&&late?' · window '+new Date(early).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+'–'+new Date(late).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):'';
+      return 'Restock '+center+window+' · '+confidence+' · '+cycles+' cycles';
+    }
+    return cycles<restockIntel.MIN_ETA_CYCLES
+      ?'Out of stock · '+cycles+' usable cycles; need '+restockIntel.MIN_ETA_CYCLES+' for ETA.'
+      :'Out of stock · sellout start is outside or ambiguous in the 48h history window.';
+  }
+
+  async function refreshTornIntelTravel({silent=false}={}){
+    if(!restockIntel)throw new Error('Torn Intel module did not load.');
+    const before=state||await readSharedState();
+    const response=await gmJsonResponse(restockIntel.TRAVEL_TABLE_URL);
+    const normalized=restockIntel.normalizeTravelTable(response.data,response.fetchedAt);
+    if(!normalized.length)throw new Error('Torn Intel Travel Table returned no readable stock rows.');
+    const enriched=restockIntel.enrichTravelRows(normalized,before,Date.now());
+    state=await service.importTravelRows(enriched,response.fetchedAt);
+    if(!silent)statusText='Torn Intel travel stock updated: '+enriched.length+' item/country rows.';
+    return {rows:enriched,response,state};
+  }
+
+  async function refreshRestockEta(country,itemId,itemName=''){
+    if(!restockIntel)throw new Error('Torn Intel module did not load.');
+    const key=tornIntelKey();
+    if(!key)throw new Error('Save the free Torn Intel client key in Setup / Advanced before loading restock history.');
+    const code=restockIntel.countryCode(country);
+    const id=String(itemId||'').trim();
+    if(!code||!/^\d+$/.test(id))throw new Error('Restock history needs a supported country and Torn item ID.');
+
+    const previousCall=Math.max(0,Number(GM_getValue(TORN_INTEL_LAST_KEYED_AT,0))||0);
+    const wait=restockIntel.KEYED_COOLDOWN_MS-(Date.now()-previousCall);
+    if(previousCall&&wait>0)throw new Error('Torn Intel history rate-limit guard: retry in '+durationMs(wait)+'.');
+
+    const url=new URL(restockIntel.HISTORY_URL);
+    url.searchParams.set('itemId',id);
+    url.searchParams.set('country',code);
+    url.searchParams.set('hours','48');
+    GM_setValue(TORN_INTEL_LAST_KEYED_AT,Date.now());
+
+    const response=await gmJsonResponse(url.toString(),{headers:{'X-Torn-Intel-Key':key}});
+    const model=restockIntel.deriveRestockModel(response.data,Date.now());
+    const record=restockIntel.modelRecord({
+      country:code,itemId:id,itemName,model,fetchedAt:response.fetchedAt
+    });
+    if(!record)throw new Error('Torn Intel history could not be converted into a restock model.');
+
+    await core.updateDomainState('market',draft=>{
+      const travel=draft.travelIntel || (draft.travelIntel={});
+      const records=travel.restockEta&&typeof travel.restockEta==='object'?travel.restockEta:{};
+      records[record.key]=record;
+      travel.restockEta=restockIntel.pruneRestockRecords(records,Date.now());
+      travel.restockEtaUpdatedAt=new Date(response.fetchedAt).toISOString();
+      travel.restockEtaSource='Torn Intel observed history';
+      travel.diagnostics=Array.isArray(travel.diagnostics)?travel.diagnostics:[];
+      travel.diagnostics.unshift({
+        at:new Date().toISOString(),
+        text:'Restock ETA refreshed for '+record.country+' / '+record.itemName+' using '+record.pointCount+' history points and '+record.usableCycles+' usable cycles.'
+      });
+      travel.diagnostics=travel.diagnostics.slice(0,30);
+      return draft;
+    });
+    state=await readSharedState();
+    return record;
+  }
+
   async function importTravelCapture({silent=false}={}){
     const feed=readTravelFeed();
     if(!feed?.rows?.length) {
