@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Inventory Manager/ROI Tracker
 // @namespace    manic-mike.torn.inventory-roi
-// @version      8.0.0-alpha.8
+// @version      8.0.0-alpha.9
 // @description  Connected Bazaar/inventory dashboard with sales velocity, FIFO ROI, Market Pulse context and restock readiness.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js
@@ -19,7 +19,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.8';
+  const VERSION='8.0.0-alpha.9';
   const ROOT_ID='mm-inventory-roi';
   const LAUNCHER_ID='mm-inventory-roi-launcher';
   const STYLE_ID='mm-inventory-roi-style';
@@ -302,7 +302,7 @@
         tile('PULSE COVERAGE',summary.skuCount?pulseCoverage+'% fresh':'—',summary.pulseStaleCount||summary.pulseMissingCount?'mm-ir-warn':'mm-ir-good')+
         (shop.inventoryError?tile('INVENTORY','API unavailable','mm-ir-warn'):'')+
       '</div>'+
-      '<div class="mm-ir-mini" style="margin-top:5px;">Market Pulse is read-only context from MM_Acquisitions. Pricing status below reports evidence readiness only; this module does not reprice or create a second market collector.</div>'
+      '<div class="mm-ir-mini" style="margin-top:5px;">Market Pulse is read-only context from MM_Acquisitions. Pricing recommendations are explainable decision support only; this module does not reprice, list items, or create a second market collector.</div>'
     )+
     (rows.length?rows.map(row=>{
       const attention=row.needsAttention?row.attentionReasons.join(' · '):'OK';
@@ -319,6 +319,10 @@
             tile('PULSE FLOOR',pulse.floorPrice?money(pulse.floorPrice):'—',pulse.status==='FRESH'?'mm-ir-good':'mm-ir-warn')+
             tile('MARKET POSITION',marketPosition)+
             tile('PRICE STATUS',row.pricingStatus,tone(row.pricingStatus))+
+            tile('RECOMMENDED',row.pricing?.recommendedPrice?money(row.pricing.recommendedPrice):'—',row.pricingStatus==='HOLD'?'mm-ir-warn':'')+
+            tile('PRICE RANGE',row.pricing?.rangeHigh?money(row.pricing.rangeLow)+'–'+money(row.pricing.rangeHigh):'—')+
+            tile('REC P/L UNIT',row.pricing?.expectedProfitPerUnit?money(row.pricing.expectedProfitPerUnit):'—',row.pricing?.expectedProfitPerUnit>=0?'mm-ir-good':'mm-ir-bad')+
+            tile('REC ROI',row.pricing?.recommendedPrice&&row.avgCost?row.pricing.expectedRoiPct.toFixed(1)+'%':'—')+
             tile('PULSE',pulse.status||'MISSING',pulse.status==='FRESH'?'mm-ir-good':'mm-ir-warn')+
             tile('LIQUIDITY',pulse.available?Number(pulse.liquidityScore||0).toFixed(0):'—')+
             tile('UNITS/H',pulse.available?Number(pulse.observedUnitsPerHour||0).toFixed(2):'—')+
@@ -336,7 +340,8 @@
             tile('30D ROI',row.realizedCogs30?row.realizedRoiPct30.toFixed(1)+'%':'—')+
             tile('COST COVERAGE',row.costCoveragePct30.toFixed(0)+'%')+
           '</div>'+
-          '<div class="mm-ir-mini" style="margin-top:5px;">Market source: '+esc(pulse.source||'Market Pulse')+' · provider/source age '+esc(sourceAge)+' · local fetch age '+esc(fetchAge)+' · last sale '+esc(row.lastSaleAt?when(row.lastSaleAt):'none in retained sales history')+'.</div>'+
+          '<div class="mm-ir-mini" style="margin-top:5px;">Pricing: '+esc(row.pricing?.explanation||'No pricing recommendation.')+'</div>'+
+          '<div class="mm-ir-mini" style="margin-top:3px;">Market source: '+esc(pulse.source||'Market Pulse')+' · provider/source age '+esc(sourceAge)+' · local fetch age '+esc(fetchAge)+' · last sale '+esc(row.lastSaleAt?when(row.lastSaleAt):'none in retained sales history')+'.</div>'+
         '</div></details>';
     }).join(''):card('No Bazaar/inventory rows are cached. Use Refresh Shop.'));
   }
