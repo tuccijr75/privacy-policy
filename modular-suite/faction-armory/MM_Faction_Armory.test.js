@@ -341,10 +341,10 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.24.4';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.24.5';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
-assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@67c6282894d1a6767047c4e19c42cb53683804ac/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
+assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@81f40c0aa93888169419b082254d413108b4f783/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -353,7 +353,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.24.4';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.24.5';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -361,7 +361,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.24.4';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.24.5';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -460,7 +460,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.4';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.5';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
@@ -730,6 +730,50 @@ assert(userSourceValue.includes("'Any Member Message'"),'Leadership export must 
 assert(userSourceValue.includes("'Build Message Count'"),'Leadership export must include confirmed build-message count');
 assert(userSourceValue.includes("'Data Request At'"),'Leadership export must include data-request timestamp');
 console.log('MM Faction Armory alpha.24.4 faction-message tracking regressions: PASS');
+
+const equipmentDecisionFaction={
+  current:{
+    'weapons|9001':{category:'weapons',itemId:'9001',name:'AK-47',type:'Primary',amountOwned:1,availableCount:1,loanedCount:0,damage:58.5,accuracy:54.5}
+  },
+  memberReadiness:{
+    roster:{'990':{memberId:'990',memberName:'Menu Test',level:20}},
+    profiles:{'990':{
+      stats:{strength:1000,defense:1000,speed:1000,dexterity:1000},
+      equipment:{summary:'PRIMARY: Starter Rifle',items:[{name:'Starter Rifle',slot:'primary',damage:1,accuracy:1}]},
+      verifiedAt:new Date().toISOString(),
+      equipmentDecisions:{primary:{action:'accept-current',itemName:'Starter Rifle',updatedAt:new Date().toISOString()}}
+    }},
+    settings:{staleHours:72}
+  }
+};
+let equipmentDecisionRows=logic.memberRows(equipmentDecisionFaction,[],{procurementMode:'budget'});
+let equipmentDecisionPrimary=equipmentDecisionRows[0].buildAssessment.items.find(x=>x.slot==='primary');
+assert.strictEqual(equipmentDecisionPrimary.route,'KEEP','Accept Equipped Item must waive the automatic floor for that exact slot');
+assert.strictEqual(equipmentDecisionPrimary.ready,true,'accepted equipped item must count as ready for that slot');
+assert.strictEqual(equipmentDecisionPrimary.manualDecisionAction,'accept-current');
+assert.strictEqual(equipmentDecisionPrimary.currentName,'Starter Rifle','accepting a piece must not rewrite the API-reported equipped item');
+
+equipmentDecisionFaction.memberReadiness.profiles['990'].equipmentDecisions.primary={
+  action:'replacement',itemName:'AK-47',updatedAt:new Date().toISOString()
+};
+equipmentDecisionRows=logic.memberRows(equipmentDecisionFaction,[],{procurementMode:'budget'});
+equipmentDecisionPrimary=equipmentDecisionRows[0].buildAssessment.items.find(x=>x.slot==='primary');
+assert.strictEqual(equipmentDecisionPrimary.route,'ISSUE','selected replacement already in faction stock must route to the vault');
+assert.strictEqual(equipmentDecisionPrimary.suggestedName,'AK-47','manual replacement must become the exact suggested item');
+const equipmentDecisionPlan=logic.acquisitionPlan(equipmentDecisionFaction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+assert(equipmentDecisionPlan.assignments.some(x=>x.memberId==='990'&&x.slot==='primary'&&x.route==='ISSUE'&&x.item==='AK-47'&&x.manual===true),'manual replacement must allocate the exact chosen vault item');
+assert(!equipmentDecisionPlan.assignments.some(x=>x.memberId==='990'&&x.slot==='primary'&&x.item!=='AK-47'),'manual replacement must not substitute another primary');
+
+assert(userSourceValue.includes('function equipmentOverrideMenuHtml'),'Edit Data Override must open a structured equipment menu');
+assert(userSourceValue.includes('Accept Equipped Item'),'equipment menu must allow accepting the exact equipped item');
+assert(userSourceValue.includes('Use Selected Replacement'),'equipment menu must expose suggested replacement choices');
+assert(userSourceValue.includes('Use Other Replacement'),'equipment menu must allow a plain-language manual replacement name');
+assert(userSourceValue.includes('Use Automatic'),'equipment menu must allow clearing a slot decision');
+assert(userSourceValue.includes('API/source equipment stays unchanged underneath.'),'equipment menu must explain source preservation');
+assert(!userSourceValue.includes('Enter a PARTIAL JSON object'),'normal Edit Data Override workflow must not require JSON');
+assert(!userSourceValue.includes('Manual override JSON is invalid'),'normal Edit Data Override workflow must not expose JSON parsing UX');
+console.log('MM Faction Armory alpha.24.5 equipment-menu regressions: PASS');
+
 
 
 assert(userSourceValue.includes("async function setMemberManualOverrides"),'Members UI must provide a persistent manual data override write path');
