@@ -359,12 +359,37 @@
       .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
   }
 
+
+  const DEFAULT_BAZAAR_SNAPSHOT_MAX_AGE_MS=2*60*1000;
+
+  function bazaarSnapshotFreshness(slice,at=Date.now(),maxAgeMs=DEFAULT_BAZAAR_SNAPSHOT_MAX_AGE_MS){
+    ensureCustomerSlice(slice);
+    const inv=slice?.operations?.inventoryRoi||{};
+    const localFetchedAt=Date.parse(String(inv.lastBazaarAt||''))||0;
+    const ageMs=localFetchedAt>0?Math.max(0,Number(at)-localFetchedAt):Infinity;
+    const limit=Math.max(1,n(maxAgeMs)||DEFAULT_BAZAAR_SNAPSHOT_MAX_AGE_MS);
+    const hasInventorySource=inv.listings&&typeof inv.listings==='object'&&!Array.isArray(inv.listings);
+    const listingCount=hasInventorySource?Object.keys(inv.listings).length:0;
+    return {
+      source:'MM Inventory Manager/ROI Tracker',
+      localFetchedAt,
+      localFetchedAtIso:localFetchedAt?new Date(localFetchedAt).toISOString():'',
+      ageMs,
+      maxAgeMs:limit,
+      listingCount,
+      available:Boolean(localFetchedAt&&hasInventorySource),
+      fresh:Boolean(localFetchedAt&&hasInventorySource&&ageMs<=limit),
+      status:!localFetchedAt||!hasInventorySource?'MISSING':ageMs<=limit?'FRESH':'STALE'
+    };
+  }
+
   const api=Object.freeze({
     BAZAAR_SELL_LOG_ID,COUPON_WINDOW_MS,COUPON_MAX_USES,CASHBACK_TIERS,
     ensureCustomerSlice,ensureCustomer,ensureCoupon,couponRemaining,eligibleCouponSales,cashbackForAmount,couponQualification,
     normalizeItems,extractBazaarSale,applySaleToCustomer,recalculateCustomers,importSalesEntries,
     customerRfmRows,
     issueCoupon,subscribeCustomer,unsubscribeCustomer,createRefund,completeRefund,cancelRefund,currentBazaarRows,
+    DEFAULT_BAZAAR_SNAPSHOT_MAX_AGE_MS,bazaarSnapshotFreshness,
     makeCouponCode
   });
 
