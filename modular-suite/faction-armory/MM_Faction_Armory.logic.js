@@ -213,6 +213,40 @@
   const n=value=>Math.max(0,Number(value)||0);
   const clone=value=>value==null?value:JSON.parse(JSON.stringify(value));
 
+  function overlayObject(base,override){
+    const out=base&&typeof base==='object'&&!Array.isArray(base)?clone(base):{};
+    if(!override||typeof override!=='object'||Array.isArray(override))return out;
+    for(const [key,value] of Object.entries(override)){
+      if(value===undefined)continue;
+      if(value&&typeof value==='object'&&!Array.isArray(value)){
+        out[key]=overlayObject(out[key],value);
+      }else{
+        out[key]=clone(value);
+      }
+    }
+    return out;
+  }
+
+  function manualOverrideValues(profile={}){
+    const block=profile?.manualOverrides;
+    if(!block||typeof block!=='object'||Array.isArray(block))return {};
+    const values=block.values&&typeof block.values==='object'&&!Array.isArray(block.values)?block.values:block;
+    const clean=clone(values)||{};
+    delete clean.updatedAt;
+    delete clean.reason;
+    return clean;
+  }
+
+  function effectiveMemberProfile(profile={}){
+    const raw=profile&&typeof profile==='object'&&!Array.isArray(profile)?profile:{};
+    const base=clone(raw)||{};
+    const values=manualOverrideValues(raw);
+    delete base.manualOverrides;
+    const effective=overlayObject(base,values);
+    effective.manualOverrides=clone(raw.manualOverrides||null);
+    return effective;
+  }
+
   function armorSlot(item){
     const raw=[item?.subType,item?.slot,item?.type,item?.name]
       .map(v=>String(v||'').toLowerCase()).join(' ');
@@ -1098,13 +1132,12 @@
     return map;
   }
 
-  function readinessApprovalIsCurrent(profile={},procurementMode='budget'){
+  function readinessApprovalIsCurrent(profile={},_procurementMode='budget'){
     const approval=profile?.readinessApproval;
-    if(!approval||String(approval.status||'')!=='WAR READY')return false;
-    const verifiedAt=String(profile?.verifiedAt||'');
-    const approvedVerifiedAt=String(approval.verifiedAt||'');
-    const approvedMode=String(approval.procurementMode||'budget').toLowerCase();
-    return Boolean(verifiedAt&&approvedVerifiedAt===verifiedAt&&approvedMode===String(procurementMode||'budget').toLowerCase());
+    // Leadership WAR READY is an explicit per-member decision. It persists until
+    // Leadership reopens the member and is never silently revoked by API refresh,
+    // procurement mode, missing data, or the automatic build model.
+    return Boolean(approval&&String(approval.status||'')==='WAR READY');
   }
 
   function procurementPassIsCurrent(profile={}){
@@ -1146,15 +1179,25 @@
 
     const baseRows=roster.map(member=>{
       const id=asId(member?.memberId);
-      const profile=profiles[id]&&typeof profiles[id]==='object'?profiles[id]:{};
+      const rawProfile=profiles[id]&&typeof profiles[id]==='object'?profiles[id]:{};
+      const profile=effectiveMemberProfile(rawProfile);
+      const overrideValues=manualOverrideValues(rawProfile);
+      const manualOverrideActive=Object.keys(overrideValues).length>0;
       const actualStats=profile?.stats||{};
       const actualBp=battleProfile(actualStats);
-      const estimate=actualBp.total?null:estimateBalancedBattleStats(member,profile?.publicIntel||{});
+      const memberForEstimate={
+        ...clone(member),
+        ...(profile.memberName!=null?{memberName:String(profile.memberName)}:{}),
+        ...(profile.level!=null?{level:n(profile.level)}:{})
+      };
+      const estimate=actualBp.total?null:estimateBalancedBattleStats(memberForEstimate,profile?.publicIntel||{});
       const stats=actualBp.total?clone(actualStats):clone(estimate?.stats||{});
       const bp=battleProfile(stats);
       const loan=loans.get(id)||{amount:0,items:[]};
       const equipmentSummary=String(profile?.equipment?.summary||'').trim();
       const profileHasEquipment=Boolean(equipmentSummary)||Array.isArray(profile?.equipment?.items)&&profile.equipment.items.length>0;
+      const equipmentEmptyConfirmed=Boolean(profile?.equipment?.emptyConfirmed)&&!profileHasEquipment;
+      const equipmentEvidenceKnown=profileHasEquipment||equipmentEmptyConfirmed;
       const hasEquipmentEvidence=profileHasEquipment||loan.items.length>0;
       const verifiedMs=Date.parse(profile?.verifiedAt||'')||0;
       const ageHours=verifiedMs?Math.max(0,(Date.now()-verifiedMs)/3600000):null;
@@ -1163,7 +1206,9 @@
       let dataStatus='READY FOR REVIEW';
       if(!actualBp.total){
         dataStatus=estimate?.total?'ESTIMATED — NEEDS DATA':'MISSING DATA';
-      }else if(!hasEquipmentEvidence){
+      }else if(equipmentEmptyConfirmed){
+        dataStatus='NO COMBAT GEAR EQUIPPED';
+      }else if(!equipmentEvidenceKnown){
         dataStatus='MISSING DATA';
       }else if(stale){
         dataStatus='STALE DATA';
@@ -1173,14 +1218,23 @@
 
       return {
         ...clone(member),
+        ...(profile.memberName!=null?{memberName:String(profile.memberName)}:{}),
+        ...(profile.level!=null?{level:n(profile.level)}:{}),
         memberId:id,
         profile:clone(profile),
+        rawProfile:clone(rawProfile),
+        manualOverrideActive,
+        manualOverrideValues:clone(overrideValues),
+        manualOverrideUpdatedAt:String(rawProfile?.manualOverrides?.updatedAt||''),
+        manualOverrideReason:String(rawProfile?.manualOverrides?.reason||''),
         publicIntel:clone(profile?.publicIntel||{}),
         stats,
         actualStats:clone(actualStats),
         statEstimate:clone(estimate),
         statProfile:bp,
         equipmentSummary,
+        equipmentEmptyConfirmed,
+        equipmentEvidenceKnown,
         hasStats:bp.total>0,
         hasVerifiedStats:actualBp.total>0,
         statsEstimated:Boolean(!actualBp.total&&estimate?.total),
@@ -1202,25 +1256,28 @@
 
     const rows=baseRows.map(row=>{
       const build=compareMemberBuild(row,factionInventory,baseRows,{procurementMode});
+      const leadershipWarReady=readinessApprovalIsCurrent(row.profile,procurementMode);
       let status=row.dataReadinessStatus;
-      if(status==='READY FOR REVIEW'){
-        if(!build.warReady)status='ACTION NEEDED';
-        else if(readinessApprovalIsCurrent(row.profile,procurementMode))status='WAR READY';
-        else status='READY FOR REVIEW';
+      if(leadershipWarReady){
+        status='WAR READY';
+      }else if(status==='READY FOR REVIEW'){
+        status=build.warReady?'READY FOR REVIEW':'ACTION NEEDED';
       }
       return {
         ...row,
         readinessStatus:status,
+        leadershipWarReady,
         acquisitionDisposition:status==='WAR READY'?'WAR READY':row.procurementPassCurrent?'PROCUREMENT PASS':'ACTIVE',
         buildWarReady:Boolean(build.warReady),
         buildAssessment:build,
         readinessApprovedAt:status==='WAR READY'?String(row.profile?.readinessApproval?.approvedAt||''):'',
-        readinessApprovalMode:status==='WAR READY'?String(row.profile?.readinessApproval?.procurementMode||procurementMode):''
+        readinessApprovalMode:status==='WAR READY'?String(row.profile?.readinessApproval?.procurementMode||'MANUAL'):'',
+        readinessApprovalReason:status==='WAR READY'?String(row.profile?.readinessApproval?.reason||'Leadership manual decision'):''
       };
     });
 
     return rows.sort((a,b)=>{
-      const priority={'MISSING DATA':0,'STALE DATA':1,'ESTIMATED — NEEDS DATA':2,'SUPPLY ACTION':3,'ACTION NEEDED':4,'READY FOR REVIEW':5,'WAR READY':6};
+      const priority={'MISSING DATA':0,'NO COMBAT GEAR EQUIPPED':1,'STALE DATA':2,'ESTIMATED — NEEDS DATA':3,'SUPPLY ACTION':4,'ACTION NEEDED':5,'READY FOR REVIEW':6,'WAR READY':7};
       return (priority[a.readinessStatus]??9)-(priority[b.readinessStatus]??9)
         || n(b.level)-n(a.level)
         || String(a.memberName||'').localeCompare(String(b.memberName||''));
@@ -1574,6 +1631,8 @@
     equipmentValueMetrics,
     readinessScore,
     readinessFloorScore,
+    manualOverrideValues,
+    effectiveMemberProfile,
     estimateBalancedBattleStats,
     generalCandidates,
     equipmentOptionsForSlot,
