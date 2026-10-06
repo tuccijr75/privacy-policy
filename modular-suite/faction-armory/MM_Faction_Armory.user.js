@@ -2878,7 +2878,7 @@
         statusText='Xanax policy saved. Matchups, stock target, shortfall, Acquire, leader report, and export recalculated.';
       }catch(error){statusText='Xanax policy failed: '+(error?.message||String(error));}
       finally{busy=false;render();}
-    }));
+    });
     root.querySelectorAll('[data-xanax-member-save]').forEach(b=>b.addEventListener('click',async()=>{
       if(busy)return;
       const id=asId(b.dataset.xanaxMemberSave);
