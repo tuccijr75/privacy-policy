@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.8
+// @version      8.0.0-alpha.24.9
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.8';
+  const VERSION='8.0.0-alpha.24.9';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -2397,28 +2397,86 @@
     return torn?{...torn}:null;
   }
 
+  function priceTimestampMs(value){
+    if(value==null||value==='')return 0;
+    if(typeof value==='number'||/^\d+(?:\.\d+)?$/.test(String(value).trim())){
+      const raw=Number(value);
+      if(!Number.isFinite(raw)||raw<=0)return 0;
+      return raw>1e12?raw:raw>1e9?raw*1000:0;
+    }
+    const parsed=Date.parse(String(value));
+    return Number.isFinite(parsed)?parsed:0;
+  }
+
+  function priceEvidenceFresh(value,maxAgeMs,nowMs=Date.now()){
+    const at=priceTimestampMs(value);
+    const ageMs=at?Math.max(0,nowMs-at):Infinity;
+    return {at,ageMs,fresh:Boolean(at&&ageMs<=Math.max(1,num(maxAgeMs)))};
+  }
+
   function acquisitionSourceSnapshot(row){
     const itemName=String(row?.item||'');
     const record=sharedItemRecordByName(itemName)||{};
     const itemId=String(record.itemId||'');
     const snap=itemId?state?.procurement?.marketSnapshots?.[itemId]||{}:{};
     const detail=itemId?state?.marketIntel?.details?.[itemId]||{}:{};
-    const bazaar=(detail.organicListings||[])
+    const now=Date.now();
+    const marketMaxAgeMs=Math.max(30,num(state?.businessRules?.maxListingAgeSec)||180)*1000;
+    const travelMaxAgeMs=15*60*1000;
+
+    const itemMarketRaw=num(snap?.itemMarket?.lowest);
+    const itemMarketFetchedAt=String(snap?.fetchedAt||snap?.itemMarket?.fetchedAt||snap?.itemMarket?.updatedAt||'');
+    const itemMarketFreshness=priceEvidenceFresh(itemMarketFetchedAt,marketMaxAgeMs,now);
+    const itemMarketPrice=itemMarketFreshness.fresh?itemMarketRaw:0;
+
+    const freshBazaarListings=(detail.organicListings||[])
       .filter(x=>num(x?.price)>0&&num(x?.quantity)>0)
-      .slice().sort((a,b)=>num(a.price)-num(b.price))[0]||null;
-    const travel=(state?.travelIntel?.rows||[])
+      .filter(x=>priceEvidenceFresh(x?.lastChecked??x?.contentUpdated??x?.fetchedAt,marketMaxAgeMs,now).fresh)
+      .slice().sort((a,b)=>num(a.price)-num(b.price));
+    const bazaar=freshBazaarListings[0]||null;
+    const bazaarSnapshotRaw=num(snap?.bazaar?.lowest);
+    const bazaarSnapshotFetchedAt=String(snap?.fetchedAt||snap?.bazaar?.fetchedAt||'');
+    const bazaarSnapshotFreshness=priceEvidenceFresh(bazaarSnapshotFetchedAt,marketMaxAgeMs,now);
+    const bazaarPrice=num(bazaar?.price)||(bazaarSnapshotFreshness.fresh?bazaarSnapshotRaw:0);
+    const bazaarFetchedAt=bazaar
+      ?String(bazaar?.lastChecked??bazaar?.contentUpdated??bazaar?.fetchedAt??'')
+      :bazaarSnapshotFetchedAt;
+
+    const travelFeedFetchedAt=String(state?.travelIntel?.sourceUpdatedAt||state?.travelIntel?.lastSyncAt||'');
+    const travelFreshness=priceEvidenceFresh(travelFeedFetchedAt,travelMaxAgeMs,now);
+    const travelRaw=(state?.travelIntel?.rows||[])
       .filter(x=>num(x?.stock)>0&&(
         (itemId&&String(x?.itemId||'')===itemId)||
         String(x?.itemName||'').trim().toLowerCase()===itemName.trim().toLowerCase()
       ))
       .slice().sort((a,b)=>(num(a.shopCost)||Number.MAX_SAFE_INTEGER)-(num(b.shopCost)||Number.MAX_SAFE_INTEGER))[0]||null;
-    const itemMarketPrice=num(snap?.itemMarket?.lowest);
-    const bazaarPrice=num(bazaar?.price)||num(snap?.bazaar?.lowest);
+    const travel=travelFreshness.fresh?travelRaw:null;
     const travelPrice=num(travel?.shopCost);
+    const travelFetchedAt=travelFeedFetchedAt;
+
     const tornMarketPrice=num(record?.marketPrice??record?.market_price??record?.marketValue??record?.market_value);
-    const itemMarketFetchedAt=String(snap?.itemMarket?.fetchedAt||snap?.itemMarket?.updatedAt||snap?.fetchedAt||'');
-    const bazaarFetchedAt=String(bazaar?.fetchedAt||detail?.fetchedAt||snap?.bazaar?.fetchedAt||snap?.fetchedAt||'');
-    const travelFetchedAt=String(travel?.fetchedAt||travel?.localFetchedAt||state?.travelIntel?.fetchedAt||'');
+    const staleSources=[];
+    if(itemMarketRaw&&!itemMarketFreshness.fresh){
+      staleSources.push({source:'Item Market',price:itemMarketRaw,fetchedAt:itemMarketFetchedAt,ageMs:itemMarketFreshness.ageMs});
+    }
+    const staleNamedBazaar=(detail.organicListings||[])
+      .filter(x=>num(x?.price)>0&&num(x?.quantity)>0)
+      .filter(x=>!priceEvidenceFresh(x?.lastChecked??x?.contentUpdated??x?.fetchedAt,marketMaxAgeMs,now).fresh)
+      .slice().sort((a,b)=>num(a.price)-num(b.price))[0]||null;
+    if(!bazaarPrice){
+      const staleBazaarPrice=num(staleNamedBazaar?.price)||bazaarSnapshotRaw;
+      const staleBazaarAt=staleNamedBazaar
+        ?String(staleNamedBazaar?.lastChecked??staleNamedBazaar?.contentUpdated??staleNamedBazaar?.fetchedAt??'')
+        :bazaarSnapshotFetchedAt;
+      if(staleBazaarPrice)staleSources.push({
+        source:'Bazaar',price:staleBazaarPrice,fetchedAt:staleBazaarAt,
+        ageMs:priceEvidenceFresh(staleBazaarAt,marketMaxAgeMs,now).ageMs
+      });
+    }
+    if(travelRaw&&num(travelRaw?.shopCost)>0&&!travelFreshness.fresh){
+      staleSources.push({source:'Overseas',price:num(travelRaw.shopCost),fetchedAt:travelFeedFetchedAt,ageMs:travelFreshness.ageMs});
+    }
+
     const liveCandidates=[
       itemMarketPrice?{source:'Item Market',price:itemMarketPrice,fetchedAt:itemMarketFetchedAt}:null,
       bazaarPrice?{source:'Bazaar',price:bazaarPrice,fetchedAt:bazaarFetchedAt}:null,
@@ -2433,20 +2491,24 @@
     const bestPlanning=best||fallback;
     return {
       itemId,
+      marketMaxAgeMs,
+      travelMaxAgeMs,
       itemMarketPrice,
+      itemMarketRaw,
       itemMarketFetchedAt,
       bazaarPrice,
       bazaarFetchedAt,
       bazaarSellerId:String(bazaar?.sellerId||''),
       travelPrice,
       travelFetchedAt,
-      travelCountry:String(travel?.country||''),
-      travelStock:num(travel?.stock),
+      travelCountry:String(travel?.country||travelRaw?.country||''),
+      travelStock:num(travel?.stock||travelRaw?.stock),
       tornMarketPrice,
       tornMarketFetchedAt:String(record?.fetchedAt||''),
       best,
       bestPlanning,
       liveCandidates,
+      staleSources,
       priceEvidence:best?'LIVE CACHED SOURCE':tornMarketPrice?'TORN MARKET REFERENCE':num(row?.marketValue)?'ARMORY STATIC REFERENCE':'UNPRICED'
     };
   }
@@ -2495,7 +2557,7 @@
       return {
         low:0,high:0,lowTotal:0,highTotal:0,
         planningUnit:0,planningTotal:0,planningSource:'',
-        planningFetchedAt:'',priceEvidence:'UNPRICED',priced:false
+        planningFetchedAt:'',priceEvidence:'UNPRICED',staleSources:live.staleSources||[],priced:false
       };
     }
     const low=Math.min(...comparisonPrices);
@@ -2505,6 +2567,7 @@
       planningUnit,planningTotal:planningUnit*qty,planningSource,
       planningFetchedAt:String(live.bestPlanning?.fetchedAt||''),
       priceEvidence:String(live.priceEvidence||''),
+      staleSources:live.staleSources||[],
       priced:true,
       liveRange:Boolean(livePrices.length)
     };
@@ -2526,7 +2589,8 @@
         priceEvidence:band.priceEvidence,
         low:band.low,
         high:band.high,
-        liveRange:band.liveRange
+        liveRange:band.liveRange,
+        staleSources:band.staleSources||[]
       };
     }
     return logic.reconcileAcquisitionPricing(base,quotes,acquisitionBudget);
