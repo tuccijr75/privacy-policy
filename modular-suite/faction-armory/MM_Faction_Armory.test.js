@@ -772,6 +772,11 @@ assert(userSourceValue.includes('Use Automatic'),'equipment menu must allow clea
 assert(userSourceValue.includes('API/source equipment stays unchanged underneath.'),'equipment menu must explain source preservation');
 assert(!userSourceValue.includes('Enter a PARTIAL JSON object'),'normal Edit Data Override workflow must not require JSON');
 assert(!userSourceValue.includes('Manual override JSON is invalid'),'normal Edit Data Override workflow must not expose JSON parsing UX');
+
+assert(userSourceValue.includes('function equipmentDecisionSummary'),'equipment overrides must have a plain-language audit summary');
+assert(userSourceValue.includes('EQUIPMENT OVERRIDE'),'Members UI must visibly identify members with slot decisions');
+assert(userSourceValue.includes("'Equipment Decisions'"),'Leadership export must include plain-language equipment decisions');
+
 console.log('MM Faction Armory alpha.24.5 equipment-menu regressions: PASS');
 
 
