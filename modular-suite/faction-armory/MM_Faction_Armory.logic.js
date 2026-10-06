@@ -955,6 +955,24 @@
             unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:item.currentName||'',reason:'Current item exists but performance is not known.'});
             continue;
           }
+          if(item.manualDecisionAction==='replacement'&&item.manualDecisionItemName){
+            const replacement=item.suggestedItem||{
+              name:item.manualDecisionItemName,
+              slot:item.slot,
+              source:'Leadership manual replacement'
+            };
+            const exactPool=(poolState[item.slot]||[]).find(candidate=>
+              candidate.remaining>0&&String(candidate.name||'').trim().toLowerCase()===String(item.manualDecisionItemName).trim().toLowerCase()
+            );
+            if(exactPool){
+              exactPool.remaining--;
+              assignments.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,route:'ISSUE',item:exactPool.name,manual:true});
+            }else{
+              addRequirement(replacement,1,member.memberName+' '+item.slot+' (Leadership replacement)'+(member.statsEstimated?' (estimated balanced build)':''),'equipment');
+              assignments.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,route:'ACQUIRE',item:String(replacement.name||item.manualDecisionItemName),estimated:Boolean(member.statsEstimated),manual:true});
+            }
+            continue;
+          }
           const target=item.targetItem;
           if(!target){
             unresolved.push({memberId:member.memberId,memberName:member.memberName,slot:item.slot,current:item.currentName||'',reason:'No baseline target could be resolved.'});
