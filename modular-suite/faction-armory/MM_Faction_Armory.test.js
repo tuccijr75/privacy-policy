@@ -987,7 +987,7 @@ priceState={
   procurement:{marketSnapshots:{'900':{
     fetchedAt:freshAt,
     itemMarket:{lowest:120},
-    bazaar:{lowest:45}
+    bazaar:{lowest:0,fetchedAt:staleAt}
   }}}
 };
 priceSnapshot=priceSnapshotFactory(numLocal,()=>priceRecord,priceState)({item:'Test Item',marketValue:300});
