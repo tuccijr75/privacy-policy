@@ -606,7 +606,7 @@ assert(userSourceValue.includes('data-save-acq-qty'));
 assert(userSourceValue.includes('requestedQty<=0'),'zero planned/funded quantity must not hand off a forced quantity of one');
 assert(userSourceValue.includes('const livePrices=[num(live.itemMarketPrice),num(live.bazaarPrice),num(live.travelPrice)]'),'leader planning must distinguish cached live-source prices from references');
 assert(userSourceValue.includes("const bestPlanning=best||fallback;"),'cached live buyable-source evidence must outrank Torn/static reference fallbacks');
-assert(userSourceValue.includes('Reference-only values are labeled and used only when no cached live buyable source is available.'),'leader snapshot must disclose fallback-reference semantics');
+assert(userSourceValue.includes('Reference-only values are labeled and used only when no fresh cached buyable source is available.'),'leader snapshot must disclose fallback-reference semantics');
 assert(userSourceValue.includes('SYSTEM BUY'));
 assert(userSourceValue.includes('PLANNED BUY'));
 assert(userSourceValue.includes('data-view="coverage"'));
