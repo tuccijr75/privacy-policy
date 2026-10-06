@@ -1731,8 +1731,9 @@
       mode:'peace',
       procurementMode
     });
+    const procurementPasses=members.filter(row=>row.procurementPassCurrent);
     const nonReady=new Map(
-      members.filter(row=>row.readinessStatus!=='WAR READY').map(row=>[row.memberId,row])
+      members.filter(row=>row.readinessStatus!=='WAR READY'&&!row.procurementPassCurrent).map(row=>[row.memberId,row])
     );
     const memberNeeds=isWar
       ? plan.assignments.filter(row=>row.route==='ACQUIRE'&&nonReady.has(row.memberId))
@@ -1753,8 +1754,9 @@
     if(isWar){
       lines.push(
         'Approved War Ready: '+members.filter(row=>row.readinessStatus==='WAR READY').length,
-        'Not War Ready: '+nonReady.size,
-        'Scope: WAR ONLY — non-WAR-READY member equipment plus war equipment spares.',
+        'Procurement Pass / Excluded: '+procurementPasses.length,
+        'Active acquisition members: '+nonReady.size,
+        'Scope: WAR ONLY — active member equipment plus war equipment spares.',
         'Routine minimum-stock replenishment is deferred until Peace mode.',
         '',
         'INDIVIDUAL MEMBER WAR BUILD NEEDS'
@@ -1795,7 +1797,7 @@
         const row=item.row;
         const band=item.band;
         lines.push(
-          '- '+row.item+' x'+fmt(row.qty)+' · '+
+          '- '+row.item+' x'+fmt(row.qty)+(row.manualQtyOverride!=null?' (manual; system '+fmt(row.systemQty)+')':'')+' · '+
           (band.priced
             ? '$'+fmt(band.low)+'–$'+fmt(band.high)+' each · $'+fmt(band.lowTotal)+'–$'+fmt(band.highTotal)+' line total'
             : 'price unresolved')+
@@ -1847,7 +1849,7 @@
       return '<details class="mm-fa-build-member" open>'+
         '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+
         '</b><span class="mm-fa-pill">'+rows.length+' items</span></span><span class="mm-fa-muted">'+
-        rows.reduce((sum,row)=>sum+num(row.qty),0)+' required</span></summary>'+
+        rows.reduce((sum,row)=>sum+num(row.qty),0)+' planned</span></summary>'+
         '<div class="mm-fa-build-body">'+rows.map(row=>{
           const live=acquisitionSourceSnapshot(row);
           const best=live.best;
@@ -1863,6 +1865,9 @@
                   : 'No live market/travel price cached yet — MM_Acquisitions will verify before routing.')+
               '</div>'+
               '<div class="mm-fa-actions" style="margin-top:4px;">'+
+                '<label class="mm-fa-muted">Planned qty <input class="mm-fa-input" data-acq-qty-input="'+esc(row.item)+'" data-acq-qty-category="'+esc(row.category)+'" type="number" min="0" step="1" value="'+Math.round(num(row.qty))+'" style="width:72px;"></label>'+
+                '<button data-save-acq-qty="'+esc(row.item)+'" data-acq-qty-category="'+esc(row.category)+'" style="'+button(row.manualQtyOverride!=null)+'">Save Qty</button>'+
+                (row.manualQtyOverride!=null?'<button data-reset-acq-qty="'+esc(row.item)+'" data-acq-qty-category="'+esc(row.category)+'" style="'+button()+'">Reset '+fmt(row.systemQty)+'</button>':'')+
                 '<button data-armory-acquire="'+esc(row.item)+'" data-source="Best" style="'+button(true)+'">Find Best Source</button>'+
                 '<button data-armory-acquire="'+esc(row.item)+'" data-source="Item Market" style="'+button()+'">Item Market</button>'+
                 '<button data-armory-acquire="'+esc(row.item)+'" data-source="Bazaar" style="'+button()+'">Bazaar</button>'+
@@ -1870,7 +1875,8 @@
               '</div>'+
             '</div>'+
             '<div class="mm-fa-tiles">'+
-              tile('REQUIRED',fmt(row.qty))+
+              tile('SYSTEM',fmt(row.systemQty))+
+              tile('PLANNED',fmt(row.qty),{cls:row.manualQtyOverride!=null?'mm-fa-warn':''})+
               tile('BUY NOW',fmt(row.fundedQty),{cls:row.fundedQty?'mm-fa-good':''})+
               (row.deferredQty?tile('DEFER',fmt(row.deferredQty),{cls:'mm-fa-warn'}):'')+
               (row.marketValue?tile('REF EACH','$'+fmt(row.marketValue)):'')+
@@ -1906,6 +1912,7 @@
       '</div>'+
       '<div class="mm-fa-tiles">'+
         tile('CURRENT MEMBERS',fmt(plan.participants))+
+        tile('PROCUREMENT PASSES',fmt(memberRows().filter(row=>row.procurementPassCurrent).length))+
         tile('BUDGET CAP','$'+fmt(plan.budgetCap))+
         tile('BUY NOW','$'+fmt(plan.fundedEstimatedValue),{cls:'mm-fa-good'})+
         tile('KNOWN DEFERRED','$'+fmt(plan.deferredEstimatedValue),{cls:plan.deferredEstimatedValue?'mm-fa-warn':''})+
@@ -1922,7 +1929,7 @@
         (stockMode==='war'
           ? 'War mode: acquire only non-War-Ready member equipment plus war equipment spares. Routine minimum-stock replenishment waits for Peace mode. '
           : 'Peace mode: replenish faction minimum stock only. Individual member equipment needs are deferred until War mode. ')+
-        'Approved War Ready members generate no individual equipment acquisition. Members without private stats use a clearly labeled balanced public estimate; faction loans are counted before purchases. '+
+        'Approved War Ready and current Procurement Pass members generate no individual equipment acquisition. Manual item quantities override planning/output only; they do not rewrite readiness or inventory facts. Members without private stats use a clearly labeled balanced public estimate; faction loans are counted before purchases. '+
         'Cached Item Market, Bazaar, overseas, and reference prices provide low/high planning estimates; MM_Acquisitions performs live source verification before purchase.'+
       '</div>'+
       (plan.unresolvedCount
@@ -1976,6 +1983,7 @@
     const viewHtml=activeView==='members'?membersHtml()
       :activeView==='builds'?buildsHtml()
       :activeView==='inventory'?inventoryHtml()
+      :activeView==='coverage'?coverageHtml()
       :activeView==='minimums'?minimumsHtml()
       :activeView==='acquire'?acquireHtml()
       :settingsHtml();
@@ -1986,6 +1994,7 @@
           '<button data-view="members" style="'+button(activeView==='members')+'">Members</button>'+
           '<button data-view="builds" style="'+button(activeView==='builds')+'">Builds</button>'+
           '<button data-view="inventory" style="'+button(activeView==='inventory')+'">Stock</button>'+
+          '<button data-view="coverage" style="'+button(activeView==='coverage')+'">Coverage</button>'+
           '<button data-view="minimums" style="'+button(activeView==='minimums')+'">Minimums</button>'+
           '<button data-view="acquire" style="'+button(activeView==='acquire')+'">Acquire</button>'+
           '<button data-view="settings" style="'+button(activeView==='settings')+'">Settings</button>'+
