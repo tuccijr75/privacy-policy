@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.20
+// @version      8.0.0-alpha.21
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.8
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/customers/MM_Customers.logic.js?v=8.0.0-alpha.1
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@63d47b40c0cebf546032218d7166ad4e5b5cef18/modular-suite/core/MM_Torn_Core.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b07cc05e6366f164f5f8e37dd00c1c98a7f47832/modular-suite/customers/MM_Customers.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.20';
+  const VERSION='8.0.0-alpha.21';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -522,18 +522,23 @@
     );
   }
 
-  function restockMessage(sub,rows){
+  function restockMessage(sub,rows,snapshot){
+    if(!snapshot?.fresh)throw new Error('Bazaar snapshot is not fresh enough for a current-stock message.');
     const name=String(sub?.name||'there');
     const limited=rows.slice(0,30),omitted=Math.max(0,rows.length-limited.length),chunks=[[],[],[]];
     limited.forEach((row,index)=>chunks[index%3].push(String(row.name||'Item')+' — Qty '+fmt(row.quantity)+' — '+(n(row.price)?money(row.price)+' each':'price unavailable')));
-    const columns=chunks.map((lines,index)=>({title:index===0?'CURRENT STOCK':'MORE STOCK',lines:lines.length?lines:['No additional items']}));
+    const columns=chunks.map((lines,index)=>({title:index===0?'SNAPSHOT STOCK':'MORE SNAPSHOT STOCK',lines:lines.length?lines:['No additional items']}));
     const totalUnits=rows.reduce((sum,row)=>sum+n(row.quantity),0);
-    const footer=['Stock and prices can change quickly and are first come, first served.'].concat(omitted?[fmt(omitted)+' additional item'+(omitted===1?'':'s')+' omitted to keep this message compact.']:[]).concat(['Reply STOP if you no longer want restock alerts.']);
-    const greeting='Here’s what’s currently available at '+SHOP_NAME+', '+name+'.';
+    const snapshotAge=Math.max(0,Math.round(n(snapshot.ageMs)/1000));
+    const footer=[
+      'This list comes from my Bazaar snapshot refreshed '+snapshotAge+' second'+(snapshotAge===1?'':'s')+' before this message was prepared.',
+      'Stock and prices can change after the snapshot and are first come, first served.'
+    ].concat(omitted?[fmt(omitted)+' additional item'+(omitted===1?'':'s')+' omitted to keep this message compact.']:[]).concat(['Reply STOP if you no longer want restock alerts.']);
+    const greeting='Here’s what was listed in my Bazaar when I refreshed it, '+name+'.';
     return {
-      subject:SHOP_NAME+' — Bazaar restock alert',
-      body:plainMessageText({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' total units',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer}),
-      bodyHtml:brandedMessageHtml({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' total units',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer})
+      subject:SHOP_NAME+' — Bazaar restock snapshot',
+      body:plainMessageText({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' snapshot units',columns,footerTitle:'RESTOCK SNAPSHOT',footerLines:footer}),
+      bodyHtml:brandedMessageHtml({customerName:name,greeting,centerText:fmt(rows.length)+' SKU'+(rows.length===1?'':'s'),rightText:fmt(totalUnits)+' snapshot units',columns,footerTitle:'RESTOCK SNAPSHOT',footerLines:footer})
     };
   }
 
@@ -1167,12 +1172,15 @@
   function restockHtml(){
     const rows=Object.values(state?.subscribers||{}).sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
     if(!rows.length)return card('No restock subscribers. Add them from Customers when they request RESTOCK.');
-    return rows.map(sub=>{
-      const matching=logic.currentBazaarRows(state,sub);
-      return '<details class="mm-cu-member"><summary><span><b>'+esc(sub.name||sub.id)+'</b> <span class="mm-cu-muted">['+esc(sub.id)+']</span></span><span class="mm-cu-muted">'+matching.length+' matching SKU(s)</span></summary>'+
-        '<div class="mm-cu-detail"><div class="mm-cu-muted">Interests: '+esc(sub.interests?.length?sub.interests.join(', '):'All items')+' · last notified '+when(sub.lastNotified)+'</div>'+
-        '<div class="mm-cu-actions" style="margin-top:5px;"><button data-restock-alert="'+esc(sub.id)+'" style="'+button(true)+'">Prepare Alert</button>'+(sub.pendingNotification?'<button data-restock-dismiss="'+esc(sub.id)+'" style="'+button()+'">Cancel Pending Draft</button>':'')+'<button data-restock-interests="'+esc(sub.id)+'" style="'+button()+'">Interests</button><button data-restock-remove="'+esc(sub.id)+'" style="'+button()+'">Remove</button></div></div></details>';
-    }).join('');
+    const snapshot=logic.bazaarSnapshotFreshness(state);
+    const snapshotLabel=snapshot.fresh?'FRESH · '+when(snapshot.localFetchedAt):snapshot.status==='STALE'?'STALE · '+when(snapshot.localFetchedAt):'MISSING';
+    return card('<div class="mm-cu-row"><div class="mm-cu-main"><b>Bazaar message evidence</b><div class="mm-cu-muted">Inventory Manager snapshot: '+esc(snapshotLabel)+' · '+fmt(snapshot.listingCount)+' cached SKU(s). Restock alerts require a snapshot no older than '+Math.round(snapshot.maxAgeMs/60000)+' minutes.</div></div><span class="'+(snapshot.fresh?'mm-cu-good':'mm-cu-warn')+'">'+esc(snapshot.status)+'</span></div>')+
+      rows.map(sub=>{
+        const matching=logic.currentBazaarRows(state,sub);
+        return '<details class="mm-cu-member"><summary><span><b>'+esc(sub.name||sub.id)+'</b> <span class="mm-cu-muted">['+esc(sub.id)+']</span></span><span class="mm-cu-muted">'+matching.length+' matching SKU(s)</span></summary>'+
+          '<div class="mm-cu-detail"><div class="mm-cu-muted">Interests: '+esc(sub.interests?.length?sub.interests.join(', '):'All items')+' · last notified '+when(sub.lastNotified)+' · stock snapshot '+esc(snapshotLabel)+'</div>'+
+          '<div class="mm-cu-actions" style="margin-top:5px;"><button data-restock-alert="'+esc(sub.id)+'" '+(snapshot.fresh?'':'disabled')+' style="'+button(snapshot.fresh)+'">'+(snapshot.fresh?'Prepare Alert':'Refresh Inventory First')+'</button>'+(sub.pendingNotification?'<button data-restock-dismiss="'+esc(sub.id)+'" style="'+button()+'">Cancel Pending Draft</button>':'')+'<button data-restock-interests="'+esc(sub.id)+'" style="'+button()+'">Interests</button><button data-restock-remove="'+esc(sub.id)+'" style="'+button()+'">Remove</button></div></div></details>';
+      }).join('');
   }
 
   function refundsHtml(){
@@ -1206,7 +1214,7 @@
     return card(
       '<b>Torn API</b><div class="mm-cu-muted">MM Customers keeps its key in this userscript\'s Tampermonkey storage only.</div>'+
       '<div class="mm-cu-actions" style="margin-top:6px;"><input id="mm-cu-api" class="mm-cu-input" type="password" autocomplete="off" placeholder="'+(saved?'API key saved — enter to replace':'Torn API key')+'" style="flex:1 1 260px;min-width:180px;"><button id="mm-cu-save-api" style="'+button(true)+'">Save</button><button id="mm-cu-clear-api" style="'+button()+'">Clear</button></div>'+
-      '<div class="mm-cu-mini" style="margin-top:5px;">Purpose: User Log 1226 for Bazaar customer/sales history. Restock alerts read the current Bazaar snapshot owned by MM Inventory Manager/ROI Tracker. The key is not copied into IndexedDB/localStorage and is not shared with other scripts.</div>'
+      '<div class="mm-cu-mini" style="margin-top:5px;">Purpose: User Log 1226 for Bazaar customer/sales history. Restock alerts consume the Bazaar snapshot owned by MM Inventory Manager/ROI Tracker and are blocked when that snapshot is stale/missing. The key is not copied into IndexedDB/localStorage and is not shared with other scripts.</div>'
     );
   }
 
@@ -1402,9 +1410,15 @@
 
     root.querySelectorAll('[data-restock-alert]').forEach(b=>b.addEventListener('click',async()=>{
       const id=b.dataset.restockAlert;const sub=state?.subscribers?.[id];if(!sub)return;
-      const rows=logic.currentBazaarRows(state,sub);if(!rows.length){statusText='No matching current Bazaar inventory. Refresh MM Inventory Manager/ROI Tracker first.';render();return;}
-      const msg=restockMessage(sub,rows);
-      await updateCustomerState(draft=>{const s=draft.subscribers[id];if(s){s.lastPrepared=new Date().toISOString();s.pendingNotification={id:'notice-'+Date.now(),type:'bazaar-inventory',preparedAt:s.lastPrepared,itemCount:rows.length};}});
+      const snapshot=logic.bazaarSnapshotFreshness(state);
+      if(!snapshot.fresh){
+        statusText='Restock alert blocked: Inventory Manager Bazaar snapshot is '+snapshot.status.toLowerCase()+'. Refresh Shop in MM Inventory Manager/ROI Tracker first.';
+        render();return;
+      }
+      const rows=logic.currentBazaarRows(state,sub);
+      if(!rows.length){statusText='No matching Bazaar listings in the fresh Inventory Manager snapshot.';render();return;}
+      const msg=restockMessage(sub,rows,snapshot);
+      await updateCustomerState(draft=>{const subDraft=draft.subscribers[id];if(subDraft){subDraft.lastPrepared=new Date().toISOString();subDraft.pendingNotification={id:'notice-'+Date.now(),type:'bazaar-inventory',preparedAt:subDraft.lastPrepared,itemCount:rows.length,bazaarSnapshotAt:snapshot.localFetchedAtIso};}});
       composeMessage(id,msg.subject,msg.body,msg.bodyHtml,{kind:'restock',noticeId:state?.subscribers?.[id]?.pendingNotification?.id||null});
     }));
     root.querySelectorAll('[data-restock-dismiss]').forEach(b=>b.addEventListener('click',()=>run('Dismissing pending restock alert…',async()=>{
