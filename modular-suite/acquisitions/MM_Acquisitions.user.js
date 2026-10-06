@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.30
+// @version      8.0.0-alpha.31
 // @description  Pricelist procurement and ranked-weapon investment assistant with direct Bazaar, Item Market, auction and travel routing; final actions remain manual.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -9,7 +9,7 @@
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@81cda9d1dce86eb6244f6fa7d88235b153d4634f/modular-suite/acquisitions/MM_Acquisitions.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@3957e080066298ab168b4288e71dda58049dd791/modular-suite/acquisitions/MM_Acquisitions.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@3b033e03b26faf17466fed7122adcb9c34077a0b/modular-suite/acquisitions/MM_Acquisitions.live.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@7439f1289a0ac281515e2954b6c2a349d2aa6815/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6c2ababdb06ee105191e74126c457ac3b7fea53f/modular-suite/acquisitions/MM_Acquisitions.torn-intel.js
@@ -43,6 +43,7 @@
   const TRAVEL_FRESH_MS=300_000;
   const TRAVEL_STALE_MS=900_000;
   const TRAVEL_CONTEXT_REFRESH_MS=60_000;
+  const TRAVEL_TIMING_REFRESH_MS=5*60_000;
   const CATALOG_STALE_MS=24*60*60*1000;
   const ITEM_PAGE_SIZE=75;
   const RANKED_PAGE_SIZE=30;
@@ -66,6 +67,7 @@
   let armorySources=null;
   let travelContext=null;
   let travelContextCheckedAt=0;
+  let travelTimingCheckedAt=0;
   let itemQuery='';
   let itemCategory='All';
   let itemAvailability='buyable';
@@ -258,6 +260,42 @@
     return ctx.state||'In Torn';
   }
 
+  async function refreshObservedTravelDuration(ctx,{force=false}={}){
+    if(!apiKey()||ctx?.mode!=='traveling'||!logic?.travelDurationObservation||!logic?.recordTravelDuration)return null;
+    if(!force&&travelTimingCheckedAt&&Date.now()-travelTimingCheckedAt<TRAVEL_TIMING_REFRESH_MS)return null;
+    travelTimingCheckedAt=Date.now();
+    try{
+      const data=await tornRequest('/user/travel');
+      const observation=logic.travelDurationObservation(data,Date.now());
+      if(!observation)return null;
+      const currentState=state||await readSharedState();
+      const existing=currentState?.travelIntel?.travelDurations?.[observation.key]?.samples||[];
+      const duplicate=Array.isArray(existing)&&existing.some(row=>
+        Number(row?.departedAt||0)===Number(observation.departedAt)&&
+        Number(row?.arrivalAt||0)===Number(observation.arrivalAt)
+      );
+      if(!duplicate){
+        await core.updateDomainState('market',draft=>{
+          const travel=draft.travelIntel||(draft.travelIntel={});
+          logic.recordTravelDuration(travel,observation,Date.now());
+          return draft;
+        });
+        state=await readSharedState();
+      }
+      if(ctx&&typeof ctx==='object'){
+        ctx.observedTravelDuration={
+          destination:observation.destination,method:observation.method,
+          durationSec:observation.durationSec,source:observation.source
+        };
+        ctx.timingError='';
+      }
+      return observation;
+    }catch(error){
+      if(ctx&&typeof ctx==='object')ctx.timingError=String(error?.message||error||'Travel timing unavailable');
+      return null;
+    }
+  }
+
   async function refreshTravelContext({force=false,silent=true}={}){
     if(!apiKey())return travelContext;
     if(!force&&travelContext&&Date.now()-travelContextCheckedAt<TRAVEL_CONTEXT_REFRESH_MS)return travelContext;
@@ -265,6 +303,7 @@
       const data=await tornRequest('/user/basic');
       travelContext=parseTravelContext(data);
       travelContextCheckedAt=Date.now();
+      if(travelContext?.mode==='traveling')await refreshObservedTravelDuration(travelContext,{force});
       if(!silent)statusText='Travel context updated: '+travelContextLabel(travelContext)+'.';
       return travelContext;
     }catch(error){
@@ -500,6 +539,30 @@
     return cycles<restockIntel.MIN_ETA_CYCLES
       ?'Out of stock · '+cycles+' usable cycles; need '+restockIntel.MIN_ETA_CYCLES+' for ETA.'
       :'Out of stock · sellout start is outside or ambiguous in the 48h history window.';
+  }
+
+  function departureTimingSummary(row){
+    const record=restockRecord(row?.countryCode||row?.country,row?.itemId);
+    if(!record)return 'Departure timing: load Restock History first.';
+    const estimate=logic?.travelDurationEstimate?.(state?.travelIntel||{},row?.country||row?.countryCode,Date.now())||null;
+    if(!estimate?.available){
+      return 'Departure timing: no observed trip duration yet. Acquisitions learns your actual duration from Torn /user/travel while you are flying.';
+    }
+    const timing=logic?.departureTiming?.(record,estimate,Date.now())||null;
+    if(!timing?.usable){
+      return 'Departure timing: ETA UNRELIABLE · '+String(timing?.reason||'restock or travel-duration evidence is insufficient');
+    }
+    const early=Number(timing.departureEarlyAt||0);
+    const late=Number(timing.departureLateAt||0);
+    const window=early&&late
+      ?new Date(early).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+'–'+new Date(late).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})
+      :'unknown';
+    const samples=Math.max(0,Number(estimate.sampleCount||0));
+    return 'Departure from Torn: '+String(timing.status||'ETA UNRELIABLE')+
+      ' · leave window '+window+
+      ' · observed travel '+durationMs(Number(estimate.durationSec||0)*1000)+
+      ' via '+String(estimate.method||'known method')+
+      ' ('+samples+' trip'+(samples===1?'':'s')+') · stock on arrival is not guaranteed.';
   }
 
   async function refreshTornIntelTravel({silent=false}={}){
@@ -1146,7 +1209,9 @@
       (!tornIntelKey()?'<div style="font-size:10px;color:#d8b96a;margin-top:5px;">Save the free Torn Intel client key under More → Setup / Advanced to calculate ETAs.</div>':'')+
       (restockRows.length?restockRows.map(r=>
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
-          '<div><b>'+esc(r.itemName)+'</b> · '+esc(r.country)+' · <span style="color:#ffb3b3;">OUT OF STOCK</span><div style="font-size:10px;color:#888;margin-top:2px;">Foreign cost '+money(r.shopCost||0)+' · '+esc(restockEtaSummary(r))+'</div></div>'+
+          '<div><b>'+esc(r.itemName)+'</b> · '+esc(r.country)+' · <span style="color:#ffb3b3;">OUT OF STOCK</span>'+
+          '<div style="font-size:10px;color:#888;margin-top:2px;">Foreign cost '+money(r.shopCost||0)+' · '+esc(restockEtaSummary(r))+'</div>'+
+          '<div style="font-size:10px;color:#9aa8b6;margin-top:2px;">'+esc(departureTimingSummary(r))+'</div></div>'+
           '<button data-restock-eta="1" data-restock-country="'+esc(r.countryCode||r.country||'')+'" data-restock-id="'+esc(r.itemId||'')+'" data-restock-name="'+esc(r.itemName||'')+'" '+(busy?'disabled':'')+' style="'+button(Boolean(restockRecord(r.countryCode||r.country,r.itemId)?.etaAt))+(busy?'opacity:.5;':'')+'white-space:nowrap;">ESTIMATE RESTOCK</button>'+
         '</div>'
       ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No out-of-stock items in the current travel scope.</div>')
@@ -2127,7 +2192,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.30 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.31 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
