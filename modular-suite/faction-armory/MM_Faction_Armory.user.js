@@ -2190,6 +2190,135 @@
     return inputs;
   }
 
+  function minimumRowByKey(key){
+    const proposal=logic.minimumProposal(state?.factionInventory||{},{
+      mode:stockMode,
+      procurementMode
+    });
+    return proposal.proposals.find(row=>String(row.minimumOverrideKey||'')===String(key||''))||null;
+  }
+
+  async function saveMinimumControl(row,{min,orderEnabled}={}){
+    if(!row)throw new Error('Minimum row is required.');
+    const key=String(row.minimumOverrideKey||logic.minimumOverrideKey(stockMode,row.category,row.item,row.slot));
+    const rawMin=String(min??'').trim();
+    const parsedMin=rawMin===''?null:Number(rawMin);
+    if(parsedMin!=null&&(!Number.isFinite(parsedMin)||parsedMin<0||!Number.isInteger(parsedMin)))throw new Error('Minimum must be a whole number of zero or more.');
+    const at=new Date().toISOString();
+    await core.updateDomainState('faction',draft=>{
+      const fi=draft.factionInventory;
+      fi.stockPlanning=fi.stockPlanning&&typeof fi.stockPlanning==='object'?fi.stockPlanning:{schema:1};
+      fi.stockPlanning.schema=1;
+      fi.stockPlanning.minimumOverrides=fi.stockPlanning.minimumOverrides&&typeof fi.stockPlanning.minimumOverrides==='object'
+        ?fi.stockPlanning.minimumOverrides:{};
+      const prior=fi.stockPlanning.minimumOverrides[key]&&typeof fi.stockPlanning.minimumOverrides[key]==='object'
+        ?fi.stockPlanning.minimumOverrides[key]:{};
+      const next={...prior,updatedAt:at};
+      if(parsedMin==null)delete next.min;
+      else next.min=Math.round(parsedMin);
+      if(orderEnabled==null){
+        if(!Object.prototype.hasOwnProperty.call(next,'orderEnabled'))next.orderEnabled=true;
+      }else{
+        next.orderEnabled=Boolean(orderEnabled);
+      }
+      if(!Object.prototype.hasOwnProperty.call(next,'min')&&next.orderEnabled!==false)delete fi.stockPlanning.minimumOverrides[key];
+      else fi.stockPlanning.minimumOverrides[key]=next;
+      return draft;
+    });
+    state=await core.readLegacyState();
+  }
+
+  async function saveXanaxPolicy(patch={}){
+    await core.updateDomainState('faction',draft=>{
+      const fi=draft.factionInventory;
+      fi.warPlanning=fi.warPlanning&&typeof fi.warPlanning==='object'?fi.warPlanning:{schema:1};
+      fi.warPlanning.schema=1;
+      const policy=fi.warPlanning.xanaxPolicy&&typeof fi.warPlanning.xanaxPolicy==='object'
+        ?fi.warPlanning.xanaxPolicy:{};
+      fi.warPlanning.xanaxPolicy={...policy,...patch};
+      return draft;
+    });
+    state=await core.readLegacyState();
+  }
+
+  async function refreshWarIntelOnly(){
+    if(busy)return;
+    const key=factionKey();
+    if(!key){activeView='settings';statusText='Save a faction-compatible API key first.';render();return;}
+    const leadership=state?.factionInventory?.leadership||{};
+    if(!leadership.factionId){statusText='Refresh Faction once before refreshing rival data.';render();return;}
+    busy=true;statusText='Refreshing current ranked-war rival…';render();
+    try{
+      const warsData=await apiRequest('/faction/wars',key);
+      const result=await refreshWarPlanning(key,leadership,warsData,{force:true});
+      if(result.war){
+        statusText='Rival refreshed: '+result.war.opponentFactionName+' · '+result.estimated+'/'+result.opponentMembers+' opponent estimates'+(result.failed?' · '+result.failed+' profile failures':'')+'.';
+      }else{
+        statusText='No current/upcoming ranked-war rival returned by Torn.';
+      }
+    }catch(error){statusText='Rival refresh failed: '+(error?.message||String(error));}
+    finally{busy=false;render();}
+  }
+
+  function xanaxWarHtml(proposal){
+    const estimator=proposal?.xanax;
+    const row=proposal?.proposals?.find(item=>String(item.item||'').toLowerCase()==='xanax')||null;
+    if(!estimator||!row)return '';
+    const policy=estimator.policy||{};
+    const pricing=acquisitionSourceSnapshot({item:'Xanax',marketValue:num(row.marketValue)});
+    const unit=num(pricing.bestPlanning?.price)||num(row.marketValue);
+    const short=num(row.shortfall);
+    const estimatedCost=unit*short;
+    const war=estimator.currentWar||{};
+    const sourceAge=estimator.opponentFetchedAt?when(estimator.opponentFetchedAt):'not refreshed';
+    const memberRowsHtml=(estimator.members||[]).map(member=>
+      '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(member.memberName)+'</b> <span class="mm-fa-pill">'+esc(member.tier)+'</span>'+
+        '<div class="mm-fa-muted">'+fmt(member.statsTotal)+(member.statsEstimated?' estimated':' verified')+' stats · '+member.credibleTargets+' credible rival target'+(member.credibleTargets===1?'':'s')+
+        (member.targetNames?.length?' · '+esc(member.targetNames.join(', ')):'')+'</div></div>'+
+        '<div class="mm-fa-tiles">'+
+          tile('CEILING',fmt(member.ceiling))+
+          tile('WAR REC',fmt(member.recommended),{cls:member.recommended?'mm-fa-good':''})+
+          (member.manualOverride!=null?tile('MANUAL',fmt(member.manualOverride),{cls:'mm-fa-warn'}):'')+
+        '</div>'+
+        '<div class="mm-fa-actions">'+
+          '<input class="mm-fa-input" data-xanax-member-input="'+esc(member.memberId)+'" type="number" min="0" max="'+Math.round(num(member.ceiling))+'" step="1" placeholder="Auto" value="'+(member.manualOverride!=null?Math.round(num(member.manualOverride)):'')+'" style="width:70px;">'+
+          '<button data-xanax-member-save="'+esc(member.memberId)+'" style="'+button(member.manualOverride!=null)+'">Save</button>'+
+          (member.manualOverride!=null?'<button data-xanax-member-reset="'+esc(member.memberId)+'" style="'+button()+'">Auto</button>':'')+
+        '</div></div>'
+    ).join('');
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head"><div><b>Xanax War Estimator</b> <span class="mm-fa-muted">'+
+        (war.opponentFactionName?'vs '+esc(war.opponentFactionName)+' · war '+esc(war.warId||'—'):'no rival resolved')+
+        ' · rival cache '+esc(sourceAge)+'</span></div>'+
+        '<div class="mm-fa-actions"><button id="mm-fa-refresh-war" style="'+button(true)+'">Refresh Rival</button></div></div>'+
+      '<div class="mm-fa-tiles">'+
+        tile('VAULT HAVE',fmt(row.current))+
+        tile('LEADERSHIP CEILING',fmt(estimator.leadershipCeiling))+
+        tile('MATCHUP TARGET',estimator.ready?fmt(estimator.recommendedTarget):'DATA')+
+        tile('EFFECTIVE MIN',row.dataRequired?'DATA':fmt(row.effectiveMin),{cls:row.minimumOverrideActive?'mm-fa-warn':''})+
+        tile('SHORT',row.dataRequired?'—':fmt(row.shortfall),{cls:short?'mm-fa-bad':'mm-fa-good'})+
+        tile('ORDER',row.orderEnabled?(short?'YES':'NO — ENOUGH'):'HOLD',{cls:row.orderEnabled&&short?'mm-fa-warn':''})+
+        (unit?tile('PLAN EACH','$'+fmt(unit)+' · '+String(pricing.bestPlanning?.source||'reference'),{wide:true}):tile('PLAN EACH','PRICE NOT CACHED',{wide:true}))+
+        (unit&&short?tile('SHORTFALL COST','$'+fmt(estimatedCost),{cls:'mm-fa-warn'}):'')+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:5px;">'+esc(estimator.rationale)+'</div>'+
+      '<div class="mm-fa-actions" style="margin-top:6px;">'+
+        '<label class="mm-fa-muted">Posture <select id="mm-fa-xanax-posture" class="mm-fa-input" style="width:115px;">'+
+          ['off','conserve','compete','push'].map(value=>'<option value="'+value+'" '+(policy.investmentPosture===value?'selected':'')+'>'+value.toUpperCase()+'</option>').join('')+
+        '</select></label>'+
+        '<label class="mm-fa-muted">Reasonable matchup ratio <input id="mm-fa-xanax-ratio" class="mm-fa-input" type="number" min="0.1" max="2" step="0.05" value="'+Number(policy.reasonableRatio||0.8).toFixed(2)+'" style="width:75px;"></label>'+
+        '<label class="mm-fa-muted">High ≥ <input id="mm-fa-xanax-high" class="mm-fa-input" type="number" min="1" step="1000" value="'+Math.round(num(policy.highThreshold))+'" style="width:90px;"></label>'+
+        '<label class="mm-fa-muted">Medium ≥ <input id="mm-fa-xanax-medium" class="mm-fa-input" type="number" min="1" step="500" value="'+Math.round(num(policy.mediumThreshold))+'" style="width:90px;"></label>'+
+        '<label class="mm-fa-muted">High cap <input id="mm-fa-xanax-high-cap" class="mm-fa-input" type="number" min="0" step="1" value="'+Math.round(num(policy.highCeiling))+'" style="width:55px;"></label>'+
+        '<label class="mm-fa-muted">Med cap <input id="mm-fa-xanax-medium-cap" class="mm-fa-input" type="number" min="0" step="1" value="'+Math.round(num(policy.mediumCeiling))+'" style="width:55px;"></label>'+
+        '<label class="mm-fa-muted">Low cap <input id="mm-fa-xanax-low-cap" class="mm-fa-input" type="number" min="0" step="1" value="'+Math.round(num(policy.lowCeiling))+'" style="width:55px;"></label>'+
+        '<button id="mm-fa-save-xanax-policy" style="'+button(true)+'">Save Xanax Policy</button>'+
+      '</div>'+
+      '<div class="mm-fa-mini" style="margin-top:5px;">CONSERVE is the current leadership-loss posture: only credible rival matchups create a recommendation, capped by the agreed tier allowance. Any field or member allocation can be changed manually.</div>'+
+      '<details class="mm-fa-details" style="margin-top:5px;"><summary>Member Xanax recommendations · '+(estimator.members||[]).length+'</summary><div style="margin-top:4px;">'+memberRowsHtml+'</div></details>'+
+    '</div>';
+  }
+
   function minimumsHtml(){
     const proposal=logic.minimumProposal(state?.factionInventory||{},{
       mode:stockMode,
@@ -2200,35 +2329,55 @@
     const modeLabel=stockMode==='war'?'WAR · '+proposal.participants+' CURRENT MEMBERS':'PEACE';
     const numeric=proposal.proposals.filter(row=>!row.dataRequired);
     const shortRows=numeric.filter(row=>num(row.shortfall)>0);
+    const orderRows=shortRows.filter(row=>row.orderEnabled);
+    const heldRows=shortRows.filter(row=>!row.orderEnabled);
     const dataRows=proposal.proposals.filter(row=>row.dataRequired);
     const groups=categories.map(cat=>{
       const rows=proposal.proposals.filter(row=>String(row.category||'other')===cat)
+        .filter(row=>!(stockMode==='war'&&String(row.item||'').toLowerCase()==='xanax'))
         .sort((a,b)=>(b.shortfall||0)-(a.shortfall||0)||String(a.item).localeCompare(String(b.item)));
+      if(!rows.length)return '';
       const short=rows.reduce((sum,row)=>sum+num(row.shortfall),0);
-      return '<details class="mm-fa-build-member">'+
+      return '<details class="mm-fa-build-member" '+(['medical','temporary'].includes(cat)?'open':'')+'>'+
         '<summary><span class="mm-fa-build-summary-main"><b>'+esc(cat.toUpperCase())+'</b><span class="mm-fa-pill">'+rows.length+' lines</span></span><span class="mm-fa-muted">'+short+' short</span></summary>'+
-        '<div class="mm-fa-build-body">'+rows.map(row=>
-          '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.item)+'</b><div class="mm-fa-muted">'+esc(row.rationale)+'</div></div>'+
-          '<div class="mm-fa-tiles">'+tile('CURRENT',fmt(row.current))+tile('MIN',row.dataRequired?'DATA':fmt(row.recommendedMin))+tile('MAX',row.dataRequired?'—':fmt(row.recommendedMax))+tile('SHORT',row.dataRequired?'—':fmt(row.shortfall),{cls:num(row.shortfall)>0?'mm-fa-bad':''})+'</div></div>'
-        ).join('')+'</div>'+
-      '</details>';
+        '<div class="mm-fa-build-body">'+rows.map(row=>{
+          const key=String(row.minimumOverrideKey||'');
+          const inputValue=row.manualMin!=null?row.manualMin:(row.suggestedMin!=null?row.suggestedMin:'');
+          const statusClass=row.status==='ENOUGH'?'mm-fa-good':row.status==='ORDER'?'mm-fa-bad':'mm-fa-warn';
+          return '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.item)+'</b>'+
+            '<div class="mm-fa-muted">'+esc(row.rationale)+'</div>'+
+            '<div class="mm-fa-actions" style="margin-top:4px;">'+
+              '<label class="mm-fa-muted">Minimum <input class="mm-fa-input" data-min-input="'+esc(key)+'" type="number" min="0" step="1" value="'+esc(inputValue)+'" '+(row.dataRequired&&!row.minimumOverrideActive?'placeholder="Set manually"':'')+' style="width:82px;"></label>'+
+              '<button data-save-min="'+esc(key)+'" style="'+button(row.minimumOverrideActive)+'">Save Minimum</button>'+
+              (row.minimumOverrideActive?'<button data-reset-min="'+esc(key)+'" style="'+button()+'">Use Suggested</button>':'')+
+              '<button data-toggle-min-order="'+esc(key)+'" style="'+button(row.orderEnabled)+'">'+(row.orderEnabled?'Order Shortfall':'Hold / Don\'t Order')+'</button>'+
+            '</div></div>'+
+            '<div class="mm-fa-tiles">'+
+              tile('HAVE',fmt(row.current))+
+              tile('SUGGESTED',row.suggestedMin==null?'DATA':fmt(row.suggestedMin))+
+              tile('EFFECTIVE MIN',row.dataRequired?'DATA':fmt(row.effectiveMin),{cls:row.minimumOverrideActive?'mm-fa-warn':''})+
+              tile('SHORT',row.dataRequired?'—':fmt(row.shortfall),{cls:num(row.shortfall)>0?'mm-fa-bad':''})+
+              tile('STATUS',row.status,{cls:statusClass})+
+            '</div></div>';
+        }).join('')+'</div></details>';
     }).join('');
     const inputHtml=inputs.map(row=>
       '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.priority)+' · '+esc(row.topic)+'</b><div class="mm-fa-muted">'+esc(row.detail)+'</div></div>'+
       '<span class="'+(row.status==='READY'||row.status==='COMPLETE'||row.status==='MATURE'||row.status==='READY TO DESIGN'?'mm-fa-good':row.status.includes('WAITING')||row.status==='COLLECTING'||row.status==='IN PROGRESS'?'mm-fa-warn':'mm-fa-bad')+'">'+esc(row.status)+'</span></div>'
     ).join('');
     return '<div class="mm-fa-card mm-fa-compact">'+
-      '<div class="mm-fa-module-head"><div><b>Manager Minimums Proposal</b> <span class="mm-fa-muted">'+modeLabel+' · '+procurementMode.toUpperCase()+' · '+proposal.observedDays.toFixed(1)+'d history · '+proposal.confidence+'</span></div>'+
+      '<div class="mm-fa-module-head"><div><b>War Stock Control</b> <span class="mm-fa-muted">'+modeLabel+' · '+procurementMode.toUpperCase()+' · '+proposal.observedDays.toFixed(1)+'d history · '+proposal.confidence+'</span></div>'+
       '<div class="mm-fa-actions"><button data-stock-mode="peace" style="'+button(stockMode==='peace')+'">Peace</button><button data-stock-mode="war" style="'+button(stockMode==='war')+'">War</button><button id="mm-fa-export" style="'+button(true)+'">Leadership Excel</button></div></div>'+
       '<div class="mm-fa-tiles">'+
-        tile('PROPOSED LINES',proposal.proposals.length)+
-        tile('BELOW MIN',shortRows.length,{cls:shortRows.length?'mm-fa-warn':''})+
+        tile('LINES',proposal.proposals.length)+
+        tile('ORDER NOW',orderRows.length,{cls:orderRows.length?'mm-fa-bad':'mm-fa-good'})+
+        tile('SHORT / HOLD',heldRows.length,{cls:heldRows.length?'mm-fa-warn':''})+
         tile('DATA REQUIRED',dataRows.length,{cls:dataRows.length?'mm-fa-warn':''})+
-        tile('CONFIDENCE',proposal.confidence)+
       '</div>'+
-      '<div class="mm-fa-muted" style="margin-top:5px;"><b>Our recommendation:</b> '+esc(proposal.assumptions)+' These are Inventory Manager numbers for Leadership approval—not open-ended quantity questions.</div>'+
+      '<div class="mm-fa-muted" style="margin-top:5px;"><b>Live rule:</b> Acquire uses the same effective minimum shown here. Change a minimum, order/hold decision, member readiness input, Xanax policy, rival estimate, or faction stock and the shortfall is recalculated automatically.</div>'+
     '</div>'+
-    '<details class="mm-fa-build-member" open><summary><span class="mm-fa-build-summary-main"><b>WHAT WE STILL NEED TO FIGURE OUT</b><span class="mm-fa-pill">'+inputs.filter(row=>!['READY','COMPLETE','MATURE','READY TO DESIGN'].includes(row.status)).length+' open</span></span><span class="mm-fa-muted">manager inputs / leadership dependencies</span></summary><div class="mm-fa-build-body">'+inputHtml+'</div></details>'+
+    (stockMode==='war'?xanaxWarHtml(proposal):'')+
+    '<details class="mm-fa-build-member"><summary><span class="mm-fa-build-summary-main"><b>Planning dependencies</b><span class="mm-fa-pill">'+inputs.filter(row=>!['READY','COMPLETE','MATURE','READY TO DESIGN'].includes(row.status)).length+' open</span></span><span class="mm-fa-muted">data that can improve the recommendation</span></summary><div class="mm-fa-build-body">'+inputHtml+'</div></details>'+
     groups;
   }
 
