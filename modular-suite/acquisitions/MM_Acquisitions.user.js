@@ -1040,6 +1040,7 @@
   function travelHtml(){
     if(!state)return card('<b>No cached travel state available.</b>');
     const ranked=logic.rankCachedTravel(state);
+    const allTravelRows=Array.isArray(state?.travelIntel?.rows)?state.travelIntel.rows:[];
     const feed=readTravelFeed();
     const captureAge=feed?.capturedAt?age(new Date(Number(feed.capturedAt)).toISOString()):'none';
     const syncedAt=Date.parse(state.travelIntel?.lastSyncAt||'')||0;
@@ -1050,45 +1051,74 @@
     const destination=normalizeTravelLocation(ctx?.destination||'');
     let scope='Next trip from Torn';
     let scopedRows=ranked;
+    let scopedRestock=allTravelRows.filter(row=>Number(row?.stock||0)<=0&&Number(row?.shopCost||0)>0);
     if(ctx?.mode==='abroad'&&current){
       scope='Items available where you are now · '+String(ctx.country||'current destination');
       scopedRows=ranked.filter(r=>normalizeTravelLocation(r.country)===current);
+      scopedRestock=scopedRestock.filter(r=>normalizeTravelLocation(r.country)===current);
     }else if(ctx?.mode==='traveling'&&destination&&destination!=='torn'){
       scope='Items to consider when you arrive · '+String(ctx.destination||'destination');
       scopedRows=ranked.filter(r=>normalizeTravelLocation(r.country)===destination);
+      scopedRestock=scopedRestock.filter(r=>normalizeTravelLocation(r.country)===destination);
     }else if(ctx?.mode==='traveling'){
       scope='You are traveling · showing next-trip ideas';
     }
     const stale=freshness==='STALE'||freshness==='UNKNOWN';
     const rows=(stale?[]:scopedRows).slice(0,20);
+    const restockRows=(stale?[]:scopedRestock).slice().sort((a,b)=>{
+      const ar=restockRecord(a?.countryCode||a?.country,a?.itemId);
+      const br=restockRecord(b?.countryCode||b?.country,b?.itemId);
+      const ae=Date.parse(String(ar?.etaAt||''))||Number.MAX_SAFE_INTEGER;
+      const be=Date.parse(String(br?.etaAt||''))||Number.MAX_SAFE_INTEGER;
+      return ae-be||String(a?.country||'').localeCompare(String(b?.country||''))||String(a?.itemName||'').localeCompare(String(b?.itemName||''));
+    }).slice(0,20);
     const freshnessColor=freshness==='FRESH'?'#9fe3a8':freshness==='AGING'?'#ffd18a':'#ff9b9b';
+    const provider=String(state?.travelIntel?.source||'Travel source');
+    const sourceAge=age(state?.travelIntel?.sourceUpdatedAt||'');
     return armoryRequestHtml()+card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
-        '<div><b>Travel Deals</b><div style="font-size:10px;color:#888;">Buy overseas and resell in Torn. Start near the top of the list. Travel and purchases remain manual.</div></div>'+
-        '<button id="mm-acq-travel-update" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Travel Prices</button>'+
+        '<div><b>Travel Deals</b><div style="font-size:10px;color:#888;">Current foreign stock uses Torn Intel when available; TornW3B remains the fallback. Travel and purchases remain manual.</div></div>'+
+        '<button id="mm-acq-travel-update" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Travel Stock</button>'+
       '</div>'+
-      '<div style="font-size:10px;margin-top:5px;"><b style="color:'+freshnessColor+';">'+esc(freshness)+'</b> · '+esc(scope)+'</div>'+
-      '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:10px;color:#888;">Travel data details</summary><div style="font-size:10px;color:#888;margin-top:4px;">Last browser capture: '+esc(captureAge)+' · saved travel data: '+esc(age(state.travelIntel?.lastSyncAt))+' · '+esc(travelContextLabel(ctx))+'</div><button id="mm-acq-travel-import" style="'+button()+'margin-top:5px;">Import Browser Capture</button></details>'+
-      (stale?'<div style="margin-top:6px;padding:6px;border:1px solid #7d3b3b;border-radius:5px;color:#ffb3b3;font-size:11px;"><b>Refresh needed.</b> Old travel prices are hidden until they are refreshed.</div>':'')
+      '<div style="font-size:10px;margin-top:5px;"><b style="color:'+freshnessColor+';">'+esc(freshness)+'</b> · '+esc(scope)+' · '+esc(provider)+'</div>'+
+      '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:10px;color:#888;">Travel data details</summary><div style="font-size:10px;color:#888;margin-top:4px;">Provider source observed '+esc(sourceAge)+' · local fetch '+esc(age(state.travelIntel?.lastSyncAt))+' · TornW3B browser capture '+esc(captureAge)+' · '+esc(travelContextLabel(ctx))+'</div><button id="mm-acq-travel-import" style="'+button()+'margin-top:5px;">Import TornW3B Fallback Capture</button></details>'+
+      (stale?'<div style="margin-top:6px;padding:6px;border:1px solid #7d3b3b;border-radius:5px;color:#ffb3b3;font-size:11px;"><b>Refresh needed.</b> Old travel stock is hidden until it is refreshed.</div>':'')
     )+
-    card(rows.length?rows.map((r,i)=>
-      '<div style="border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
-        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-          '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.itemName)+'</b><div style="margin-top:2px;">Buy in <b>'+esc(r.country)+'</b> · stock <b>'+Number(r.stock||0).toLocaleString()+'</b></div>'+
-            '<div style="color:#aaa;margin-top:2px;">Estimated profit <b>'+money(r.profit||0)+'</b> each · about <b>'+money(r.sourceProfitPerHour||0)+'/hr</b></div>'+
-            pulseLine(r,r.itemId,r.profit)+
+    card(
+      '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b>In-stock travel opportunities</b><div style="font-size:10px;color:#888;">Profit is shown only when Acquisitions has separate resale evidence. A foreign stock row by itself does not fabricate a resale price.</div></div></div>'+
+      (rows.length?rows.map((r,i)=>{
+        const profitKnown=Number(r?.profit||0)>0;
+        const hourlyKnown=Number(r?.sourceProfitPerHour||0)>0;
+        return '<div style="border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
+          '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
+            '<div style="min-width:0;"><b>#'+(i+1)+' '+esc(r.itemName)+'</b><div style="margin-top:2px;">Buy in <b>'+esc(r.country)+'</b> · stock <b>'+Number(r.stock||0).toLocaleString()+'</b> · foreign cost <b>'+money(r.shopCost||0)+'</b></div>'+
+              '<div style="color:#aaa;margin-top:2px;">'+(profitKnown?('Estimated profit <b>'+money(r.profit||0)+'</b> each'+(hourlyKnown?' · about <b>'+money(r.sourceProfitPerHour||0)+'/hr</b>':'')):'Resale/profit needs current market verification.')+'</div>'+
+              '<div style="font-size:10px;color:#777;margin-top:2px;">'+esc(restockEtaSummary(r))+'</div>'+
+              pulseLine(r,r.itemId,r.profit)+
+            '</div>'+
+            '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
+              '<button data-restock-eta="1" data-restock-country="'+esc(r.countryCode||r.country||'')+'" data-restock-id="'+esc(r.itemId||'')+'" data-restock-name="'+esc(r.itemName||'')+'" style="'+button()+'">RESTOCK HISTORY</button>'+
+              '<button data-travel-compare="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">Check All Prices</button>'+
+              '<button data-travel-source="Bazaar" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">GO TO BAZAAR</button>'+
+              '<button data-travel-source="Item Market" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">GO TO ITEM MARKET</button>'+
+              '<button data-travel-agency="1" style="'+button(true)+'">GO TO TRAVEL AGENCY</button>'+
+            '</div>'+
           '</div>'+
-          '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;">'+
-            '<button data-travel-compare="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">Check All Prices</button>'+
-            '<button data-travel-source="Bazaar" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">GO TO BAZAAR</button>'+
-            '<button data-travel-source="Item Market" data-travel-id="'+esc(r.itemId||'')+'" data-travel-name="'+esc(r.itemName||'')+'" style="'+button()+'">GO TO ITEM MARKET</button>'+
-            '<button data-travel-agency="1" style="'+button(true)+'">GO TO TRAVEL AGENCY</button>'+
-          '</div>'+
-        '</div>'+
-      '</div>'
-    ).join(''):(stale
-      ?'<div style="font-size:11px;color:#888;">Refresh travel prices to see recommendations.</div>'
-      :'<div style="font-size:11px;color:#888;">No profitable travel deals match your current trip.</div>'));
+        '</div>';
+      }).join(''):(stale
+        ?'<div style="font-size:11px;color:#888;margin-top:6px;">Refresh travel stock to see recommendations.</div>'
+        :'<div style="font-size:11px;color:#888;margin-top:6px;">No profitable in-stock travel deals match your current trip.</div>'))
+    )+
+    card(
+      '<div><b>Restock Watch</b><div style="font-size:10px;color:#888;margin-top:3px;">Out-of-stock foreign items. Restock estimates are MM calculations from Torn Intel observed history, not Torn Intel\'s private prediction. History calls are on-demand and rate-limited.</div></div>'+
+      (!tornIntelKey()?'<div style="font-size:10px;color:#d8b96a;margin-top:5px;">Save the free Torn Intel client key under More → Setup / Advanced to calculate ETAs.</div>':'')+
+      (restockRows.length?restockRows.map(r=>
+        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+          '<div><b>'+esc(r.itemName)+'</b> · '+esc(r.country)+' · <span style="color:#ffb3b3;">OUT OF STOCK</span><div style="font-size:10px;color:#888;margin-top:2px;">Foreign cost '+money(r.shopCost||0)+' · '+esc(restockEtaSummary(r))+'</div></div>'+
+          '<button data-restock-eta="1" data-restock-country="'+esc(r.countryCode||r.country||'')+'" data-restock-id="'+esc(r.itemId||'')+'" data-restock-name="'+esc(r.itemName||'')+'" '+(busy?'disabled':'')+' style="'+button(Boolean(restockRecord(r.countryCode||r.country,r.itemId)?.etaAt))+(busy?'opacity:.5;':'')+'white-space:nowrap;">ESTIMATE RESTOCK</button>'+
+        '</div>'
+      ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No out-of-stock items in the current travel scope.</div>')
+    );
   }
 
   async function compareTravelItem(itemId,itemName){
