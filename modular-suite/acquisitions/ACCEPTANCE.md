@@ -1,24 +1,23 @@
 # MM_Acquisitions Acceptance
 
 Candidate:
-- Desktop: 8.0.0-alpha.25
-- TornPDA: 8.0.0-alpha.25-pda.12
+- Desktop: 8.0.0-alpha.26
+- TornPDA: 8.0.0-alpha.26-pda.13
 - Branch: crm-v8-acquisitions-alpha22-clarity
 - Base: crm-v8-acquisitions-ranked-profit
 - Stable/customer publication: not approved
 
-## Simplified workflow
+## Focused customer workflow
 
-On first open, Acquisitions must land on **Home**.
+On first open, Acquisitions must land on **Pricelist**.
 
-The normal user path is:
+The only primary navigation choices are:
 
-1. **Find One Item** — search by item name or Torn item ID.
-2. **Check Prices** — compare Bazaar, Item Market, Torn shop, and Travel when available.
-3. **Choose a destination** — use the large **GO TO BAZAAR**, **GO TO ITEM MARKET**, or **GO TO TRAVEL AGENCY** button.
-4. Complete any purchase, bid, or travel action manually in Torn.
+1. **Pricelist** — every priced item from the configured customer pricelist, with buy rate, current known source prices, under/over-rate status, estimated resale/profit when available, and direct Bazaar / Item Market / Travel actions.
+2. **Ranked Weapons** — Primary / Secondary / Melee ranked weapon evaluation using BB value, official completed Auction House history, ROI and 7/30/90 sales traffic.
+3. **More** — supporting tools only: Find One Item, Best Deals, Travel Deals, Setup / Advanced.
 
-The user should not need to understand Market Pulse, liquidity, velocity, confidence, BB floor, or other advanced terms to complete this path. Advanced data must remain behind expandable details or specialist pages.
+The customer should not need to use More for the normal pricelist or ranked-weapon workflow. Market Pulse, liquidity, confidence, cache timing and diagnostics remain supporting/advanced evidence rather than primary navigation.
 
 ## Purpose
 
@@ -59,29 +58,42 @@ PASS:
 - panel opens/closes normally;
 - existing layout position is preserved.
 
-### 2. Home and Find Item workflow
+### 2. Pricelist primary workflow
 
-- Open Acquisitions and confirm **Home** is the first screen.
-- Confirm Home explains the order: choose item → compare prices → open source → buy manually.
-- Confirm the glossary is collapsed behind **What do these words mean?**
-- Open **Find Item**.
-- Search Can of Crocozade or another ordinary item and click **Check Prices**.
-- Confirm the selected-item card shows:
-  - Cheapest Price;
-  - Likely Resale;
-  - Estimated Profit;
-  - Return on Cost (with ROI explained as the alternate name).
-- Confirm the item card clearly asks **WHERE DO YOU WANT TO BUY?**.
-- Confirm **GO TO BAZAAR** says it opens player-owned bazaars.
-- Confirm **GO TO ITEM MARKET** says it opens Torn Item Market for that item.
-- Confirm Bazaar / Item Market / Travel alternatives appear as direct actions when those sources exist.
-- Confirm advanced source details and market-activity metrics are collapsed.
-- Confirm Market Activity says observed listing movement is not a confirmed individual sale.
+- Open Acquisitions and confirm **Pricelist** is the first screen.
+- Confirm the top navigation contains only **Pricelist**, **Ranked Weapons**, and **More**.
+- Confirm every priced item from the configured pricelist is reachable through paging/filtering.
+- Confirm each visible row shows:
+  - item name / ID;
+  - pricelist buy rate;
+  - known Bazaar price or dash;
+  - known Item Market price or dash;
+  - known Travel price or dash when applicable;
+  - cheapest currently known source;
+  - **AT / UNDER BUY RATE**, **ABOVE BUY RATE**, or **CHECK PRICE**;
+  - estimated resale / profit / ROI when evidence is available.
+- Confirm each row exposes **Check Prices**, **GO TO BAZAAR**, **GO TO ITEM MARKET**, and Travel when applicable.
+- Use Check Prices on one item and confirm the detailed comparison still asks **WHERE DO YOU WANT TO BUY?**.
+- Confirm direct Bazaar routing verifies a concrete seller before opening that Bazaar.
+- Confirm direct Item Market routing opens the exact selected item.
+- Confirm no action completes the purchase.
 
 PASS:
-- a new user can follow the workflow without knowing advanced market terminology;
-- no source or exit value is mislabeled;
-- no observational market movement is presented as a confirmed sale.
+- the normal non-ranked workflow can be completed entirely from Pricelist;
+- every customer pricelist item remains reachable;
+- buy-rate status is obvious without interpreting advanced metrics;
+- Bazaar / Item Market destination choice is unambiguous.
+
+### 2A. More tools are secondary
+
+- Open **More**.
+- Confirm Find One Item, Best Deals, Travel Deals and Setup / Advanced are available.
+- Confirm none of those tools appear as equal top-level tabs.
+- Open one More subtool and confirm a **← More tools** path is visible.
+- Confirm advanced settings and Market Activity remain optional/supporting.
+
+PASS:
+- supporting features remain available without competing with the two core customer jobs.
 
 ### 3. Verified Sales evidence
 
@@ -109,20 +121,31 @@ PASS:
 - evidence is readable and clearly distinguished from current asks/bids;
 - completed auctions are not described as current market prices.
 
-### 4. Ranked
+### 4. Ranked Weapons primary workflow
 
-- Refresh Ranked.
+- Open Ranked Weapons.
+- Confirm the page states that no bonus is excluded.
+- Refresh Weapons.
 - Verify Primary / Secondary / Melee filters.
 - Verify Bazaar / Item Market / Auction source filters.
-- Confirm live Bazaar and Item Market rows show Ask / Fair / Profit / ROI.
-- Confirm Auction rows show Current bid, fair value, max/break-even bid ceiling, headroom, bid count and time remaining.
-- Confirm live auctions sort by watch score, not purchase investment score.
+- Confirm each visible row leads with:
+  - current price / current bid;
+  - estimated value;
+  - estimated profit and ROI;
+  - completed-sale traffic for 7 / 30 / 90 days.
+- Confirm an item below its BB floor is visibly labeled **UNDER BB VALUE**.
+- Confirm other positive-value opportunities can be labeled **INVESTMENT CANDIDATE** or **WATCH / BID CANDIDATE** as appropriate.
+- Confirm BB value, AH median, confidence, liquidity, investment/watch score and Market Activity are behind **Valuation details**.
 - Load official completed Auction House history for at least one weapon.
-- Confirm 7/30/90 traffic, AH confidence/liquidity and Market Pulse metrics remain visible.
+- Confirm **Completed Sales (N)** reaches the official Torn completed-sale evidence.
+- For auctions, confirm current bid, maximum/break-even bid ceiling, headroom, bid count and time remaining remain visible.
+- Confirm the action button clearly identifies Bazaar, Item Market, direct Torn auction when available, or the auction finder fallback.
 
 PASS:
-- no $1 or low-bid auction is presented as a guaranteed purchase;
-- completed-sale evidence and live-bid semantics remain separate.
+- the ranked workflow can be understood from price, value, ROI and sales traffic without reading advanced metrics;
+- no bonuses are silently excluded;
+- no $1/low bid is presented as a guaranteed purchase;
+- completed-sale history and current auction bids remain distinct.
 
 ### 5. Market Pulse
 
@@ -153,19 +176,19 @@ PASS:
 - no duplicate polling engine;
 - ownership transfers after expiry/close without permanent lockout.
 
-### 7. Existing workflows
+### 7. Supporting workflows
 
-Check:
-- Deals;
-- Pricelist Universe scan;
-- Items;
-- Ranked;
+From **More**, check:
+- Find One Item;
+- Best Deals;
 - Travel / Overseas;
 - Faction Armory procurement handoff;
-- Settings;
+- Setup / Advanced;
 - purchase ledger sync.
 
 PASS:
+- supporting workflows remain available;
+- none replaces or obscures the primary Pricelist / Ranked Weapons paths;
 - no regression in Bazaar, Item Market, Auction, Travel, pricelist or ranked behavior.
 
 ### 8. Manual final-action boundary
@@ -194,7 +217,9 @@ PASS:
 
 ## TornPDA
 
-Install 8.0.0-alpha.25-pda.12.
+Install 8.0.0-alpha.26-pda.13.
+
+- Confirm TornPDA also opens on Pricelist and shows only Pricelist / Ranked Weapons / More as primary navigation.
 
 ### Boot
 
@@ -223,10 +248,10 @@ PASS:
 ### Travel alternatives
 
 - Open Travel Deals and choose an item where Travel is the cheapest known source.
-- Confirm the row still shows **Check All Prices**, **Open Bazaar**, **Open Item Market**, and **Travel Agency**.
+- Confirm the row still shows **Check All Prices**, **GO TO BAZAAR**, **GO TO ITEM MARKET**, and **GO TO TRAVEL AGENCY**.
 - From an Item comparison where Travel is cheapest, confirm Acquisitions stays on the comparison and explains that Bazaar or Item Market can still be opened.
-- Confirm Open Bazaar can resolve aggregate Bazaar evidence to a verified seller before opening that seller's Bazaar.
-- Confirm Open Item Market opens the exact item search.
+- Confirm GO TO BAZAAR can resolve aggregate Bazaar evidence to a verified seller before opening that seller's Bazaar.
+- Confirm GO TO ITEM MARKET opens the exact item search.
 - No button may complete a purchase automatically.
 
 ### Travel handoff
