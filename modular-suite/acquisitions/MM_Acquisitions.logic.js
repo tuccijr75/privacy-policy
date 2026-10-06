@@ -394,6 +394,62 @@
       );
   }
 
+  function rankTravelDestinations(db,nowMs=Date.now()) {
+    const demand=db?.operations?.inventoryRoi?.restockDemand||{};
+    const byCountry=new Map();
+    for(const row of rankCachedTravel(db,nowMs)){
+      const country=String(row?.country||row?.countryCode||'Unknown').trim()||'Unknown';
+      let group=byCountry.get(country);
+      if(!group){
+        group={
+          country,itemCount:0,profitableItemCount:0,totalObservedStock:0,
+          totalAvailableProfit:0,totalAcquisitionCost:0,
+          bestLiquidityAdjustedProfitPerHour:0,bestSourceProfitPerHour:0,
+          bestRoiPct:0,bestItem:null,pulseFreshItems:0,pulseConfidenceMax:0,
+          restockMatchCount:0,restockDemandUnits:0,items:[]
+        };
+        byCountry.set(country,group);
+      }
+      const stock=Math.max(0,Number(row?.stock||0));
+      const profit=Math.max(0,Number(row?.profit||0));
+      const shopCost=Math.max(0,Number(row?.shopCost||0));
+      const roiPct=shopCost>0&&profit>0?profit/shopCost*100:0;
+      const adjustedPerHour=Math.max(0,Number(row?.liquidityAdjustedProfitPerHour||0));
+      const sourcePerHour=Math.max(0,Number(row?.sourceProfitPerHour||0));
+      const itemId=asId(row?.itemId);
+      const restock=demand?.[itemId];
+      const restockUnits=restock&&String(restock?.status||'OPEN')==='OPEN'?Math.max(0,Number(restock?.deficit||0)):0;
+      group.itemCount++;
+      if(profit>0)group.profitableItemCount++;
+      group.totalObservedStock+=stock;
+      group.totalAvailableProfit+=profit*stock;
+      group.totalAcquisitionCost+=shopCost*stock;
+      group.bestLiquidityAdjustedProfitPerHour=Math.max(group.bestLiquidityAdjustedProfitPerHour,adjustedPerHour);
+      group.bestSourceProfitPerHour=Math.max(group.bestSourceProfitPerHour,sourcePerHour);
+      group.bestRoiPct=Math.max(group.bestRoiPct,roiPct);
+      if(row?.pulseFreshness&&!row.pulseFreshness.stale)group.pulseFreshItems++;
+      group.pulseConfidenceMax=Math.max(group.pulseConfidenceMax,Math.max(0,Number(row?.pulseConfidencePct||0)));
+      if(restockUnits>0){group.restockMatchCount++;group.restockDemandUnits+=restockUnits;}
+      group.items.push({...row,roiPct,restockDemandUnits:restockUnits});
+      if(!group.bestItem||
+        adjustedPerHour>Number(group.bestItem?.liquidityAdjustedProfitPerHour||0)||
+        (adjustedPerHour===Number(group.bestItem?.liquidityAdjustedProfitPerHour||0)&&profit>Number(group.bestItem?.profit||0))){
+        group.bestItem={...row,roiPct,restockDemandUnits:restockUnits};
+      }
+    }
+    return [...byCountry.values()]
+      .map(group=>({
+        ...group,
+        pulseCoveragePct:group.itemCount?group.pulseFreshItems/group.itemCount*100:0
+      }))
+      .sort((a,b)=>
+        Number(b.bestLiquidityAdjustedProfitPerHour||0)-Number(a.bestLiquidityAdjustedProfitPerHour||0)||
+        Number(b.totalAvailableProfit||0)-Number(a.totalAvailableProfit||0)||
+        Number(b.profitableItemCount||0)-Number(a.profitableItemCount||0)||
+        String(a.country).localeCompare(String(b.country))
+      );
+  }
+
   const api = Object.freeze({
     businessRules,
     freshnessInfo,
@@ -401,7 +457,8 @@
     pulseSignals,pulseFields,
     rankCachedOpportunities,
     rankPricelistUniverse,
-    rankCachedTravel
+    rankCachedTravel,
+    rankTravelDestinations
   });
 
   Object.defineProperty(globalThis,'MMTornAcquisitionsLogic',{
