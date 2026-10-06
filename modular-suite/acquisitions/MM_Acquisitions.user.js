@@ -1962,6 +1962,17 @@
       '</div>'+
       '<div style="font-size:10px;color:#888;margin-top:7px;">While Acquisitions is open and visible, stale purchase logs and opportunity data refresh automatically with guarded intervals. Weav3r generation is checked once per minute. Verify & Buy and final purchase remain manual.</div>'
     )+
+    card(
+      '<b>Setup · Torn Intel travel/restock</b>'+
+      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">Current foreign stock can use Torn Intel without this key. The free approved Torn Intel client key is used only for on-demand 48-hour history / Restock ETA calls. It is stored only in this userscript\'s Tampermonkey GM storage and is never copied into shared state or diagnostics.</div>'+
+      '<div style="display:grid;grid-template-columns:minmax(160px,1fr) auto auto auto;gap:5px;align-items:center;">'+
+        '<input id="mm-acq-ti-key" type="password" autocomplete="off" placeholder="'+(tornIntelKey()?'Torn Intel client key saved — enter to replace':'Torn Intel client key')+'" style="'+inputCss()+'">'+
+        '<button id="mm-acq-ti-save" style="'+button(true)+'">Save</button>'+
+        '<button id="mm-acq-ti-clear" style="'+button()+'">Clear</button>'+
+        '<button id="mm-acq-ti-test-live" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Test Live Stock</button>'+
+      '</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:6px;">Travel provider: '+esc(String(state?.travelIntel?.source||'not synced'))+' · source observed '+esc(age(state?.travelIntel?.sourceUpdatedAt||''))+' · cached restock models '+Object.keys(state?.travelIntel?.restockEta||{}).length+'. Request/approve a client key at torn-intel.com/developers if Restock ETA is needed.</div>'
+    )+
     '<details style="margin-bottom:7px;"><summary style="cursor:pointer;border:1px solid #353535;background:#171717;border-radius:8px;padding:9px;"><b>Advanced settings</b> · optional</summary><div style="margin-top:7px;">'+
     card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
