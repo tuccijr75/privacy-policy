@@ -139,6 +139,7 @@
     inv.inventory=inv.inventory&&typeof inv.inventory==='object'&&!Array.isArray(inv.inventory)?inv.inventory:{};
     inv.listingPlans=inv.listingPlans&&typeof inv.listingPlans==='object'&&!Array.isArray(inv.listingPlans)?inv.listingPlans:{};
     inv.restockDemand=inv.restockDemand&&typeof inv.restockDemand==='object'&&!Array.isArray(inv.restockDemand)?inv.restockDemand:{};
+    inv.tradeReconciliation=inv.tradeReconciliation&&typeof inv.tradeReconciliation==='object'&&!Array.isArray(inv.tradeReconciliation)?inv.tradeReconciliation:{};
     return out;
   }
 
@@ -351,27 +352,118 @@
     return out.sort((a,b)=>a.timestamp-b.timestamp);
   }
 
+  function tradeInventoryEvents(db,itemId){
+    const id=asId(itemId),inboundLots=[],outboundEvents=[];
+    const records=db?.operations?.inventoryRoi?.tradeReconciliation||{};
+    for(const record of Object.values(records)){
+      if(!record||!['PENDING','ACCOUNTED'].includes(String(record.status||'')))continue;
+      const completedAt=n(record.completedAt);
+      if(!(completedAt>0)||String(record?.evidence?.confidence||'')!=='TRUSTED_COMPLETION')continue;
+      const tradeId=asId(record.tradeId);
+      for(let index=0;index<(Array.isArray(record.effects)?record.effects:[]).length;index++){
+        const effect=record.effects[index];
+        if(asId(effect?.itemId)!==id)continue;
+        const quantity=Math.max(0,n(effect?.quantity));if(!(quantity>0))continue;
+        const direction=String(effect?.direction||'').toUpperCase();
+        if(direction==='IN'){
+          const costKnown=effect?.basisKnown===true&&Number.isFinite(Number(effect?.unitCost))&&n(effect.unitCost)>=0;
+          inboundLots.push({
+            id:'trade:'+tradeId+':in:'+index,tradeId,acquiredAt:completedAt+1,quantity,remaining:quantity,
+            unitCost:costKnown?Math.max(0,n(effect.unitCost)):0,costKnown,
+            basisMethod:String(effect?.basisMethod||'UNKNOWN_INBOUND_COST'),source:'Trade',sellerId:'',sellerName:''
+          });
+        }else if(direction==='OUT'){
+          outboundEvents.push({
+            kind:'TRADE_OUT',tradeId,timestamp:completedAt,quantity,
+            reportedBasisKnown:effect?.basisKnown===true,reportedBasisTotal:Math.max(0,n(effect?.basisTotal)),
+            reportedUnitCost:Math.max(0,n(effect?.unitCost)),basisMethod:String(effect?.basisMethod||'')
+          });
+        }
+      }
+    }
+    inboundLots.sort((a,b)=>a.acquiredAt-b.acquiredAt||a.id.localeCompare(b.id));
+    outboundEvents.sort((a,b)=>a.timestamp-b.timestamp||a.tradeId.localeCompare(b.tradeId));
+    return {inboundLots,outboundEvents};
+  }
+
+  function tradeReconciliationSummary(db){
+    const records=db?.operations?.inventoryRoi?.tradeReconciliation||{};
+    const rows=Object.values(records||{});
+    return {
+      total:rows.length,
+      pending:rows.filter(r=>String(r?.status||'')==='PENDING').length,
+      accounted:rows.filter(r=>String(r?.status||'')==='ACCOUNTED').length,
+      invalid:rows.filter(r=>!['PENDING','ACCOUNTED'].includes(String(r?.status||''))).length
+    };
+  }
+
+  function acknowledgeTradeReconciliations(slice,at=Date.now()){
+    ensureInventorySlice(slice);
+    const records=slice.operations.inventoryRoi.tradeReconciliation;
+    let changed=0,invalid=0;
+    for(const [key,record] of Object.entries(records)){
+      if(String(record?.status||'')!=='PENDING')continue;
+      const valid=/^\d+$/.test(asId(record?.tradeId))&&n(record?.completedAt)>0&&Array.isArray(record?.effects)&&String(record?.evidence?.confidence||'')==='TRUSTED_COMPLETION';
+      if(!valid){invalid++;continue;}
+      records[key]={...record,status:'ACCOUNTED',accountedAt:Number(at),accountingVersion:1};
+      changed++;
+    }
+    if(changed)slice.operations.inventoryRoi.lastTradeReconciliationAt=new Date(Number(at)).toISOString();
+    return {changed,invalid,summary:tradeReconciliationSummary(slice)};
+  }
+
   function fifoLedger(db,itemId){
     const id=asId(itemId);
+    const trade=tradeInventoryEvents(db,id);
     const lots=(db?.procurement?.acquisitions||[])
       .filter(a=>asId(a.itemId)===id)
-      .map(a=>({id:a.id,acquiredAt:Date.parse(a.acquiredAt||'')||0,quantity:n(a.quantity),remaining:n(a.quantity),unitCost:n(a.unitCost),source:String(a.source||''),sellerId:asId(a.sellerId||''),sellerName:String(a.sellerName||'')}))
-      .filter(l=>l.quantity>0&&l.unitCost>=0).sort((a,b)=>a.acquiredAt-b.acquiredAt);
-    let cursor=0;const saleRows=[];
-    for(const sale of salesByItemDetailed(db,id)){
-      let need=sale.quantity,cogs=0,matched=0;
+      .map(a=>({id:a.id,acquiredAt:Date.parse(a.acquiredAt||'')||0,quantity:n(a.quantity),remaining:n(a.quantity),unitCost:n(a.unitCost),costKnown:true,basisMethod:'PROCUREMENT_ACQUISITION',source:String(a.source||''),sellerId:asId(a.sellerId||''),sellerName:String(a.sellerName||'')}))
+      .filter(l=>l.quantity>0&&l.unitCost>=0)
+      .concat(trade.inboundLots)
+      .sort((a,b)=>a.acquiredAt-b.acquiredAt||String(a.id).localeCompare(String(b.id)));
+
+    const events=[
+      ...salesByItemDetailed(db,id).map(sale=>({kind:'SALE',timestamp:n(sale.timestamp),sale})),
+      ...trade.outboundEvents
+    ].sort((a,b)=>n(a.timestamp)-n(b.timestamp)||(a.kind==='TRADE_OUT'?-1:1));
+
+    let cursor=0;const saleRows=[],tradeRows=[];
+    const consume=(quantity,timestamp)=>{
+      let need=Math.max(0,n(quantity)),cogs=0,knownUnits=0,consumedUnits=0,unknownCostUnits=0;
       while(need>0&&cursor<lots.length){
-        const lot=lots[cursor];if(lot.acquiredAt>sale.timestamp)break;
-        const take=Math.min(need,lot.remaining);cogs+=take*lot.unitCost;matched+=take;lot.remaining-=take;need-=take;if(lot.remaining<=0)cursor++;
+        const lot=lots[cursor];
+        if(n(lot.acquiredAt)>n(timestamp))break;
+        const take=Math.min(need,Math.max(0,n(lot.remaining)));
+        if(!(take>0)){cursor++;continue;}
+        consumedUnits+=take;
+        if(lot.costKnown){cogs+=take*n(lot.unitCost);knownUnits+=take;}else unknownCostUnits+=take;
+        lot.remaining-=take;need-=take;if(lot.remaining<=0)cursor++;
       }
-      const matchedRevenue=sale.quantity>0?sale.total*matched/sale.quantity:0;
-      saleRows.push({...sale,cogs,matchedUnits:matched,unmatchedUnits:Math.max(0,sale.quantity-matched),matchedRevenue,grossProfit:matchedRevenue-cogs});
+      return {cogs,knownUnits,consumedUnits,unknownCostUnits,untrackedUnits:Math.max(0,n(quantity)-consumedUnits)};
+    };
+
+    for(const event of events){
+      if(event.kind==='SALE'){
+        const sale=event.sale,used=consume(sale.quantity,event.timestamp);
+        const matchedRevenue=sale.quantity>0?sale.total*used.knownUnits/sale.quantity:0;
+        saleRows.push({...sale,cogs:used.cogs,matchedUnits:used.knownUnits,unmatchedUnits:Math.max(0,sale.quantity-used.knownUnits),consumedUnits:used.consumedUnits,unknownCostUnits:used.unknownCostUnits,untrackedUnits:used.untrackedUnits,matchedRevenue,grossProfit:matchedRevenue-used.cogs});
+      }else{
+        const used=consume(event.quantity,event.timestamp);
+        tradeRows.push({...event,cogs:used.cogs,knownCostUnits:used.knownUnits,consumedUnits:used.consumedUnits,unknownCostUnits:used.unknownCostUnits,untrackedUnits:used.untrackedUnits});
+      }
     }
-    const remainingLots=lots.filter(l=>l.remaining>0);
-    const remainingCost=remainingLots.reduce((s,l)=>s+l.remaining*l.unitCost,0);
-    const remainingQty=remainingLots.reduce((s,l)=>s+l.remaining,0);
+
+    const remainingLots=lots.filter(l=>n(l.remaining)>0);
+    const remainingKnownQty=remainingLots.filter(l=>l.costKnown).reduce((s,l)=>s+n(l.remaining),0);
+    const remainingUnknownQty=remainingLots.filter(l=>!l.costKnown).reduce((s,l)=>s+n(l.remaining),0);
+    const remainingCost=remainingLots.filter(l=>l.costKnown).reduce((s,l)=>s+n(l.remaining)*n(l.unitCost),0);
+    const remainingQty=remainingKnownQty+remainingUnknownQty;
     const now=Date.now();
-    return {lots,remainingLots:remainingLots.map(l=>({...l,ageDays:l.acquiredAt?(now-l.acquiredAt)/86400000:0,value:l.remaining*l.unitCost})),remainingCost,remainingQty,saleRows};
+    return {
+      lots,tradeRows,
+      remainingLots:remainingLots.map(l=>({...l,ageDays:l.acquiredAt?(now-l.acquiredAt)/86400000:0,value:l.costKnown?n(l.remaining)*n(l.unitCost):null})),
+      remainingCost,remainingQty,remainingKnownQty,remainingUnknownQty,saleRows
+    };
   }
 
   function realizedProfitMetrics(db,itemId,days=30,at=Date.now()){
@@ -385,16 +477,21 @@
   function inventoryRoiRows(db,at=Date.now()){
     return listingRows(db).map(row=>{
       const realized=realizedProfitMetrics(db,row.id,30,at),basis=realized.ledger;
-      const avgCost=basis.remainingQty>0?basis.remainingCost/basis.remainingQty:0;
+      const ownedQty=Math.max(0,n(row.bazaarQty)+n(row.personalQty));
+      const coverageDenominator=Math.max(ownedQty,n(basis.remainingQty));
+      const currentCostCoveragePct=coverageDenominator>0?Math.max(0,Math.min(100,n(basis.remainingKnownQty)/coverageDenominator*100)):100;
+      const avgCost=currentCostCoveragePct>=99.999&&n(basis.remainingKnownQty)>0?basis.remainingCost/basis.remainingKnownQty:0;
       const exit=n(row.plannedPrice)||n(row.bazaarPrice)||n(row.avgSoldPrice30);
       const currentProfitPerUnit=avgCost>0&&exit>0?exit-avgCost:0;
-      const ownedQty=Math.max(0,n(row.bazaarQty)+n(row.personalQty));
       const targetStock=Math.max(0,n(row.targetListed));
       const deficit=targetStock>0?Math.max(0,targetStock-ownedQty):0;
       const restockStatus=targetStock<=0?'NO SALES SIGNAL':ownedQty<=0?'OUT OF STOCK':deficit>0?'LOW STOCK':'ON TARGET';
       const staleInventory=n(row.bazaarQty)>0&&n(row.units30d)<=0;
       const pulse=marketPulseEvidence(db,row.id,at);
-      const pricing=pricingRecommendation({bazaarPrice:row.bazaarPrice,bazaarQty:row.bazaarQty,personalQty:row.personalQty,avgCost,avgSoldPrice30:row.avgSoldPrice30,pulse});
+      let pricing=pricingRecommendation({bazaarPrice:row.bazaarPrice,bazaarQty:row.bazaarQty,personalQty:row.personalQty,avgCost,avgSoldPrice30:row.avgSoldPrice30,pulse});
+      if(ownedQty>0&&currentCostCoveragePct<99.999){
+        pricing={...pricing,state:'COST BASIS INCOMPLETE',recommendedPrice:0,expectedProfitPerUnit:0,expectedRoiPct:0,explanation:'Tracked FIFO cost basis covers '+currentCostCoveragePct.toFixed(0)+'% of current/remaining units. Pricing margin guidance is withheld until basis is reconciled.'};
+      }
       const pricingStatus=pricing.state;
       const listingVsMarketPct=pricing.listingVsMarketPct;
       const expectedMarketProfitPerUnit=pulse.usable&&avgCost>0?pulse.floorPrice-avgCost:0;
@@ -405,7 +502,8 @@
       if(row.action==='LIST'||row.action==='TOP UP'||row.action==='REVIEW SLOW')attentionReasons.push(row.action);
       if(restockStatus==='OUT OF STOCK'||restockStatus==='LOW STOCK')attentionReasons.push(restockStatus);
       if(staleInventory&&!attentionReasons.includes('REVIEW SLOW'))attentionReasons.push('STALE INVENTORY');
-      return {...row,avgCost,trackedRemainingQty:basis.remainingQty,trackedRemainingCost:basis.remainingCost,currentProfitPerUnit,currentRoiPct:avgCost>0?currentProfitPerUnit/avgCost*100:0,
+      if(ownedQty>0&&currentCostCoveragePct<99.999)attentionReasons.push('COST BASIS INCOMPLETE');
+      return {...row,avgCost,currentCostCoveragePct,trackedRemainingQty:basis.remainingQty,trackedKnownCostQty:basis.remainingKnownQty,trackedUnknownCostQty:basis.remainingUnknownQty,trackedRemainingCost:basis.remainingCost,tradeOutCount:(basis.tradeRows||[]).length,currentProfitPerUnit,currentRoiPct:avgCost>0?currentProfitPerUnit/avgCost*100:0,
         realizedRevenue30:realized.revenue,realizedCogs30:realized.cogs,realizedGrossProfit30:realized.grossProfit,realizedRoiPct30:realized.realizedRoiPct,costCoveragePct30:realized.costCoveragePct,matchedUnits30:realized.matchedUnits,
         ownedQty,targetStock,deficit,restockStatus,staleInventory,coverDays,lastAcquisitionAt,pulse,pricing,pricingStatus,listingVsMarketPct,expectedMarketProfitPerUnit,expectedMarketRoiPct,attentionReasons,needsAttention:attentionReasons.length>0};
     }).sort((a,b)=>
@@ -494,6 +592,7 @@
     const revenue30=sales.filter(s=>n(s.timestamp)>=Number(at)-30*DAY_MS).reduce((sum,s)=>sum+n(s.total),0);
     const gross30=rows.reduce((sum,row)=>sum+n(row.realizedGrossProfit30),0);
     const cogs30=rows.reduce((sum,row)=>sum+n(row.realizedCogs30),0);
+    const trade=tradeReconciliationSummary(db);
     return {
       skuCount:rows.length,
       ownedUnits:rows.reduce((sum,row)=>sum+n(row.ownedQty),0),
@@ -504,7 +603,9 @@
       restockUnits:rows.reduce((sum,row)=>sum+n(row.deficit),0),
       pulseFreshCount:rows.filter(row=>row.pulse?.status==='FRESH').length,
       pulseStaleCount:rows.filter(row=>row.pulse?.status==='STALE').length,
-      pulseMissingCount:rows.filter(row=>row.pulse?.status==='MISSING').length
+      pulseMissingCount:rows.filter(row=>row.pulse?.status==='MISSING').length,
+      costBasisIncompleteCount:rows.filter(row=>n(row.currentCostCoveragePct)<99.999&&n(row.ownedQty)>0).length,
+      tradePendingCount:trade.pending,tradeAccountedCount:trade.accounted,tradeInvalidCount:trade.invalid
     };
   }
 
@@ -512,7 +613,7 @@
     BAZAAR_SELL_LOG_ID,
     ensureInventorySlice,normalizeItems,extractBazaarSale,importSalesEntries,
     parseStackableRows,salesItemMetrics,listingRows,updateShopSnapshot,
-    marketPulseEvidence,pricingRecommendation,salesByItemDetailed,fifoLedger,realizedProfitMetrics,inventoryRoiRows,restockDemandRows,replaceRestockDemand,dashboardSummary
+    marketPulseEvidence,pricingRecommendation,salesByItemDetailed,tradeInventoryEvents,tradeReconciliationSummary,acknowledgeTradeReconciliations,fifoLedger,realizedProfitMetrics,inventoryRoiRows,restockDemandRows,replaceRestockDemand,dashboardSummary
   });
 
   Object.defineProperty(globalThis,'MMTornInventoryRoiLogic',{value:api,configurable:true,enumerable:false,writable:false});
