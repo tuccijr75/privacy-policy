@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.29
+// @version      8.0.0-alpha.30
 // @description  Pricelist procurement and ranked-weapon investment assistant with direct Bazaar, Item Market, auction and travel routing; final actions remain manual.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -9,7 +9,7 @@
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@64269ee21590d11289c15331947576e4e6795b4f/modular-suite/acquisitions/MM_Acquisitions.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@81cda9d1dce86eb6244f6fa7d88235b153d4634f/modular-suite/acquisitions/MM_Acquisitions.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@3b033e03b26faf17466fed7122adcb9c34077a0b/modular-suite/acquisitions/MM_Acquisitions.live.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@7439f1289a0ac281515e2954b6c2a349d2aa6815/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6c2ababdb06ee105191e74126c457ac3b7fea53f/modular-suite/acquisitions/MM_Acquisitions.torn-intel.js
@@ -1053,6 +1053,7 @@
   function travelHtml(){
     if(!state)return card('<b>No cached travel state available.</b>');
     const ranked=logic.rankCachedTravel(state);
+    const destinationRanked=logic.rankTravelDestinations?.(state)||[];
     const allTravelRows=Array.isArray(state?.travelIntel?.rows)?state.travelIntel.rows:[];
     const feed=readTravelFeed();
     const captureAge=feed?.capturedAt?age(new Date(Number(feed.capturedAt)).toISOString()):'none';
@@ -1065,19 +1066,23 @@
     const destination=normalizeTravelLocation(ctx?.destination||'');
     let scope='Next trip from Torn';
     let scopedRows=ranked;
+    let scopedDestinations=destinationRanked;
     let scopedRestock=allTravelRows.filter(row=>Number(row?.stock||0)<=0&&Number(row?.shopCost||0)>0);
     if(ctx?.mode==='abroad'&&current){
       scope='Items available where you are now · '+String(ctx.country||'current destination');
       scopedRows=ranked.filter(r=>normalizeTravelLocation(r.country)===current);
+      scopedDestinations=destinationRanked.filter(r=>normalizeTravelLocation(r.country)===current);
       scopedRestock=scopedRestock.filter(r=>normalizeTravelLocation(r.country)===current);
     }else if(ctx?.mode==='traveling'&&destination&&destination!=='torn'){
       scope='Items to consider when you arrive · '+String(ctx.destination||'destination');
       scopedRows=ranked.filter(r=>normalizeTravelLocation(r.country)===destination);
+      scopedDestinations=destinationRanked.filter(r=>normalizeTravelLocation(r.country)===destination);
       scopedRestock=scopedRestock.filter(r=>normalizeTravelLocation(r.country)===destination);
     }else if(ctx?.mode==='traveling'){
       scope='You are traveling · showing next-trip ideas';
     }
     const stale=freshness==='STALE'||freshness==='UNKNOWN';
+    const destinations=(stale?[]:scopedDestinations).slice(0,10);
     const rows=(stale?[]:scopedRows).slice(0,20);
     const restockRows=(stale?[]:scopedRestock).slice().sort((a,b)=>{
       const ar=restockRecord(a?.countryCode||a?.country,a?.itemId);
@@ -1097,6 +1102,19 @@
       '<div style="font-size:10px;margin-top:5px;"><b style="color:'+freshnessColor+';">'+esc(freshness)+'</b> · '+esc(scope)+' · '+esc(provider)+'</div>'+
       '<details style="margin-top:6px;"><summary style="cursor:pointer;font-size:10px;color:#888;">Travel data details</summary><div style="font-size:10px;color:#888;margin-top:4px;">Provider source observed '+esc(sourceAge)+' · local fetch '+esc(age(state.travelIntel?.lastSyncAt))+' · TornW3B browser capture '+esc(captureAge)+' · '+esc(travelContextLabel(ctx))+'</div><button id="mm-acq-travel-import" style="'+button()+'margin-top:5px;">Import TornW3B Fallback Capture</button></details>'+
       (stale?'<div style="margin-top:6px;padding:6px;border:1px solid #7d3b3b;border-radius:5px;color:#ffb3b3;font-size:11px;"><b>Refresh needed.</b> Old travel stock is hidden until it is refreshed.</div>':'')
+    )+
+    card(
+      '<div><b>Destination ranking</b><div style="font-size:10px;color:#888;margin-top:3px;">Countries are ordered by the best liquidity-adjusted profit/hour available there, then total observed profit opportunity. Components stay visible; there is no hidden country score.</div></div>'+
+      (destinations.length?destinations.map((d,i)=>{
+        const best=d.bestItem||{};
+        const bestRoi=Number(best.roiPct||0);
+        const restock=Number(d.restockMatchCount||0)>0?' · <b style="color:#ffd18a;">RESTOCK MATCH '+Number(d.restockMatchCount||0)+'</b> ('+Number(d.restockDemandUnits||0).toLocaleString()+' needed)':'';
+        return '<div style="border-top:1px solid #303030;padding:8px 0;font-size:11px;">'+
+          '<div><b>#'+(i+1)+' '+esc(d.country)+'</b>'+restock+
+          '<div style="color:#aaa;margin-top:2px;">Best item <b>'+esc(best.itemName||'—')+'</b> · adjusted profit velocity <b>'+money(d.bestLiquidityAdjustedProfitPerHour||0)+'/hr</b> · source profit velocity '+money(d.bestSourceProfitPerHour||0)+'/hr</div>'+
+          '<div style="color:#888;margin-top:2px;">'+Number(d.itemCount||0)+' profitable item(s) · observed stock '+Number(d.totalObservedStock||0).toLocaleString()+' · available gross opportunity '+money(d.totalAvailableProfit||0)+' · best ROI '+bestRoi.toFixed(1)+'% · fresh Pulse '+Number(d.pulseCoveragePct||0).toFixed(0)+'% · max confidence '+Number(d.pulseConfidenceMax||0).toFixed(0)+'%</div>'+
+          '</div></div>';
+      }).join(''):(stale?'<div style="font-size:11px;color:#888;margin-top:6px;">Refresh travel stock to rank destinations.</div>':'<div style="font-size:11px;color:#888;margin-top:6px;">No destination currently has a supported profitable in-stock opportunity.</div>'))
     )+
     card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;"><div><b>In-stock travel opportunities</b><div style="font-size:10px;color:#888;">Profit is shown only when Acquisitions has separate resale evidence. A foreign stock row by itself does not fabricate a resale price.</div></div></div>'+
@@ -2109,7 +2127,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.29 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.30 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
