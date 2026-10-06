@@ -2015,7 +2015,6 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
 
 /* ===== Acquisitions logic (bundled) ===== */
-
 (() => {
   'use strict';
 
@@ -2280,7 +2279,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         id,
         name:String(base.itemName || db?.procurement?.catalog?.[id]?.name || ('Item '+id)),
         itemType:String(db?.procurement?.catalog?.[id]?.type || ''),
-        buyPrice,maxBuyPrice,bazaarAverage,marketPrice,sellerCount,liveListingCount,traderExit,
+        buyPrice,maxBuyPrice,bazaarAverage,marketPrice:marketReference,marketReference,sellerCount,liveListingCount,traderExit,
         bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,score,economicScore,confidence,
         ...pulse,
         freshness:globalFresh,history,enriched:Boolean(detail),
@@ -2426,7 +2425,6 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     value:api,configurable:true,enumerable:false,writable:false
   });
 })();
-
 
 ;globalThis.__MM_ACQ_PDA_STAGE='logic';
 
