@@ -1,7 +1,27 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.7**
+Status: **NON-PRODUCTION / alpha.24.8**
 
+
+## Alpha.24.8 acquisition-output accuracy audit
+
+- Leader output is now an **acquisition snapshot**, not a quote or authorization.
+- Acquire, Leader snapshot, Armory -> Acquisitions handoff, and Leadership Excel consume the same reconciled acquisition plan.
+- Cached buyable-source evidence is prioritized in this order: Item Market / Bazaar / overseas current cache by lowest observed price. Torn Market Reference and Armory static values are fallback-only and explicitly labeled as reference evidence.
+- A cheaper reference value can no longer outrank an available cached buyable-source price.
+- Budget-funded quantity is recomputed from the same displayed planning unit price used in the snapshot and Acquire UI.
+- Full planned priced cost is separated from budget-funded buy-now cost.
+- Unpriced requirements are not silently treated as funded; they are shown as **PRICE UNKNOWN** and excluded from funded dollar totals until live verification.
+- The snapshot records roster/inventory/market freshness, distinguishes verified private stats from public estimates, and labels unresolved rival/Xanax evidence.
+- Final purchase remains manual; MM_Acquisitions still performs live source verification before routing.
+
+### Alpha.24.8 acceptance additions
+
+1. Compare the Acquire totals with the Leader snapshot and Leadership Excel; Buy Now, Full Plan, Deferred and unpriced quantities must match.
+2. For an item with both a cached live source and a lower Torn/reference value, verify the live buyable-source price remains the planning basis.
+3. For an unpriced requirement, verify Buy Now is zero and the Leader snapshot says it is excluded from funded dollar totals.
+4. Use Find Best Source on one funded item and verify the handoff quantity equals the displayed budget-funded quantity, not the full planned quantity.
+5. Do not treat any displayed estimate as a guaranteed quote; verify MM_Acquisitions still rechecks live source/availability before the manual purchase boundary.
 
 ## Alpha.24.7 live war stock + opponent-weighted Xanax
 
