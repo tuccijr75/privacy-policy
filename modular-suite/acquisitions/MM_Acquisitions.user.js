@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.26
+// @version      8.0.0-alpha.27
 // @description  Pricelist procurement and ranked-weapon investment assistant with direct Bazaar, Item Market, auction and travel routing; final actions remain manual.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/core/MM_Torn_Core.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b5cb1338e22d67c4903f9abddc0ac471f7e043bd/modular-suite/acquisitions/MM_Acquisitions.live.js
@@ -91,6 +91,11 @@
   const live=globalThis.MMTornAcquisitionsLive;
   const rankedLogic=globalThis.MMTornRankedProfitLogic;
   const ledger=globalThis.MMTornAcquisitionLedger;
+
+  async function readSharedState(){
+    if(core?.ensureSharedState)return core.ensureSharedState();
+    return core.readLegacyState();
+  }
 
   const esc=value=>String(value??'')
     .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
@@ -469,7 +474,7 @@
       return;
     }
     try{
-      const next=await core.readLegacyState();
+      const next=await readSharedState();
       const validation=core.validateLegacyState(next);
       if(!validation.ok)throw new Error(validation.errors.join('; '));
       state=next;
@@ -515,7 +520,7 @@
       draft.businessRules={...(draft.businessRules||{}),...values,updatedAt:new Date().toISOString()};
       return draft;
     });
-    state=await core.readLegacyState();
+    state=await readSharedState();
     statusText='Shared business rules saved.';
     render();
   }
@@ -548,7 +553,7 @@
             : reason==='live-verification-unavailable'
               ? 'Live verification unavailable'+(warningSources.length?' for '+warningSources.join(' / '):'')+'. No purchase route was opened.'
               : 'Could not route purchase: '+reason;
-        state=await core.readLegacyState();
+        state=await readSharedState();
       }
     }catch(error){
       statusText='Live verification failed: '+(error?.message||String(error));
@@ -628,7 +633,7 @@
     if(!ledger)throw new Error('Acquisition ledger dependency missing.');
     busy=true;statusText='Syncing Bazaar + Item Market purchase logs…';render();
     try{
-      const current=await core.readLegacyState();const proc=ledger.ensureProcurement(current?.procurement||{});
+      const current=await readSharedState();const proc=ledger.ensureProcurement(current?.procurement||{});
       const fromMs=ledger.syncWindowStart(proc,Date.now(),180,24);const fetched={};
       for(const [logId,source] of Object.entries(ledger.ACQUISITION_LOG_IDS))fetched[logId]={source,rows:await fetchPurchaseLogs(Number(logId),fromMs/1000,50)};
       let added=0;
@@ -637,7 +642,7 @@
         for(const pack of Object.values(fetched))added+=ledger.mergeAcquisitionLogRows(draft.procurement,pack.rows,pack.source);
         draft.procurement.lastAcquisitionSyncAt=new Date().toISOString();return draft;
       });
-      state=await core.readLegacyState();statusText='Purchase ledger synced: '+added+' new lot'+(added===1?'':'s')+'.';
+      state=await readSharedState();statusText='Purchase ledger synced: '+added+' new lot'+(added===1?'':'s')+'.';
     }catch(error){statusText='Purchase sync failed: '+(error?.message||String(error));}
     finally{busy=false;render();}
   }
@@ -648,7 +653,7 @@
     const panelOpen=Boolean(root&&root.style.display!=='none');
     autoRefreshRunning=true;
     try{
-      state=await core.readLegacyState();
+      state=await readSharedState();
       if(panelOpen){
         try{await importTravelCapture({silent:true});}catch{}
         if(apiKey())try{await refreshTravelContext({force:false,silent:true});}catch{}
@@ -686,7 +691,7 @@
     if(!apiKey()){statusText='Save a Torn API key in Settings before refreshing Market Pulse.';activeView='settings';render();return;}
     busy=true;statusText='Refreshing one Market Pulse item from Torn API…';render();
     try{
-      state=await core.readLegacyState();
+      state=await readSharedState();
       const itemId=pulse.trackedItemIds(state,1)[0]||'';
       if(!itemId){statusText='Market Pulse has no tracked acquisition item yet. Refresh Opportunities or Pricelist first.';return;}
       const result=await pulseEngine.tick({itemId});
@@ -765,7 +770,7 @@
     busy=true;statusText='Comparing Bazaar, Item Market and overseas sources for '+armoryRequest.itemName+'…';render();
     try{
       armorySources=await service.procurementSourceOptions(armoryRequest.itemId,armoryRequest.itemName);
-      state=armorySources?.state||await core.readLegacyState();
+      state=armorySources?.state||await readSharedState();
       statusText=armorySources?.sources?.length
         ?'Source comparison ready for '+armoryRequest.itemName+'. Final purchase remains manual.'
         :'No live source is currently cached/available for '+armoryRequest.itemName+'.';
@@ -975,7 +980,7 @@
     render();
     try{
       const result=await service.routeProcurementRequest({itemId:id,itemName:name,preferredSource});
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       if(result?.routed){
         statusText='Opened '+result.source+' for '+(name||result.itemName||('item '+id))+'. Final purchase remains manual.';
       }else{
@@ -1058,7 +1063,7 @@
     render();
     try{
       const result=await service.refreshGlobal();
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       statusText='Pricelist market data refreshed. Use Check Prices on an item for exact live Bazaar / Item Market verification.';
     }catch(error){
       statusText='Pricelist market refresh failed: '+(error?.message||String(error));
@@ -1083,7 +1088,7 @@
     try{
       await refreshTravelContext({force:true,silent:true});
       const result=await service.routeProcurementRequest({itemId:id,itemName:name,preferredSource:source});
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       statusText=result?.routed
         ?('Opened '+result.source+' for '+name+'. Complete the purchase manually on Torn.')
         :(source+' is not currently available for '+name+'. Use Check Prices for the full comparison.');
@@ -1205,7 +1210,7 @@
       ranked.settings=settings;
       return draft;
     });
-    state=await core.readLegacyState();
+    state=await readSharedState();
     statusText='Ranked profit settings saved.';
     render();
   }
@@ -1217,7 +1222,7 @@
     render();
     try{
       const result=await service.refreshPricelist(rankedSettings().pricelistUserId);
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       statusText='Pricelist updated: '+Number(result?.priced||0).toLocaleString()+' priced items · '+money(result?.bbRate||0)+'/BB.';
     }catch(error){statusText='Pricelist refresh failed: '+(error?.message||String(error));}
     finally{busy=false;render();}
@@ -1231,7 +1236,7 @@
     render();
     try{
       const result=await service.refreshRankedLive({pagesPerType:cfg.pagesPerType,auctionPages:cfg.auctionPages,limit:100});
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       const liveRows=Array.isArray(result?.market)?result.market:[];
       const bazaarCount=liveRows.filter(row=>String(row?.source||'').toLowerCase()==='bazaar').length;
       const itemMarketCount=liveRows.filter(row=>String(row?.source||'').toLowerCase()==='item market'||String(row?.source||'').toLowerCase()==='market').length;
@@ -1268,7 +1273,7 @@
     render();
     try{
       const result=await service.refreshRankedHistory(id,{days:rankedSettings().historyDays,maxPages:8});
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       verifiedSalesItemId=id;
       statusText='Verified sales updated for '+String(catalog.name||('Item '+id))+': '+Number(result?.rows?.length||0).toLocaleString()+' completed Auction House sales.';
     }catch(error){statusText='Auction history failed: '+(error?.message||String(error));}
@@ -1334,7 +1339,7 @@
         statusText='Auction history '+(i+1)+'/'+ids.length+': '+name+'…';
         render();
         const result=await service.refreshRankedHistory(ids[i],{days:cfg.historyDays,maxPages:8});
-        state=result?.state||await core.readLegacyState();
+        state=result?.state||await readSharedState();
       }
       statusText='Official Auction House history updated for '+ids.length+' visible weapon types.';
     }catch(error){statusText='Ranked history batch stopped: '+(error?.message||String(error));}
@@ -1528,7 +1533,7 @@
     render();
     try{
       const result=await service.refreshItemCatalog();
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       const count=Number(state?.procurement?.catalogItemCount||result?.rows?.length||0);
       const buyable=Number(state?.procurement?.catalogBuyableCount||0);
       statusText='Torn item catalog updated: '+count.toLocaleString()+' items · '+buyable.toLocaleString()+' buyable.';
@@ -1562,7 +1567,7 @@
     render();
     try{
       itemSources=await service.procurementSourceOptions(item.id,item.name);
-      state=itemSources?.state||await core.readLegacyState();
+      state=itemSources?.state||await readSharedState();
       statusText=itemSources?.sources?.length
         ?'Price comparison ready for '+item.name+'. Lowest available source is listed first.'
         :'No current purchase source was found for '+item.name+'.';
