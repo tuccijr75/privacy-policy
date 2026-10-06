@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.24-pda.11
+// @version      8.0.0-alpha.25-pda.12
 // @description  Easy TornPDA buying workflow: find items, compare Bazaar, Item Market and travel prices, then open a source and buy manually.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -3781,6 +3781,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const RANKED_LIVE_STALE_MS=300_000;
   const PRICELIST_STALE_MS=3600_000;
   const DEFAULT_PRICELIST_USER_ID='4054377';
+  const PANEL_OPEN_KEY='mm_acquisitions_panel_open_v1';
 
   let activeView='home';
   let state=null;
@@ -3811,6 +3812,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   let rankedWeapon='';
   let rankedMinRoi=0;
   let rankedPage=0;
+  let renderedView='';
+  const detailOpenState=new Map();
+  const viewScrollTop=new Map();
 
   const core=globalThis.MMTornCore;
   const pulse=globalThis.MMTornMarketPulse;
@@ -4166,7 +4170,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(isTornMarket&&marketNavigationBlocked()){
       throw new Error('Torn market purchase pages are unavailable while traveling or abroad. Return to Torn before routing this market purchase.');
     }
-    close();
+    GM_setValue(PANEL_OPEN_KEY,true);
     setTimeout(()=>{location.href=target;},20);
   }
 
@@ -5386,6 +5390,32 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     '</div></details>';
   }
 
+  function detailStateKey(view,details){
+    const label=String(details?.querySelector?.('summary')?.textContent||'').trim().replace(/\s+/g,' ');
+    return label?String(view||'home')+'|'+label:'';
+  }
+
+  function capturePanelUiState(root){
+    if(!root||!renderedView)return;
+    const scroller=root.querySelector('#mm-acq-content');
+    if(scroller)viewScrollTop.set(renderedView,Number(scroller.scrollTop||0));
+    root.querySelectorAll('details').forEach(details=>{
+      const key=detailStateKey(renderedView,details);
+      if(key)detailOpenState.set(key,Boolean(details.open));
+    });
+  }
+
+  function restorePanelUiState(root){
+    if(!root)return;
+    root.querySelectorAll('details').forEach(details=>{
+      const key=detailStateKey(activeView,details);
+      if(key&&detailOpenState.has(key))details.open=Boolean(detailOpenState.get(key));
+    });
+    const scroller=root.querySelector('#mm-acq-content');
+    if(scroller)scroller.scrollTop=Number(viewScrollTop.get(activeView)||0);
+    renderedView=activeView;
+  }
+
   function createPanel(){
     if(document.getElementById(ROOT_ID))return;
     const root=document.createElement('div');
@@ -5397,10 +5427,11 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   function render(){
     const root=document.getElementById(ROOT_ID);
     if(!root||root.style.display==='none')return;
+    capturePanelUiState(root);
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.24-pda.11 · SIMPLE BUYING WORKFLOW</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.25-pda.12 · SIMPLE BUYING WORKFLOW</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -5416,7 +5447,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         '<div style="padding:5px 7px;background:#151515;border:1px solid #333;border-radius:5px;color:#d7ad4b;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(statusText)+'</div>'+
         sourceStrip()+
         (loadError?card('<b style="color:#ffaaaa;">Cannot read shared CRM state</b><div style="font-size:11px;margin-top:4px;">'+esc(loadError)+'</div>'):'')+
-        '<div style="max-height:calc(100vh - 240px);overflow:auto;padding-right:2px;">'+
+        '<div id="mm-acq-content" style="max-height:calc(100vh - 240px);overflow:auto;padding-right:2px;">'+
           (activeView==='home'?homeHtml():activeView==='settings'?settingsHtml():activeView==='travel'?travelHtml():activeView==='ranked'?rankedHtml():activeView==='items'?itemsHtml():dealsHtml())+
         '</div>'+
       '</div>';
@@ -5427,6 +5458,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       'acquisitions',
       window.innerWidth<=620?{right:'4px',top:'54px'}:{right:'12px',top:'90px'}
     );
+    restorePanelUiState(root);
     root.querySelector('#mm-acq-close')?.addEventListener('click',close);
     root.querySelectorAll('[data-acq-view]').forEach(b=>b.addEventListener('click',()=>{
       activeView=b.dataset.acqView||'home';
@@ -5541,6 +5573,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     createPanel();
     const root=document.getElementById(ROOT_ID);
     root.style.display='block';
+    GM_setValue(PANEL_OPEN_KEY,true);
     core?.setDockLauncherActive?.('acquisitions',true);
     render();
     reloadCachedState().then(()=>autoRefreshAcquisitions({force:false}));
@@ -5552,6 +5585,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   function close(){
     const root=document.getElementById(ROOT_ID);
     if(root)root.style.display='none';
+    GM_setValue(PANEL_OPEN_KEY,false);
     core?.setDockLauncherActive?.('acquisitions',false);
     stopWatcher();
   }
@@ -5566,7 +5600,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
          icon:'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h11M4 12h8M4 17h5M16 5l4 4-7 7-4 1 1-4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
         onClick:()=>{
           const root=document.getElementById(ROOT_ID);
-          if(root&&root.style.display!=='none')close(); else open();
+          if(!root||root.style.display==='none')open();
+          else core?.setDockLauncherActive?.('acquisitions',true);
         }
       });
       if(b)b.id=LAUNCHER_ID;
@@ -5586,7 +5621,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     installTravelCollector();
     return;
   }
-  globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';function initializeAcquisitions(){createLauncher();installChannel();startAutoRefresh();}
+  globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';
+  function initializeAcquisitions(){
+    createLauncher();
+    installChannel();
+    startAutoRefresh();
+    if(Boolean(GM_getValue(PANEL_OPEN_KEY,false)))setTimeout(open,0);
+  }
   window.addEventListener('pagehide',()=>{stopAutoRefresh();pulseEngine?.release?.();},{once:true});
   if(document.body)initializeAcquisitions();
   else window.addEventListener('DOMContentLoaded',initializeAcquisitions,{once:true});
