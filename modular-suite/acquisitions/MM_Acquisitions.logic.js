@@ -152,7 +152,7 @@
       const discoveryBuy = itemMarketBuy || aggregateBuy;
       const discoverySource = itemMarketBuy > 0 ? 'Item Market' : (aggregateBuy > 0 ? 'Bazaar aggregate' : 'Unknown');
       const bazaarAverage = Number(base.bazaarAverage || 0);
-      const marketPrice = Number(base.marketPrice || snap?.itemMarket?.median || snap?.itemMarket?.third || 0);
+      const marketReference = Number(base.marketPrice || 0);
 
       if (!(discoveryBuy > 1) || discoveryBuy < rules.minPrice || discoveryBuy > rules.maxPrice) continue;
       const sellerCount = Number(base.totalBazaars || 0);
@@ -165,8 +165,12 @@
       const freshListings = freshOrganicListings(db, detail?.organicListings || [], nowMs);
       const bazaarListing = freshListings[0] || null;
 
-      const bazaarExit = bazaarAverage ? Math.floor(bazaarAverage * (1 - Number(settings.bazaarExitHaircutPct || 0) / 100)) : 0;
-      const itemMarketNet = marketPrice ? Math.floor(marketPrice * (1 - ITEM_MARKET_FEE_RATE)) : 0;
+      const bazaarExit = !globalFresh.stale&&sellerCount>0&&aggregateBuy>0&&bazaarAverage
+        ?Math.floor(bazaarAverage * (1 - Number(settings.bazaarExitHaircutPct || 0) / 100))
+        :0;
+      const itemMarketNet = itemMarketFresh&&itemMarketBuy>0
+        ?Math.floor(itemMarketBuy * (1 - ITEM_MARKET_FEE_RATE))
+        :0;
       const traderExit = Number(organicTrader?.price || 0);
       const exits = [
         { route:'Bazaar', value:bazaarExit },
@@ -302,10 +306,16 @@
       const catalog=db?.procurement?.catalog?.[id]||{};
       const buyPrice=Math.max(0,Number(base?.lowestPrice||0));
       const bazaarAverage=Math.max(0,Number(base?.bazaarAverage||0));
-      const marketPrice=Math.max(0,Number(base?.marketPrice||catalog?.marketPrice||0));
+      const marketReference=Math.max(0,Number(base?.marketPrice||catalog?.marketPrice||0));
       const sellerCount=Math.max(0,Number(base?.totalBazaars||0));
-      const bazaarExit=bazaarAverage>0?Math.floor(bazaarAverage*(1-Number(settings.bazaarExitHaircutPct||0)/100)):0;
-      const itemMarketNet=marketPrice>0?Math.floor(marketPrice*(1-ITEM_MARKET_FEE_RATE)):0;
+      const snap=db?.procurement?.marketSnapshots?.[id]||{};
+      const snapAge=ageSeconds(snap?.fetchedAt,nowMs);
+      const itemMarketFresh=Boolean(snap?.fetchedAt)&&snapAge<=rules.maxListingAgeSec;
+      const itemMarketAsk=itemMarketFresh?Math.max(0,Number(snap?.itemMarket?.lowest||0)):0;
+      const bazaarExit=!freshness.stale&&sellerCount>0&&Number(base?.lowestPrice||0)>0&&bazaarAverage>0
+        ?Math.floor(bazaarAverage*(1-Number(settings.bazaarExitHaircutPct||0)/100))
+        :0;
+      const itemMarketNet=itemMarketAsk>0?Math.floor(itemMarketAsk*(1-ITEM_MARKET_FEE_RATE)):0;
       const exitOptions=[
         {route:'Bazaar',value:bazaarExit},
         {route:'Item Market Net',value:itemMarketNet}
@@ -340,7 +350,9 @@
         id,
         name:String(targetRow?.name||base?.itemName||catalog?.name||('Item '+id)),
         itemType:String(catalog?.type||''),
-        targetBuy,buyPrice,bazaarAverage,marketPrice,sellerCount,
+        targetBuy,buyPrice,bazaarAverage,marketPrice:marketReference,sellerCount,
+        marketReference,
+        itemMarketLivePrice:itemMarketAsk,
         buySource:buyPrice>0?'Bazaar observed':'Unknown',
         bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,targetDiscountPct,
         confidence,liquidity,score,economicScore,history,
