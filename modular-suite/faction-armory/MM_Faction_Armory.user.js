@@ -1410,6 +1410,17 @@
     return {memberId:id,memberName:String(member.memberName||id),slot:normalizedSlot,action:String(decision?.action||'automatic')};
   }
 
+  function equipmentDecisionSummary(row){
+    const decisions=row?.profile?.equipmentDecisions;
+    if(!decisions||typeof decisions!=='object')return '';
+    return Object.entries(decisions).map(([slot,decision])=>{
+      const action=String(decision?.action||'');
+      if(action==='accept-current')return String(slot).toUpperCase()+': ACCEPT '+String(decision?.itemName||'equipped item');
+      if(action==='replacement')return String(slot).toUpperCase()+': REPLACE WITH '+String(decision?.itemName||'');
+      return '';
+    }).filter(Boolean).join(' | ');
+  }
+
   function equipmentOverrideMenuHtml(){
     const id=asId(editingEquipmentMemberId);
     if(!id)return '';
@@ -1621,9 +1632,10 @@
       const buildMessage=memberMessageStatus(row.memberId,'member-build');
       const dataReminder=memberMessageStatus(row.memberId,'member-data-reminder');
       const anyMessage=memberAnyMessageStatus(row.memberId);
+      const equipmentDecisionText=equipmentDecisionSummary(row);
       return '<details class="mm-fa-build-member">'+
         '<summary>'+
-          '<span class="mm-fa-build-summary-main"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(anyMessage.sent?'<span class="mm-fa-pill mm-fa-good">MSG SENT</span>':'<span class="mm-fa-pill mm-fa-warn">NO MSG SENT</span>')+(row.manualOverrideActive?'<span class="mm-fa-pill mm-fa-warn">MANUAL OVERRIDE</span>':'')+(row.procurementPassCurrent?'<span class="mm-fa-pill mm-fa-good">PROCUREMENT PASS</span>':'')+(row.procurementPassStale?'<span class="mm-fa-pill mm-fa-warn">PASS NEEDS REVIEW</span>':'')+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</span>'+
+          '<span class="mm-fa-build-summary-main"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(anyMessage.sent?'<span class="mm-fa-pill mm-fa-good">MSG SENT</span>':'<span class="mm-fa-pill mm-fa-warn">NO MSG SENT</span>')+(equipmentDecisionText?'<span class="mm-fa-pill mm-fa-warn">EQUIPMENT OVERRIDE</span>':'')+(row.manualOverrideActive?'<span class="mm-fa-pill mm-fa-warn">LEGACY DATA OVERRIDE</span>':'')+(row.procurementPassCurrent?'<span class="mm-fa-pill mm-fa-good">PROCUREMENT PASS</span>':'')+(row.procurementPassStale?'<span class="mm-fa-pill mm-fa-warn">PASS NEEDS REVIEW</span>':'')+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</span>'+
           '<span class="mm-fa-muted">'+(row.statsEstimated?'~'+fmt(row.statProfile.total)+' estimated stats':row.hasStats?fmt(row.statProfile.total)+' stats':'stats missing')+'</span>'+
         '</summary>'+
         '<div class="mm-fa-build-body">'+
@@ -1652,7 +1664,8 @@
             tile('PROCUREMENT',row.acquisitionDisposition||'ACTIVE')+
             tile('BUILD BASELINE',row.buildWarReady?'PASS':'ACTION NEEDED')+
             (row.readinessApprovedAt?tile('WAR READY OVERRIDE',when(row.readinessApprovedAt)+(row.readinessApprovalReason?' · '+row.readinessApprovalReason:''),{wide:true}):'')+
-            (row.manualOverrideActive?tile('DATA OVERRIDE',when(row.manualOverrideUpdatedAt)+(row.manualOverrideReason?' · '+row.manualOverrideReason:''),{wide:true}):'')+
+            (equipmentDecisionText?tile('EQUIPMENT OVERRIDE',equipmentDecisionText,{wide:true}):'')+
+            (row.manualOverrideActive?tile('LEGACY DATA OVERRIDE',when(row.manualOverrideUpdatedAt)+(row.manualOverrideReason?' · '+row.manualOverrideReason:''),{wide:true}):'')+
             (row.procurementPassAt?tile('PASS',when(row.procurementPassAt)+(row.procurementPassReason?' · '+row.procurementPassReason:''),{wide:true}):'')+
             tile('LOANS',row.loans?row.loans+' units':'—')+
             tile('BUILD MSG',buildMessage.sent?'SENT '+when(buildMessage.sentAt)+' · x'+buildMessage.count:'NOT SENT',{cls:buildMessage.sent?'mm-fa-good':'mm-fa-warn',wide:true})+
@@ -2819,7 +2832,7 @@
       {Metric:'Minimum proposal approval status',Value:'PROVISIONAL — LEADERSHIP APPROVAL REQUIRED'},
       {Metric:'Open manager / leadership inputs',Value:minimumOpenInputs(minimums).filter(r=>!['READY','COMPLETE','MATURE','READY TO DESIGN'].includes(r.status)).length}
     ];
-    const memberHeaders=['Member ID','Member','Level','Torn Age Days','API Saved','Stats Source','Estimate Confidence','Readiness','War Ready','War Ready Reason','Any Member Message','Last Member Message At','Build Message','Build Message At','Build Message Count','Data Request','Data Request At','Procurement Disposition','Procurement Pass At','Procurement Pass Reason','Baseline Pass','Approved At','Approval Mode','Manual Override','Override Updated At','Override Reason','Override JSON','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberHeaders=['Member ID','Member','Level','Torn Age Days','API Saved','Stats Source','Estimate Confidence','Readiness','War Ready','War Ready Reason','Any Member Message','Last Member Message At','Build Message','Build Message At','Build Message Count','Data Request','Data Request At','Procurement Disposition','Procurement Pass At','Procurement Pass Reason','Baseline Pass','Approved At','Approval Mode','Equipment Decisions','Manual Override','Override Updated At','Override Reason','Override JSON','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
     const memberData=members.map(r=>{
       const build=r.buildAssessment||logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
       const anyMessage=memberAnyMessageStatus(r.memberId);
@@ -2842,6 +2855,7 @@
         'Procurement Pass At':r.procurementPassAt||'',
         'Procurement Pass Reason':r.procurementPassReason||'',
         'Baseline Pass':build.warReady?'YES':'NO','Approved At':r.readinessApprovedAt||'','Approval Mode':r.readinessApprovalMode||'',
+        'Equipment Decisions':equipmentDecisionSummary(r),
         'Manual Override':r.manualOverrideActive?'YES':'NO','Override Updated At':r.manualOverrideUpdatedAt||'','Override Reason':r.manualOverrideReason||'','Override JSON':r.manualOverrideActive?JSON.stringify(r.manualOverrideValues||{}):'',
         'Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
         'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
