@@ -711,16 +711,21 @@
     }
 
     async function importTravelRows(rows,capturedAt=Date.now()) {
-      const safeRows=(Array.isArray(rows)?rows:[]).map(row=>({...row,source:String(row?.source||'TornW3B Travel Stock')}));
+      const safeRows=(Array.isArray(rows)?rows:[]).map(row=>({...row,source:String(row?.source||'Travel Stock')}));
       if(!safeRows.length)throw new Error('No travel rows to import.');
       const at=Number(capturedAt||Date.now());
+      const sourceNames=[...new Set(safeRows.map(row=>String(row?.source||'').trim()).filter(Boolean))];
+      const sourceLabel=sourceNames.length===1?sourceNames[0]:(sourceNames.length?'Mixed travel sources':'Travel Stock');
+      const sourceTimes=safeRows.map(row=>Date.parse(String(row?.sourceUpdatedAt||''))||Number(row?.observedAt||0)).filter(value=>Number.isFinite(value)&&value>0);
+      const newestSourceAt=sourceTimes.length?Math.max(...sourceTimes):0;
       await core.updateDomainState('market',draft=>{
         const travel=draft.travelIntel || (draft.travelIntel={});
         travel.rows=safeRows;
         travel.lastSyncAt=new Date(at).toISOString();
-        travel.source='TornW3B Travel Stock';
+        travel.source=sourceLabel;
+        travel.sourceUpdatedAt=newestSourceAt?new Date(newestSourceAt).toISOString():'';
         travel.diagnostics=Array.isArray(travel.diagnostics)?travel.diagnostics:[];
-        travel.diagnostics.unshift({at:nowIso(),text:'MM Acquisitions Travel import: '+safeRows.length+' rows.'});
+        travel.diagnostics.unshift({at:nowIso(),text:'MM Acquisitions Travel import: '+safeRows.length+' rows from '+sourceLabel+'.'});
         travel.diagnostics=travel.diagnostics.slice(0,30);
         recordTravelSnapshots(travel,safeRows,at);
         return draft;
@@ -869,8 +874,16 @@
       const result=await procurementSourceOptions(itemId,itemName);
       const id=result.itemId;
       if(!id) return {routed:false,reason:'item-id-unresolved',...result};
-      const preferred=String(preferredSource||'Best').toLowerCase();
-      const ordered=result.sources.filter(source=>preferred==='best'||String(source.source||'').toLowerCase()===preferred);
+      const preferred=String(preferredSource||'Best').trim().toLowerCase();
+      const sourceMatchesPreferred=source=>{
+        const name=String(source?.source||'').trim().toLowerCase();
+        if(preferred==='best')return true;
+        if(preferred==='bazaar')return name==='bazaar'||name==='bazaar aggregate';
+        if(preferred==='market'||preferred==='item market'||preferred==='item-market')return name==='item market';
+        if(preferred==='travel'||preferred==='overseas')return name==='overseas';
+        return name===preferred;
+      };
+      const ordered=result.sources.filter(sourceMatchesPreferred);
       if(!ordered.length) return {routed:false,reason:'preferred-source-unavailable',...result};
       const verificationWarnings=[];
 

@@ -19,6 +19,7 @@ PULSE = HERE / "MM_Acquisitions.market-pulse.js"
 LOGIC = HERE / "MM_Acquisitions.logic.js"
 LIVE = HERE / "MM_Acquisitions.live.js"
 RANKED = HERE / "MM_Acquisitions.ranked.logic.js"
+TORN_INTEL = HERE / "MM_Acquisitions.torn-intel.js"
 PURCHASE = HERE / "MM_Acquisitions.purchase.logic.js"
 MAIN = HERE / "MM_Acquisitions.user.js"
 DEFAULT_OUTPUT = HERE / "MM_Acquisitions.pda.user.js"
@@ -30,6 +31,7 @@ SECTIONS = [
     ("Acquisitions logic (bundled)", LOGIC),
     ("Acquisitions live service (bundled)", LIVE),
     ("Ranked profit logic (bundled)", RANKED),
+    ("Torn Intel restock intelligence (bundled)", TORN_INTEL),
     ("Purchase ledger logic (bundled)", PURCHASE),
 ]
 
@@ -64,7 +66,7 @@ def metadata(version: str) -> str:
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
 // @version      {version}
-// @description  TornPDA-compatible bundled MM Acquisitions build. Market Pulse, profit, ranked weapons, travel procurement, manual final purchase.
+// @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
@@ -75,6 +77,7 @@ def metadata(version: str) -> str:
 // @grant        GM_deleteValue
 // @connect      api.torn.com
 // @connect      weav3r.dev
+// @connect      torn-intel.com
 // ==/UserScript==
 
 """
@@ -135,6 +138,7 @@ def build(pda_revision: int) -> str:
         "logic",
         "live",
         "ranked",
+        "torn-intel",
         "ledger",
     ]
     for (stage, (title, path)) in zip(stage_names, SECTIONS):
@@ -145,8 +149,8 @@ def build(pda_revision: int) -> str:
     body = main_body(main_source)
     body = replace_once(
         body,
-        f"v{base_version} · PROFIT / RANKED / TRAVEL",
-        f"v{pda_version} · PROFIT / RANKED / TRAVEL",
+        f"v{base_version}",
+        f"v{pda_version}",
         "panel version",
     )
 
@@ -349,15 +353,15 @@ def build(pda_revision: int) -> str:
     )
     body = replace_once(
         body,
-        "      beginTravelCapture();\n      return;",
-        "      await beginTravelCapture();\n      return;",
+        "        beginTravelCapture();\n        return;",
+        "        await beginTravelCapture();\n        return;",
         "PDA Travel fallback handoff persistence",
     )
 
     body = replace_once(
         body,
-        "function initializeAcquisitions(){createLauncher();installChannel();startAutoRefresh();}",
-        "globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';function initializeAcquisitions(){createLauncher();installChannel();startAutoRefresh();}",
+        "  function initializeAcquisitions(){",
+        "  globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';\n  function initializeAcquisitions(){",
         "PDA ready/open bridge",
     )
     pieces.append("\n/* ===== Acquisitions UI ===== */\n")
@@ -373,6 +377,7 @@ def build(pda_revision: int) -> str:
         "MMTornAcquisitionsLogic",
         "MMTornAcquisitionsLive",
         "MMTornRankedProfitLogic",
+        "MMTornRestockIntel",
         "MMTornAcquisitionLedger",
         "PDA_storage",
         "PDA_httpGet",
@@ -384,7 +389,7 @@ def build(pda_revision: int) -> str:
 
 def cli() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pda-revision", type=int, default=8)
+    parser.add_argument("--pda-revision", type=int, default=15)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.pda_revision < 1:

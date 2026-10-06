@@ -55,8 +55,21 @@ assert.strictEqual(farAuction.history.confidence,0);
 assert.strictEqual(farAuction.liquidityScore,0);
 assert(farAuction.investmentScore>=40,'legacy purchase-style score demonstrates why auctions need separate watch scoring');
 assert(farAuction.auctionWatchScore<30,'long-running $1 auction with no history must not look like a strong investment');
+assert.strictEqual(farAuction.auctionBidProvisional,true,'early tiny auction bids must be provisional');
+assert.strictEqual(farAuction.sortScore,0,'provisional early bids must not rank as normal profit opportunities');
+assert.strictEqual(nearAuction.auctionBidProvisional,false,'near-close auction should remain inspectable');
 assert(nearAuction.auctionWatchScore>farAuction.auctionWatchScore,'watch score should increase as an otherwise equal auction nears completion');
-assert.strictEqual(farAuction.sortScore,farAuction.auctionWatchScore);
+assert.strictEqual(nearAuction.sortScore,nearAuction.auctionWatchScore);
+
+const customerHammerCase=logic.evaluateListing({
+  ...candidate,
+  source:'Auction',
+  price:119,
+  bids:1,
+  endsAt:Math.floor(now/1000)+18*3600
+},history,{now,bbRate:6000000,bonusBand:5,minComparableSales:3});
+assert.strictEqual(customerHammerCase.auctionBidProvisional,true,'$119-style early auction bid must be quarantined');
+assert.strictEqual(customerHammerCase.sortScore,0,'$119-style bid must not enter normal profit ranking');
 assert.strictEqual(value.bbUnits,10);
 assert.strictEqual(value.bbFloor,60000000);
 assert(value.auctionValue>=58000000&&value.auctionValue<100000000,'outlier should not dominate auction median');

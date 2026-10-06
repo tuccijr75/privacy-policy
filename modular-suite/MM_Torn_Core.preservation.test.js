@@ -6,7 +6,7 @@ if (!c) throw new Error('MMTornCore unavailable');
 
 const fs = require('fs');
 const coreSource = fs.readFileSync(__dirname + '/core/MM_Torn_Core.js', 'utf8');
-if (!coreSource.includes("CORE_VERSION = '8.0.0-alpha.13'")) throw new Error('core ordered-dock version missing');
+if (!coreSource.includes("CORE_VERSION = '8.0.0-alpha.14'")) throw new Error('core ordered-dock version missing');
 if (!coreSource.includes('const LAUNCHER_SNAP_GAP=4')) throw new Error('fixed launcher gap missing');
 if (!coreSource.includes('const NATIVE_DOCK_CLEARANCE=6')) throw new Error('native Torn clearance floor missing');
 if (!coreSource.includes('function launcherTooClose')) throw new Error('launcher overlap guard missing');
@@ -27,6 +27,20 @@ if (!coreSource.includes('rightEdgeDistance:Math.abs(window.innerWidth-last.r.ri
 if (!coreSource.includes('candidate.bottomDistance<=minBottomDistance+8')) throw new Error('bottom-row peer tolerance missing');
 if (!coreSource.includes('a.rightEdgeDistance-b.rightEdgeDistance')) throw new Error('right-edge native row priority missing');
 if (!coreSource.includes('mmDockLeft')) throw new Error('dock geometry diagnostics missing');
+if (!coreSource.includes('async function ensureSharedState()')) throw new Error('fresh-install bootstrap API missing');
+if (!coreSource.includes('openLegacyDb({ allowCreate: true })')) throw new Error('fresh-install write/bootstrap path missing');
+if (!coreSource.includes("bootstrap: 'fresh-install'")) throw new Error('fresh-install provenance missing');
+if (typeof c.createEmptySharedState !== 'function') throw new Error('empty shared-state factory missing');
+if (typeof c.ensureSharedState !== 'function') throw new Error('shared-state bootstrap export missing');
+
+const empty = c.createEmptySharedState('2026-10-06T00:00:00.000Z');
+const emptyValidation = c.validateLegacyState(empty);
+if (!emptyValidation.ok) throw new Error('fresh-install state invalid: ' + emptyValidation.errors.join('; '));
+if (empty.schema !== 11) throw new Error('fresh-install schema mismatch');
+if (empty.meta?.bootstrap !== 'fresh-install') throw new Error('fresh-install provenance mismatch');
+if (Object.keys(empty.customers).length || Object.keys(empty.procurement).length || Object.keys(empty.marketIntel).length) {
+  throw new Error('fresh-install state must start empty');
+}
 
 
 const fixture = {
