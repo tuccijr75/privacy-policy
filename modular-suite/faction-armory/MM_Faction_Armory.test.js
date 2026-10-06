@@ -171,7 +171,9 @@ assert(warFaks);
 assert.strictEqual(warFaks.recommendedMin,200,'war FAK target should provision 10 per member for 20 participants');
 const warXanax=warMinimums.proposals.find(x=>x.category==='drugs'&&x.item==='Xanax');
 assert(warXanax);
-assert.strictEqual(warXanax.recommendedMin,60,'war Xanax target should provision 3 per member');
+assert.strictEqual(warXanax.dataRequired,true,'Xanax must fail safe when no current rival estimates are available');
+assert.strictEqual(warXanax.suggestedMin,0,'no-rival Xanax automation must not invent a purchase target');
+assert(!warMinimums.actionable.some(x=>x.item==='Xanax'),'no-rival Xanax must not enter automatic acquisition');
 
 
 const parsedReply=logic.parseMemberReply(
@@ -207,7 +209,8 @@ const acquisition=logic.acquisitionPlan({
 },{mode:'war',participants:3});
 assert.strictEqual(acquisition.participants,20,'acquisition participant count must equal the live roster size');
 assert(acquisition.list.some(row=>row.category==='equipment'),'War acquisition must contain named equipment requirements');
-assert(!acquisition.list.some(row=>row.category==='provisions'),'War acquisition must defer routine minimum-stock provisions until Peace mode');
+assert(acquisition.list.some(row=>row.category==='provisions'&&row.item==='First Aid Kit'),'War acquisition must consume approved war-stock medical shortfalls from the same minimum state');
+assert(!acquisition.list.some(row=>row.category==='provisions'&&row.item==='Xanax'),'War acquisition must not buy Xanax without current rival evidence or a manual minimum');
 
 const peaceAcquisition=logic.acquisitionPlan({
   ...factionInventory,
@@ -341,10 +344,10 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.24.6';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.24.7';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
-assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@81f40c0aa93888169419b082254d413108b4f783/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
+assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b64c42f86580add2e8fdc89c00e128e3b63c5d1c/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -353,7 +356,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.24.6';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.24.7';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -361,7 +364,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.24.6';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.24.7';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -460,7 +463,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.6';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.7';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
@@ -489,8 +492,9 @@ assert(userSourceValue.includes('fingerprintBaselineCount'),'send detector must 
 assert(userSourceValue.includes('Message Faction Leader'),'Acquire must expose leader-message output');
 assert(userSourceValue.includes("isWar?'FACTION ARMORY WAR ACQUISITION REPORT':'FACTION ARMORY PEACE MINIMUMS REPORT'"),'leader report title must follow War/Peace scope');
 assert(userSourceValue.includes("const memberNeeds=isWar"),'member-build needs must be War-only in the leader report');
-assert(userSourceValue.includes("const minNeeds=isWar?[]"),'minimum-stock section must be Peace-only');
-assert(userSourceValue.includes('Routine minimum-stock replenishment is deferred until Peace mode.'),'War report must explicitly defer minimums');
+assert(userSourceValue.includes("const minNeeds=(minimums?.actionable||[])"),'leader report must consume the same live minimum shortfalls in War and Peace');
+assert(userSourceValue.includes('WAR STOCK SHORTFALLS'),'War report must expose approved war-stock shortfalls');
+assert(!userSourceValue.includes('Routine minimum-stock replenishment is deferred until Peace mode.'),'War report must no longer hide active war-stock minimums');
 assert(userSourceValue.includes('Member build/equipment gaps are deferred until War mode.'),'Peace report must explicitly defer member equipment');
 assert(userSourceValue.includes("'WAR ACQUISITION LIST / PRICE RANGE':'PEACE MINIMUM REPLENISHMENT / PRICE RANGE'"),'combined list label must expose mode scope');
 assert(userSourceValue.includes("'PLANNED WAR ACQUISITION ESTIMATE':'PLANNED PEACE MINIMUM REPLENISHMENT ESTIMATE'"),'planning estimate total must expose mode scope');
@@ -789,6 +793,117 @@ assert(userSourceValue.includes('Use whatever is helpful and ignore anything tha
 assert(!userSourceValue.includes("'TARGET BUILD'"),'member message must not use command-like TARGET BUILD heading');
 assert(!userSourceValue.includes('Send your actual readiness data before any final vault borrowing or purchase.'),'member message must not command members to send data');
 console.log('MM Faction Armory alpha.24.6 advisory-message regressions: PASS');
+
+const stockControlFaction={
+  current:{
+    'medical|20':{category:'medical',itemId:'20',name:'First Aid Kit',availableCount:10,amountOwned:10,loanedCount:0},
+    'drugs|x':{category:'drugs',itemId:'x',name:'Xanax',availableCount:2,amountOwned:2,loanedCount:0}
+  },
+  memberReadiness:{
+    roster:{
+      high:{memberId:'high',memberName:'High Scorer',level:40},
+      medium:{memberId:'medium',memberName:'Medium Scorer',level:25},
+      low:{memberId:'low',memberName:'Low Scorer',level:10}
+    },
+    profiles:{
+      high:{stats:{strength:7500,defense:7500,speed:7500,dexterity:7500},equipment:{summary:'',items:[],emptyConfirmed:true},verifiedAt:new Date().toISOString()},
+      medium:{stats:{strength:2500,defense:2500,speed:2500,dexterity:2500},equipment:{summary:'',items:[],emptyConfirmed:true},verifiedAt:new Date().toISOString()},
+      low:{stats:{strength:500,defense:500,speed:500,dexterity:500},equipment:{summary:'',items:[],emptyConfirmed:true},verifiedAt:new Date().toISOString()}
+    },
+    settings:{staleHours:72}
+  },
+  warPlanning:{
+    currentWar:{warId:'rw-1',opponentFactionId:'999',opponentFactionName:'Rivals'},
+    opponent:{
+      factionId:'999',factionName:'Rivals',fetchedAt:new Date().toISOString(),
+      members:{
+        a:{memberId:'a',memberName:'Weak Rival',estimatedTotal:1000},
+        b:{memberId:'b',memberName:'Mid Rival',estimatedTotal:8000},
+        c:{memberId:'c',memberName:'Strong Rival',estimatedTotal:20000}
+      }
+    },
+    xanaxPolicy:{
+      investmentPosture:'conserve',reasonableRatio:0.80,
+      highThreshold:25000,mediumThreshold:5000,
+      highCeiling:4,mediumCeiling:3,lowCeiling:2,
+      memberOverrides:{}
+    }
+  },
+  stockPlanning:{schema:1,minimumOverrides:{}},
+  snapshots:[],events:[]
+};
+let stockProposal=logic.minimumProposal(stockControlFaction,{mode:'war',procurementMode:'budget'});
+let xanaxRow=stockProposal.proposals.find(row=>row.item==='Xanax');
+assert(xanaxRow&&!xanaxRow.dataRequired,'current rival estimates must activate the Xanax estimator');
+assert.strictEqual(stockProposal.xanax.leadershipCeiling,9,'4/3/2 is a ceiling, not an automatic buy quantity');
+assert.strictEqual(stockProposal.xanax.members.find(row=>row.memberId==='high').recommended,3,'high scorer should receive one Xanax per credible target up to the ceiling under CONSERVE');
+assert.strictEqual(stockProposal.xanax.members.find(row=>row.memberId==='medium').recommended,2);
+assert.strictEqual(stockProposal.xanax.members.find(row=>row.memberId==='low').recommended,1);
+assert.strictEqual(stockProposal.xanax.recommendedTarget,6,'opponent-weighted Xanax target should be derived from member matchups');
+assert.strictEqual(xanaxRow.current,2);
+assert.strictEqual(xanaxRow.effectiveMin,6);
+assert.strictEqual(xanaxRow.shortfall,4);
+
+const fakKey=logic.minimumOverrideKey('war','medical','First Aid Kit');
+stockControlFaction.stockPlanning.minimumOverrides[fakKey]={min:25,orderEnabled:true,updatedAt:new Date().toISOString()};
+stockProposal=logic.minimumProposal(stockControlFaction,{mode:'war',procurementMode:'budget'});
+let controlledFak=stockProposal.proposals.find(row=>row.item==='First Aid Kit');
+assert.strictEqual(controlledFak.suggestedMin,30,'three-member FAK suggestion remains 10 per member');
+assert.strictEqual(controlledFak.manualMin,25);
+assert.strictEqual(controlledFak.effectiveMin,25);
+assert.strictEqual(controlledFak.shortfall,15);
+assert.strictEqual(controlledFak.status,'ORDER');
+let controlledPlan=logic.acquisitionPlan(stockControlFaction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+assert.strictEqual(controlledPlan.list.find(row=>row.category==='provisions'&&row.item==='First Aid Kit')?.systemQty,15,'Acquire must derive FAK quantity from the edited effective minimum');
+
+stockControlFaction.stockPlanning.minimumOverrides[fakKey].orderEnabled=false;
+stockProposal=logic.minimumProposal(stockControlFaction,{mode:'war',procurementMode:'budget'});
+controlledFak=stockProposal.proposals.find(row=>row.item==='First Aid Kit');
+assert.strictEqual(controlledFak.status,'SHORT / HOLD');
+assert(stockProposal.held.some(row=>row.item==='First Aid Kit'));
+assert(!stockProposal.actionable.some(row=>row.item==='First Aid Kit'));
+controlledPlan=logic.acquisitionPlan(stockControlFaction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+assert(!controlledPlan.list.some(row=>row.category==='provisions'&&row.item==='First Aid Kit'),'holding an item must remove that shortfall from Acquire without changing the minimum');
+
+stockControlFaction.stockPlanning.minimumOverrides[fakKey].orderEnabled=true;
+stockControlFaction.warPlanning.xanaxPolicy.memberOverrides.high=4;
+stockProposal=logic.minimumProposal(stockControlFaction,{mode:'war',procurementMode:'budget'});
+xanaxRow=stockProposal.proposals.find(row=>row.item==='Xanax');
+assert.strictEqual(stockProposal.xanax.recommendedTarget,7,'member Xanax edit must recompute the total target without a copied total field');
+assert.strictEqual(xanaxRow.shortfall,5,'member Xanax edit must immediately flow into stock shortfall');
+controlledPlan=logic.acquisitionPlan(stockControlFaction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+assert.strictEqual(controlledPlan.list.find(row=>row.category==='provisions'&&row.item==='Xanax')?.systemQty,5,'member Xanax edit must immediately flow into Acquire');
+
+delete stockControlFaction.warPlanning.xanaxPolicy.memberOverrides.high;
+stockControlFaction.memberReadiness.profiles.medium.stats={strength:10000,defense:10000,speed:10000,dexterity:10000};
+stockProposal=logic.minimumProposal(stockControlFaction,{mode:'war',procurementMode:'budget'});
+assert.strictEqual(stockProposal.xanax.recommendedTarget,7,'internal member-stat edits must recompute matchup-weighted Xanax demand automatically');
+
+const xanaxKey=logic.minimumOverrideKey('war','drugs','Xanax');
+stockControlFaction.stockPlanning.minimumOverrides[xanaxKey]={min:3,orderEnabled:true,updatedAt:new Date().toISOString()};
+stockProposal=logic.minimumProposal(stockControlFaction,{mode:'war',procurementMode:'budget'});
+xanaxRow=stockProposal.proposals.find(row=>row.item==='Xanax');
+assert.strictEqual(xanaxRow.suggestedMin,7,'manual minimum must preserve the live calculated Xanax suggestion for comparison');
+assert.strictEqual(xanaxRow.effectiveMin,3);
+assert.strictEqual(xanaxRow.shortfall,1);
+controlledPlan=logic.acquisitionPlan(stockControlFaction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+assert.strictEqual(controlledPlan.list.find(row=>row.category==='provisions'&&row.item==='Xanax')?.systemQty,1,'manual Xanax minimum must be the same source consumed by Acquire');
+
+assert(userSourceValue.includes("apiRequest('/faction/wars',key)"),'Faction refresh must retrieve the official current ranked-war context');
+assert(userSourceValue.includes("'/faction/'+encodeURIComponent(war.opponentFactionId)+'/members'"),'Armory must retrieve the current rival roster from the official faction endpoint');
+assert(userSourceValue.includes('WAR_OPPONENT_INTEL_MAX_AGE_MS=6*60*60*1000'),'opponent estimates must have explicit bounded freshness');
+assert(userSourceValue.includes('War Stock Control'),'Minimums must expose the live stock control surface');
+assert(userSourceValue.includes('Xanax War Estimator'),'War mode must expose the rival-weighted Xanax estimator');
+assert(userSourceValue.includes('Save Minimum'),'stock minimums must be directly editable');
+assert(userSourceValue.includes("Hold / Don't Order"),'each minimum must allow an explicit no-order decision');
+assert(userSourceValue.includes('Refresh Rival'),'operator must be able to refresh rival-dependent estimates');
+assert(userSourceValue.includes('Save Xanax Policy'),'Xanax posture/thresholds/caps must be adjustable');
+assert(userSourceValue.includes("xmlSheet('Xanax'"),'Leadership export must contain the current Xanax estimator');
+assert(userSourceValue.includes("'Effective Min'"),'Leadership export must expose the effective minimum used by Acquire');
+assert(userSourceValue.includes('Acquire uses the same effective minimum shown here.'),'UI must state the single-source dependency contract');
+assert(!userSourceValue.includes('Final purchase remains automatic'),'final purchase must remain manual');
+console.log('MM Faction Armory alpha.24.7 war-stock/Xanax dependency regressions: PASS');
+
 
 
 
