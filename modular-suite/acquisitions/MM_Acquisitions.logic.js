@@ -262,7 +262,7 @@
         id,
         name:String(base.itemName || db?.procurement?.catalog?.[id]?.name || ('Item '+id)),
         itemType:String(db?.procurement?.catalog?.[id]?.type || ''),
-        buyPrice,maxBuyPrice,bazaarAverage,marketPrice,sellerCount,liveListingCount,traderExit,
+        buyPrice,maxBuyPrice,bazaarAverage,marketPrice:marketReference,marketReference,sellerCount,liveListingCount,traderExit,
         bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,score,economicScore,confidence,
         ...pulse,
         freshness:globalFresh,history,enriched:Boolean(detail),
