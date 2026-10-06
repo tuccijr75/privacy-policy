@@ -145,8 +145,8 @@ def build(pda_revision: int) -> str:
     body = main_body(main_source)
     body = replace_once(
         body,
-        f"v{base_version} · PROFIT / RANKED / TRAVEL",
-        f"v{pda_version} · PROFIT / RANKED / TRAVEL",
+        f"v{base_version}",
+        f"v{pda_version}",
         "panel version",
     )
 
