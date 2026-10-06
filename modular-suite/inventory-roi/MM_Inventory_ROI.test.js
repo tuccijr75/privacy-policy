@@ -25,20 +25,59 @@ const persisted=logic.replaceRestockDemand(soldOut,demands,now);assert.strictEqu
 const persistedAgain=logic.replaceRestockDemand(soldOut,demands,now+1000);assert.strictEqual(persistedAgain.changed,false);
 assert.strictEqual(Math.round(row.avgCost),100);assert.strictEqual(Math.round(row.currentRoiPct),60);
 assert.strictEqual(Math.round(row.realizedGrossProfit30),100);assert.strictEqual(Math.round(row.realizedRoiPct30),50);assert.strictEqual(Math.round(row.costCoveragePct30),100);
+
+const tradeDb=logic.ensureInventorySlice({
+  procurement:{acquisitions:[{id:'ta1',itemId:'26',itemName:'AK-47',quantity:5,unitCost:100,acquiredAt:new Date(now-10*86400000).toISOString(),source:'Bazaar'}]},
+  sales:{},
+  operations:{tradeManager:{},inventoryRoi:{tradeReconciliation:{
+    '1001':{tradeId:'1001',completedAt:now-5*86400000,status:'PENDING',evidence:{confidence:'TRUSTED_COMPLETION'},effects:[{direction:'OUT',itemId:'26',quantity:2,basisKnown:true,basisTotal:200,unitCost:100,basisMethod:'FIFO_AT_TRADE_SYNC'}]},
+    '1002':{tradeId:'1002',completedAt:now-4*86400000,status:'PENDING',evidence:{confidence:'TRUSTED_COMPLETION'},effects:[{direction:'IN',itemId:'26',quantity:3,basisKnown:true,basisTotal:450,unitCost:150,basisMethod:'RESIDUAL_CONSIDERATION_PRO_RATA_REFERENCE'}]}
+  },listings:{'26':{id:'26',name:'AK-47',quantity:0,price:200}},inventory:{'26':{id:'26',name:'AK-47',quantity:6}},listingPlans:{}}}
+});
+let tradeLedger=logic.fifoLedger(tradeDb,'26');
+assert.strictEqual(tradeLedger.tradeRows.length,1);
+assert.strictEqual(tradeLedger.tradeRows[0].consumedUnits,2);
+assert.strictEqual(tradeLedger.remainingQty,6);
+assert.strictEqual(tradeLedger.remainingKnownQty,6);
+assert.strictEqual(tradeLedger.remainingUnknownQty,0);
+assert.strictEqual(tradeLedger.remainingCost,750);
+let ack=logic.acknowledgeTradeReconciliations(tradeDb,now);
+assert.strictEqual(ack.changed,2);assert.strictEqual(ack.invalid,0);assert.strictEqual(ack.summary.accounted,2);
+ack=logic.acknowledgeTradeReconciliations(tradeDb,now+1000);assert.strictEqual(ack.changed,0);
+
+const unknownTradeDb=logic.ensureInventorySlice({
+  procurement:{acquisitions:[]},sales:{},
+  operations:{inventoryRoi:{tradeReconciliation:{
+    'u1':{tradeId:'1001',completedAt:now-1000,status:'PENDING',evidence:{confidence:'TRUSTED_COMPLETION'},effects:[{direction:'IN',itemId:'77',quantity:2,basisKnown:false,basisMethod:'UNKNOWN_INBOUND_COST'}]}
+  },listings:{},inventory:{'77':{id:'77',name:'Unknown Basis Item',quantity:2}},listingPlans:{}}}
+});
+const unknownRows=logic.inventoryRoiRows(unknownTradeDb,now);
+const unknownRow=unknownRows.find(r=>r.id==='77');assert(unknownRow);
+assert.strictEqual(unknownRow.trackedUnknownCostQty,2);
+assert.strictEqual(unknownRow.currentCostCoveragePct,0);
+assert.strictEqual(unknownRow.pricingStatus,'COST BASIS INCOMPLETE');
+assert.strictEqual(unknownRow.pricing.recommendedPrice,0);
+
+const invalidRecon=logic.ensureInventorySlice({operations:{inventoryRoi:{tradeReconciliation:{bad:{tradeId:'bad',completedAt:now,status:'PENDING',effects:[],evidence:{confidence:'NOPE'}}}}}});
+const invalidAck=logic.acknowledgeTradeReconciliations(invalidRecon,now);assert.strictEqual(invalidAck.changed,0);assert.strictEqual(invalidAck.invalid,1);
+
 console.log('MM Inventory ROI logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Inventory_Manager_ROI_Tracker.user.js','utf8');
 assert(!/async\s+function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml must remain synchronous because render concatenates its return value directly into HTML');
 assert(/function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml declaration missing');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.11';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.12';"));
 assert(userSource.includes('Bazaar / Inventory Dashboard'));
 assert(userSource.includes('Market Pulse is read-only context from MM_Acquisitions.'));
 assert(userSource.includes('Pricing recommendations are explainable decision support only'));
 assert(userSource.includes('async function syncRestockDemand'));
+assert(userSource.includes('logic.acknowledgeTradeReconciliations'));
+assert(userSource.includes('TRADE HANDOFF'));
+assert(userSource.includes('CURRENT COST COVERAGE'));
 assert(userSource.includes("logic.replaceRestockDemand(draft,rows,Date.now())"));
 assert(userSource.includes("tile('RECOMMENDED'"));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@4ef4197cb0fc19e4c29b5864dd4d003732d58deb/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@bb32ea39494ef4465a58acd76c4c3993cc8568b4/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js'));
 assert(!userSource.includes('// @updateURL'));
 assert(!userSource.includes('// @downloadURL'));
 assert(userSource.includes('core?.ensureSharedState'),'fresh-install Core bootstrap missing');
