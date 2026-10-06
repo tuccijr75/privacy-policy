@@ -1245,7 +1245,7 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
   Object.defineProperty(globalThis,'MMTornCore',{value:api,configurable:true,enumerable:false,writable:false});
 })();
 
-/* ===== Inventory FIFO logic (bundled) ===== */
+/* ===== Inventory FIFO logic (pinned immutable snapshot 4ef4197) ===== */
 
 (() => {
   'use strict';
@@ -1254,6 +1254,130 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
   const n=v=>Number.isFinite(Number(v))?Number(v):0;
   const asId=v=>String(v??'').trim();
   const nowIso=()=>new Date().toISOString();
+  const DAY_MS=86400000;
+  const RESTOCK_DEMAND_MAX=200;
+
+  function epochMs(value){
+    if(typeof value==='string'){
+      const parsed=Date.parse(value);
+      if(Number.isFinite(parsed)&&parsed>0)return parsed;
+    }
+    const raw=n(value);
+    if(!(raw>0))return 0;
+    return raw<100_000_000_000?raw*1000:raw;
+  }
+
+  function marketPulseEvidence(slice,itemId,at=Date.now()){
+    const id=asId(itemId);
+    const pulse=slice?.marketIntel?.marketPulse;
+    const item=pulse?.items?.[id];
+    if(!item||typeof item!=='object'){
+      return {
+        itemId:id,available:false,usable:false,stale:true,status:'MISSING',
+        floorPrice:0,marketDepth:0,observedUnitsPerHour:0,turnoverPerHour:0,
+        liquidityScore:0,confidencePct:0,trendPct:0,sourceTimestamp:0,
+        fetchedAt:0,sourceAgeMs:Infinity,fetchAgeMs:Infinity,ttlMs:0,
+        source:'Market Pulse'
+      };
+    }
+    const ttlMs=Math.max(0,n(pulse?.settings?.ttlMs));
+    const fetchedAt=epochMs(item.fetchedAt??item.lastSnapshot?.fetchedAt);
+    const sourceTimestamp=epochMs(item.sourceTimestamp??item.lastSnapshot?.sourceTimestamp);
+    const fetchAgeMs=fetchedAt?Math.max(0,Number(at)-fetchedAt):Infinity;
+    const sourceAgeMs=sourceTimestamp?Math.max(0,Number(at)-sourceTimestamp):Infinity;
+    const freshnessKnown=ttlMs>0&&fetchedAt>0;
+    const stale=!freshnessKnown||fetchAgeMs>ttlMs;
+    const floorPrice=Math.max(0,n(item.floorPrice??item.lastSnapshot?.floorPrice));
+    const available=fetchedAt>0||sourceTimestamp>0||floorPrice>0;
+    const usable=available&&!stale&&floorPrice>0;
+    return {
+      itemId:id,available,usable,stale,status:!available?'MISSING':stale?'STALE':'FRESH',
+      floorPrice,marketDepth:Math.max(0,Math.round(n(item.marketDepth??item.lastSnapshot?.marketDepth))),
+      observedUnitsPerHour:Math.max(0,n(item.observedUnitsPerHour)),
+      turnoverPerHour:Math.max(0,n(item.turnoverPerHour)),
+      liquidityScore:Math.max(0,n(item.liquidityScore)),
+      confidencePct:Math.max(0,n(item.confidencePct)),
+      trendPct:n(item.trendPct),
+      tier:String(item.tier||''),
+      sourceTimestamp,fetchedAt,sourceAgeMs,fetchAgeMs,ttlMs,
+      source:String(item.lastSnapshot?.source||item.sources?.itemMarket||'Market Pulse')
+    };
+  }
+
+  function pricingRecommendation({bazaarPrice=0,bazaarQty=0,personalQty=0,avgCost=0,avgSoldPrice30=0,pulse={}}={}){
+    const listingPrice=Math.max(0,n(bazaarPrice));
+    const availableQty=Math.max(0,n(personalQty));
+    const cost=Math.max(0,n(avgCost));
+    const historical=Math.max(0,n(avgSoldPrice30));
+    const floor=Math.max(0,n(pulse?.floorPrice));
+    const confidence=Math.max(0,n(pulse?.confidencePct));
+    const liquidity=Math.max(0,n(pulse?.liquidityScore));
+    const depth=Math.max(0,n(pulse?.marketDepth));
+    const base={
+      state:'INSUFFICIENT EVIDENCE',recommendedPrice:0,rangeLow:0,rangeHigh:0,
+      expectedProfitPerUnit:0,expectedRoiPct:0,marketFloor:floor,listingVsMarketPct:null,
+      source:String(pulse?.source||'Market Pulse'),sourceTimestamp:n(pulse?.sourceTimestamp),
+      fetchedAt:n(pulse?.fetchedAt),confidencePct:confidence,liquidityScore:liquidity,
+      explanation:''
+    };
+    if(!pulse?.available){
+      return {...base,explanation:'No current Market Pulse evidence is available for this item.'};
+    }
+    if(pulse?.stale){
+      return {...base,state:'MARKET DATA STALE',explanation:'Market evidence exists but is outside its defined freshness window.'};
+    }
+    if(!(floor>0)||!(depth>0)||confidence<30){
+      return {...base,explanation:'Fresh evidence is too weak to support a listing recommendation.'};
+    }
+
+    const undercutStep=Math.max(1,Math.min(1000,Math.round(floor*0.001)));
+    const rangeLow=Math.max(1,floor-undercutStep);
+    const rangeHigh=floor;
+    const listingVsMarketPct=listingPrice>0?(listingPrice-floor)/floor*100:null;
+    let state='PRICE COMPETITIVELY';
+    let recommendedPrice=floor;
+    let explanation='Fresh market floor supports pricing at the current competitive range.';
+
+    if(cost>0&&rangeHigh<=cost){
+      state='HOLD';
+      recommendedPrice=0;
+      explanation='Current fresh market floor does not clear the tracked FIFO cost basis.';
+    }else if(listingPrice>0){
+      const delta=(listingPrice-floor)/floor;
+      if(delta<=-0.03){
+        state='PRICE TOO LOW';
+        explanation='Current Bazaar listing is more than 3% below the fresh market floor.';
+      }else if(delta>=0.03){
+        state='PRICE TOO HIGH';
+        explanation='Current Bazaar listing is more than 3% above the fresh market floor.';
+      }else{
+        state='PRICE COMPETITIVELY';
+        recommendedPrice=Math.min(listingPrice,rangeHigh);
+        explanation='Current Bazaar listing is within 3% of the fresh market floor.';
+      }
+    }else if(availableQty>0&&confidence>=55&&liquidity>=55){
+      state='UNDERCUT OPPORTUNITY';
+      recommendedPrice=rangeLow;
+      explanation='Unlisted stock has fresh, sufficiently liquid evidence; a bounded undercut may improve queue position.';
+    }else{
+      explanation='Fresh market evidence exists, but liquidity/confidence does not justify an undercut recommendation.';
+    }
+
+    if(recommendedPrice>0&&cost>0&&recommendedPrice<=cost){
+      state='HOLD';
+      recommendedPrice=0;
+      explanation='Competitive pricing would not clear the tracked FIFO cost basis.';
+    }
+
+    const expectedProfitPerUnit=recommendedPrice>0&&cost>0?recommendedPrice-cost:0;
+    const expectedRoiPct=recommendedPrice>0&&cost>0?expectedProfitPerUnit/cost*100:0;
+    const historyNote=historical>0?' Recent 30-day realized average: '+Math.round(historical).toLocaleString()+'.':'';
+    return {
+      ...base,state,recommendedPrice,rangeLow,rangeHigh,expectedProfitPerUnit,expectedRoiPct,
+      listingVsMarketPct,explanation:explanation+historyNote
+    };
+  }
+
   function ensureInventorySlice(slice={}){
     const out=slice&&typeof slice==='object'?slice:{};
     out.sales=out.sales&&typeof out.sales==='object'&&!Array.isArray(out.sales)?out.sales:{};
@@ -1263,6 +1387,7 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
     inv.listings=inv.listings&&typeof inv.listings==='object'&&!Array.isArray(inv.listings)?inv.listings:{};
     inv.inventory=inv.inventory&&typeof inv.inventory==='object'&&!Array.isArray(inv.inventory)?inv.inventory:{};
     inv.listingPlans=inv.listingPlans&&typeof inv.listingPlans==='object'&&!Array.isArray(inv.listingPlans)?inv.listingPlans:{};
+    inv.restockDemand=inv.restockDemand&&typeof inv.restockDemand==='object'&&!Array.isArray(inv.restockDemand)?inv.restockDemand:{};
     return out;
   }
 
@@ -1418,6 +1543,9 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
     const bm=slice.operations.inventoryRoi;
     const metrics=salesItemMetrics(slice);
     const ids=new Set([...Object.keys(bm.listings||{}),...Object.keys(bm.inventory||{})]);
+    for(const [id,metric] of Object.entries(metrics)){
+      if(/^\d+$/.test(String(id))&&n(metric?.units30d)>0)ids.add(String(id));
+    }
     const rows=[];
     for(const id of ids){
       const listing=bm.listings[id]||{};
@@ -1438,7 +1566,7 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
         id,name:String(listing.name||inventory.name||metric.name||('Item '+id)),
         bazaarQty,bazaarPrice:n(listing.price),personalQty,
         units7d:n(metric.units7d),units30d:n(metric.units30d),daily30:daily,
-        avgSoldPrice30:n(metric.avgSoldPrice30),targetListed,addToBazaar,
+        avgSoldPrice30:n(metric.avgSoldPrice30),lastSaleAt:n(metric.lastSaleAt),targetListed,addToBazaar,
         plannedPrice:price,action
       });
     }
@@ -1509,16 +1637,131 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
       const avgCost=basis.remainingQty>0?basis.remainingCost/basis.remainingQty:0;
       const exit=n(row.plannedPrice)||n(row.bazaarPrice)||n(row.avgSoldPrice30);
       const currentProfitPerUnit=avgCost>0&&exit>0?exit-avgCost:0;
+      const ownedQty=Math.max(0,n(row.bazaarQty)+n(row.personalQty));
+      const targetStock=Math.max(0,n(row.targetListed));
+      const deficit=targetStock>0?Math.max(0,targetStock-ownedQty):0;
+      const restockStatus=targetStock<=0?'NO SALES SIGNAL':ownedQty<=0?'OUT OF STOCK':deficit>0?'LOW STOCK':'ON TARGET';
+      const staleInventory=n(row.bazaarQty)>0&&n(row.units30d)<=0;
+      const pulse=marketPulseEvidence(db,row.id,at);
+      const pricing=pricingRecommendation({bazaarPrice:row.bazaarPrice,bazaarQty:row.bazaarQty,personalQty:row.personalQty,avgCost,avgSoldPrice30:row.avgSoldPrice30,pulse});
+      const pricingStatus=pricing.state;
+      const listingVsMarketPct=pricing.listingVsMarketPct;
+      const expectedMarketProfitPerUnit=pulse.usable&&avgCost>0?pulse.floorPrice-avgCost:0;
+      const expectedMarketRoiPct=pulse.usable&&avgCost>0?expectedMarketProfitPerUnit/avgCost*100:0;
+      const coverDays=n(row.daily30)>0?ownedQty/n(row.daily30):null;
+      const lastAcquisitionAt=(basis.lots||[]).reduce((max,lot)=>Math.max(max,n(lot.acquiredAt)),0);
+      const attentionReasons=[];
+      if(row.action==='LIST'||row.action==='TOP UP'||row.action==='REVIEW SLOW')attentionReasons.push(row.action);
+      if(restockStatus==='OUT OF STOCK'||restockStatus==='LOW STOCK')attentionReasons.push(restockStatus);
+      if(staleInventory&&!attentionReasons.includes('REVIEW SLOW'))attentionReasons.push('STALE INVENTORY');
       return {...row,avgCost,trackedRemainingQty:basis.remainingQty,trackedRemainingCost:basis.remainingCost,currentProfitPerUnit,currentRoiPct:avgCost>0?currentProfitPerUnit/avgCost*100:0,
-        realizedRevenue30:realized.revenue,realizedCogs30:realized.cogs,realizedGrossProfit30:realized.grossProfit,realizedRoiPct30:realized.realizedRoiPct,costCoveragePct30:realized.costCoveragePct,matchedUnits30:realized.matchedUnits};
-    });
+        realizedRevenue30:realized.revenue,realizedCogs30:realized.cogs,realizedGrossProfit30:realized.grossProfit,realizedRoiPct30:realized.realizedRoiPct,costCoveragePct30:realized.costCoveragePct,matchedUnits30:realized.matchedUnits,
+        ownedQty,targetStock,deficit,restockStatus,staleInventory,coverDays,lastAcquisitionAt,pulse,pricing,pricingStatus,listingVsMarketPct,expectedMarketProfitPerUnit,expectedMarketRoiPct,attentionReasons,needsAttention:attentionReasons.length>0};
+    }).sort((a,b)=>
+      Number(b.needsAttention)-Number(a.needsAttention)||
+      n(b.deficit)-n(a.deficit)||
+      n(b.daily30)-n(a.daily30)||
+      a.name.localeCompare(b.name)
+    );
+  }
+
+  function restockDemandRows(db,at=Date.now()){
+    return inventoryRoiRows(db,at)
+      .filter(row=>n(row.deficit)>0&&n(row.daily30)>0)
+      .map(row=>{
+        const currentQuantity=Math.max(0,n(row.ownedQty));
+        const desiredQuantity=Math.max(0,n(row.targetStock));
+        const coverDays=row.coverDays==null?null:n(row.coverDays);
+        const urgency=currentQuantity<=0?'URGENT':coverDays!=null&&coverDays<2?'HIGH':'NORMAL';
+        const recentRealizedMarginPerUnit=n(row.matchedUnits30)>0?n(row.realizedGrossProfit30)/n(row.matchedUnits30):0;
+        return {
+          schema:1,itemId:String(row.id),itemName:String(row.name||('Item '+row.id)),
+          desiredQuantity,currentQuantity,deficit:Math.max(0,n(row.deficit)),
+          restockThreshold:Math.max(1,Math.ceil(n(row.daily30))),
+          targetAcquisitionPrice:0,
+          recentRealizedMarginPerUnit,
+          sellVelocityUnitsPerDay:n(row.daily30),
+          liquidityScore:row.pulse?.status==='FRESH'?n(row.pulse?.liquidityScore):0,
+          urgency,lastSoldTimestamp:n(row.lastSaleAt),lastAcquisitionTimestamp:n(row.lastAcquisitionAt),
+          marketFreshness:String(row.pulse?.status||'MISSING'),
+          acquisitionRecommendation:row.pulse?.status==='FRESH'?'SOURCE AND VERIFY':'SOURCE; REFRESH EXIT EVIDENCE',
+          status:'OPEN'
+        };
+      })
+      .sort((a,b)=>{
+        const priority={URGENT:0,HIGH:1,NORMAL:2};
+        return (priority[a.urgency]??9)-(priority[b.urgency]??9)||
+          n(b.sellVelocityUnitsPerDay)-n(a.sellVelocityUnitsPerDay)||
+          n(b.deficit)-n(a.deficit)||
+          a.itemName.localeCompare(b.itemName);
+      })
+      .slice(0,RESTOCK_DEMAND_MAX);
+  }
+
+  function replaceRestockDemand(slice,rows=[],at=Date.now()){
+    ensureInventorySlice(slice);
+    const inv=slice.operations.inventoryRoi;
+    const compact={};
+    for(const row of (Array.isArray(rows)?rows:[]).slice(0,RESTOCK_DEMAND_MAX)){
+      const id=asId(row?.itemId);
+      if(!/^\d+$/.test(id)||!(n(row?.deficit)>0))continue;
+      compact[id]={
+        schema:1,itemId:id,itemName:String(row.itemName||('Item '+id)),
+        desiredQuantity:Math.max(0,n(row.desiredQuantity)),
+        currentQuantity:Math.max(0,n(row.currentQuantity)),
+        deficit:Math.max(0,n(row.deficit)),
+        restockThreshold:Math.max(0,n(row.restockThreshold)),
+        targetAcquisitionPrice:Math.max(0,n(row.targetAcquisitionPrice)),
+        recentRealizedMarginPerUnit:n(row.recentRealizedMarginPerUnit),
+        sellVelocityUnitsPerDay:Math.max(0,n(row.sellVelocityUnitsPerDay)),
+        liquidityScore:Math.max(0,n(row.liquidityScore)),
+        urgency:String(row.urgency||'NORMAL'),
+        lastSoldTimestamp:Math.max(0,n(row.lastSoldTimestamp)),
+        lastAcquisitionTimestamp:Math.max(0,n(row.lastAcquisitionTimestamp)),
+        marketFreshness:String(row.marketFreshness||'MISSING'),
+        acquisitionRecommendation:String(row.acquisitionRecommendation||'SOURCE AND VERIFY'),
+        status:String(row.status||'OPEN')
+      };
+    }
+    const current=inv.restockDemand&&typeof inv.restockDemand==='object'?inv.restockDemand:{};
+    const stableCurrent={};
+    for(const [id,row] of Object.entries(current)){
+      const copy={...(row||{})};delete copy.updatedAt;stableCurrent[id]=copy;
+    }
+    const changed=JSON.stringify(stableCurrent)!==JSON.stringify(compact);
+    if(changed){
+      const updatedAt=Math.max(0,n(at))||Date.now();
+      inv.restockDemand=Object.fromEntries(Object.entries(compact).map(([id,row])=>[id,{...row,updatedAt}]));
+      inv.lastRestockDemandAt=new Date(updatedAt).toISOString();
+    }
+    return {changed,count:Object.keys(compact).length,rows:compact};
+  }
+
+  function dashboardSummary(db,at=Date.now()){
+    const rows=inventoryRoiRows(db,at);
+    const sales=Object.values(db?.sales||{});
+    const revenue30=sales.filter(s=>n(s.timestamp)>=Number(at)-30*DAY_MS).reduce((sum,s)=>sum+n(s.total),0);
+    const gross30=rows.reduce((sum,row)=>sum+n(row.realizedGrossProfit30),0);
+    const cogs30=rows.reduce((sum,row)=>sum+n(row.realizedCogs30),0);
+    return {
+      skuCount:rows.length,
+      ownedUnits:rows.reduce((sum,row)=>sum+n(row.ownedQty),0),
+      listedUnits:rows.reduce((sum,row)=>sum+n(row.bazaarQty),0),
+      revenue30,gross30,cogs30,realizedRoiPct30:cogs30>0?gross30/cogs30*100:0,
+      attentionCount:rows.filter(row=>row.needsAttention).length,
+      restockSkuCount:rows.filter(row=>row.deficit>0).length,
+      restockUnits:rows.reduce((sum,row)=>sum+n(row.deficit),0),
+      pulseFreshCount:rows.filter(row=>row.pulse?.status==='FRESH').length,
+      pulseStaleCount:rows.filter(row=>row.pulse?.status==='STALE').length,
+      pulseMissingCount:rows.filter(row=>row.pulse?.status==='MISSING').length
+    };
   }
 
   const api=Object.freeze({
     BAZAAR_SELL_LOG_ID,
     ensureInventorySlice,normalizeItems,extractBazaarSale,importSalesEntries,
     parseStackableRows,salesItemMetrics,listingRows,updateShopSnapshot,
-    salesByItemDetailed,fifoLedger,realizedProfitMetrics,inventoryRoiRows
+    marketPulseEvidence,pricingRecommendation,salesByItemDetailed,fifoLedger,realizedProfitMetrics,inventoryRoiRows,restockDemandRows,replaceRestockDemand,dashboardSummary
   });
 
   Object.defineProperty(globalThis,'MMTornInventoryRoiLogic',{value:api,configurable:true,enumerable:false,writable:false});
