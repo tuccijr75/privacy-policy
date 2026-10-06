@@ -140,6 +140,22 @@ function baseDb(){
   const rows=logic.rankCachedTravel(db);
   assert.strictEqual(rows.length,2);
   assert.strictEqual(rows[0].itemName,'B','travel ranking should prioritize source profit/hour');
+  db.operations={inventoryRoi:{restockDemand:{'2':{itemId:'2',deficit:4,status:'OPEN'}}}};
+  db.travelIntel.rows=[
+    {itemId:'1',itemName:'Japan A',country:'Japan',stock:10,shopCost:100,profit:1000,sourceProfitPerHour:100},
+    {itemId:'2',itemName:'Mexico B',country:'Mexico',stock:5,shopCost:100,profit:500,sourceProfitPerHour:200},
+    {itemId:'3',itemName:'Mexico C',country:'Mexico',stock:2,shopCost:200,profit:800,sourceProfitPerHour:150}
+  ];
+  const destinations=logic.rankTravelDestinations(db);
+  assert.strictEqual(destinations.length,2);
+  assert.strictEqual(destinations[0].country,'Mexico','destination ranking should use the best liquidity-adjusted/source profit velocity');
+  assert.strictEqual(destinations[0].itemCount,2);
+  assert.strictEqual(destinations[0].totalObservedStock,7);
+  assert.strictEqual(destinations[0].totalAvailableProfit,4100);
+  assert.strictEqual(destinations[0].restockMatchCount,1);
+  assert.strictEqual(destinations[0].restockDemandUnits,4);
+  assert.strictEqual(destinations[0].bestItem.itemName,'Mexico B');
+  assert.strictEqual(destinations[1].country,'Japan');
 }
 
 console.log('MM_Acquisitions ranking + travel regression tests: PASS');
