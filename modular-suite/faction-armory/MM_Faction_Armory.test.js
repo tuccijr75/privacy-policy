@@ -344,10 +344,10 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.24.7';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.24.8';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
-assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b64c42f86580add2e8fdc89c00e128e3b63c5d1c/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
+assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@1e24b83e6507e4e029da3fbbc8aae518f1de42ee/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -356,7 +356,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.24.7';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.24.8';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -364,7 +364,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.24.7';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.24.8';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -463,7 +463,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.7';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.8';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
@@ -496,14 +496,16 @@ assert(userSourceValue.includes("const minNeeds=(minimums?.actionable||[])"),'le
 assert(userSourceValue.includes('WAR STOCK SHORTFALLS'),'War report must expose approved war-stock shortfalls');
 assert(!userSourceValue.includes('Routine minimum-stock replenishment is deferred until Peace mode.'),'War report must no longer hide active war-stock minimums');
 assert(userSourceValue.includes('Member build/equipment gaps are deferred until War mode.'),'Peace report must explicitly defer member equipment');
-assert(userSourceValue.includes("'WAR ACQUISITION LIST / PRICE RANGE':'PEACE MINIMUM REPLENISHMENT / PRICE RANGE'"),'combined list label must expose mode scope');
-assert(userSourceValue.includes("'PLANNED WAR ACQUISITION ESTIMATE':'PLANNED PEACE MINIMUM REPLENISHMENT ESTIMATE'"),'planning estimate total must expose mode scope');
-assert(userSourceValue.includes("subject:'Faction Armory '+stockMode.toUpperCase()+' acquisition report'"),'leader message subject must expose active mode');
+assert(userSourceValue.includes("isWar?'ACQUISITION PLAN':'PEACE REPLENISHMENT PLAN'"),'combined plan label must expose mode scope');
+assert(userSourceValue.includes('BUDGET-FUNDED BUY-NOW ESTIMATE'),'leader snapshot must separate budget-funded spend from the full plan');
+assert(userSourceValue.includes('FULL PLANNED PRICED ESTIMATE'),'leader snapshot must disclose the full priced plan separately');
+assert(userSourceValue.includes("subject:'Faction Armory '+stockMode.toUpperCase()+' acquisition snapshot'"),'leader message subject must identify the output as a snapshot rather than a final quote');
 assert(userSourceValue.includes("leaderBaseLabel+(stockMode==='war'?' · War Needs':' · Peace / Minimums')"),'leader button must expose the active report scope');
 assert((userSourceValue.match(/data-stock-mode="war"/g)||[]).length>=2,'War/Peace selection must be available on Acquire as well as Minimums');
 assert(userSourceValue.includes('function leaderAcquisitionReport'),'leader acquisition report must be generated from live Armory state');
-assert(userSourceValue.includes('PLANNED WAR ACQUISITION ESTIMATE'),'leader report must expose a best-source planning estimate instead of using the maximum cross-source price as the estimate');
-assert(userSourceValue.includes('PRICE RANGE'),'Acquire rows must expose low/high price estimates');
+assert(userSourceValue.includes('BUDGET-FUNDED BUY-NOW ESTIMATE'),'leader snapshot must expose a budget-funded estimate based on the same planning prices as Acquire');
+assert(userSourceValue.includes('CACHED LIVE RANGE'),'Acquire rows must expose live-source range only when live cached sources exist');
+assert(userSourceValue.includes('PRICE EVIDENCE'),'Acquire rows must disclose whether the planning price is live-source or reference-only evidence');
 assert(userSourceValue.includes('#mce_0'),'Armory messaging must use the shared current Torn TinyMCE compose contract');
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'),'Armory must load the expanded logic contract');
 assert(userSourceValue.includes("/torn/items?cat=All&sort=ASC"),'explicit faction refresh must collect broad Torn market-price references');
@@ -602,8 +604,9 @@ assert(userSourceValue.includes('Pass / Exclude Acquisition'));
 assert(userSourceValue.includes('PROCUREMENT PASS'));
 assert(userSourceValue.includes('data-save-acq-qty'));
 assert(userSourceValue.includes('requestedQty<=0'),'zero planned/funded quantity must not hand off a forced quantity of one');
-assert(userSourceValue.includes('planningUnit=num(live.bestPlanning?.price)||num(row?.marketValue)'),'leader planning estimate must use the best current planning source with Armory reference fallback');
-assert(userSourceValue.includes('Cross-source diagnostic range:'),'wide source range must be diagnostic rather than the leader-facing estimate');
+assert(userSourceValue.includes('const livePrices=[num(live.itemMarketPrice),num(live.bazaarPrice),num(live.travelPrice)]'),'leader planning must distinguish cached live-source prices from references');
+assert(userSourceValue.includes("const bestPlanning=best||fallback;"),'cached live buyable-source evidence must outrank Torn/static reference fallbacks');
+assert(userSourceValue.includes('Reference-only values are labeled and used only when no cached live buyable source is available.'),'leader snapshot must disclose fallback-reference semantics');
 assert(userSourceValue.includes('SYSTEM BUY'));
 assert(userSourceValue.includes('PLANNED BUY'));
 assert(userSourceValue.includes('data-view="coverage"'));
@@ -904,6 +907,47 @@ assert(userSourceValue.includes("'Effective Min'"),'Leadership export must expos
 assert(userSourceValue.includes('Acquire uses the same effective minimum shown here.'),'UI must state the single-source dependency contract');
 assert(!userSourceValue.includes('Final purchase remains automatic'),'final purchase must remain manual');
 console.log('MM Faction Armory alpha.24.7 war-stock/Xanax dependency regressions: PASS');
+
+const pricingPlanFixture={
+  budgetCap:1000,
+  list:[
+    {category:'equipment',item:'Live Item',qty:3,systemQty:3,marketValue:900},
+    {category:'equipment',item:'Reference Item',qty:4,systemQty:4,marketValue:50},
+    {category:'provisions',item:'Unknown Item',qty:2,systemQty:2,marketValue:0}
+  ]
+};
+const pricingQuotes={};
+pricingQuotes[logic.acquisitionQuoteKey('equipment','Live Item')]={
+  planningUnit:100,planningSource:'Bazaar',priceEvidence:'LIVE CACHED SOURCE',low:100,high:120,liveRange:true
+};
+pricingQuotes[logic.acquisitionQuoteKey('equipment','Reference Item')]={
+  planningUnit:50,planningSource:'Torn Market Reference',priceEvidence:'TORN MARKET REFERENCE',low:50,high:50,liveRange:false
+};
+const reconciled=logic.reconcileAcquisitionPricing(pricingPlanFixture,pricingQuotes,350);
+const liveRecon=reconciled.list.find(row=>row.item==='Live Item');
+const refRecon=reconciled.list.find(row=>row.item==='Reference Item');
+const unknownRecon=reconciled.list.find(row=>row.item==='Unknown Item');
+assert.strictEqual(liveRecon.fundedQty,3,'live-priced line should consume the displayed planning price');
+assert.strictEqual(liveRecon.fundedEstimatedValue,300);
+assert.strictEqual(refRecon.fundedQty,1,'later line funding must use remaining budget on the same displayed price basis');
+assert.strictEqual(refRecon.deferredQty,3);
+assert.strictEqual(unknownRecon.fundedQty,0,'unpriced requirements must never be treated as budget-funded');
+assert.strictEqual(unknownRecon.fundingStatus,'PRICE UNKNOWN');
+assert.strictEqual(reconciled.fundedEstimatedValue,350);
+assert.strictEqual(reconciled.fullPlannedKnownCost,500);
+assert.strictEqual(reconciled.deferredEstimatedValue,150);
+assert.strictEqual(reconciled.unpricedUnits,2);
+assert.strictEqual(reconciled.remainingBudget,0);
+assert(userSourceValue.includes('function acquisitionAccuracyPlan'),'screen/report/export/handoff must share one reconciled acquisition plan');
+assert(userSourceValue.includes('const plan=acquisitionAccuracyPlan();'),'Acquire and leader paths must consume the reconciled plan');
+assert(userSourceValue.includes('const acquisition=acquisitionAccuracyPlan();'),'Leadership export must consume the reconciled plan');
+assert(userSourceValue.includes('PRICE UNRESOLVED — excluded from budget-funded estimate'),'leader snapshot must explicitly exclude unpriced rows from funded dollar totals');
+assert(userSourceValue.includes('cached live Bazaar / Item Market / overseas evidence is preferred over reference values'),'leader snapshot must state source-priority semantics');
+assert(userSourceValue.includes('No planning price resolved — excluded from budget-funded quantity until pricing is refreshed.'),'Acquire must fail closed on unpriced budget allocation');
+assert(userSourceValue.includes("'Funding Status'"),'Leadership export must disclose each row funding status');
+assert(userSourceValue.includes("'Price Evidence'"),'Leadership export must disclose price evidence quality');
+console.log('MM Faction Armory alpha.24.8 acquisition-accuracy regressions: PASS');
+
 
 
 
