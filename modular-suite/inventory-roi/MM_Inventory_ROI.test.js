@@ -98,7 +98,7 @@ const userSource=fs.readFileSync(__dirname+'/MM_Inventory_Manager_ROI_Tracker.us
 assert(!/async\s+function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml must remain synchronous because render concatenates its return value directly into HTML');
 assert(/function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml declaration missing');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.13';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.14';"));
 assert(userSource.includes('Bazaar / Inventory Dashboard'));
 assert(userSource.includes('Market Pulse is read-only context from MM_Acquisitions.'));
 assert(userSource.includes('Pricing recommendations are explainable decision support only'));
@@ -109,7 +109,7 @@ assert(userSource.includes('CURRENT COST COVERAGE'));
 assert(userSource.includes("logic.replaceRestockDemand(draft,rows,Date.now())"));
 assert(userSource.includes("tile('RECOMMENDED'"));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@94f5fd00ba9df3abaabcd0abf868b39c3fd9869b/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@217ed83f2e74684f704fd442d1477be785f2815c/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js'));
 assert(!userSource.includes('// @updateURL'));
 assert(!userSource.includes('// @downloadURL'));
 assert(userSource.includes('core?.ensureSharedState'),'fresh-install Core bootstrap missing');
