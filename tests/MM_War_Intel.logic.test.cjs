@@ -200,7 +200,15 @@ test('runtime source enforces bounded collectors and does not echo keys into DOM
   assert.match(source, /Promise\.allSettled\(due\.map/);
   assert.match(source, /renewLease\(\)/);
   assert.match(source, /Roster loaded · enriching…/);
+  assert.match(source, /RUNTIME_KEY='__MMWarIntelRuntimeV1'/);
+  assert.match(source, /purgeStaleUi\(\)/);
+  assert.match(source, /hidden style="display:none"/);
+  assert.match(source, /mmi-minimize/);
+  assert.match(source, /setPanelOpen\(false\);render\(\);/);
+  assert.match(source, /if\(!ui\)return;renderStatus/);
   assert.match(source, /result:p\.id===row\.attackerId\?row\.result:'Assist'/);
+  assert.doesNotMatch(source, /ui\.panel\.hidden=!ui\.panel\.hidden/);
+  assert.doesNotMatch(source, /if\(!ui\|\|ui\.panel\.hidden\)return/);
   assert.doesNotMatch(source, /sync\(true\)|sync\(false\)/);
   assert.doesNotMatch(source, /value=\"'\+esc\(state\.settings\.tornApiKey\)/);
   assert.doesNotMatch(source, /value=\"'\+esc\(state\.settings\.ffscouterKey\)/);
