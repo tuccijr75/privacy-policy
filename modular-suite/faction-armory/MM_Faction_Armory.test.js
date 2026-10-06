@@ -493,7 +493,7 @@ assert(userSourceValue.includes("const minNeeds=isWar?[]"),'minimum-stock sectio
 assert(userSourceValue.includes('Routine minimum-stock replenishment is deferred until Peace mode.'),'War report must explicitly defer minimums');
 assert(userSourceValue.includes('Member build/equipment gaps are deferred until War mode.'),'Peace report must explicitly defer member equipment');
 assert(userSourceValue.includes("'WAR ACQUISITION LIST / PRICE RANGE':'PEACE MINIMUM REPLENISHMENT / PRICE RANGE'"),'combined list label must expose mode scope');
-assert(userSourceValue.includes("'ESTIMATED WAR ACQUISITION COST':'ESTIMATED PEACE MINIMUM REPLENISHMENT COST'"),'cost total must expose mode scope');
+assert(userSourceValue.includes("'PLANNED WAR ACQUISITION ESTIMATE':'PLANNED PEACE MINIMUM REPLENISHMENT ESTIMATE'"),'planning estimate total must expose mode scope');
 assert(userSourceValue.includes("subject:'Faction Armory '+stockMode.toUpperCase()+' acquisition report'"),'leader message subject must expose active mode');
 assert(userSourceValue.includes("leaderBaseLabel+(stockMode==='war'?' · War Needs':' · Peace / Minimums')"),'leader button must expose the active report scope');
 assert((userSourceValue.match(/data-stock-mode="war"/g)||[]).length>=2,'War/Peace selection must be available on Acquire as well as Minimums');
