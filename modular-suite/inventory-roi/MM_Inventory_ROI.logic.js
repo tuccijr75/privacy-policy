@@ -6,6 +6,7 @@
   const asId=v=>String(v??'').trim();
   const nowIso=()=>new Date().toISOString();
   const DAY_MS=86400000;
+  const RESTOCK_DEMAND_MAX=200;
 
   function epochMs(value){
     if(typeof value==='string'){
@@ -137,6 +138,7 @@
     inv.listings=inv.listings&&typeof inv.listings==='object'&&!Array.isArray(inv.listings)?inv.listings:{};
     inv.inventory=inv.inventory&&typeof inv.inventory==='object'&&!Array.isArray(inv.inventory)?inv.inventory:{};
     inv.listingPlans=inv.listingPlans&&typeof inv.listingPlans==='object'&&!Array.isArray(inv.listingPlans)?inv.listingPlans:{};
+    inv.restockDemand=inv.restockDemand&&typeof inv.restockDemand==='object'&&!Array.isArray(inv.restockDemand)?inv.restockDemand:{};
     return out;
   }
 
@@ -292,6 +294,9 @@
     const bm=slice.operations.inventoryRoi;
     const metrics=salesItemMetrics(slice);
     const ids=new Set([...Object.keys(bm.listings||{}),...Object.keys(bm.inventory||{})]);
+    for(const [id,metric] of Object.entries(metrics)){
+      if(/^\d+$/.test(String(id))&&n(metric?.units30d)>0)ids.add(String(id));
+    }
     const rows=[];
     for(const id of ids){
       const listing=bm.listings[id]||{};
@@ -395,19 +400,92 @@
       const expectedMarketProfitPerUnit=pulse.usable&&avgCost>0?pulse.floorPrice-avgCost:0;
       const expectedMarketRoiPct=pulse.usable&&avgCost>0?expectedMarketProfitPerUnit/avgCost*100:0;
       const coverDays=n(row.daily30)>0?ownedQty/n(row.daily30):null;
+      const lastAcquisitionAt=(basis.lots||[]).reduce((max,lot)=>Math.max(max,n(lot.acquiredAt)),0);
       const attentionReasons=[];
       if(row.action==='LIST'||row.action==='TOP UP'||row.action==='REVIEW SLOW')attentionReasons.push(row.action);
       if(restockStatus==='OUT OF STOCK'||restockStatus==='LOW STOCK')attentionReasons.push(restockStatus);
       if(staleInventory&&!attentionReasons.includes('REVIEW SLOW'))attentionReasons.push('STALE INVENTORY');
       return {...row,avgCost,trackedRemainingQty:basis.remainingQty,trackedRemainingCost:basis.remainingCost,currentProfitPerUnit,currentRoiPct:avgCost>0?currentProfitPerUnit/avgCost*100:0,
         realizedRevenue30:realized.revenue,realizedCogs30:realized.cogs,realizedGrossProfit30:realized.grossProfit,realizedRoiPct30:realized.realizedRoiPct,costCoveragePct30:realized.costCoveragePct,matchedUnits30:realized.matchedUnits,
-        ownedQty,targetStock,deficit,restockStatus,staleInventory,coverDays,pulse,pricing,pricingStatus,listingVsMarketPct,expectedMarketProfitPerUnit,expectedMarketRoiPct,attentionReasons,needsAttention:attentionReasons.length>0};
+        ownedQty,targetStock,deficit,restockStatus,staleInventory,coverDays,lastAcquisitionAt,pulse,pricing,pricingStatus,listingVsMarketPct,expectedMarketProfitPerUnit,expectedMarketRoiPct,attentionReasons,needsAttention:attentionReasons.length>0};
     }).sort((a,b)=>
       Number(b.needsAttention)-Number(a.needsAttention)||
       n(b.deficit)-n(a.deficit)||
       n(b.daily30)-n(a.daily30)||
       a.name.localeCompare(b.name)
     );
+  }
+
+  function restockDemandRows(db,at=Date.now()){
+    return inventoryRoiRows(db,at)
+      .filter(row=>n(row.deficit)>0&&n(row.daily30)>0)
+      .map(row=>{
+        const currentQuantity=Math.max(0,n(row.ownedQty));
+        const desiredQuantity=Math.max(0,n(row.targetStock));
+        const coverDays=row.coverDays==null?null:n(row.coverDays);
+        const urgency=currentQuantity<=0?'URGENT':coverDays!=null&&coverDays<2?'HIGH':'NORMAL';
+        const recentRealizedMarginPerUnit=n(row.matchedUnits30)>0?n(row.realizedGrossProfit30)/n(row.matchedUnits30):0;
+        return {
+          schema:1,itemId:String(row.id),itemName:String(row.name||('Item '+row.id)),
+          desiredQuantity,currentQuantity,deficit:Math.max(0,n(row.deficit)),
+          restockThreshold:Math.max(1,Math.ceil(n(row.daily30))),
+          targetAcquisitionPrice:0,
+          recentRealizedMarginPerUnit,
+          sellVelocityUnitsPerDay:n(row.daily30),
+          liquidityScore:row.pulse?.status==='FRESH'?n(row.pulse?.liquidityScore):0,
+          urgency,lastSoldTimestamp:n(row.lastSaleAt),lastAcquisitionTimestamp:n(row.lastAcquisitionAt),
+          marketFreshness:String(row.pulse?.status||'MISSING'),
+          acquisitionRecommendation:row.pulse?.status==='FRESH'?'SOURCE AND VERIFY':'SOURCE; REFRESH EXIT EVIDENCE',
+          status:'OPEN'
+        };
+      })
+      .sort((a,b)=>{
+        const priority={URGENT:0,HIGH:1,NORMAL:2};
+        return (priority[a.urgency]??9)-(priority[b.urgency]??9)||
+          n(b.sellVelocityUnitsPerDay)-n(a.sellVelocityUnitsPerDay)||
+          n(b.deficit)-n(a.deficit)||
+          a.itemName.localeCompare(b.itemName);
+      })
+      .slice(0,RESTOCK_DEMAND_MAX);
+  }
+
+  function replaceRestockDemand(slice,rows=[],at=Date.now()){
+    ensureInventorySlice(slice);
+    const inv=slice.operations.inventoryRoi;
+    const compact={};
+    for(const row of (Array.isArray(rows)?rows:[]).slice(0,RESTOCK_DEMAND_MAX)){
+      const id=asId(row?.itemId);
+      if(!/^\d+$/.test(id)||!(n(row?.deficit)>0))continue;
+      compact[id]={
+        schema:1,itemId:id,itemName:String(row.itemName||('Item '+id)),
+        desiredQuantity:Math.max(0,n(row.desiredQuantity)),
+        currentQuantity:Math.max(0,n(row.currentQuantity)),
+        deficit:Math.max(0,n(row.deficit)),
+        restockThreshold:Math.max(0,n(row.restockThreshold)),
+        targetAcquisitionPrice:Math.max(0,n(row.targetAcquisitionPrice)),
+        recentRealizedMarginPerUnit:n(row.recentRealizedMarginPerUnit),
+        sellVelocityUnitsPerDay:Math.max(0,n(row.sellVelocityUnitsPerDay)),
+        liquidityScore:Math.max(0,n(row.liquidityScore)),
+        urgency:String(row.urgency||'NORMAL'),
+        lastSoldTimestamp:Math.max(0,n(row.lastSoldTimestamp)),
+        lastAcquisitionTimestamp:Math.max(0,n(row.lastAcquisitionTimestamp)),
+        marketFreshness:String(row.marketFreshness||'MISSING'),
+        acquisitionRecommendation:String(row.acquisitionRecommendation||'SOURCE AND VERIFY'),
+        status:String(row.status||'OPEN')
+      };
+    }
+    const current=inv.restockDemand&&typeof inv.restockDemand==='object'?inv.restockDemand:{};
+    const stableCurrent={};
+    for(const [id,row] of Object.entries(current)){
+      const copy={...(row||{})};delete copy.updatedAt;stableCurrent[id]=copy;
+    }
+    const changed=JSON.stringify(stableCurrent)!==JSON.stringify(compact);
+    if(changed){
+      const updatedAt=Math.max(0,n(at))||Date.now();
+      inv.restockDemand=Object.fromEntries(Object.entries(compact).map(([id,row])=>[id,{...row,updatedAt}]));
+      inv.lastRestockDemandAt=new Date(updatedAt).toISOString();
+    }
+    return {changed,count:Object.keys(compact).length,rows:compact};
   }
 
   function dashboardSummary(db,at=Date.now()){
@@ -434,7 +512,7 @@
     BAZAAR_SELL_LOG_ID,
     ensureInventorySlice,normalizeItems,extractBazaarSale,importSalesEntries,
     parseStackableRows,salesItemMetrics,listingRows,updateShopSnapshot,
-    marketPulseEvidence,pricingRecommendation,salesByItemDetailed,fifoLedger,realizedProfitMetrics,inventoryRoiRows,dashboardSummary
+    marketPulseEvidence,pricingRecommendation,salesByItemDetailed,fifoLedger,realizedProfitMetrics,inventoryRoiRows,restockDemandRows,replaceRestockDemand,dashboardSummary
   });
 
   Object.defineProperty(globalThis,'MMTornInventoryRoiLogic',{value:api,configurable:true,enumerable:false,writable:false});
