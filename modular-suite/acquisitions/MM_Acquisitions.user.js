@@ -1044,7 +1044,8 @@
     const feed=readTravelFeed();
     const captureAge=feed?.capturedAt?age(new Date(Number(feed.capturedAt)).toISOString()):'none';
     const syncedAt=Date.parse(state.travelIntel?.lastSyncAt||'')||0;
-    const travelAgeMs=syncedAt?Math.max(0,Date.now()-syncedAt):Infinity;
+    const sourceAt=Date.parse(state.travelIntel?.sourceUpdatedAt||'')||syncedAt;
+    const travelAgeMs=sourceAt?Math.max(0,Date.now()-sourceAt):Infinity;
     const freshness=!Number.isFinite(travelAgeMs)?'UNKNOWN':travelAgeMs<=TRAVEL_FRESH_MS?'FRESH':travelAgeMs<=TRAVEL_STALE_MS?'AGING':'STALE';
     const ctx=travelContext;
     const current=normalizeTravelLocation(ctx?.country||'');
