@@ -195,6 +195,11 @@ test('sanitized export removes both stored API keys', () => {
 test('runtime source enforces bounded collectors and does not echo keys into DOM', () => {
   assert.match(source, /MAX_ATTACK_PAGES=3/);
   assert.match(source, /LEASE_MS=45000/);
+  assert.match(source, /REQUEST_TIMEOUT_MS=10000/);
+  assert.match(source, /Promise\.allSettled\(toRead\.map/);
+  assert.match(source, /Promise\.allSettled\(due\.map/);
+  assert.match(source, /renewLease\(\)/);
+  assert.match(source, /Roster loaded · enriching…/);
   assert.match(source, /result:p\.id===row\.attackerId\?row\.result:'Assist'/);
   assert.doesNotMatch(source, /sync\(true\)|sync\(false\)/);
   assert.doesNotMatch(source, /value=\"'\+esc\(state\.settings\.tornApiKey\)/);

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM War Intel
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.2
+// @version      0.1.0-alpha.3
 // @description  Ranked-war rival intelligence, group coordination, attack evidence, and defensive risk recommendations.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -468,9 +468,9 @@
 
 (() => {
 'use strict';
-const APP='MM War Intel', VERSION='0.1.0-alpha.2', MODULE_ID='war-intel';
+const APP='MM War Intel', VERSION='0.1.0-alpha.3', MODULE_ID='war-intel';
 const STATE_KEY='mm-war-intel:state:v1', LEASE_KEY='mm-war-intel:lease:v1';
-const REFRESH_MS=30000, LEASE_MS=45000, STATS_MS=300000, LIFE_STALE_MS=120000;
+const REFRESH_MS=30000, LEASE_MS=45000, STATS_MS=300000, LIFE_STALE_MS=120000, REQUEST_TIMEOUT_MS=10000;
 const MAX_LOGS=8, MAX_PROFILES=8, MAX_ATTACK_PAGES=3;
 const core=globalThis.MMTornCore, logic=globalThis.MMWarIntelLogic;
 const ownerId=(globalThis.crypto&&typeof crypto.randomUUID==='function')?crypto.randomUUID():String(Date.now())+'-'+Math.random().toString(36).slice(2);
@@ -490,7 +490,7 @@ function age(ms){if(!Number.isFinite(ms)||ms<0)return'—';const s=Math.floor(ms
 function status(m){return String(m?.status?.state||'Unknown');}
 function lastAge(m){const t=Number(m?.last_action?.timestamp);return Number.isFinite(t)&&t>0?Date.now()-t*1000:Infinity;}
 
-async function req(url,opt={}){return new Promise((resolve,reject)=>GM.xmlHttpRequest({method:opt.method||'GET',url,headers:{Accept:'application/json',...(opt.headers||{})},data:opt.data,timeout:15000,onload(r){let b;try{b=JSON.parse(r.responseText||'null');}catch{reject(new Error('Invalid JSON response.'));return;}if(r.status<200||r.status>=300){reject(new Error(String(b?.error?.error||b?.error||b?.message||('HTTP '+r.status))));return;}if(b?.error){reject(new Error(String(b.error.error||b.error)));return;}resolve(b);},ontimeout(){reject(new Error('Request timed out.'));},onerror(){reject(new Error('Network request failed.'));}}));}
+async function req(url,opt={}){return new Promise((resolve,reject)=>GM.xmlHttpRequest({method:opt.method||'GET',url,headers:{Accept:'application/json',...(opt.headers||{})},data:opt.data,timeout:REQUEST_TIMEOUT_MS,onload(r){let b;try{b=JSON.parse(r.responseText||'null');}catch{reject(new Error('Invalid JSON response.'));return;}if(r.status<200||r.status>=300){reject(new Error(String(b?.error?.error||b?.error||b?.message||('HTTP '+r.status))));return;}if(b?.error){reject(new Error(String(b.error.error||b.error)));return;}resolve(b);},ontimeout(){reject(new Error('Request timed out.'));},onerror(){reject(new Error('Network request failed.'));}}));}
 async function torn(path,q={}){const key=state.settings.tornApiKey.trim();if(!validKey(key))throw new Error('Configure a 16-character Torn API key.');const u=new URL('https://api.torn.com/v2/'+String(path).replace(/^\/+/,''));for(const[k,v]of Object.entries(q))if(v!==null&&v!==undefined&&v!=='')u.searchParams.set(k,String(v));return req(u.href,{headers:{Authorization:'ApiKey '+key}});}
 async function ff(path,q={}){const key=state.settings.ffscouterKey.trim();if(!validKey(key))throw new Error('Configure a 16-character FFScouter key.');const u=new URL('https://ffscouter.com/api/v1/'+String(path).replace(/^\/+/,''));u.searchParams.set('key',key);for(const[k,v]of Object.entries(q))if(v!==null&&v!==undefined&&v!=='')u.searchParams.set(k,String(v));return req(u.href);}
 async function ffPost(path,payload){const key=state.settings.ffscouterKey.trim();if(!validKey(key))throw new Error('Configure a 16-character FFScouter key.');return req('https://ffscouter.com/api/v1/'+String(path).replace(/^\/+/,''),{method:'POST',headers:{'Content-Type':'application/json'},data:JSON.stringify({key,...payload})});}
@@ -546,13 +546,15 @@ async function refreshAttacks(){
     to=oldest-1;
   }
 
-  const detail=[];
   const requestedCodes=new Set();
-  let reads=0;
+  const toRead=[];
   for(const row of pending){
-    if(!row.code||seenCodes.has(row.code)||requestedCodes.has(row.code)||reads>=MAX_LOGS)continue;
+    if(!row.code||seenCodes.has(row.code)||requestedCodes.has(row.code)||toRead.length>=MAX_LOGS)continue;
     requestedCodes.add(row.code);
-    reads++;
+    toRead.push(row);
+  }
+
+  const detailResults=await Promise.allSettled(toRead.map(async row=>{
     try{
       const b=await torn('torn/attacklog',{log:row.code});
       const s=Array.isArray(b?.attacklog?.summary)?b.attacklog.summary:Array.isArray(b?.summary)?b.summary:[];
@@ -566,40 +568,39 @@ async function refreshAttacks(){
         if(damage<=0&&hits<=0&&misses<=0)continue;
         participants.push({id,name:String(p?.name||''),damage,hits,misses});
       }
-      if(participants.length){
-        const ids=new Set(participants.map(p=>p.id));
-        for(const p of participants){
-          detail.push({
-            ...row,
-            attackerId:p.id,
-            attackerName:p.name||row.attackerName,
-            result:p.id===row.attackerId?row.result:'Assist',
-            damage:p.damage,
-            hits:p.hits,
-            misses:p.misses,
-            group:participants.length>1||row.group
-          });
-        }
-        if(!ids.has(row.attackerId))detail.push(row);
-      }else{
-        detail.push(row);
-      }
       seenCodes.add(row.code);
+      if(!participants.length)return[row];
+      const ids=new Set(participants.map(p=>p.id));
+      const rows=participants.map(p=>({
+        ...row,
+        attackerId:p.id,
+        attackerName:p.name||row.attackerName,
+        result:p.id===row.attackerId?row.result:'Assist',
+        damage:p.damage,
+        hits:p.hits,
+        misses:p.misses,
+        group:participants.length>1||row.group
+      }));
+      if(!ids.has(row.attackerId))rows.push(row);
+      return rows;
     }catch(e){
       safeError(e,'attacklog');
+      return[];
     }
-  }
+  }));
+  const detail=detailResults.flatMap(result=>result.status==='fulfilled'?result.value:[]);
 
   state.attacks=logic.mergeAttackHistory(state.attacks,[...pending,...detail],logic.LIMITS.historyAttacks);
   state.fetch.attacksAt=Date.now();
 }
-async function refreshLife(){const due=[...state.enemyMembers].sort((a,b)=>{const aa=status(a)==='Okay'?0:1,bb=status(b)==='Okay'?0:1;return aa!==bb?aa-bb:lastAge(a)-lastAge(b);}).filter(m=>{const r=state.life[String(m.id)];return!r||Date.now()-Number(r.fetchedAt||0)>LIFE_STALE_MS;}).slice(0,MAX_PROFILES);for(const m of due){try{const b=await torn('user/'+m.id+'/profile'),p=b?.profile??b,l=p?.life;if(l&&Number.isFinite(Number(l.current))&&Number.isFinite(Number(l.maximum)))state.life[String(m.id)]={current:Number(l.current),maximum:Number(l.maximum),fetchedAt:Date.now()};}catch(e){safeError(e,'life');}}}
+async function refreshLife(){const due=[...state.enemyMembers].sort((a,b)=>{const aa=status(a)==='Okay'?0:1,bb=status(b)==='Okay'?0:1;return aa!==bb?aa-bb:lastAge(a)-lastAge(b);}).filter(m=>{const r=state.life[String(m.id)];return!r||Date.now()-Number(r.fetchedAt||0)>LIFE_STALE_MS;}).slice(0,MAX_PROFILES);await Promise.allSettled(due.map(async m=>{try{const b=await torn('user/'+m.id+'/profile'),p=b?.profile??b,l=p?.life;if(l&&Number.isFinite(Number(l.current))&&Number.isFinite(Number(l.maximum)))state.life[String(m.id)]={current:Number(l.current),maximum:Number(l.maximum),fetchedAt:Date.now()};}catch(e){safeError(e,'life');}}));}
 async function refreshClaims(){if(!validKey(state.settings.ffscouterKey))return;const b=await ff('hit-calling/claims');state.claims=b?.claims?.faction&&typeof b.claims.faction==='object'?b.claims.faction:{};state.fetch.claimsAt=Date.now();}
 async function claim(id){await ffPost('hit-calling/claim',{target_player_id:Number(id)});await refreshClaims();}
 async function unclaim(id){await ffPost('hit-calling/unclaim',{target_player_id:Number(id)});await refreshClaims();}
 async function lease(){const n=Date.now(),cur=await GM.getValue(LEASE_KEY,null);if(cur&&cur.owner!==ownerId&&Number(cur.expiresAt)>n)return false;await GM.setValue(LEASE_KEY,{owner:ownerId,expiresAt:n+LEASE_MS});return(await GM.getValue(LEASE_KEY,null))?.owner===ownerId;}
+async function renewLease(){const n=Date.now(),cur=await GM.getValue(LEASE_KEY,null);if(cur?.owner!==ownerId)return false;await GM.setValue(LEASE_KEY,{owner:ownerId,expiresAt:n+LEASE_MS});return true;}
 async function releaseLease(){const cur=await GM.getValue(LEASE_KEY,null);if(cur?.owner===ownerId)await GM.setValue(LEASE_KEY,null);}
-async function sync(){if(syncing||destroyed)return;if(!(await lease()))return;syncing=true;renderStatus('Refreshing…');try{await refreshRoster();const[statsResult,claimsResult]=await Promise.allSettled([refreshStats(),refreshClaims()]);if(statsResult.status==='rejected')safeError(statsResult.reason,'ffscouter-stats');if(claimsResult.status==='rejected')safeError(claimsResult.reason,'ffscouter-claims');await refreshAttacks();await refreshLife();state.fetch.lastSyncAt=Date.now();await saveState();}catch(e){safeError(e,'sync');await saveState();}finally{syncing=false;render();}}
+async function sync(){if(syncing||destroyed)return;if(!(await lease()))return;syncing=true;renderStatus('Refreshing roster…');try{await refreshRoster();await saveState();render();renderStatus('Roster loaded · enriching…');if(!(await renewLease()))throw new Error('Refresh lease lost before enrichment.');const names=['ffscouter-stats','ffscouter-claims','attacks','life'];const results=await Promise.allSettled([refreshStats(),refreshClaims(),refreshAttacks(),refreshLife()]);results.forEach((result,index)=>{if(result.status==='rejected')safeError(result.reason,names[index]);});state.fetch.lastSyncAt=Date.now();await saveState();}catch(e){safeError(e,'sync');await saveState();}finally{syncing=false;render();}}
 
 function claims(id){return Array.isArray(state.claims?.[String(id)])?state.claims[String(id)]:[];}
 function defense(){return logic.defensiveBoard({ownMembers:state.ownMembers,enemyMembers:state.enemyMembers,ownIntel:state.intel,enemyIntel:state.intel,attacks:state.attacks,nowSeconds:nowSec()});}
