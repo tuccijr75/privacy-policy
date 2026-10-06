@@ -490,12 +490,12 @@ assert(userSourceValue.includes('armorySentConfirmationTexts'),'send confirmatio
 assert(!userSourceValue.includes('const leftCompose='),'leaving Compose alone must not count as successful delivery');
 assert(userSourceValue.includes('fingerprintBaselineCount'),'send detector must compare post-send transcript against a pre-send baseline');
 assert(userSourceValue.includes('Message Faction Leader'),'Acquire must expose leader-message output');
-assert(userSourceValue.includes("isWar?'FACTION ARMORY WAR ACQUISITION REPORT':'FACTION ARMORY PEACE MINIMUMS REPORT'"),'leader report title must follow War/Peace scope');
+assert(userSourceValue.includes("isWar?'FACTION ARMORY WAR ACQUISITION SNAPSHOT':'FACTION ARMORY PEACE MINIMUMS SNAPSHOT'"),'leader snapshot title must follow War/Peace scope');
 assert(userSourceValue.includes("const memberNeeds=isWar"),'member-build needs must be War-only in the leader report');
 assert(userSourceValue.includes("const minNeeds=(minimums?.actionable||[])"),'leader report must consume the same live minimum shortfalls in War and Peace');
 assert(userSourceValue.includes('WAR STOCK SHORTFALLS'),'War report must expose approved war-stock shortfalls');
 assert(!userSourceValue.includes('Routine minimum-stock replenishment is deferred until Peace mode.'),'War report must no longer hide active war-stock minimums');
-assert(userSourceValue.includes('Member build/equipment gaps are deferred until War mode.'),'Peace report must explicitly defer member equipment');
+assert(userSourceValue.includes('Member equipment gaps are not added in Peace mode.'),'Peace snapshot must explicitly exclude member equipment');
 assert(userSourceValue.includes("isWar?'ACQUISITION PLAN':'PEACE REPLENISHMENT PLAN'"),'combined plan label must expose mode scope');
 assert(userSourceValue.includes('BUDGET-FUNDED BUY-NOW ESTIMATE'),'leader snapshot must separate budget-funded spend from the full plan');
 assert(userSourceValue.includes('FULL PLANNED PRICED ESTIMATE'),'leader snapshot must disclose the full priced plan separately');
