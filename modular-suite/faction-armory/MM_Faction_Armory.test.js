@@ -123,7 +123,7 @@ assert.strictEqual(readyRows[0].buildAssessment.warReady,true,'Members and Build
 
 readyFaction.memberReadiness.profiles['150'].verifiedAt=new Date(Date.now()+1000).toISOString();
 readyRows=logic.memberRows(readyFaction,[],{procurementMode:'budget'});
-assert.strictEqual(readyRows[0].readinessStatus,'READY FOR REVIEW','new member data must invalidate the prior approval until reviewed again');
+assert.strictEqual(readyRows[0].readinessStatus,'WAR READY','individual Leadership WAR READY must persist across later API refreshes until explicitly reopened');
 
 const missingMember={
   memberId:'101',
@@ -341,10 +341,10 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.24.2';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.24.3';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
-assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@2c85d554254bdcc4e3d1334f9fdc23eb3fd5ba42/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
+assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@67c6282894d1a6767047c4e19c42cb53683804ac/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -353,7 +353,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.24.2';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.24.3';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -361,7 +361,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.24.2';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.24.3';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -460,7 +460,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.2';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.3';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
@@ -468,8 +468,8 @@ assert(userSourceValue.includes('Find Best Source'));
 assert(userSourceValue.includes('data-armory-acquire'));
 assert(userSourceValue.includes("type:'armory-acquisition-request'"));
 assert(userSourceValue.includes('function setMemberWarReady'));
-assert(userSourceValue.includes('Approve / War Ready'));
-assert(userSourceValue.includes('Reopen Review'));
+assert(userSourceValue.includes('Mark War Ready'));
+assert(userSourceValue.includes('Reopen Readiness'));
 assert(userSourceValue.includes("row.buildAssessment||logic.compareMemberBuild"));
 assert(userSourceValue.includes("'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO'"));
 assert(userSourceValue.includes("'Baseline Pass':build.warReady?'YES':'NO'"));
@@ -632,7 +632,7 @@ console.log('MM Faction Armory alpha.24 build/minimums regressions: PASS');
 assert(userSourceValue.includes("const rawEquipment=Array.isArray(equipData?.equipment)?equipData.equipment:null;"),'member import must distinguish a valid empty equipment array from a malformed response');
 assert(userSourceValue.includes("if(rawEquipment.length&&!items.length)throw new Error('Equipped combat items were returned but could not be normalized; no profile was changed.');"),'non-empty Torn equipment that normalizes to zero must still fail closed');
 assert(userSourceValue.includes('emptyConfirmed:equipmentEmptyConfirmed'),'valid empty equipment must be stored as explicit fresh evidence');
-assert(userSourceValue.includes('No combat equipment equipped (API confirmed)'),'Members UI must distinguish confirmed-empty combat equipment from missing/stale data');
+assert(userSourceValue.includes('No combat gear equipped (confirmed)'),'Members UI must distinguish confirmed-empty combat equipment from missing/stale data');
 assert(!userSourceValue.includes('No equipped items could be parsed; no profile was changed.'),'valid empty equipment must no longer be rejected by the obsolete summary guard');
 console.log('MM Faction Armory alpha.24.2 empty-equipment regression: PASS');
 
@@ -652,5 +652,75 @@ assert.strictEqual(morpheusLiveMelee.route,'KEEP','neutral readiness must not tu
 assert(morpheusLiveMelee.currentScore>=morpheusLiveMelee.readinessFloor,'Morpheus live Metal Nunchaku must clear the objective melee floor');
 assert(userSourceValue.includes('neutral gear performance determines readiness, while member style ranks qualifying alternatives')||logic.warReadinessStandard(morpheusLiveRow,{current:{}},[morpheusLiveRow],{procurementMode:'budget'}).methodology.includes('neutral gear performance determines readiness'),'readiness methodology must separate objective pass/fail from alternative ranking');
 console.log('MM Faction Armory alpha.24.2 objective-readiness regression: PASS');
+
+const noGearFaction={
+  current:{},
+  memberReadiness:{
+    roster:{'777':{memberId:'777',memberName:'Confirmed Empty',level:15}},
+    profiles:{'777':{
+      stats:{strength:1000,defense:1000,speed:1000,dexterity:1000},
+      equipment:{summary:'',items:[],emptyConfirmed:true},
+      verifiedAt:new Date().toISOString(),
+      source:'MM Faction Armory member Limited Access API'
+    }},
+    settings:{staleHours:72}
+  }
+};
+const noGearRows=logic.memberRows(noGearFaction,[],{procurementMode:'budget'});
+assert.strictEqual(noGearRows[0].readinessStatus,'NO COMBAT GEAR EQUIPPED','fresh confirmed-empty equipment must not be mislabeled MISSING DATA');
+assert.strictEqual(noGearRows[0].equipmentEvidenceKnown,true,'confirmed-empty equipment is valid evidence even though no combat item is equipped');
+
+noGearFaction.memberReadiness.profiles['777'].readinessApproval={
+  status:'WAR READY',approvedAt:new Date().toISOString(),manual:true,reason:'Leader decision'
+};
+let manuallyReadyRows=logic.memberRows(noGearFaction,[],{procurementMode:'budget'});
+assert.strictEqual(manuallyReadyRows[0].readinessStatus,'WAR READY','Leadership must be able to mark a confirmed-empty member WAR READY individually');
+assert.strictEqual(manuallyReadyRows[0].buildWarReady,false,'manual WAR READY must not falsify the automatic build baseline');
+const manuallyReadyPlan=logic.acquisitionPlan(noGearFaction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+assert(!manuallyReadyPlan.assignments.some(row=>row.memberId==='777'),'individual Leadership WAR READY must remove that member from War acquisition');
+
+const overrideFaction={
+  current:{},
+  memberReadiness:{
+    roster:{'888':{memberId:'888',memberName:'Source Name',level:10}},
+    profiles:{'888':{
+      stats:{strength:100,defense:100,speed:100,dexterity:100},
+      equipment:{summary:'',items:[],emptyConfirmed:true},
+      verifiedAt:'2026-10-06T12:00:00.000Z',
+      source:'API',
+      manualOverrides:{
+        updatedAt:'2026-10-06T13:00:00.000Z',
+        reason:'Leadership correction',
+        values:{
+          memberName:'Manual Name',
+          level:22,
+          stats:{strength:2500},
+          equipment:{summary:'MELEE: Macana',items:[{name:'Macana',slot:'melee'}],emptyConfirmed:false},
+          medicalStatus:'MANUAL READY'
+        }
+      }
+    }},
+    settings:{staleHours:999999}
+  }
+};
+const overrideRows=logic.memberRows(overrideFaction,[],{procurementMode:'budget'});
+assert.strictEqual(overrideRows[0].memberName,'Manual Name','manual override must be able to replace displayed member data');
+assert.strictEqual(overrideRows[0].level,22,'manual override must be able to replace roster-derived level');
+assert.strictEqual(overrideRows[0].stats.strength,2500,'manual stats override must drive effective readiness data');
+assert.strictEqual(overrideRows[0].rawProfile.stats.strength,100,'manual override must not destroy underlying source/API data');
+assert.strictEqual(overrideRows[0].manualOverrideActive,true);
+assert.strictEqual(overrideRows[0].equipmentSummary,'MELEE: Macana','manual equipment override must drive build input');
+assert.strictEqual(overrideRows[0].equipmentEmptyConfirmed,false);
+assert.deepStrictEqual(logic.manualOverrideValues(overrideFaction.memberReadiness.profiles['888']).stats,{strength:2500});
+console.log('MM Faction Armory alpha.24.3 leadership/manual-override regressions: PASS');
+
+assert(userSourceValue.includes("async function setMemberManualOverrides"),'Members UI must provide a persistent manual data override write path');
+assert(userSourceValue.includes("data-edit-override"),'every member must expose manual data override editing');
+assert(userSourceValue.includes("data-clear-override"),'manual override must be individually clearable');
+assert(userSourceValue.includes("row.readinessStatus!=='WAR READY'?'<button data-war-ready="),'every non-WAR-READY member must expose an individual War Ready decision');
+assert(!userSourceValue.includes("Member is not currently eligible for War Ready approval."),'manual War Ready must not retain the automatic eligibility gate');
+assert(userSourceValue.includes("Source/API data remains preserved underneath."),'manual override UX must state source preservation');
+assert(userSourceValue.includes("'Override JSON'"),'leadership export must disclose manual overrides');
+
 
 
