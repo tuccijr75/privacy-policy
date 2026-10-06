@@ -69,6 +69,30 @@ const outOfStockPricing=logic.pricingRecommendation({
 assert.strictEqual(outOfStockPricing.state,'OUT OF STOCK');
 assert.strictEqual(outOfStockPricing.recommendedPrice,0);
 
+
+const namedFromCatalog=logic.ensureInventorySlice({
+  procurement:{catalog:{'180':{name:'Vicodin',catalogSource:'Torn API v2'}}},
+  operations:{inventoryRoi:{}}
+});
+logic.updateShopSnapshot(namedFromCatalog,{bazaar:[{id:180,name:'Item 180',quantity:0,price:0}],inventory:[]});
+assert.strictEqual(logic.listingRows(namedFromCatalog).find(row=>row.id==='180').name,'Vicodin');
+
+const namedFromPulse=logic.ensureInventorySlice({
+  marketIntel:{marketPulse:{items:{'258':{itemId:'258',itemName:'Xanax'}}}},
+  operations:{inventoryRoi:{}}
+});
+logic.updateShopSnapshot(namedFromPulse,{bazaar:[{id:258,quantity:0,price:0}],inventory:[]});
+assert.strictEqual(logic.listingRows(namedFromPulse).find(row=>row.id==='258').name,'Xanax');
+
+const namedFromMarketplace=logic.ensureInventorySlice({
+  marketIntel:{marketplace:{'310':{itemId:'310',itemName:'Morphine'}}},
+  operations:{inventoryRoi:{}}
+});
+logic.updateShopSnapshot(namedFromMarketplace,{bazaar:[{id:310,quantity:0,price:0}],inventory:[]});
+assert.strictEqual(logic.listingRows(namedFromMarketplace).find(row=>row.id==='310').name,'Morphine');
+assert.strictEqual(logic.usableItemName('Item 310','310'),'');
+assert.strictEqual(logic.sharedItemName(namedFromMarketplace,'310','Item 310'),'Morphine');
+
 console.log('MM Inventory ROI logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Inventory_Manager_ROI_Tracker.user.js','utf8');
 assert(!/async\s+function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml must remain synchronous because render concatenates its return value directly into HTML');
