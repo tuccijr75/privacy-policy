@@ -212,6 +212,19 @@ For ordinary war supplies:
 
 This means internal edits remain consistent across Minimums, Acquire, leader messaging and Leadership export. The only outbound procurement step is the existing Armory-to-MM_Acquisitions handoff; final purchase and transfer actions remain manual.
 
+## Downstream market freshness rule
+
+Armory is a consumer of Acquisitions-owned market evidence, not an independent market collector. It therefore applies the producer's freshness semantics before a cached price can participate in procurement planning.
+
+- Item Market / Bazaar: use `state.businessRules.maxListingAgeSec` when available; default to 180 seconds.
+- Overseas / Travel: treat source evidence older than 15 minutes as stale.
+- Missing or unparsable timestamps do not qualify as fresh live evidence.
+- Stale values remain diagnostic only. They cannot become `bestPlanning`, reduce the planning unit cost, consume budget, or determine the handoff quantity.
+- Torn Market Reference and Armory static reference values remain labeled fallback references, not verified listings.
+- If no fresh live evidence and no usable fallback reference exist, the requirement stays visible as `PRICE UNKNOWN` with funded quantity zero.
+
+The same freshness-filtered acquisition snapshot feeds Acquire, the Leader snapshot, Leadership Excel and the Armory -> MM_Acquisitions handoff.
+
 ## Acquisition output accuracy contract
 
 All Armory procurement outputs must derive from one reconciled acquisition snapshot.
