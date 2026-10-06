@@ -1418,15 +1418,20 @@
     const raw=factionInventory?.warPlanning?.xanaxPolicy;
     const overrides=raw?.memberOverrides&&typeof raw.memberOverrides==='object'&&!Array.isArray(raw.memberOverrides)
       ? clone(raw.memberOverrides):{};
+    const whole=(value,fallback,min=0)=>{
+      const parsed=Number(value);
+      return Number.isFinite(parsed)?Math.max(min,Math.round(parsed)):fallback;
+    };
+    const ratio=Number(raw?.reasonableRatio);
     return {
       investmentPosture:['off','conserve','compete','push'].includes(String(raw?.investmentPosture||'').toLowerCase())
         ?String(raw.investmentPosture).toLowerCase():DEFAULT_XANAX_POLICY.investmentPosture,
-      reasonableRatio:Math.max(0.1,Math.min(2,Number(raw?.reasonableRatio)||DEFAULT_XANAX_POLICY.reasonableRatio)),
-      highThreshold:Math.max(1,Math.round(Number(raw?.highThreshold)||DEFAULT_XANAX_POLICY.highThreshold)),
-      mediumThreshold:Math.max(1,Math.round(Number(raw?.mediumThreshold)||DEFAULT_XANAX_POLICY.mediumThreshold)),
-      highCeiling:Math.max(0,Math.round(Number(raw?.highCeiling)??DEFAULT_XANAX_POLICY.highCeiling)),
-      mediumCeiling:Math.max(0,Math.round(Number(raw?.mediumCeiling)??DEFAULT_XANAX_POLICY.mediumCeiling)),
-      lowCeiling:Math.max(0,Math.round(Number(raw?.lowCeiling)??DEFAULT_XANAX_POLICY.lowCeiling)),
+      reasonableRatio:Number.isFinite(ratio)?Math.max(0.1,Math.min(2,ratio)):DEFAULT_XANAX_POLICY.reasonableRatio,
+      highThreshold:whole(raw?.highThreshold,DEFAULT_XANAX_POLICY.highThreshold,1),
+      mediumThreshold:whole(raw?.mediumThreshold,DEFAULT_XANAX_POLICY.mediumThreshold,1),
+      highCeiling:whole(raw?.highCeiling,DEFAULT_XANAX_POLICY.highCeiling,0),
+      mediumCeiling:whole(raw?.mediumCeiling,DEFAULT_XANAX_POLICY.mediumCeiling,0),
+      lowCeiling:whole(raw?.lowCeiling,DEFAULT_XANAX_POLICY.lowCeiling,0),
       memberOverrides:overrides
     };
   }
