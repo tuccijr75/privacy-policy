@@ -1159,6 +1159,31 @@
     }
   }
 
+  async function runRestockEta(country,itemId,itemName=''){
+    if(busy)return;
+    if(!tornIntelKey()){
+      statusText='Save the free Torn Intel client key in Setup / Advanced before loading restock history.';
+      activeView='settings';
+      render();
+      return;
+    }
+    busy=true;
+    statusText='Loading Torn Intel observed history for '+String(itemName||('item '+itemId))+'…';
+    render();
+    try{
+      const record=await refreshRestockEta(country,itemId,itemName);
+      const etaAt=Date.parse(String(record?.etaAt||''))||0;
+      statusText=etaAt
+        ?('Restock model updated: '+String(record.confidence||'UNKNOWN')+' confidence · '+Number(record.usableCycles||0)+' usable cycles · ETA '+new Date(etaAt).toLocaleString()+'.')
+        :('Restock history updated: '+Number(record?.usableCycles||0)+' usable cycles · '+String(record?.confidence||'INSUFFICIENT')+' confidence. No active ETA is currently justified.');
+    }catch(error){
+      statusText='Restock history failed: '+(error?.message||String(error));
+    }finally{
+      busy=false;
+      render();
+    }
+  }
+
   function pricelistRows(){
     const list=state?.procurement?.pricelist?.items||{};
     const catalog=state?.procurement?.catalog||{};
