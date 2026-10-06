@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.9
+// @version      8.0.0-alpha.24.10
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.9';
+  const VERSION='8.0.0-alpha.24.10';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -2700,7 +2700,7 @@
     lines.push('',isWar?'ACQUISITION PLAN':'PEACE REPLENISHMENT PLAN');
     if(plan.list.length){
       for(const row of plan.list){
-        const manual=row.manualQtyOverride!=null?' · manual planned qty (system '+fmt(row.systemQty)+')':'';
+        const manual=row.manualQtyOverride!=null?' · your override '+fmt(row.qty)+' · Armory recommendation '+fmt(row.systemQty):'';
         const quote=row.quote||{};
         const staleText=(quote.staleSources||[]).length
           ?' · ignored stale '+quote.staleSources.map(source=>
@@ -2811,7 +2811,7 @@
               '<div class="mm-fa-actions" style="margin-top:4px;">'+
                 '<label class="mm-fa-muted">Planned qty <input class="mm-fa-input" data-acq-qty-input="'+esc(row.item)+'" data-acq-qty-category="'+esc(row.category)+'" type="number" min="0" step="1" value="'+Math.round(num(row.qty))+'" style="width:72px;"></label>'+
                 '<button data-save-acq-qty="'+esc(row.item)+'" data-acq-qty-category="'+esc(row.category)+'" style="'+button(row.manualQtyOverride!=null)+'">Save Qty</button>'+
-                (row.manualQtyOverride!=null?'<button data-reset-acq-qty="'+esc(row.item)+'" data-acq-qty-category="'+esc(row.category)+'" style="'+button()+'">Reset '+fmt(row.systemQty)+'</button>':'')+
+                (row.manualQtyOverride!=null?'<button data-reset-acq-qty="'+esc(row.item)+'" data-acq-qty-category="'+esc(row.category)+'" style="'+button()+'">Use Armory '+fmt(row.systemQty)+'</button>':'')+
                 '<button data-armory-acquire="'+esc(row.item)+'" data-source="Best" style="'+button(true)+'">Find Best Source</button>'+
                 '<button data-armory-acquire="'+esc(row.item)+'" data-source="Item Market" style="'+button()+'">Item Market</button>'+
                 '<button data-armory-acquire="'+esc(row.item)+'" data-source="Bazaar" style="'+button()+'">Bazaar</button>'+
@@ -2819,8 +2819,8 @@
               '</div>'+
             '</div>'+
             '<div class="mm-fa-tiles">'+
-              tile('SYSTEM',fmt(row.systemQty))+
-              tile('PLANNED',fmt(row.qty),{cls:row.manualQtyOverride!=null?'mm-fa-warn':''})+
+              tile('ARMORY REC',fmt(row.systemQty))+
+              tile(row.manualQtyOverride!=null?'YOUR OVERRIDE':'PLANNED',fmt(row.qty),{cls:row.manualQtyOverride!=null?'mm-fa-warn':''})+
               tile('BUY NOW',fmt(row.fundedQty),{cls:row.fundedQty?'mm-fa-good':''})+
               (row.deferredQty?tile('DEFER',fmt(row.deferredQty),{cls:'mm-fa-warn'}):'')+
               tile('FUNDING',row.fundingStatus,{cls:row.fundingStatus==='PRICE UNKNOWN'?'mm-fa-warn':''})+
@@ -2881,7 +2881,7 @@
         (stockMode==='war'
           ? 'War mode includes non-War-Ready member equipment, two equipment spares per slot, and enabled war-stock shortfalls. '
           : 'Peace mode replenishes enabled faction minimum-stock shortfalls only; member equipment gaps are deferred until War mode. ')+
-        'Approved War Ready and current Procurement Pass members generate no individual equipment acquisition. Manual planned quantities change procurement output only; they do not rewrite readiness or inventory facts. '+
+        'Approved War Ready and current Procurement Pass members generate no individual equipment acquisition. Your Override changes procurement output only; Armory Recommendation remains visible for comparison and neither value rewrites readiness or inventory facts. '+
         'Fresh cached Item Market, Bazaar and overseas evidence is preferred for budget planning; stale cached evidence is ignored and disclosed. Torn market/static references are fallback-only and visibly labeled. Unpriced rows are not treated as budget-funded. '+
         'MM_Acquisitions must still verify live availability and price before any manual purchase.'+
       '</div>'+
