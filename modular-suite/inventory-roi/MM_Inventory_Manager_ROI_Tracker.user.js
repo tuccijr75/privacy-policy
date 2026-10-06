@@ -1,14 +1,12 @@
 // ==UserScript==
 // @name         MM_Inventory Manager/ROI Tracker
 // @namespace    manic-mike.torn.inventory-roi
-// @version      8.0.0-alpha.7.6
-// @description  Dedicated personal inventory, Bazaar listing guidance, sales velocity and FIFO ROI tracking.
-// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js
-// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js
+// @version      8.0.0-alpha.11
+// @description  Connected Bazaar/inventory dashboard with sales velocity, FIFO ROI, Market Pulse context and restock readiness.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.13
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js?v=8.0.0-alpha.1
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@4ef4197cb0fc19e4c29b5864dd4d003732d58deb/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -19,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.7.6';
+  const VERSION='8.0.0-alpha.11';
   const ROOT_ID='mm-inventory-roi';
   const LAUNCHER_ID='mm-inventory-roi-launcher';
   const STYLE_ID='mm-inventory-roi-style';
@@ -37,6 +35,11 @@
 
   const core=globalThis.MMTornCore;
   const logic=globalThis.MMTornInventoryRoiLogic;
+
+  async function readSharedState(){
+    if(core?.ensureSharedState)return core.ensureSharedState();
+    return core.readLegacyState();
+  }
   if(!core||!logic){
     console.error('[MM Inventory Manager/ROI Tracker] Core/logic dependency missing.');
     return;
@@ -181,7 +184,7 @@
   }
 
   async function reloadState(){
-    state=await core.readLegacyState();
+    state=await readSharedState();
     render();
   }
 
@@ -191,12 +194,25 @@
       const out=mutator(draft);
       return out===undefined?draft:out;
     });
-    state=await core.readLegacyState();
+    state=await readSharedState();
+  }
+
+  async function syncRestockDemand(){
+    const snapshot=await readSharedState();
+    logic.ensureInventorySlice(snapshot);
+    const rows=logic.restockDemandRows(snapshot);
+    let outcome={changed:false,count:rows.length};
+    await core.updateDomainState('bazaar',draft=>{
+      outcome=logic.replaceRestockDemand(draft,rows,Date.now());
+      return draft;
+    });
+    if(outcome.changed)state=await readSharedState();
+    return outcome;
   }
 
   async function refreshSales({backfill=false}={}){
     if(!apiKey())throw new Error('Save a Torn API key in Settings first.');
-    if(!state)state=await core.readLegacyState();
+    if(!state)state=await readSharedState();
     const bm=state?.operations?.inventoryRoi||{};
     const needsBackfill=backfill||!bm.salesBackfillCompleteAt;
     const lookback=needsBackfill?SALES_BACKFILL_MS:SALES_LOOKBACK_MS;
@@ -209,6 +225,7 @@
       if(needsBackfill)inv.salesBackfillCompleteAt=new Date().toISOString();
       return draft;
     });
+    await syncRestockDemand();
     return {...result,backfilled:needsBackfill,lookbackMs:lookback};
   }
 
@@ -240,12 +257,13 @@
       };
       return draft;
     });
+    await syncRestockDemand();
     return {bazaarOk,inventoryOk,bazaarError,inventoryError};
   }
 
   async function autoRefreshInventory({force=false}={}){
     if(autoSyncRunning||!apiKey())return null;
-    if(!state)state=await core.readLegacyState();
+    if(!state)state=await readSharedState();
     const bm=state?.operations?.inventoryRoi||{},now=Date.now();
     const salesAt=Date.parse(bm.lastSalesAt||'')||0;
     const shopAt=Date.parse(bm.lastShopRefresh?.at||bm.lastBazaarAt||'')||0;
@@ -282,19 +300,68 @@
 
   function inventoryHtml(){
     const slice=state||{};logic.ensureInventorySlice(slice);
-    const bm=slice.operations?.inventoryRoi||{};const rows=logic.inventoryRoiRows(slice);const sales=Object.values(slice.sales||{});
-    const revenue30=sales.filter(s=>n(s.timestamp)>=Date.now()-30*86400000).reduce((sum,s)=>sum+n(s.total),0);
-    const gross30=rows.reduce((sum,row)=>sum+n(row.realizedGrossProfit30),0),cogs30=rows.reduce((sum,row)=>sum+n(row.realizedCogs30),0),roi30=cogs30>0?gross30/cogs30*100:0;
+    const bm=slice.operations?.inventoryRoi||{};
+    const rows=logic.inventoryRoiRows(slice);
+    const summary=logic.dashboardSummary(slice);
     const shop=bm.lastShopRefresh||{};
+    const pulseCoverage=summary.skuCount?Math.round(summary.pulseFreshCount/summary.skuCount*100):0;
+    const tone=value=>String(value||'').includes('STALE')||String(value||'').includes('INSUFFICIENT')?'mm-ir-warn':String(value||'').includes('OUT')||String(value||'').includes('LOW')?'mm-ir-bad':'mm-ir-good';
     return card(
       '<div class="mm-ir-actions" style="justify-content:space-between;">'+
-        '<div><b>Inventory / ROI</b><div class="mm-ir-muted">Bazaar '+Object.keys(bm.listings||{}).length+' SKU(s) · personal '+Object.keys(bm.inventory||{}).length+' SKU(s) · shop '+when(bm.lastBazaarAt)+' · sales '+when(bm.lastSalesAt)+' · purchases '+when(slice.procurement?.lastAcquisitionSyncAt)+'</div></div>'+
+        '<div><b>Bazaar / Inventory Dashboard</b><div class="mm-ir-muted">Bazaar '+Object.keys(bm.listings||{}).length+' SKU(s) · personal '+Object.keys(bm.inventory||{}).length+' SKU(s) · shop '+when(bm.lastBazaarAt)+' · sales '+when(bm.lastSalesAt)+' · purchases '+when(slice.procurement?.lastAcquisitionSyncAt)+'</div></div>'+
         '<div class="mm-ir-actions"><button id="mm-ir-refresh-shop" style="'+button(true)+'">Refresh Shop</button><button id="mm-ir-refresh-sales" style="'+button()+'">Refresh Sales</button><button id="mm-ir-open-bazaar" style="'+button()+'">Open Bazaar</button></div>'+
       '</div>'+
-      '<div class="mm-ir-tiles" style="margin-top:5px;">'+tile('30D REVENUE',money(revenue30))+tile('30D GROSS',money(gross30),gross30>=0?'mm-ir-good':'mm-ir-bad')+tile('REALIZED ROI',cogs30?roi30.toFixed(1)+'%':'—')+tile('ACQ LOTS',fmt(slice.procurement?.acquisitions?.length||0))+(shop.inventoryError?tile('INVENTORY','API unavailable','mm-ir-warn'):'')+'</div>'
+      '<div class="mm-ir-tiles" style="margin-top:5px;">'+
+        tile('OWNED UNITS',fmt(summary.ownedUnits))+tile('LISTED UNITS',fmt(summary.listedUnits))+
+        tile('30D REVENUE',money(summary.revenue30))+tile('30D GROSS',money(summary.gross30),summary.gross30>=0?'mm-ir-good':'mm-ir-bad')+
+        tile('REALIZED ROI',summary.cogs30?summary.realizedRoiPct30.toFixed(1)+'%':'—')+
+        tile('ATTENTION',fmt(summary.attentionCount),summary.attentionCount?'mm-ir-warn':'mm-ir-good')+
+        tile('RESTOCK',summary.restockSkuCount?fmt(summary.restockSkuCount)+' SKU / '+fmt(summary.restockUnits)+' unit':'none',summary.restockSkuCount?'mm-ir-warn':'mm-ir-good')+
+        tile('PULSE COVERAGE',summary.skuCount?pulseCoverage+'% fresh':'—',summary.pulseStaleCount||summary.pulseMissingCount?'mm-ir-warn':'mm-ir-good')+
+        (shop.inventoryError?tile('INVENTORY','API unavailable','mm-ir-warn'):'')+
+      '</div>'+
+      '<div class="mm-ir-mini" style="margin-top:5px;">Market Pulse is read-only context from MM_Acquisitions. Pricing recommendations are explainable decision support only. Restock demand is published into Inventory-owned shared state for Acquisitions to source; this module does not reprice, purchase, list items, or create a second market collector.</div>'
     )+
-    (rows.length?rows.map(row=>'<details class="mm-ir-member"><summary><span><b>'+esc(row.name)+'</b> <span class="'+(row.action==='LIST'||row.action==='TOP UP'?'mm-ir-warn':'mm-ir-muted')+'">'+esc(row.action)+'</span></span><span class="mm-ir-muted">'+fmt(row.bazaarQty)+' listed · '+row.daily30.toFixed(2)+'/day · '+(row.avgCost?row.currentRoiPct.toFixed(1)+'% current ROI':'no cost basis')+'</span></summary>'+
-      '<div class="mm-ir-detail"><div class="mm-ir-tiles">'+tile('BAZAAR QTY',fmt(row.bazaarQty))+tile('BAZAAR PRICE',row.bazaarPrice?money(row.bazaarPrice):'—')+tile('PERSONAL QTY',fmt(row.personalQty))+tile('SOLD 7D',fmt(row.units7d))+tile('SOLD 30D',fmt(row.units30d))+tile('3D TARGET',fmt(row.targetListed))+tile('ADD',fmt(row.addToBazaar),row.addToBazaar?'mm-ir-warn':'')+tile('RECENT AVG',row.avgSoldPrice30?money(row.avgSoldPrice30):'—')+tile('PLAN PRICE',row.plannedPrice?money(row.plannedPrice):'—')+tile('FIFO AVG COST',row.avgCost?money(row.avgCost):'—')+tile('CURRENT ROI',row.avgCost?row.currentRoiPct.toFixed(1)+'%':'—',row.currentRoiPct>=0?'mm-ir-good':'mm-ir-bad')+tile('30D GROSS',row.realizedCogs30?money(row.realizedGrossProfit30):'—',row.realizedGrossProfit30>=0?'mm-ir-good':'mm-ir-bad')+tile('30D ROI',row.realizedCogs30?row.realizedRoiPct30.toFixed(1)+'%':'—')+tile('COST COVERAGE',row.costCoveragePct30.toFixed(0)+'%')+'</div></div></details>').join(''):card('No Bazaar/inventory rows are cached. Use Refresh Shop.'));
+    (rows.length?rows.map(row=>{
+      const attention=row.needsAttention?row.attentionReasons.join(' · '):'OK';
+      const pulse=row.pulse||{};
+      const sourceAge=pulse.sourceTimestamp?when(pulse.sourceTimestamp):'unknown';
+      const fetchAge=pulse.fetchedAt?when(pulse.fetchedAt):'unknown';
+      const marketPosition=row.listingVsMarketPct==null?'—':(row.listingVsMarketPct>=0?'+':'')+row.listingVsMarketPct.toFixed(1)+'%';
+      return '<details class="mm-ir-member"><summary><span><b>'+esc(row.name)+'</b> <span class="'+(row.needsAttention?'mm-ir-warn':'mm-ir-good')+'">'+esc(attention)+'</span></span>'+
+        '<span class="mm-ir-muted">'+fmt(row.ownedQty)+' owned · '+fmt(row.bazaarQty)+' listed · '+fmt(row.units30d)+' sold/30d · '+esc(row.pricingStatus)+'</span></summary>'+
+        '<div class="mm-ir-detail">'+
+          '<div class="mm-ir-tiles">'+
+            tile('OWNED',fmt(row.ownedQty))+tile('BAZAAR QTY',fmt(row.bazaarQty))+tile('PERSONAL QTY',fmt(row.personalQty))+
+            tile('LIST PRICE',row.bazaarPrice?money(row.bazaarPrice):'—')+
+            tile('PULSE FLOOR',pulse.floorPrice?money(pulse.floorPrice):'—',pulse.status==='FRESH'?'mm-ir-good':'mm-ir-warn')+
+            tile('MARKET POSITION',marketPosition)+
+            tile('PRICE STATUS',row.pricingStatus,tone(row.pricingStatus))+
+            tile('RECOMMENDED',row.pricing?.recommendedPrice?money(row.pricing.recommendedPrice):'—',row.pricingStatus==='HOLD'?'mm-ir-warn':'')+
+            tile('PRICE RANGE',row.pricing?.rangeHigh?money(row.pricing.rangeLow)+'–'+money(row.pricing.rangeHigh):'—')+
+            tile('REC P/L UNIT',row.pricing?.expectedProfitPerUnit?money(row.pricing.expectedProfitPerUnit):'—',row.pricing?.expectedProfitPerUnit>=0?'mm-ir-good':'mm-ir-bad')+
+            tile('REC ROI',row.pricing?.recommendedPrice&&row.avgCost?row.pricing.expectedRoiPct.toFixed(1)+'%':'—')+
+            tile('PULSE',pulse.status||'MISSING',pulse.status==='FRESH'?'mm-ir-good':'mm-ir-warn')+
+            tile('LIQUIDITY',pulse.available?Number(pulse.liquidityScore||0).toFixed(0):'—')+
+            tile('UNITS/H',pulse.available?Number(pulse.observedUnitsPerHour||0).toFixed(2):'—')+
+            tile('TURNOVER/H',pulse.available&&pulse.turnoverPerHour?money(pulse.turnoverPerHour):'—')+
+            tile('CONFIDENCE',pulse.available?Number(pulse.confidencePct||0).toFixed(0)+'%':'—')+
+            tile('SOLD 7D',fmt(row.units7d))+tile('SOLD 30D',fmt(row.units30d))+
+            tile('TARGET STOCK',fmt(row.targetStock))+tile('DEFICIT',fmt(row.deficit),row.deficit?'mm-ir-warn':'')+
+            tile('RESTOCK',row.restockStatus,tone(row.restockStatus))+
+            tile('COVER',row.coverDays==null?'—':row.coverDays.toFixed(1)+'d')+
+            tile('FIFO AVG COST',row.avgCost?money(row.avgCost):'—')+
+            tile('LIST P/L UNIT',row.avgCost&&row.bazaarPrice?money(row.bazaarPrice-row.avgCost):'—',(row.bazaarPrice-row.avgCost)>=0?'mm-ir-good':'mm-ir-bad')+
+            tile('PULSE P/L UNIT',pulse.usable&&row.avgCost?money(row.expectedMarketProfitPerUnit):'—',row.expectedMarketProfitPerUnit>=0?'mm-ir-good':'mm-ir-bad')+
+            tile('PULSE ROI',pulse.usable&&row.avgCost?row.expectedMarketRoiPct.toFixed(1)+'%':'—')+
+            tile('30D GROSS',row.realizedCogs30?money(row.realizedGrossProfit30):'—',row.realizedGrossProfit30>=0?'mm-ir-good':'mm-ir-bad')+
+            tile('30D ROI',row.realizedCogs30?row.realizedRoiPct30.toFixed(1)+'%':'—')+
+            tile('COST COVERAGE',row.costCoveragePct30.toFixed(0)+'%')+
+          '</div>'+
+          '<div class="mm-ir-mini" style="margin-top:5px;">Pricing: '+esc(row.pricing?.explanation||'No pricing recommendation.')+'</div>'+
+          '<div class="mm-ir-mini" style="margin-top:3px;">Market source: '+esc(pulse.source||'Market Pulse')+' · provider/source age '+esc(sourceAge)+' · local fetch age '+esc(fetchAge)+' · last sale '+esc(row.lastSaleAt?when(row.lastSaleAt):'none in retained sales history')+'.</div>'+
+        '</div></details>';
+    }).join(''):card('No Bazaar/inventory rows are cached. Use Refresh Shop.'));
   }
 
           function settingsHtml(){
