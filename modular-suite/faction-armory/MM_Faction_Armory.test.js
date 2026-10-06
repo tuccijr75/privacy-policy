@@ -341,7 +341,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.24.5';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.24.6';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@81f40c0aa93888169419b082254d413108b4f783/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
@@ -353,7 +353,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.24.5';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.24.6';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -361,7 +361,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.24.5';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.24.6';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -460,7 +460,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.5';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.6';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
@@ -778,6 +778,18 @@ assert(userSourceValue.includes('EQUIPMENT OVERRIDE'),'Members UI must visibly i
 assert(userSourceValue.includes("'Equipment Decisions'"),'Leadership export must include plain-language equipment decisions');
 
 console.log('MM Faction Armory alpha.24.5 equipment-menu regressions: PASS');
+
+assert(userSourceValue.includes('OBSIDIAN FORCE optional war-prep suggestions'),'member build message subject must frame the message as optional guidance');
+assert(userSourceValue.includes('This is not an order, and you do not need to change anything if you are comfortable with your current setup.'),'member message must explicitly remove command ambiguity');
+assert(userSourceValue.includes('OPTIONAL WAR-PREP SUGGESTIONS'),'member message section heading must be advisory, not TARGET BUILD');
+assert(userSourceValue.includes('One option is to BORROW FROM VAULT'),'vault wording must remain a suggestion rather than an instruction');
+assert(userSourceValue.includes('A possible replacement to consider'),'acquisition wording must remain advisory');
+assert(userSourceValue.includes('If you want a more accurate recommendation, you can send your current readiness data whenever convenient.'),'estimated-data request must be opt-in');
+assert(userSourceValue.includes('Use whatever is helpful and ignore anything that is not.'),'member message must close with clear member choice');
+assert(!userSourceValue.includes("'TARGET BUILD'"),'member message must not use command-like TARGET BUILD heading');
+assert(!userSourceValue.includes('Send your actual readiness data before any final vault borrowing or purchase.'),'member message must not command members to send data');
+console.log('MM Faction Armory alpha.24.6 advisory-message regressions: PASS');
+
 
 
 
