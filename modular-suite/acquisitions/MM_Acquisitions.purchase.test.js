@@ -140,7 +140,7 @@ console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS
 const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      8.0.0-alpha.27-pda.13'));
+assert(pdaSource.includes('// @version      8.0.0-alpha.27-pda.14'));
 assert(!pdaHeader.includes('@require'));
 assert(!pdaSource.includes('globalThis.GM_getValue=function'));
 assert(pdaSource.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
