@@ -618,3 +618,65 @@ New **Coverage** view and export worksheets provide:
 - [ ] Open/export Coverage and verify member HAS/NEED vs faction stock matches visible live data.
 - [ ] Verify shared dock placement/collision remains unchanged.
 - [ ] Do not merge/publish until owner accepts live results.
+
+
+## Alpha.24 weapons / Quick Build / minimums proposal — 2026-10-06
+
+### Source behavior
+
+- Stock still refreshes the official Torn `weapons` faction-inventory category.
+- Weapon rows are grouped as Primary / Secondary / Melee when classification is available.
+- Any weapon row that cannot be mapped to those slots is retained under **UNCLASSIFIED** instead of disappearing.
+- Stock shows Torn weapon-source row counts plus raw API type/subtype/slot/weaponType fields for diagnosis.
+
+### Quick Build
+
+- Builds now opens with a compact **Quick Build** card.
+- Select one faction member and immediately see:
+  - Level;
+  - STR / DEF / SPD / DEX / total;
+  - build style;
+  - offense need;
+  - defense style;
+  - one row per target equipment slot with Current / Target / Route.
+- The Quick Build reuses the existing `compareMemberBuild()` result; it does not create a second recommendation engine.
+- Estimated public battle stats are visibly marked and are planning-only.
+- **Message Build** prepares a Torn message for the selected member; Send remains manual.
+- The prior full detailed build analysis remains available under **Advanced / Full Roster Builds**.
+
+### Manager Minimums Proposal
+
+- Minimums is explicitly labeled **Manager Minimums Proposal**.
+- Existing `minimumProposal()` remains the single quantity engine.
+- The screen summarizes proposal count, rows below minimum, data-required rows, history/confidence, and methodology.
+- A new **WHAT WE STILL NEED TO FIGURE OUT** section exposes:
+  - filled blood-bag compatibility/mix;
+  - usage-history maturity;
+  - weapon classification completeness;
+  - verified member battle-stat coverage;
+  - named preferred external suppliers;
+  - high-value gear boundary.
+- Leadership Excel now includes an **Open Inputs** worksheet in addition to Minimums.
+
+### Static validation
+
+- [x] Userscript parse PASS.
+- [x] Existing Faction Armory logic fixtures PASS.
+- [x] Existing alpha.23 audit/consistency fixtures PASS.
+- [x] Alpha.24 weapon visibility / Quick Build / Minimums regressions PASS.
+- [x] No new MutationObserver or background polling loop introduced.
+- [x] Message Send remains manual.
+
+### Live acceptance required
+
+- [ ] Install alpha.24 candidate and reload Torn.
+- [ ] Open Stock → Refresh Faction.
+- [ ] Expand WEAPONS and confirm Torn weapon source row count.
+- [ ] Confirm every returned weapon appears in Primary / Secondary / Melee / UNCLASSIFIED; no row is silently absent.
+- [ ] Open Builds → Quick Build; select at least two members and verify level/stats/target routes match Advanced build evidence.
+- [ ] For an estimated-stat member, confirm the planning-only warning is visible.
+- [ ] Prepare one Message Build and confirm Torn compose is correctly prefilled; do not auto-send.
+- [ ] Open Minimums in Peace and War mode; inspect proposed MIN/MAX/SHORT values and open-input statuses.
+- [ ] Export Leadership Excel and inspect Minimums + Open Inputs.
+- [ ] Verify dock/collision behavior is unchanged.
+- [ ] Do not merge/publish until owner accepts live results.
