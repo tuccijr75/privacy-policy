@@ -16,6 +16,13 @@ const weak=logic.pricingRecommendation({personalQty:5,avgCost:100,pulse:{...logi
 const stale=logic.marketPulseEvidence(db,'26',now+60*60*1000);assert.strictEqual(stale.stale,true);assert.strictEqual(stale.status,'STALE');
 const missing=logic.marketPulseEvidence(db,'999',now);assert.strictEqual(missing.status,'MISSING');
 const summary=logic.dashboardSummary(db,now);assert.strictEqual(summary.ownedUnits,6);assert.strictEqual(summary.listedUnits,1);assert.strictEqual(summary.pulseFreshCount,1);
+const soldOut=logic.ensureInventorySlice({marketIntel:{marketPulse:{settings:{ttlMs:45*60*1000},items:{'99':{itemId:'99',floorPrice:300,marketDepth:8,observedUnitsPerHour:2,turnoverPerHour:600,liquidityScore:70,confidencePct:75,sourceTimestamp:now-60000,fetchedAt:now-30000,lastSnapshot:{source:'Torn API v2 Item Market',floorPrice:300,marketDepth:8,sourceTimestamp:now-60000,fetchedAt:now-30000}}}}},procurement:{acquisitions:[{id:'a99',itemId:'99',itemName:'Sold Out Item',quantity:5,unitCost:100,acquiredAt:new Date(now-10*86400000).toISOString(),source:'Travel'}]},operations:{inventoryRoi:{}}});
+logic.importSalesEntries(soldOut,[{id:'s99',timestamp:Math.floor((now-86400000)/1000),details:{id:1226},data:{buyer:{id:999,name:'Buyer'},item_id:99,item_name:'Sold Out Item',quantity:5,cost_each:250,cost_total:1250}}]);
+logic.updateShopSnapshot(soldOut,{bazaar:[],inventory:[],at:new Date(now).toISOString()});
+const soldOutRow=logic.inventoryRoiRows(soldOut,now).find(r=>r.id==='99');assert(soldOutRow);assert.strictEqual(soldOutRow.ownedQty,0);assert.strictEqual(soldOutRow.restockStatus,'OUT OF STOCK');
+const demands=logic.restockDemandRows(soldOut,now);assert.strictEqual(demands.length,1);assert.strictEqual(demands[0].itemId,'99');assert.strictEqual(demands[0].urgency,'URGENT');assert(demands[0].deficit>0);
+const persisted=logic.replaceRestockDemand(soldOut,demands,now);assert.strictEqual(persisted.changed,true);assert.strictEqual(soldOut.operations.inventoryRoi.restockDemand['99'].status,'OPEN');
+const persistedAgain=logic.replaceRestockDemand(soldOut,demands,now+1000);assert.strictEqual(persistedAgain.changed,false);
 assert.strictEqual(Math.round(row.avgCost),100);assert.strictEqual(Math.round(row.currentRoiPct),60);
 assert.strictEqual(Math.round(row.realizedGrossProfit30),100);assert.strictEqual(Math.round(row.realizedRoiPct30),50);assert.strictEqual(Math.round(row.costCoveragePct30),100);
 console.log('MM Inventory ROI logic tests: PASS');
@@ -23,10 +30,12 @@ const userSource=fs.readFileSync(__dirname+'/MM_Inventory_Manager_ROI_Tracker.us
 assert(!/async\s+function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml must remain synchronous because render concatenates its return value directly into HTML');
 assert(/function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml declaration missing');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.9';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.10';"));
 assert(userSource.includes('Bazaar / Inventory Dashboard'));
 assert(userSource.includes('Market Pulse is read-only context from MM_Acquisitions.'));
 assert(userSource.includes('Pricing recommendations are explainable decision support only'));
+assert(userSource.includes('async function syncRestockDemand'));
+assert(userSource.includes("logic.replaceRestockDemand(draft,rows,Date.now())"));
 assert(userSource.includes("tile('RECOMMENDED'"));
 assert(userSource.includes('MM_Torn_Core.js?v=8.0.0-alpha.13'));
 assert(userSource.includes('// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js'));
