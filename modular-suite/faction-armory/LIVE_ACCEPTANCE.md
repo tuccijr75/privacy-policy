@@ -1,7 +1,25 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.4**
+Status: **NON-PRODUCTION / alpha.24.5**
 
+
+## Alpha.24.5 plain-language equipment override menu
+
+- **Edit Data Override** no longer asks the operator to paste JSON.
+- It opens a member-specific equipment menu with one row per standard slot.
+- Every row shows:
+  - the item Torn/source data says is equipped now;
+  - the current Armory recommendation;
+  - the active manual choice, if any.
+- Plain-language actions:
+  - **Accept Equipped Item** — leadership explicitly accepts that exact current piece for readiness even when the automatic floor would not;
+  - **Use Selected Replacement** — choose from Armory qualifying suggestions;
+  - **Use Other Replacement** — type a different item name;
+  - **Use Automatic** — clear only that slot decision and return it to normal Armory logic.
+- Equipment decisions are stored separately from API/source equipment. The script does not falsely rewrite a replacement as currently equipped.
+- A selected replacement is honored exactly by War acquisition: if that exact item is available in faction stock it routes to the vault; otherwise that exact item is added to acquisition.
+- Members with slot decisions display **EQUIPMENT OVERRIDE** and Leadership export records the decisions in plain language.
+- Legacy alpha.24.3 JSON data overrides remain readable/clearable for migration safety but are no longer the normal editing workflow.
 
 ## Alpha.24.4 faction-message wording + contact tracking
 
