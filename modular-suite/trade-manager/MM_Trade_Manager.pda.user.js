@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Manager PDA
 // @namespace    manic-mike.torn.trade-manager.pda
-// @version      0.1.0-alpha.1-pda.1
+// @version      0.1.0-alpha.2-pda.2
 // @description  TornPDA API-confirmed trade valuation, completed-trade history and Inventory reconciliation; final trade actions remain manual.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -2032,11 +2032,43 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
     return JSON.stringify(simple);
   }
 
+  function inventoryEffects(evaluation){
+    const effects=[];
+    const costRows=Array.isArray(evaluation?.valuation?.costRows)?evaluation.valuation.costRows:[];
+    for(let i=0;i<(evaluation?.supplied?.items||[]).length;i++){
+      const row=evaluation.supplied.items[i],cost=costRows[i]||{};
+      const basisKnown=n(cost.coveragePct)>=99.999&&n(cost.requestedUnits)>0;
+      const basisTotal=basisKnown?Math.max(0,n(cost.cost)):0;
+      effects.push({
+        direction:'OUT',itemId:row.itemId,itemName:row.itemName,uid:row.uid,quantity:row.quantity,
+        basisKnown,basisTotal,unitCost:basisKnown&&n(row.quantity)>0?basisTotal/n(row.quantity):0,
+        basisMethod:basisKnown?'FIFO_AT_TRADE_SYNC':'UNKNOWN_OUTBOUND_COST',
+        costCoveragePct:Math.max(0,n(cost.coveragePct))
+      });
+    }
+
+    const incoming=evaluation?.received?.items||[];
+    const referenceTotal=incoming.reduce((sum,row)=>sum+(row?.evidence?.usable?Math.max(0,n(row.referenceValue)):0),0);
+    const unsupported=(evaluation?.supplied?.other||[]).length+(evaluation?.received?.other||[]).length;
+    const basisEligible=unsupported===0&&n(evaluation?.valuation?.costCoveragePct)>=99.999&&incoming.every(row=>row?.evidence?.usable);
+    const residualCost=Math.max(0,n(evaluation?.supplied?.money)+n(evaluation?.valuation?.costBasis)-n(evaluation?.received?.money));
+    for(const row of incoming){
+      const canAllocate=basisEligible&&(referenceTotal>0||residualCost===0);
+      const basisTotal=!canAllocate?0:referenceTotal>0?residualCost*(Math.max(0,n(row.referenceValue))/referenceTotal):0;
+      effects.push({
+        direction:'IN',itemId:row.itemId,itemName:row.itemName,uid:row.uid,quantity:row.quantity,
+        basisKnown:canAllocate,basisTotal,unitCost:canAllocate&&n(row.quantity)>0?basisTotal/n(row.quantity):0,
+        basisMethod:canAllocate?(referenceTotal>0?'RESIDUAL_CONSIDERATION_PRO_RATA_REFERENCE':'ZERO_RESIDUAL_CONSIDERATION'):'UNKNOWN_INBOUND_COST',
+        referenceValue:Math.max(0,n(row.referenceValue)),referenceSource:String(row?.evidence?.source||''),
+        referenceSourceTimestamp:Math.max(0,n(row?.evidence?.sourceTimestamp))
+      });
+    }
+    return effects;
+  }
+
   function buildCompletedRecord(evaluation,at=Date.now()){
     if(!evaluation?.recordable)throw new Error('Only an API-confirmed completed trade can be recorded.');
-    const effects=[];
-    for(const row of evaluation.supplied.items)effects.push({direction:'OUT',itemId:row.itemId,itemName:row.itemName,uid:row.uid,quantity:row.quantity});
-    for(const row of evaluation.received.items)effects.push({direction:'IN',itemId:row.itemId,itemName:row.itemName,uid:row.uid,quantity:row.quantity});
+    const effects=inventoryEffects(evaluation);
     return {
       schema:1,id:String(evaluation.id),status:'COMPLETED',completedAt:evaluation.completedAt,completedAtIso:iso(evaluation.completedAt),
       description:evaluation.description,counterparty:clone(evaluation.counterparty),
@@ -2090,7 +2122,7 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
   const api=Object.freeze({
     MAX_TRADE_HISTORY,MAX_RECONCILIATIONS,
     ensureTradeSlice,itemName,marketEvidence,tradeStatus,normalizeTrade,currentFifoCost,evaluateTrade,
-    tradeFingerprint,buildCompletedRecord,recordCompletedTrades,historyRows
+    tradeFingerprint,inventoryEffects,buildCompletedRecord,recordCompletedTrades,historyRows
   });
 
   Object.defineProperty(globalThis,'MMTornTradeManagerLogic',{value:api,configurable:true,enumerable:false,writable:false});
@@ -2101,7 +2133,7 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
 (() => {
   'use strict';
 
-  const VERSION='0.1.0-alpha.1-pda.1';
+  const VERSION='0.1.0-alpha.2-pda.2';
   const ROOT_ID='mm-trade-manager';
   const LAUNCHER_ID='mm-trade-manager-launcher';
   const STYLE_ID='mm-trade-manager-style';
