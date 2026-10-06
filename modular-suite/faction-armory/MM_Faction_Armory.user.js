@@ -2796,9 +2796,7 @@
           const best=live.best;
           const staleSources=quote.staleSources||[];
           const staleNote=staleSources.length
-            ?' Ignored stale evidence: '+staleSources.map(source=>
-              String(source.source||'source')+' $'+fmt(source.price)+' · '+(source.fetchedAt?when(source.fetchedAt):'timestamp unavailable')
-            ).join('; ')+'.'
+            ?' Ignored stale evidence: '+staleSources.map(source=>String(source.source||'source')+' $'+fmt(source.price)+' · '+(source.fetchedAt?when(source.fetchedAt):'timestamp unavailable')).join('; ')+'.'
             :'';
           const priceNote=(best
             ?'Lowest fresh cached buyable-source evidence: '+esc(best.source)+(best.country?' · '+esc(best.country):'')+' · $'+fmt(best.price)
