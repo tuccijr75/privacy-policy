@@ -85,7 +85,7 @@ assert(userSource.includes('CURRENT COST COVERAGE'));
 assert(userSource.includes("logic.replaceRestockDemand(draft,rows,Date.now())"));
 assert(userSource.includes("tile('RECOMMENDED'"));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@bb32ea39494ef4465a58acd76c4c3993cc8568b4/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@94f5fd00ba9df3abaabcd0abf868b39c3fd9869b/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js'));
 assert(!userSource.includes('// @updateURL'));
 assert(!userSource.includes('// @downloadURL'));
 assert(userSource.includes('core?.ensureSharedState'),'fresh-install Core bootstrap missing');
