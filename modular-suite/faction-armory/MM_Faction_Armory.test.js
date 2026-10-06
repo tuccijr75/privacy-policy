@@ -498,7 +498,7 @@ assert(userSourceValue.includes("subject:'Faction Armory '+stockMode.toUpperCase
 assert(userSourceValue.includes("leaderBaseLabel+(stockMode==='war'?' · War Needs':' · Peace / Minimums')"),'leader button must expose the active report scope');
 assert((userSourceValue.match(/data-stock-mode="war"/g)||[]).length>=2,'War/Peace selection must be available on Acquire as well as Minimums');
 assert(userSourceValue.includes('function leaderAcquisitionReport'),'leader acquisition report must be generated from live Armory state');
-assert(userSourceValue.includes('ESTIMATED WAR ACQUISITION COST'),'leader report must contain scoped total low/high acquisition cost');
+assert(userSourceValue.includes('PLANNED WAR ACQUISITION ESTIMATE'),'leader report must expose a best-source planning estimate instead of using the maximum cross-source price as the estimate');
 assert(userSourceValue.includes('PRICE RANGE'),'Acquire rows must expose low/high price estimates');
 assert(userSourceValue.includes('#mce_0'),'Armory messaging must use the shared current Torn TinyMCE compose contract');
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'),'Armory must load the expanded logic contract');
@@ -586,6 +586,9 @@ assert.strictEqual(alpha23Coverage.factionCoverage.length,8,'coverage export mus
 assert(userSourceValue.includes('Pass / Exclude Acquisition'));
 assert(userSourceValue.includes('PROCUREMENT PASS'));
 assert(userSourceValue.includes('data-save-acq-qty'));
+assert(userSourceValue.includes('requestedQty<=0'),'zero planned/funded quantity must not hand off a forced quantity of one');
+assert(userSourceValue.includes('planningUnit=num(live.bestPlanning?.price)||num(row?.marketValue)'),'leader planning estimate must use the best current planning source with Armory reference fallback');
+assert(userSourceValue.includes('Cross-source diagnostic range:'),'wide source range must be diagnostic rather than the leader-facing estimate');
 assert(userSourceValue.includes('SYSTEM BUY'));
 assert(userSourceValue.includes('PLANNED BUY'));
 assert(userSourceValue.includes('data-view="coverage"'));
