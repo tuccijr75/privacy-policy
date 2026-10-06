@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         MM Trade Manager
 // @namespace    manic-mike.torn.trade-manager
-// @version      0.1.0-alpha.1
+// @version      0.1.0-alpha.2
 // @description  API-confirmed Torn trade valuation, margin history and Inventory reconciliation; final trade actions remain manual.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@4ef4197cb0fc19e4c29b5864dd4d003732d58deb/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e8a1ef84cb5ed0a255fd035351d3a27f08ebb992/modular-suite/trade-manager/MM_Trade_Manager.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e079ed17073fde52bc75204be5e5613d4b77655c/modular-suite/trade-manager/MM_Trade_Manager.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -18,7 +18,7 @@
 (() => {
   'use strict';
 
-  const VERSION='0.1.0-alpha.1';
+  const VERSION='0.1.0-alpha.2';
   const ROOT_ID='mm-trade-manager';
   const LAUNCHER_ID='mm-trade-manager-launcher';
   const STYLE_ID='mm-trade-manager-style';
