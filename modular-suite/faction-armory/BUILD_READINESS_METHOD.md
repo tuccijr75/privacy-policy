@@ -128,6 +128,18 @@ Member source/API data also supports a separate manual-override layer. The overr
 
 A confirmed empty Torn combat-equipment response is valid evidence and is labeled **NO COMBAT GEAR EQUIPPED**. It is not treated as missing data.
 
+## Per-slot leadership equipment decisions
+
+Leadership can override the automatic recommendation for an individual equipment slot without changing the underlying Torn/API record.
+
+Each slot may have one explicit decision:
+
+- **Accept Equipped Item** — the exact currently equipped item is accepted for readiness. This makes that slot pass by leadership decision while preserving the automatic floor and source item for audit.
+- **Replacement** — leadership chooses an exact item to use instead. Armory does not claim the item is already equipped. If the exact selected item is available in faction stock, the route becomes vault borrowing; otherwise the same exact item becomes the acquisition requirement.
+- **Automatic** — no slot override; normal readiness and routing logic applies.
+
+Slot decisions are independent. Clearing one decision does not clear other member overrides or source data.
+
 ## Acquisition plan
 
 The Acquire screen aggregates all member requirements into a single list:
