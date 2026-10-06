@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.30-pda.17
+// @version      8.0.0-alpha.31-pda.18
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -2022,6 +2022,130 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const marketPulse = globalThis.MMTornMarketPulse;
 
   const asId = value => String(value ?? '').trim();
+  const TRAVEL_DURATION_RETENTION_MS = 45 * 86400000;
+  const TRAVEL_DURATION_SAMPLES_MAX = 5;
+  const TRAVEL_DURATION_KEYS_MAX = 36;
+
+  function travelDurationKey(destination,method='Unknown'){
+    return String(destination||'').trim().toLowerCase()+'|'+String(method||'Unknown').trim().toLowerCase();
+  }
+
+  function medianNumber(values=[]){
+    const rows=(Array.isArray(values)?values:[]).map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
+    if(!rows.length)return 0;
+    const mid=Math.floor(rows.length/2);
+    return rows.length%2?rows[mid]:(rows[mid-1]+rows[mid])/2;
+  }
+
+  function travelDurationObservation(payload,observedAt=Date.now()){
+    const travel=payload?.travel??payload?.data?.travel??null;
+    if(!travel||typeof travel!=='object')return null;
+    const destination=String(travel.destination||'').trim();
+    const method=String(travel.method||'').trim()||'Unknown';
+    const departedAt=Math.max(0,Math.round(Number(travel.departed_at||0)));
+    const arrivalAt=Math.max(0,Math.round(Number(travel.arrival_at||0)));
+    const durationSec=arrivalAt-departedAt;
+    if(!destination||destination.toLowerCase()==='torn'||!(departedAt>0)||!(arrivalAt>departedAt)||durationSec<60||durationSec>24*3600)return null;
+    return {
+      schema:1,key:travelDurationKey(destination,method),destination,method,
+      departedAt,arrivalAt,durationSec,observedAt:Math.max(0,Number(observedAt)||Date.now()),
+      source:'Torn API v2 /user/travel'
+    };
+  }
+
+  function recordTravelDuration(travelIntel,observation,nowMs=Date.now()){
+    const travel=travelIntel&&typeof travelIntel==='object'?travelIntel:{};
+    const before=JSON.stringify(travel.travelDurations||{});
+    const obs=observation&&typeof observation==='object'?observation:null;
+    if(!obs?.key||!(Number(obs.durationSec)>0))return {changed:false,key:'',record:null};
+    const records=travel.travelDurations&&typeof travel.travelDurations==='object'&&!Array.isArray(travel.travelDurations)?travel.travelDurations:{};
+    const cutoff=Number(nowMs)-TRAVEL_DURATION_RETENTION_MS;
+    const current=records[obs.key]&&typeof records[obs.key]==='object'?records[obs.key]:{
+      schema:1,key:obs.key,destination:String(obs.destination||''),method:String(obs.method||'Unknown'),
+      source:'Torn API v2 /user/travel',samples:[]
+    };
+    current.samples=(Array.isArray(current.samples)?current.samples:[])
+      .filter(row=>Number(row?.observedAt||0)>=cutoff);
+    const duplicate=current.samples.some(row=>Number(row?.departedAt||0)===Number(obs.departedAt)&&Number(row?.arrivalAt||0)===Number(obs.arrivalAt));
+    if(!duplicate){
+      current.samples.push({
+        departedAt:Number(obs.departedAt),arrivalAt:Number(obs.arrivalAt),
+        durationSec:Number(obs.durationSec),observedAt:Number(obs.observedAt)
+      });
+    }
+    current.samples=current.samples.sort((a,b)=>Number(a.observedAt||0)-Number(b.observedAt||0)).slice(-TRAVEL_DURATION_SAMPLES_MAX);
+    current.updatedAt=current.samples.reduce((max,row)=>Math.max(max,Number(row.observedAt||0)),0);
+    current.medianDurationSec=medianNumber(current.samples.map(row=>row.durationSec));
+    current.sampleCount=current.samples.length;
+    records[obs.key]=current;
+
+    for(const [key,row] of Object.entries(records)){
+      const samples=(Array.isArray(row?.samples)?row.samples:[]).filter(sample=>Number(sample?.observedAt||0)>=cutoff);
+      if(!samples.length){delete records[key];continue;}
+      row.samples=samples.slice(-TRAVEL_DURATION_SAMPLES_MAX);
+      row.updatedAt=row.samples.reduce((max,sample)=>Math.max(max,Number(sample.observedAt||0)),0);
+      row.medianDurationSec=medianNumber(row.samples.map(sample=>sample.durationSec));
+      row.sampleCount=row.samples.length;
+    }
+    const keys=Object.keys(records).sort((a,b)=>Number(records[b]?.updatedAt||0)-Number(records[a]?.updatedAt||0));
+    for(const key of keys.slice(TRAVEL_DURATION_KEYS_MAX))delete records[key];
+    travel.travelDurations=records;
+    const after=JSON.stringify(records);
+    return {changed:before!==after,key:obs.key,record:records[obs.key]||null};
+  }
+
+  function travelDurationEstimate(travelIntel,destination,nowMs=Date.now()){
+    const target=String(destination||'').trim().toLowerCase();
+    if(!target)return {available:false,usable:false,reason:'destination_unknown'};
+    const records=Object.values(travelIntel?.travelDurations||{})
+      .filter(row=>String(row?.destination||'').trim().toLowerCase()===target&&Number(row?.medianDurationSec||0)>0)
+      .sort((a,b)=>Number(b?.updatedAt||0)-Number(a?.updatedAt||0));
+    const record=records[0];
+    if(!record)return {available:false,usable:false,reason:'no_observed_duration'};
+    const ageMs=Math.max(0,Number(nowMs)-Number(record.updatedAt||0));
+    const stale=ageMs>TRAVEL_DURATION_RETENTION_MS;
+    const sampleCount=Math.max(0,Number(record.sampleCount||record.samples?.length||0));
+    return {
+      available:true,usable:!stale,stale,reason:stale?'duration_stale':'ok',
+      destination:String(record.destination||destination),method:String(record.method||'Unknown'),
+      durationSec:Number(record.medianDurationSec||0),sampleCount,updatedAt:Number(record.updatedAt||0),ageMs,
+      confidence:sampleCount>=3?'HIGH':sampleCount>=2?'MEDIUM':'OBSERVED',
+      source:String(record.source||'Torn API v2 /user/travel')
+    };
+  }
+
+  function departureTiming(restockRecord,durationEstimate,nowMs=Date.now()){
+    const confidence=String(restockRecord?.confidence||'INSUFFICIENT').toUpperCase();
+    const centerAt=Date.parse(String(restockRecord?.etaAt||''))||0;
+    const earlyAt=Date.parse(String(restockRecord?.etaEarlyAt||''))||0;
+    const lateAt=Date.parse(String(restockRecord?.etaLateAt||''))||0;
+    const durationSec=Math.max(0,Number(durationEstimate?.durationSec||0));
+    const base={
+      status:'ETA UNRELIABLE',usable:false,departureAt:0,departureEarlyAt:0,departureLateAt:0,
+      durationSec,durationMethod:String(durationEstimate?.method||''),durationSamples:Number(durationEstimate?.sampleCount||0),
+      restockConfidence:confidence,reason:''
+    };
+    if(!centerAt||!earlyAt||!lateAt||confidence==='INSUFFICIENT'){
+      return {...base,reason:'Restock ETA does not have a usable observed window.'};
+    }
+    if(!durationEstimate?.usable||!(durationSec>0)){
+      return {...base,reason:'No recent observed travel duration is available for this destination.'};
+    }
+    const durationMs=durationSec*1000;
+    const departureAt=centerAt-durationMs;
+    const departureEarlyAt=earlyAt-durationMs;
+    const departureLateAt=lateAt-durationMs;
+    const weak=confidence==='LOW'||String(durationEstimate?.confidence||'OBSERVED')==='OBSERVED';
+    let status='POSSIBLE DEPARTURE WINDOW';
+    if(Number(nowMs)>departureLateAt)status='LIKELY TOO LATE';
+    else if(weak)status='WATCH';
+    else if(Number(nowMs)<departureEarlyAt)status='TOO EARLY';
+    return {
+      ...base,status,usable:true,departureAt,departureEarlyAt,departureLateAt,
+      restockEarlyAt:earlyAt,restockCenterAt:centerAt,restockLateAt:lateAt,
+      reason:weak?'Timing exists but evidence is still low-confidence.':'Timing is derived from the observed restock window minus your observed travel duration.'
+    };
+  }
 
   function businessRules(db) {
     const r = db?.businessRules || {};
@@ -2475,7 +2599,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     rankCachedOpportunities,
     rankPricelistUniverse,
     rankCachedTravel,
-    rankTravelDestinations
+    rankTravelDestinations,
+    travelDurationObservation,recordTravelDuration,travelDurationEstimate,departureTiming
   });
 
   Object.defineProperty(globalThis,'MMTornAcquisitionsLogic',{
@@ -4269,6 +4394,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const TRAVEL_FRESH_MS=300_000;
   const TRAVEL_STALE_MS=900_000;
   const TRAVEL_CONTEXT_REFRESH_MS=60_000;
+  const TRAVEL_TIMING_REFRESH_MS=5*60_000;
   const CATALOG_STALE_MS=24*60*60*1000;
   const ITEM_PAGE_SIZE=75;
   const RANKED_PAGE_SIZE=30;
@@ -4292,6 +4418,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   let armorySources=null;
   let travelContext=null;
   let travelContextCheckedAt=0;
+  let travelTimingCheckedAt=0;
   let itemQuery='';
   let itemCategory='All';
   let itemAvailability='buyable';
@@ -4484,6 +4611,42 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     return ctx.state||'In Torn';
   }
 
+  async function refreshObservedTravelDuration(ctx,{force=false}={}){
+    if(!apiKey()||ctx?.mode!=='traveling'||!logic?.travelDurationObservation||!logic?.recordTravelDuration)return null;
+    if(!force&&travelTimingCheckedAt&&Date.now()-travelTimingCheckedAt<TRAVEL_TIMING_REFRESH_MS)return null;
+    travelTimingCheckedAt=Date.now();
+    try{
+      const data=await tornRequest('/user/travel');
+      const observation=logic.travelDurationObservation(data,Date.now());
+      if(!observation)return null;
+      const currentState=state||await readSharedState();
+      const existing=currentState?.travelIntel?.travelDurations?.[observation.key]?.samples||[];
+      const duplicate=Array.isArray(existing)&&existing.some(row=>
+        Number(row?.departedAt||0)===Number(observation.departedAt)&&
+        Number(row?.arrivalAt||0)===Number(observation.arrivalAt)
+      );
+      if(!duplicate){
+        await core.updateDomainState('market',draft=>{
+          const travel=draft.travelIntel||(draft.travelIntel={});
+          logic.recordTravelDuration(travel,observation,Date.now());
+          return draft;
+        });
+        state=await readSharedState();
+      }
+      if(ctx&&typeof ctx==='object'){
+        ctx.observedTravelDuration={
+          destination:observation.destination,method:observation.method,
+          durationSec:observation.durationSec,source:observation.source
+        };
+        ctx.timingError='';
+      }
+      return observation;
+    }catch(error){
+      if(ctx&&typeof ctx==='object')ctx.timingError=String(error?.message||error||'Travel timing unavailable');
+      return null;
+    }
+  }
+
   async function refreshTravelContext({force=false,silent=true}={}){
     if(!apiKey())return travelContext;
     if(!force&&travelContext&&Date.now()-travelContextCheckedAt<TRAVEL_CONTEXT_REFRESH_MS)return travelContext;
@@ -4491,6 +4654,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       const data=await tornRequest('/user/basic');
       travelContext=parseTravelContext(data);
       travelContextCheckedAt=Date.now();
+      if(travelContext?.mode==='traveling')await refreshObservedTravelDuration(travelContext,{force});
       if(!silent)statusText='Travel context updated: '+travelContextLabel(travelContext)+'.';
       return travelContext;
     }catch(error){
@@ -4761,6 +4925,30 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     return cycles<restockIntel.MIN_ETA_CYCLES
       ?'Out of stock · '+cycles+' usable cycles; need '+restockIntel.MIN_ETA_CYCLES+' for ETA.'
       :'Out of stock · sellout start is outside or ambiguous in the 48h history window.';
+  }
+
+  function departureTimingSummary(row){
+    const record=restockRecord(row?.countryCode||row?.country,row?.itemId);
+    if(!record)return 'Departure timing: load Restock History first.';
+    const estimate=logic?.travelDurationEstimate?.(state?.travelIntel||{},row?.country||row?.countryCode,Date.now())||null;
+    if(!estimate?.available){
+      return 'Departure timing: no observed trip duration yet. Acquisitions learns your actual duration from Torn /user/travel while you are flying.';
+    }
+    const timing=logic?.departureTiming?.(record,estimate,Date.now())||null;
+    if(!timing?.usable){
+      return 'Departure timing: ETA UNRELIABLE · '+String(timing?.reason||'restock or travel-duration evidence is insufficient');
+    }
+    const early=Number(timing.departureEarlyAt||0);
+    const late=Number(timing.departureLateAt||0);
+    const window=early&&late
+      ?new Date(early).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+'–'+new Date(late).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})
+      :'unknown';
+    const samples=Math.max(0,Number(estimate.sampleCount||0));
+    return 'Departure from Torn: '+String(timing.status||'ETA UNRELIABLE')+
+      ' · leave window '+window+
+      ' · observed travel '+durationMs(Number(estimate.durationSec||0)*1000)+
+      ' via '+String(estimate.method||'known method')+
+      ' ('+samples+' trip'+(samples===1?'':'s')+') · stock on arrival is not guaranteed.';
   }
 
   async function refreshTornIntelTravel({silent=false}={}){
@@ -5407,7 +5595,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       (!tornIntelKey()?'<div style="font-size:10px;color:#d8b96a;margin-top:5px;">Save the free Torn Intel client key under More → Setup / Advanced to calculate ETAs.</div>':'')+
       (restockRows.length?restockRows.map(r=>
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
-          '<div><b>'+esc(r.itemName)+'</b> · '+esc(r.country)+' · <span style="color:#ffb3b3;">OUT OF STOCK</span><div style="font-size:10px;color:#888;margin-top:2px;">Foreign cost '+money(r.shopCost||0)+' · '+esc(restockEtaSummary(r))+'</div></div>'+
+          '<div><b>'+esc(r.itemName)+'</b> · '+esc(r.country)+' · <span style="color:#ffb3b3;">OUT OF STOCK</span>'+
+          '<div style="font-size:10px;color:#888;margin-top:2px;">Foreign cost '+money(r.shopCost||0)+' · '+esc(restockEtaSummary(r))+'</div>'+
+          '<div style="font-size:10px;color:#9aa8b6;margin-top:2px;">'+esc(departureTimingSummary(r))+'</div></div>'+
           '<button data-restock-eta="1" data-restock-country="'+esc(r.countryCode||r.country||'')+'" data-restock-id="'+esc(r.itemId||'')+'" data-restock-name="'+esc(r.itemName||'')+'" '+(busy?'disabled':'')+' style="'+button(Boolean(restockRecord(r.countryCode||r.country,r.itemId)?.etaAt))+(busy?'opacity:.5;':'')+'white-space:nowrap;">ESTIMATE RESTOCK</button>'+
         '</div>'
       ).join(''):'<div style="font-size:11px;color:#888;margin-top:6px;">No out-of-stock items in the current travel scope.</div>')
@@ -6388,7 +6578,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.30-pda.17 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.31-pda.18 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
