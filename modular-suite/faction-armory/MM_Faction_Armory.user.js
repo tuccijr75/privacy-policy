@@ -1718,11 +1718,13 @@
       num(live.bazaarPrice),
       num(live.travelPrice)
     ].filter(value=>value>0);
-    if(!prices.length)return {low:0,high:0,lowTotal:0,highTotal:0,priced:false};
+    const qty=Math.max(0,Math.round(num(row?.qty)));
+    const planningUnit=num(live.bestPlanning?.price)||num(row?.marketValue);
+    const planningSource=String(live.bestPlanning?.source||(planningUnit?'Armory reference':''));
+    if(!prices.length)return {low:0,high:0,lowTotal:0,highTotal:0,planningUnit:0,planningTotal:0,planningSource:'',priced:false};
     const low=Math.min(...prices);
     const high=Math.max(...prices);
-    const qty=Math.max(0,Math.round(num(row?.qty)));
-    return {low,high,lowTotal:low*qty,highTotal:high*qty,priced:true};
+    return {low,high,lowTotal:low*qty,highTotal:high*qty,planningUnit,planningTotal:planningUnit*qty,planningSource,priced:Boolean(planningUnit)};
   }
 
   function leaderAcquisitionReport(){
@@ -1747,6 +1749,7 @@
     const minNeeds=isWar?[]:(minimums?.actionable||[]).filter(row=>num(row.shortfall)>0);
     const priceRows=plan.list.map(row=>({row,band:acquisitionPriceBand(row)}));
     const priced=priceRows.filter(item=>item.band.priced);
+    const plannedTotal=priced.reduce((sum,item)=>sum+item.band.planningTotal,0);
     const lowTotal=priced.reduce((sum,item)=>sum+item.band.lowTotal,0);
     const highTotal=priced.reduce((sum,item)=>sum+item.band.highTotal,0);
     const unpriced=priceRows.filter(item=>!item.band.priced);
@@ -1805,7 +1808,8 @@
         lines.push(
           '- '+row.item+' x'+fmt(row.qty)+(row.manualQtyOverride!=null?' (manual; system '+fmt(row.systemQty)+')':'')+' · '+
           (band.priced
-            ? '$'+fmt(band.low)+'–$'+fmt(band.high)+' each · $'+fmt(band.lowTotal)+'–$'+fmt(band.highTotal)+' line total'
+            ? '$'+fmt(band.planningUnit)+' each via '+band.planningSource+' · $'+fmt(band.planningTotal)+' planned line total'+
+              (band.low!==band.high?' · source range $'+fmt(band.low)+'–$'+fmt(band.high):'')
             : 'price unresolved')+
           (row.reasons?' · '+row.reasons:'')
         );
@@ -1814,8 +1818,11 @@
       lines.push(isWar?'- No War acquisition is currently required.':'- No Peace minimum replenishment is currently required.');
     }
 
-    lines.push('',isWar?'ESTIMATED WAR ACQUISITION COST':'ESTIMATED PEACE MINIMUM REPLENISHMENT COST');
-    lines.push(priced.length?'$'+fmt(lowTotal)+' – $'+fmt(highTotal):'$0 known');
+    lines.push('',isWar?'PLANNED WAR ACQUISITION ESTIMATE':'PLANNED PEACE MINIMUM REPLENISHMENT ESTIMATE');
+    lines.push(priced.length?'$'+fmt(plannedTotal):'$0 known');
+    if(priced.length&&lowTotal!==highTotal){
+      lines.push('Cross-source diagnostic range: $'+fmt(lowTotal)+' – $'+fmt(highTotal)+' (not the planned estimate).');
+    }
     if(unpriced.length){
       lines.push(
         'Unpriced requirements: '+
@@ -1889,8 +1896,10 @@
               (live.itemMarketPrice?tile('ITEM MKT','$'+fmt(live.itemMarketPrice)):'')+
               (live.bazaarPrice?tile('BAZAAR','$'+fmt(live.bazaarPrice)):'')+
               (live.travelPrice?tile('OVERSEAS','$'+fmt(live.travelPrice)+(live.travelCountry?' · '+live.travelCountry:''),{wide:true}):'')+
-              (band.priced?tile('PRICE RANGE','$'+fmt(band.low)+' – $'+fmt(band.high),{wide:true}):'')+
-              (row.fundedEstimatedValue?tile('BUY-NOW COST','$'+fmt(row.fundedEstimatedValue)):'')+
+              (band.priced?tile('PLAN EACH','$'+fmt(band.planningUnit)+' · '+band.planningSource,{wide:true}):'')+
+              (band.priced?tile('PLAN LINE','$'+fmt(band.planningTotal)):'')+
+              (band.priced&&band.low!==band.high?tile('SOURCE RANGE','$'+fmt(band.low)+' – $'+fmt(band.high),{wide:true}):'')+
+              (row.fundedEstimatedValue?tile('STATIC-CAP COST','$'+fmt(row.fundedEstimatedValue)):'')+
             '</div>'+
           '</div>';
         }).join('')+
