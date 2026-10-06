@@ -15,7 +15,7 @@ MAIN=HERE/"MM_Trade_Manager.user.js"
 DEFAULT_OUTPUT=HERE/"MM_Trade_Manager.pda.user.js"
 
 SECTIONS=[
-    ("MM Torn Core (bundled)",CORE),
+    ("MM Torn Core (pinned immutable snapshot b6d2202)",CORE),
     ("TornPDA platform/state adapter",ADAPTER),
     ("Inventory FIFO logic (pinned immutable snapshot bb32ea3)",INVENTORY),
     ("Trade Manager logic (bundled)",LOGIC),
