@@ -110,6 +110,38 @@ function baseDb(){
 
 {
   const db=baseDb();
+  db.marketIntel.marketplaceGeneratedAt=new Date(now-301000).toISOString();
+  db.marketIntel.marketplace['1'].lowestPrice=100;
+  db.marketIntel.marketplace['1'].bazaarAverage=1500;
+  db.procurement.marketSnapshots['1'].fetchedAt=new Date(now-30000).toISOString();
+  db.procurement.marketSnapshots['1'].itemMarket.lowest=900;
+  const row=logic.rankPricelistUniverse(db,now).find(x=>x.id==='1');
+  assert(row,'pricelist row should survive stale Bazaar evidence when Item Market is fresh');
+  assert.strictEqual(row.rawBazaarPrice,100);
+  assert.strictEqual(row.bazaarLivePrice,0,'stale Bazaar aggregate must be diagnostic only');
+  assert.strictEqual(row.itemMarketLivePrice,900);
+  assert.strictEqual(row.buySource,'Item Market','fresh Item Market must replace cheaper stale Bazaar as buy evidence');
+  assert.strictEqual(row.buyPrice,900);
+  assert.strictEqual(row.profitable,false,'same-market fee cannot be misrepresented as positive profit');
+  assert.strictEqual(row.qualifies,false);
+}
+
+{
+  const db=baseDb();
+  db.marketIntel.marketplaceGeneratedAt=new Date(now-301000).toISOString();
+  db.procurement.marketSnapshots['1'].fetchedAt=new Date(now-181000).toISOString();
+  const row=logic.rankPricelistUniverse(db,now).find(x=>x.id==='1');
+  assert(row,'pricelist row should remain visible when buy evidence is stale');
+  assert.strictEqual(row.buyPrice,0,'all-stale buy evidence must fail closed');
+  assert.strictEqual(row.buySource,'Unknown');
+  assert.strictEqual(row.hasMarketEvidence,false);
+  assert.strictEqual(row.profit,0);
+  assert.strictEqual(row.roiPct,0);
+  assert.strictEqual(row.qualifies,false);
+}
+
+{
+  const db=baseDb();
   delete db.procurement.marketSnapshots['1'];
   const rows=logic.rankCachedOpportunities(db,now);
   assert.strictEqual(rows.length,1);
