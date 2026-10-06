@@ -6,7 +6,7 @@
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9109ad4eff4ff9fc2ac688018b8fdc4e014312bc/modular-suite/faction-armory/MM_Faction_Armory.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@2c85d554254bdcc4e3d1334f9fdc23eb3fd5ba42/modular-suite/faction-armory/MM_Faction_Armory.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
