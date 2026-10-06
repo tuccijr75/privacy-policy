@@ -9,7 +9,7 @@ This model answers three separate questions and keeps them separate:
 
 1. **Is the member's known current equipment adequate for war?**
 2. **If not, can the faction issue a suitable item already in stock?**
-3. **If not, what generally available item should the Inventory Manager acquire?**
+3. **If not, what generally available item should MM_Acquisitions source?**
 
 Faction inventory does **not** define the readiness standard. It only changes the route from `ACQUIRE` to `ISSUE` when adequate stock already exists.
 
@@ -150,7 +150,7 @@ Faction Inventory API v2 returns each armory item's specialized market `type`. T
 - Opponent-specific Defense and Dexterity are not known when preparing a generic faction build.
 - RW weapon bonuses, mods, ammo, weapon experience and advanced armor bonuses require richer item-specific scoring.
 - Static reference availability/value data may become stale; it does not replace live procurement verification.
-- The Inventory Manager still verifies price and availability outside this module before purchasing.
+- MM_Acquisitions verifies live price and availability outside this module before any manual purchase.
 
 These limitations are intentional: the module determines **what** is needed; procurement tooling determines **where and at what price** to buy it.
 
@@ -483,3 +483,46 @@ It includes only minimum-stock replenishment:
 Peace mode does **not** create individual member build assignments, unresolved member equipment slots, or purchases to equip members. Member equipment readiness is acted on only in War mode.
 
 This mode split is shared by the Acquire screen and the faction-leader acquisition message, so the UI, report, quantities, and cost totals use the same plan.
+
+
+## Alpha.23 evidence and procurement-control separation
+
+Armory now treats three facts as separate layers:
+
+1. **Evidence** — what Torn/member data says the member currently has.
+2. **Readiness assessment** — whether known equipped gear meets the active floor.
+3. **Leadership procurement disposition** — whether the member should continue contributing acquisition requirements.
+
+### Equipment identity and slot authority
+
+For API-backed profiles, Torn's numeric equipped-slot field is preserved as the primary slot signal. The curated catalog and name/type heuristics remain fallbacks and enrichment sources, not prerequisites for recognizing valid equipped gear.
+
+Combat readiness uses the API equipment collection. Cosmetic clothing is not treated as combat armor.
+
+A catalog alias may normalize harmless naming variations such as `Metal Nunchaku` / `Metal Nunchakus`, but exact API-provided damage/accuracy/armor remains stronger evidence than catalog averages.
+
+### War Ready vs Procurement Pass
+
+`WAR READY` means the known eight-slot build passes and leadership explicitly approves it.
+
+`PROCUREMENT PASS` means leadership intentionally excludes that member from current individual acquisition planning without asserting that the member is verified ready. This is appropriate when evidence is unavailable, incomplete, or leadership has another reason not to provision the member through the current plan.
+
+A Procurement Pass is attached to the member's current `verifiedAt` state. New private member evidence invalidates the previous pass so the new information can be reviewed.
+
+### System quantity vs planned quantity
+
+Acquisition output preserves both:
+
+- **System Qty** — deterministic shortfall produced by readiness/faction-stock logic.
+- **Planned Qty** — operator-approved planning quantity after an explicit per-item override.
+
+Overrides are stored as a separate planning layer. They do not mutate member readiness, faction inventory, or the computed system quantity. Zero is a valid planned quantity and must remain zero through reporting and the Armory → MM_Acquisitions handoff.
+
+### Consistency scan
+
+Coverage includes an invariant scan over the full cached roster.
+
+- If an equipped item's score is known and meets/exceeds its slot floor, any active route other than KEEP is surfaced as `EQUIPMENT_SCORE_MISMATCH`.
+- If a non-temporary equipped API item cannot be mapped to a standard combat slot, it is surfaced as `UNMAPPED_EQUIPMENT`.
+
+These are diagnostic defects/review flags, not acquisition requirements. They must be resolved before trusting a affected member's automated requirement.
