@@ -32,9 +32,23 @@ assert.strictEqual(db.coupons['123'].uses,1);
 logic.subscribeCustomer(db,'123');
 assert.strictEqual(logic.currentBazaarRows(db,db.subscribers['123']).length,1);
 
+let bazaarFreshness=logic.bazaarSnapshotFreshness(db,now);
+assert.strictEqual(bazaarFreshness.status,'MISSING','cached listings without producer timestamp must not qualify as current restock evidence');
+assert.strictEqual(bazaarFreshness.fresh,false);
+db.operations.inventoryRoi.lastBazaarAt=new Date(now-30_000).toISOString();
+bazaarFreshness=logic.bazaarSnapshotFreshness(db,now);
+assert.strictEqual(bazaarFreshness.status,'FRESH');
+assert.strictEqual(bazaarFreshness.fresh,true);
+assert.strictEqual(bazaarFreshness.listingCount,1);
+db.operations.inventoryRoi.lastBazaarAt=new Date(now-180_000).toISOString();
+bazaarFreshness=logic.bazaarSnapshotFreshness(db,now);
+assert.strictEqual(bazaarFreshness.status,'STALE','restock messages must fail closed after the consumer freshness window');
+assert.strictEqual(bazaarFreshness.fresh,false);
+db.operations.inventoryRoi.lastBazaarAt=new Date(now-15_000).toISOString();
+
 const userSrc=fs.readFileSync(__dirname+'/MM_Customers.user.js','utf8');
 assert.doesNotThrow(()=>new Function(userSrc));
-assert(userSrc.includes("const VERSION='8.0.0-alpha.20';"));
+assert(userSrc.includes("const VERSION='8.0.0-alpha.21';"));
 assert(userSrc.includes("const PENDING_COMPOSE_KEY='mm_customers_pending_compose_v1';"));
 assert(userSrc.includes("const PENDING_SEND_KEY='mm_customers_pending_send_v1';"));
 assert(userSrc.includes("const DELIVERY_RECEIPTS_KEY='mm_customers_delivery_receipts_v1';"));
@@ -66,6 +80,13 @@ assert(userSrc.includes('function plainMessageText'));
 assert(userSrc.includes('function customerMessage'));
 assert(userSrc.includes('function cashbackEligibilityReminderMessage'));
 assert(userSrc.includes('function restockMessage'));
+assert(userSrc.includes('logic.bazaarSnapshotFreshness(state)'),'restock UI and prepare action must consume Inventory-owned snapshot freshness');
+assert(userSrc.includes('Refresh Inventory First'),'stale/missing Bazaar evidence must block restock preparation visibly');
+assert(userSrc.includes('Bazaar restock snapshot'),'customer subject must describe the content as a snapshot, not guaranteed current stock');
+assert(userSrc.includes('Here’s what was listed in my Bazaar when I refreshed it'),'customer message must use time-bounded snapshot wording');
+assert(!userSrc.includes("Here’s what’s currently available at "),'unbounded current-availability wording must not remain');
+assert(userSrc.includes('bazaarSnapshotAt:snapshot.localFetchedAtIso'),'prepared restock state must preserve the exact source snapshot timestamp');
+assert(userSrc.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@63d47b40c0cebf546032218d7166ad4e5b5cef18/modular-suite/customers/MM_Customers.logic.js'),'changed Customers logic must be immutable-SHA pinned');
 assert.strictEqual((userSrc.match(/composeMessage\(/g)||[]).length,5,'four message actions must share one compose transport');
 assert(userSrc.includes('Prepare Cashback Reminder'));
 assert(userSrc.includes('QUALIFYING PURCHASE'));
@@ -158,4 +179,4 @@ assert(userSrc.includes("if(event?.data?.type!=='state-updated'||!panelIsOpen())
 assert(!initialize.includes('BroadcastChannel'),'initialization must not open a cross-tab channel');
 assert(!userSrc.includes('core.adoptLegacyCrmLauncher?.();'),'Core owns legacy-launcher compatibility');
 
-console.log('MM_Customers alpha20 logic, coupon redemption, TinyMCE compose, delivery and resource regressions: PASS');
+console.log('MM_Customers alpha21 logic, restock freshness, coupon redemption, TinyMCE compose, delivery and resource regressions: PASS');
