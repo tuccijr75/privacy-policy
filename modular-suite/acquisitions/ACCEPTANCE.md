@@ -1,10 +1,10 @@
 # MM_Acquisitions Acceptance
 
 Candidate:
-- Desktop: 8.0.0-alpha.28
-- TornPDA: 8.0.0-alpha.28-pda.15
-- Branch: crm-v8-acquisitions-alpha22-clarity
-- Base: crm-v8-acquisitions-ranked-profit
+- Desktop: 8.0.0-alpha.32
+- TornPDA: 8.0.0-alpha.32-pda.19
+- Branch: crm-v8-acquisitions-pricelist-freshness-alpha32
+- Base: crm-v8-acquisitions-departure-timing
 - Stable/customer publication: not approved
 - Fresh-install bootstrap: required after alpha.26 customer defect
 
@@ -14,7 +14,7 @@ On first open, Acquisitions must land on **Pricelist**.
 
 The only primary navigation choices are:
 
-1. **Pricelist** — every priced item from the configured customer pricelist, with buy rate, current known source prices, under/over-rate status, estimated resale/profit when available, and direct Bazaar / Item Market / Travel actions.
+1. **Pricelist** — every priced item from the configured customer pricelist, with buy rate, freshness-qualified cached source prices, under/over-rate screening status, estimated resale/profit only from eligible evidence, and direct Bazaar / Item Market / Travel actions.
 2. **Ranked Weapons** — Primary / Secondary / Melee ranked weapon evaluation using BB value, official completed Auction House history, ROI and 7/30/90 sales traffic.
 3. **More** — supporting tools only: Find One Item, Best Deals, Travel Deals, Setup / Advanced.
 
@@ -40,6 +40,25 @@ PASS:
 - existing state is preserved;
 - read-only Core reads still do not create storage unless bootstrap is explicitly requested.
 
+
+## Alpha.32 pricelist freshness gate
+
+The Pricelist and customer-universe deal scan must not mix stale buy evidence with fresh exit evidence.
+
+- Bazaar aggregate buy evidence is eligible only while the global marketplace snapshot is within the pricelist freshness window.
+- Item Market buy evidence is eligible only while that item snapshot is within `businessRules.maxListingAgeSec`.
+- Travel screening evidence is hidden from the active price comparison once the existing Travel stale cutoff is exceeded.
+- Stale cached values remain visible only as **stale ignored** diagnostics.
+- A stale cheaper source must not determine buy price, savings, profit, ROI, qualification, source highlight, or sort order.
+- "Best fresh cache" is screening language only. **Check Prices** must still reverify source availability/price before routing.
+- Final purchase remains manual.
+
+PASS:
+- stale Bazaar + fresh Item Market uses Item Market as buy evidence;
+- all-stale buy evidence yields no buy price/profit/qualification;
+- desktop and PDA show identical freshness-aware Pricelist behavior;
+- PDA default build reproduces `8.0.0-alpha.32-pda.19` exactly;
+- no stale value is labeled "Cheapest now" or "Lowest current price."
 
 ## Desktop
 
