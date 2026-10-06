@@ -140,6 +140,78 @@ Each slot may have one explicit decision:
 
 Slot decisions are independent. Clearing one decision does not clear other member overrides or source data.
 
+## War stock control
+
+War-stock quantities are a separate readiness concern from member equipment. They use one authoritative planning state under Faction Armory and are then consumed by Acquire.
+
+The default War suggestions are roster-scaled starting points, not immutable requirements:
+
+- First Aid Kit: 10 per current member.
+- Small First Aid Kit: 10 per current member.
+- Morphine: 10 per current member.
+- Ipecac Syrup: 1 per current member.
+- Empty Blood Bag: 5 per current member.
+- Flash Grenade, Smoke Grenade, Tear Gas, HEG, Grenade and Pepper Spray: 5 each per current member.
+
+Filled blood-bag mix is not guessed when member blood-type distribution is incomplete.
+
+For each line Armory retains:
+
+- current available faction quantity;
+- calculated suggested minimum;
+- optional manager minimum;
+- **effective minimum** (manager minimum when set, otherwise suggested minimum);
+- explicit order/hold decision;
+- derived shortfall.
+
+The acquisition quantity is not stored separately from this decision:
+
+`shortfall = max(0, effective minimum - current available)`
+
+Only shortfalls whose order decision is enabled flow into Acquire. An internal edit to the minimum, inventory, or order state therefore changes the acquisition result on the next derivation.
+
+## Xanax war estimator
+
+Leadership's agreed 4 / 3 / 2 policy is treated as a **per-member ceiling**, not a requirement to pre-purchase the full ceiling for every faction member.
+
+Default tiers are:
+
+- High: 25,000+ total battle stats → ceiling 4.
+- Medium: 5,000–24,999 → ceiling 3.
+- Low: below 5,000 → ceiling 2.
+
+The current-war target is weighted against the actual ranked-war rival. Armory identifies the rival from Torn `/faction/wars`, reads the rival roster from `/faction/{id}/members`, and uses verified own battle stats when available plus the existing public rank-trigger estimate where private data is absent. Rival battle totals are public-profile estimates and are explicitly treated as estimates.
+
+The default reasonable-match threshold is:
+
+`own total / rival estimated total >= 0.80`
+
+It is adjustable.
+
+The default investment posture is **CONSERVE**, matching Leadership's decision not to make a large consumable investment in a probable-loss matchup. Under CONSERVE, each member receives one recommended Xanax per credible rival target, capped by that member's 4 / 3 / 2 ceiling. Leadership may switch OFF / COMPETE / PUSH and may override an individual member's allocation.
+
+Xanax keeps three different concepts visible:
+
+1. **Leadership ceiling** — the maximum tier-authorized total.
+2. **Matchup target** — the derived recommendation for this opponent and posture.
+3. **Effective stock minimum** — the matchup target unless the Inventory Manager sets a manual minimum.
+
+If current rival evidence is unavailable, the automatic Xanax target fails safe to zero / data-required rather than extrapolating a full-roster purchase.
+
+Opponent profile estimates are locally fetched and cached for six hours. The war record carries its Torn event timing where returned; Armory also records the local fetch time. A refresh failure does not fabricate freshness or erase the prior cached opponent block.
+
+## Derived-state propagation
+
+These values are intentionally recomputed instead of copied between modules:
+
+`member/rival evidence -> matchup evaluation -> Xanax target -> effective minimum -> stock shortfall -> Acquire -> leader report/export`
+
+For ordinary war supplies:
+
+`roster/default suggestion + manager override + order/hold + live faction inventory -> effective minimum -> shortfall -> Acquire`
+
+This means internal edits remain consistent across Minimums, Acquire, leader messaging and Leadership export. The only outbound procurement step is the existing Armory-to-MM_Acquisitions handoff; final purchase and transfer actions remain manual.
+
 ## Acquisition plan
 
 The Acquire screen aggregates all member requirements into a single list:
