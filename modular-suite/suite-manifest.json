@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "8.0.0-alpha.55",
+  "suiteVersion": "8.0.0-alpha.56",
   "status": "non-production",
   "baseVersion": "7.5.3",
   "branch": "crm-v8-modular-suite",
@@ -36,7 +36,7 @@
       "id": "inventory-roi",
       "name": "MM_Inventory Manager/ROI Tracker",
       "role": "inventory-listing-sales-velocity-fifo-roi",
-      "version": "8.0.0-alpha.12",
+      "version": "8.0.0-alpha.13",
       "status": "implemented-non-production"
     },
     {
@@ -50,7 +50,7 @@
       "id": "trade-manager",
       "name": "MM Trade Manager",
       "role": "trade-value-record-inventory-reconciliation",
-      "version": "0.1.0-alpha.2",
+      "version": "0.1.0-alpha.3",
       "status": "implemented-non-production"
     },
     {
