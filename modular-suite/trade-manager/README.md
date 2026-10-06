@@ -1,7 +1,7 @@
 # MM Trade Manager
 
 **Status:** non-production foundation candidate  
-**Version:** `0.1.0-alpha.1`  
+**Version:** `0.1.0-alpha.2`  
 **Responsibility:** `TRADE / VALUE / RECORD`
 
 MM Trade Manager is a separate operational product from **MM Trade Chat Assistant**. Trade Chat Assistant remains responsible for trade-chat/forum messaging. Trade Manager is responsible for direct trade contents, valuation, completed-trade records, margin context, and inventory reconciliation handoff.
@@ -26,7 +26,7 @@ Trade Manager writes only through Core's Bazaar-domain `operations` path:
 - `operations.tradeManager.conflicts` — bounded duplicate-ID/content conflicts;
 - `operations.inventoryRoi.tradeReconciliation` — bounded pending confirmed item-movement handoff (max 250).
 
-The reconciliation handoff does **not** directly mutate Inventory Manager's live personal-inventory or Bazaar snapshots. That avoids double-counting when Inventory refreshes authoritative current inventory.
+The reconciliation handoff does **not** directly mutate Inventory Manager's live personal-inventory or Bazaar snapshots. Each item effect carries an explicit cost-basis handoff: outgoing items retain FIFO basis captured at trade sync; incoming items receive a residual-consideration basis only when full outgoing FIFO coverage and fresh received-item reference values make that allocation supportable. Otherwise inbound basis is marked unknown. This avoids both double-counting and fabricated costs.
 
 ## Valuation
 
@@ -83,7 +83,7 @@ No stable/customer publication is authorized by this foundation.
 
 ## TornPDA
 
-TornPDA uses a self-contained `0.1.0-alpha.1-pda.1` bundle. The bundle:
+TornPDA uses a self-contained `0.1.0-alpha.2-pda.2` bundle. The bundle:
 
 - uses lexical `PDA_storage` for durable shared state;
 - uses `PDA_httpGet` only as a thin GET fallback when the runtime does not provide `GM_xmlhttpRequest`;
