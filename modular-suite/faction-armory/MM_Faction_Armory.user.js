@@ -2704,7 +2704,7 @@
     openArmoryMessage({
       playerId:leaderId,
       playerName:String(leadership.leaderName||leaderId),
-      subject:'Faction Armory '+stockMode.toUpperCase()+' acquisition report',
+      subject:'Faction Armory '+stockMode.toUpperCase()+' acquisition snapshot',
       body:leaderAcquisitionReport(),
       kind:'leader-acquisition-report'
     });
@@ -3027,11 +3027,7 @@
       handoffAcquisition({item:option.name,qty:1,fundedQty:1,marketValue:num(pricing.cost)||num(option.marketValue),reasons:member.memberName+' '+slot+' qualifying alternative · '+equipmentStatsText(option.stats,{mode:'need'})},'Best');
     }));
     root.querySelectorAll('[data-armory-acquire]').forEach(b=>b.addEventListener('click',()=>{
-      const plan=logic.acquisitionPlan(state?.factionInventory||{},{
-        mode:stockMode,
-        procurementMode,
-        budgetCap:acquisitionBudget
-      });
+      const plan=acquisitionAccuracyPlan();
       const row=plan.list.find(x=>String(x.item||'')===String(b.dataset.armoryAcquire||''));
       if(row)handoffAcquisition(row,b.dataset.source||'Best');
     }));
@@ -3296,11 +3292,7 @@
       mode:stockMode,
       procurementMode
     });
-    const acquisition=logic.acquisitionPlan(state.factionInventory||{},{
-      mode:stockMode,
-      procurementMode,
-      budgetCap:acquisitionBudget
-    });
+    const acquisition=acquisitionAccuracyPlan();
     const inventory=Object.values(state.factionInventory?.current||{});
     const xanax=stockMode==='war'?minimums.xanax:null;
     const currentWar=state.factionInventory?.warPlanning?.currentWar||null;
@@ -3312,9 +3304,12 @@
       {Metric:'Generated',Value:new Date().toISOString()},
       {Metric:'Stock mode',Value:stockMode.toUpperCase()},
       {Metric:'Procurement mode',Value:procurementMode.toUpperCase()},
-      {Metric:'Acquisition budget',Value:acquisitionBudget},
-      {Metric:'Buy-now known cost',Value:acquisition.fundedEstimatedValue},
-      {Metric:'Known deferred cost',Value:acquisition.deferredEstimatedValue},
+      {Metric:'Acquisition budget',Value:acquisition.budgetCap},
+      {Metric:'Buy-now planning estimate',Value:acquisition.fundedEstimatedValue},
+      {Metric:'Full planned priced estimate',Value:acquisition.fullPlannedKnownCost},
+      {Metric:'Known priced amount deferred by budget',Value:acquisition.deferredEstimatedValue},
+      {Metric:'Unpriced acquisition units',Value:acquisition.unpricedUnits},
+      {Metric:'Remaining budget on planning basis',Value:acquisition.remainingBudget},
       {Metric:'Unresolved build slots',Value:acquisition.unresolvedCount},
       {Metric:'War roster members',Value:stockMode==='war'?members.length:''},
       {Metric:'Faction members',Value:members.length},
@@ -3416,9 +3411,12 @@
       xmlSheet('Consistency',['Type','Member ID','Member','Slot','Item','Detail'],coverage.consistencyIssues.map(r=>({
         'Type':r.type,'Member ID':r.memberId,'Member':r.memberName,'Slot':r.slot,'Item':r.item,'Detail':r.detail
       })))+
-      xmlSheet('Acquire',['Category','Item','System Qty','Planned Qty','Manual Override','Buy Now Qty','Deferred Qty','Reference Source','Reference Unit Value','Buy Now Cost','Reasons'],acquisition.list.map(r=>({
+      xmlSheet('Acquire',['Category','Item','System Qty','Planned Qty','Manual Override','Funding Status','Buy Now Qty','Deferred Qty','Planning Source','Price Evidence','Planning Unit Value','Buy Now Estimate','Full Line Estimate','Deferred Estimate','Reasons'],acquisition.list.map(r=>({
         'Category':r.category,'Item':r.item,'System Qty':num(r.systemQty),'Planned Qty':num(r.qty),'Manual Override':r.manualQtyOverride!=null?'YES':'NO',
-        'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),'Reference Source':r.source,'Reference Unit Value':num(r.marketValue),'Buy Now Cost':num(r.fundedEstimatedValue),'Reasons':r.reasons
+        'Funding Status':r.fundingStatus,'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),
+        'Planning Source':r.planningSource,'Price Evidence':r.priceEvidence,'Planning Unit Value':num(r.planningUnit),
+        'Buy Now Estimate':num(r.fundedEstimatedValue),'Full Line Estimate':num(r.plannedKnownCost),'Deferred Estimate':num(r.deferredEstimatedValue),
+        'Reasons':r.reasons
       })))+
       '</Workbook>';
     const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
