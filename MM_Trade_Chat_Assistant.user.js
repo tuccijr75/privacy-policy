@@ -502,13 +502,14 @@
       return { ok: false, reason: 'Current rotation message exceeds 125 characters.' };
     }
 
+    const transcriptBaseline = tradeTranscriptOccurrenceCount(message);
     if (!insertTradeMessage(composer, message)) {
       return { ok: false, reason: 'Torn rejected the Trade composer insertion.' };
     }
 
     lastComposer = composer;
     lastFilledMessage = message;
-    baselineTranscriptCount = tradeTranscriptOccurrenceCount(message);
+    baselineTranscriptCount = transcriptBaseline;
     sessionFilled = true;
     submitArmed = false;
     deliveryVerificationInFlight = false;
