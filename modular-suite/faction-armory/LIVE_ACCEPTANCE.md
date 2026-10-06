@@ -1,7 +1,24 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.8**
+Status: **NON-PRODUCTION / alpha.24.9**
 
+
+## Alpha.24.9 stale-price accuracy gate
+
+- Armory only treats cached Item Market/Bazaar evidence as live when it satisfies Acquisitions' market-age policy (default 180 seconds).
+- Overseas price evidence is excluded once the travel cache is older than 15 minutes, matching the Acquisitions stale cutoff.
+- Stale cached sources are retained as diagnostics but cannot become the planning basis, lower the acquisition estimate, or consume budget.
+- Acquire displays **STALE IGNORED** evidence when stale values were rejected.
+- Leader snapshots disclose ignored stale source/value/timestamp evidence and explicitly distinguish fresh live evidence from reference fallback.
+- If every live source is stale, the plan falls back only to labeled Torn/Armory references; if no fallback exists the row remains PRICE UNKNOWN and receives buy-now quantity 0.
+
+### Alpha.24.9 acceptance additions
+
+1. Load an item with a cached Item Market/Bazaar price older than the configured market-age window and verify it is not shown as live planning evidence.
+2. Load an overseas price older than 15 minutes and verify it is ignored for planning.
+3. Verify stale values remain visible as rejected diagnostics rather than disappearing silently.
+4. Verify a stale cheaper source cannot undercut a fresher source or labeled reference fallback in Acquire, Leader snapshot, handoff, or export.
+5. Verify MM_Acquisitions still performs live source/availability/price verification before the manual purchase boundary.
 
 ## Alpha.24.8 acquisition-output accuracy audit
 
