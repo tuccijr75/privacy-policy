@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.4
+// @version      8.0.0-alpha.24.5
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@67c6282894d1a6767047c4e19c42cb53683804ac/modular-suite/faction-armory/MM_Faction_Armory.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@81f40c0aa93888169419b082254d413108b4f783/modular-suite/faction-armory/MM_Faction_Armory.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.4';
+  const VERSION='8.0.0-alpha.24.5';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -50,6 +50,7 @@
   let busy=false;
   let selectedCategory='all';
   let selectedBuildMemberId='';
+  let editingEquipmentMemberId='';
   let stockMode=String(GM_getValue(STOCK_MODE_KEY,'war')||'war').toLowerCase()==='peace'?'peace':'war';
   let procurementMode=['budget','standard','ideal'].includes(String(GM_getValue(PROCUREMENT_MODE_KEY,'budget')||'').toLowerCase())?String(GM_getValue(PROCUREMENT_MODE_KEY,'budget')).toLowerCase():'budget';
   let acquisitionBudget=Math.max(0,Number(GM_getValue(ACQUISITION_BUDGET_KEY,15000000))||15000000);
@@ -106,6 +107,10 @@
       .mm-fa-tile-value{font-size:10px;line-height:1.15;color:#ddd;font-weight:600;white-space:nowrap}
       .mm-fa-module-head{display:flex;gap:5px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-bottom:4px}
       .mm-fa-member-head{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+      .mm-fa-modal-backdrop{position:fixed;inset:0;background:#000b;z-index:2147483647;display:flex;align-items:center;justify-content:center;padding:12px}
+      .mm-fa-modal{width:min(860px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;background:#141414;border:1px solid #6b5a2e;border-radius:8px;box-shadow:0 14px 40px #000;padding:8px}
+      .mm-fa-override-slot{border:1px solid #383838;border-radius:6px;padding:6px;margin-top:5px;background:#111}
+      .mm-fa-override-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:5px;margin-top:5px}
       .mm-fa-details{margin-top:3px;border-top:1px solid #2b2b2b;padding-top:3px}
       .mm-fa-details summary{cursor:pointer;font-size:9px;color:#999}
       .mm-fa-slot-grid{display:flex;gap:4px;flex-wrap:wrap;align-items:stretch;margin-top:4px}
@@ -1357,6 +1362,99 @@
     return {memberId:id,memberName:String(member.memberName||id)};
   }
 
+  async function setMemberEquipmentDecision(memberId,slot,decision){
+    const id=asId(memberId);
+    const normalizedSlot=String(slot||'').trim().toLowerCase();
+    if(!id)throw new Error('Member ID is required.');
+    if(!['primary','secondary','melee','helmet','body','gloves','pants','boots'].includes(normalizedSlot))throw new Error('Equipment slot is not valid.');
+    state=await core.readLegacyState();
+    const roster=state?.factionInventory?.memberReadiness?.roster||{};
+    const member=roster[id];
+    if(!member)throw new Error('Faction member not found.');
+    const at=new Date().toISOString();
+    await core.updateDomainState('faction',draft=>{
+      const fi=draft.factionInventory;
+      fi.memberReadiness=fi.memberReadiness&&typeof fi.memberReadiness==='object'?fi.memberReadiness:{};
+      fi.memberReadiness.profiles=fi.memberReadiness.profiles&&typeof fi.memberReadiness.profiles==='object'?fi.memberReadiness.profiles:{};
+      const profile=fi.memberReadiness.profiles[id]&&typeof fi.memberReadiness.profiles[id]==='object'
+        ?fi.memberReadiness.profiles[id]
+        :{memberId:id};
+      fi.memberReadiness.profiles[id]=profile;
+      profile.equipmentDecisions=profile.equipmentDecisions&&typeof profile.equipmentDecisions==='object'?profile.equipmentDecisions:{};
+      const action=String(decision?.action||'').trim();
+      if(!action||action==='automatic'){
+        delete profile.equipmentDecisions[normalizedSlot];
+      }else if(action==='accept-current'){
+        profile.equipmentDecisions[normalizedSlot]={
+          action:'accept-current',
+          itemName:String(decision?.itemName||'').trim(),
+          reason:String(decision?.reason||'Leadership accepted equipped item').trim(),
+          updatedAt:at
+        };
+      }else if(action==='replacement'){
+        const itemName=String(decision?.itemName||'').trim();
+        if(!itemName)throw new Error('Choose or enter a replacement item.');
+        profile.equipmentDecisions[normalizedSlot]={
+          action:'replacement',
+          itemName,
+          reason:String(decision?.reason||'Leadership selected replacement').trim(),
+          updatedAt:at
+        };
+      }else{
+        throw new Error('Equipment decision is not valid.');
+      }
+      if(!Object.keys(profile.equipmentDecisions).length)delete profile.equipmentDecisions;
+      return draft;
+    });
+    state=await core.readLegacyState();
+    return {memberId:id,memberName:String(member.memberName||id),slot:normalizedSlot,action:String(decision?.action||'automatic')};
+  }
+
+  function equipmentOverrideMenuHtml(){
+    const id=asId(editingEquipmentMemberId);
+    if(!id)return '';
+    const row=memberRows().find(item=>item.memberId===id);
+    if(!row)return '';
+    const build=row.buildAssessment||null;
+    if(!build)return '';
+    const slots=(build.items||[]).map(item=>{
+      const decision=item.equipmentDecision||{};
+      const suggestionNames=[item.suggestedName,item.targetName,...(item.recommendationOptions||[]).map(option=>option?.name)]
+        .map(value=>String(value||'').trim()).filter(Boolean);
+      const unique=[...new Set(suggestionNames)];
+      const selectedName=decision.action==='replacement'?String(decision.itemName||''):String(item.suggestedName||item.targetName||'');
+      const options=unique.map(name=>'<option value="'+esc(name)+'" '+(name===selectedName?'selected':'')+'>'+esc(name)+'</option>').join('');
+      const decisionText=decision.action==='accept-current'
+        ? 'Accepted equipped item: '+String(item.currentName||decision.itemName||'')
+        : decision.action==='replacement'
+          ? 'Replacement selected: '+String(decision.itemName||'')
+          : 'Automatic Armory recommendation';
+      return '<div class="mm-fa-override-slot">'+
+        '<div class="mm-fa-module-head"><div><b>'+esc(String(item.slot||'').toUpperCase())+'</b> '+(item.manualDecisionActive?'<span class="mm-fa-pill mm-fa-warn">MANUAL</span>':'<span class="mm-fa-pill">AUTO</span>')+'</div>'+
+          '<span class="mm-fa-mini">'+esc(decisionText)+'</span></div>'+
+        '<div class="mm-fa-override-grid">'+
+          '<div class="mm-fa-tile mm-fa-tile-wide"><span class="mm-fa-tile-label">Equipped now</span><span class="mm-fa-tile-value">'+esc(item.currentName||'Nothing equipped')+'</span><span class="mm-fa-mini">'+esc(item.currentName?equipmentStatsText(item.currentStats):'No equipped item reported')+'</span></div>'+
+          '<div class="mm-fa-tile mm-fa-tile-wide"><span class="mm-fa-tile-label">Armory suggestion</span><span class="mm-fa-tile-value">'+esc(factionMessageRoute(item))+' · '+esc(item.suggestedName||item.targetName||'Review')+'</span><span class="mm-fa-mini">'+esc(item.targetName?equipmentStatsText(item.targetStats,{mode:'need'}):'No automatic target')+'</span></div>'+
+        '</div>'+
+        '<div class="mm-fa-actions" style="margin-top:6px;">'+
+          (item.currentName?'<button data-eq-accept-current="'+esc(row.memberId)+'" data-eq-slot="'+esc(item.slot)+'" data-eq-current="'+esc(item.currentName)+'" style="'+button(decision.action==='accept-current')+'">Accept Equipped Item</button>':'')+
+          (unique.length?'<select class="mm-fa-input" data-eq-suggestion="'+esc(row.memberId)+'" data-eq-slot="'+esc(item.slot)+'" style="width:220px;max-width:100%;">'+options+'</select>'+
+          '<button data-eq-use-suggestion="'+esc(row.memberId)+'" data-eq-slot="'+esc(item.slot)+'" style="'+button(decision.action==='replacement'&&unique.includes(String(decision.itemName||'')))+'">Use Selected Replacement</button>':'')+
+          '<input class="mm-fa-input" data-eq-manual-name="'+esc(row.memberId)+'" data-eq-slot="'+esc(item.slot)+'" placeholder="Other replacement item name" value="'+esc(decision.action==='replacement'&&!unique.includes(String(decision.itemName||''))?String(decision.itemName||''):'')+'" style="width:210px;max-width:100%;">'+
+          '<button data-eq-use-manual="'+esc(row.memberId)+'" data-eq-slot="'+esc(item.slot)+'" style="'+button()+'">Use Other Replacement</button>'+
+          (item.manualDecisionActive?'<button data-eq-auto="'+esc(row.memberId)+'" data-eq-slot="'+esc(item.slot)+'" style="'+button()+'">Use Automatic</button>':'')+
+        '</div>'+
+      '</div>';
+    }).join('');
+    return '<div class="mm-fa-modal-backdrop" id="mm-fa-equipment-override-modal">'+
+      '<div class="mm-fa-modal">'+
+        '<div class="mm-fa-module-head"><div><b>Edit Equipment Override — '+esc(row.memberName)+'</b><div class="mm-fa-muted">Choose each slot in normal wording. API/source equipment stays unchanged underneath.</div></div><button id="mm-fa-close-equipment-override" style="'+button()+'">Close</button></div>'+
+        '<div class="mm-fa-mini">Accept Equipped Item means you approve that exact currently equipped piece for readiness. A replacement means Armory will plan that exact item—borrow it from the vault if available, otherwise acquire it.</div>'+
+        slots+
+      '</div>'+
+    '</div>';
+  }
+
   async function setMemberProcurementPass(memberId,approved,reason=''){
     const id=asId(memberId);
     if(!id)throw new Error('Member ID is required.');
@@ -1536,7 +1634,7 @@
             (row.readinessStatus!=='WAR READY'?'<button data-war-ready="'+esc(row.memberId)+'" style="'+button(true)+'">Mark War Ready</button>':'')+
             (row.readinessStatus==='WAR READY'?'<button data-reopen-review="'+esc(row.memberId)+'" style="'+button()+'">Reopen Readiness</button>':'')+
             '<button data-edit-override="'+esc(row.memberId)+'" style="'+button()+'">Edit Data Override</button>'+
-            (row.manualOverrideActive?'<button data-clear-override="'+esc(row.memberId)+'" style="'+button()+'">Clear Override</button>':'')+
+            (row.manualOverrideActive?'<button data-clear-override="'+esc(row.memberId)+'" style="'+button()+'">Clear Legacy Data Override</button>':'')+
             (row.readinessStatus!=='WAR READY'&&!row.procurementPassCurrent?'<button data-procurement-pass="'+esc(row.memberId)+'" style="'+button()+'">Pass / Exclude Acquisition</button>':'')+
             (row.procurementPassCurrent?'<button data-reopen-procurement="'+esc(row.memberId)+'" style="'+button()+'">Reopen Procurement</button>':'')+
           '</div></div>'+
@@ -2360,7 +2458,8 @@
         sourceStrip()+
         (loadError?card('<span class="mm-fa-bad"><b>Shared state unavailable:</b> '+esc(loadError)+'</span>'):'')+
         '<div class="mm-fa-scroll">'+viewHtml+'</div>'+
-      '</div>';
+      '</div>'+
+      equipmentOverrideMenuHtml();
 
     core?.makePanelDraggable?.(
       root,
@@ -2527,30 +2626,66 @@
       }catch(error){statusText='Readiness review update failed: '+(error?.message||String(error));}
       finally{busy=false;render();}
     }));
-    root.querySelectorAll('[data-edit-override]').forEach(b=>b.addEventListener('click',async()=>{
-      const id=asId(b.dataset.editOverride);
-      const row=memberRows().find(item=>item.memberId===id);
-      if(!row||busy)return;
-      const current=row.manualOverrideValues&&typeof row.manualOverrideValues==='object'?row.manualOverrideValues:{};
-      const raw=prompt(
-        'Manual data override for '+row.memberName+'. Enter a PARTIAL JSON object. Only fields you include replace source data; API/source data remains stored underneath. Examples: {"stats":{"strength":2500},"level":20} or {"equipment":{"summary":"MELEE: Macana","items":[{"name":"Macana","slot":"melee","damage":60,"accuracy":67}],"emptyConfirmed":false}}. Use {} then Clear Override to return fully to source data.',
-        JSON.stringify(current,null,2)
-      );
-      if(raw==null)return;
-      let values;
-      try{
-        values=JSON.parse(String(raw||'{}'));
-        if(!values||typeof values!=='object'||Array.isArray(values))throw new Error('Override must be a JSON object.');
-      }catch(error){
-        statusText='Manual override JSON is invalid: '+(error?.message||String(error));render();return;
+    root.querySelectorAll('[data-edit-override]').forEach(b=>b.addEventListener('click',()=>{
+      editingEquipmentMemberId=asId(b.dataset.editOverride);
+      render();
+    }));
+    root.querySelector('#mm-fa-close-equipment-override')?.addEventListener('click',()=>{
+      editingEquipmentMemberId='';
+      render();
+    });
+    root.querySelector('#mm-fa-equipment-override-modal')?.addEventListener('click',event=>{
+      if(event.target?.id==='mm-fa-equipment-override-modal'){
+        editingEquipmentMemberId='';
+        render();
       }
-      const reason=prompt('Optional reason / audit note for this manual override:',row.manualOverrideReason||'Leadership manual correction');
-      if(reason==null)return;
-      busy=true;statusText='Saving manual data override…';render();
+    });
+    root.querySelectorAll('[data-eq-accept-current]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Accepting equipped item for '+String(b.dataset.eqSlot||'slot')+'…';render();
       try{
-        const result=await setMemberManualOverrides(id,values,reason);
-        statusText=result.memberName+' manual data override saved. Source/API data remains preserved underneath.';
-      }catch(error){statusText='Manual override failed: '+(error?.message||String(error));}
+        const result=await setMemberEquipmentDecision(b.dataset.eqAcceptCurrent,b.dataset.eqSlot,{
+          action:'accept-current',
+          itemName:String(b.dataset.eqCurrent||''),
+          reason:'Leadership accepted equipped item'
+        });
+        statusText=result.memberName+' '+String(result.slot).toUpperCase()+': equipped item accepted.';
+      }catch(error){statusText='Equipment override failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-eq-use-suggestion]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      const id=asId(b.dataset.eqUseSuggestion),slot=String(b.dataset.eqSlot||'');
+      const select=root.querySelector('[data-eq-suggestion="'+CSS.escape(id)+'"][data-eq-slot="'+CSS.escape(slot)+'"]');
+      const itemName=String(select?.value||'').trim();
+      if(!itemName){statusText='Choose a replacement item first.';render();return;}
+      busy=true;statusText='Saving replacement for '+slot+'…';render();
+      try{
+        const result=await setMemberEquipmentDecision(id,slot,{action:'replacement',itemName,reason:'Leadership selected Armory replacement'});
+        statusText=result.memberName+' '+String(result.slot).toUpperCase()+': replacement set to '+itemName+'.';
+      }catch(error){statusText='Equipment override failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-eq-use-manual]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      const id=asId(b.dataset.eqUseManual),slot=String(b.dataset.eqSlot||'');
+      const input=root.querySelector('[data-eq-manual-name="'+CSS.escape(id)+'"][data-eq-slot="'+CSS.escape(slot)+'"]');
+      const itemName=String(input?.value||'').trim();
+      if(!itemName){statusText='Enter a replacement item name first.';render();return;}
+      busy=true;statusText='Saving replacement for '+slot+'…';render();
+      try{
+        const result=await setMemberEquipmentDecision(id,slot,{action:'replacement',itemName,reason:'Leadership entered manual replacement'});
+        statusText=result.memberName+' '+String(result.slot).toUpperCase()+': replacement set to '+itemName+'.';
+      }catch(error){statusText='Equipment override failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-eq-auto]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      busy=true;statusText='Restoring automatic recommendation…';render();
+      try{
+        const result=await setMemberEquipmentDecision(b.dataset.eqAuto,b.dataset.eqSlot,{action:'automatic'});
+        statusText=result.memberName+' '+String(result.slot).toUpperCase()+': automatic Armory recommendation restored.';
+      }catch(error){statusText='Equipment override failed: '+(error?.message||String(error));}
       finally{busy=false;render();}
     }));
     root.querySelectorAll('[data-clear-override]').forEach(b=>b.addEventListener('click',async()=>{
