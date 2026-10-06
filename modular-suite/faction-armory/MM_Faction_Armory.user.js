@@ -2803,6 +2803,96 @@
       const count=Object.keys(state?.factionInventory?.memberReadiness?.roster||{}).length; statusText='Inventory minimum mode: '+(stockMode==='war'?'WAR ('+count+' current members)':'PEACE')+'.';
       render();
     }));
+    root.querySelector('#mm-fa-refresh-war')?.addEventListener('click',refreshWarIntelOnly);
+    root.querySelectorAll('[data-save-min]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      const key=String(b.dataset.saveMin||'');
+      const row=minimumRowByKey(key);
+      const input=[...root.querySelectorAll('[data-min-input]')].find(node=>String(node.dataset.minInput||'')===key);
+      if(!row||!input)return;
+      busy=true;statusText='Saving '+row.item+' minimum…';render();
+      try{
+        await saveMinimumControl(row,{min:input.value});
+        statusText=row.item+' minimum saved. Minimums, Xanax/stock comparison, Acquire, leader report, and export now use the updated value.';
+      }catch(error){statusText='Minimum update failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-reset-min]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      const row=minimumRowByKey(String(b.dataset.resetMin||''));
+      if(!row)return;
+      busy=true;statusText='Restoring suggested minimum…';render();
+      try{
+        await saveMinimumControl(row,{min:null});
+        statusText=row.item+' returned to the live suggested minimum.';
+      }catch(error){statusText='Minimum reset failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-toggle-min-order]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      const row=minimumRowByKey(String(b.dataset.toggleMinOrder||''));
+      if(!row)return;
+      busy=true;statusText='Updating '+row.item+' order decision…';render();
+      try{
+        await saveMinimumControl(row,{min:row.manualMin,orderEnabled:!row.orderEnabled});
+        statusText=row.item+': '+(!row.orderEnabled?'ORDER SHORTFALL':'HOLD / DO NOT ORDER')+'. Acquire updated automatically.';
+      }catch(error){statusText='Order decision failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelector('#mm-fa-save-xanax-policy')?.addEventListener('click',async()=>{
+      if(busy)return;
+      const read=id=>root.querySelector(id)?.value;
+      const patch={
+        investmentPosture:String(read('#mm-fa-xanax-posture')||'conserve').toLowerCase(),
+        reasonableRatio:Math.max(0.1,Math.min(2,Number(read('#mm-fa-xanax-ratio'))||0.8)),
+        highThreshold:Math.max(1,Math.round(Number(read('#mm-fa-xanax-high'))||25000)),
+        mediumThreshold:Math.max(1,Math.round(Number(read('#mm-fa-xanax-medium'))||5000)),
+        highCeiling:Math.max(0,Math.round(Number(read('#mm-fa-xanax-high-cap'))||0)),
+        mediumCeiling:Math.max(0,Math.round(Number(read('#mm-fa-xanax-medium-cap'))||0)),
+        lowCeiling:Math.max(0,Math.round(Number(read('#mm-fa-xanax-low-cap'))||0))
+      };
+      if(patch.mediumThreshold>patch.highThreshold){
+        statusText='Xanax policy not saved: Medium threshold cannot exceed High threshold.';render();return;
+      }
+      busy=true;statusText='Saving Xanax war policy…';render();
+      try{
+        await saveXanaxPolicy(patch);
+        statusText='Xanax policy saved. Matchups, stock target, shortfall, Acquire, leader report, and export recalculated.';
+      }catch(error){statusText='Xanax policy failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-xanax-member-save]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      const id=asId(b.dataset.xanaxMemberSave);
+      const estimator=logic.xanaxEstimator(state?.factionInventory||{},{procurementMode});
+      const member=estimator.members.find(row=>row.memberId===id);
+      const input=[...root.querySelectorAll('[data-xanax-member-input]')].find(node=>asId(node.dataset.xanaxMemberInput)===id);
+      if(!member||!input)return;
+      const value=Number(input.value);
+      if(!Number.isFinite(value)||value<0||!Number.isInteger(value)||value>num(member.ceiling)){
+        statusText='Xanax member allocation must be a whole number from 0 to '+fmt(member.ceiling)+'.';render();return;
+      }
+      const overrides={...(estimator.policy?.memberOverrides||{}),[id]:value};
+      busy=true;statusText='Saving member Xanax allocation…';render();
+      try{
+        await saveXanaxPolicy({memberOverrides:overrides});
+        statusText=member.memberName+' Xanax allocation saved at '+value+'. All dependent totals updated.';
+      }catch(error){statusText='Member Xanax allocation failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-xanax-member-reset]').forEach(b=>b.addEventListener('click',async()=>{
+      if(busy)return;
+      const id=asId(b.dataset.xanaxMemberReset);
+      const estimator=logic.xanaxEstimator(state?.factionInventory||{},{procurementMode});
+      const overrides={...(estimator.policy?.memberOverrides||{})};
+      delete overrides[id];
+      busy=true;statusText='Restoring matchup-based Xanax allocation…';render();
+      try{
+        await saveXanaxPolicy({memberOverrides:overrides});
+        statusText='Member Xanax allocation returned to automatic matchup weighting.';
+      }catch(error){statusText='Member Xanax reset failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
     root.querySelectorAll('[data-procurement-mode]').forEach(b=>b.addEventListener('click',()=>{
       procurementMode=['budget','standard','ideal'].includes(b.dataset.procurementMode)?b.dataset.procurementMode:'budget';
       GM_setValue(PROCUREMENT_MODE_KEY,procurementMode);
