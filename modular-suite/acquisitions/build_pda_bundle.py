@@ -353,8 +353,8 @@ def build(pda_revision: int) -> str:
     )
     body = replace_once(
         body,
-        "      beginTravelCapture();\n      return;",
-        "      await beginTravelCapture();\n      return;",
+        "        beginTravelCapture();\n        return;",
+        "        await beginTravelCapture();\n        return;",
         "PDA Travel fallback handoff persistence",
     )
 
