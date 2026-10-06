@@ -89,6 +89,6 @@ TornPDA uses a self-contained `0.1.0-alpha.1-pda.1` bundle. The bundle:
 - uses `PDA_httpGet` only as a thin GET fallback when the runtime does not provide `GM_xmlhttpRequest`;
 - keeps the injected PDA API key lexical and does not expose it on `globalThis`;
 - uses a PDA-safe launcher above native bottom chrome;
-- bundles an exact read-only snapshot of Inventory FIFO logic from immutable commit `4ef4197cb0fc19e4c29b5864dd4d003732d58deb`, matching the desktop dependency.
+- bundles exact read-only snapshots of Core from immutable commit `b6d2202ad507c6b138919e2d37e461cfc422b382` and Inventory FIFO logic from immutable commit `4ef4197cb0fc19e4c29b5864dd4d003732d58deb`, matching the desktop dependencies.
 
-The vendored FIFO file is a PDA packaging artifact, not a second mutable source of Inventory truth.
+The vendored Core/FIFO files are PDA packaging artifacts, not second mutable sources of shared contracts or Inventory truth.
