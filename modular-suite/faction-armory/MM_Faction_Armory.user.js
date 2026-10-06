@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.7
+// @version      8.0.0-alpha.24.8
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b64c42f86580add2e8fdc89c00e128e3b63c5d1c/modular-suite/faction-armory/MM_Faction_Armory.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@1e24b83e6507e4e029da3fbbc8aae518f1de42ee/modular-suite/faction-armory/MM_Faction_Armory.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.7';
+  const VERSION='8.0.0-alpha.24.8';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -2416,24 +2416,38 @@
     const bazaarPrice=num(bazaar?.price)||num(snap?.bazaar?.lowest);
     const travelPrice=num(travel?.shopCost);
     const tornMarketPrice=num(record?.marketPrice??record?.market_price??record?.marketValue??record?.market_value);
-    const candidates=[
-      itemMarketPrice?{source:'Item Market',price:itemMarketPrice}:null,
-      bazaarPrice?{source:'Bazaar',price:bazaarPrice}:null,
-      travelPrice?{source:'Overseas',price:travelPrice,country:String(travel?.country||'')}:null
+    const itemMarketFetchedAt=String(snap?.itemMarket?.fetchedAt||snap?.itemMarket?.updatedAt||snap?.fetchedAt||'');
+    const bazaarFetchedAt=String(bazaar?.fetchedAt||detail?.fetchedAt||snap?.bazaar?.fetchedAt||snap?.fetchedAt||'');
+    const travelFetchedAt=String(travel?.fetchedAt||travel?.localFetchedAt||state?.travelIntel?.fetchedAt||'');
+    const liveCandidates=[
+      itemMarketPrice?{source:'Item Market',price:itemMarketPrice,fetchedAt:itemMarketFetchedAt}:null,
+      bazaarPrice?{source:'Bazaar',price:bazaarPrice,fetchedAt:bazaarFetchedAt}:null,
+      travelPrice?{source:'Overseas',price:travelPrice,country:String(travel?.country||''),fetchedAt:travelFetchedAt}:null
     ].filter(Boolean).sort((a,b)=>a.price-b.price);
-    const planningCandidates=[...candidates,tornMarketPrice?{source:'Torn Market Reference',price:tornMarketPrice}:null].filter(Boolean).sort((a,b)=>a.price-b.price);
+    const best=liveCandidates[0]||null;
+    const fallback=tornMarketPrice
+      ?{source:'Torn Market Reference',price:tornMarketPrice,fetchedAt:String(record?.fetchedAt||''),referenceOnly:true}
+      :num(row?.marketValue)
+        ?{source:'Armory Static Reference',price:num(row.marketValue),fetchedAt:'',referenceOnly:true}
+        :null;
+    const bestPlanning=best||fallback;
     return {
       itemId,
       itemMarketPrice,
+      itemMarketFetchedAt,
       bazaarPrice,
+      bazaarFetchedAt,
       bazaarSellerId:String(bazaar?.sellerId||''),
       travelPrice,
+      travelFetchedAt,
       travelCountry:String(travel?.country||''),
       travelStock:num(travel?.stock),
       tornMarketPrice,
       tornMarketFetchedAt:String(record?.fetchedAt||''),
-      best:candidates[0]||null,
-      bestPlanning:planningCandidates[0]||null
+      best,
+      bestPlanning,
+      liveCandidates,
+      priceEvidence:best?'LIVE CACHED SOURCE':tornMarketPrice?'TORN MARKET REFERENCE':num(row?.marketValue)?'ARMORY STATIC REFERENCE':'UNPRICED'
     };
   }
 
@@ -2441,23 +2455,28 @@
     const source=acquisitionSourceSnapshot(row);
     const requestedQty=row?.fundedQty!=null?Math.round(num(row.fundedQty)):Math.round(num(row?.qty));
     if(requestedQty<=0){
-      statusText='Planned / funded quantity is 0 for '+String(row?.item||'this item')+'. Nothing was sent to MM_Acquisitions.';
+      statusText=row?.fundingStatus==='PRICE UNKNOWN'
+        ?'No budget-safe quantity was sent for '+String(row?.item||'this item')+' because its planning price is unresolved. Refresh/check pricing first.'
+        :'Planned / budget-funded quantity is 0 for '+String(row?.item||'this item')+'. Nothing was sent to MM_Acquisitions.';
       render();
       return;
     }
+    const referenceValue=num(row?.planningUnit)||num(source.bestPlanning?.price)||num(row?.marketValue);
     const payload={
       itemName:String(row?.item||''),
       itemId:source.itemId,
       qty:requestedQty,
       preferredSource:String(preferredSource||'Best'),
-      referenceValue:num(row?.marketValue),
+      referenceValue,
       sourceCountry:source.travelCountry,
-      armoryReason:String(row?.reasons||'Faction Armory requirement')
+      armoryReason:String(row?.reasons||'Faction Armory requirement')+
+        (row?.priceEvidence?' · Armory price evidence: '+String(row.priceEvidence):'')
     };
     try{
       if(!channel)channel=new BroadcastChannel(CHANNEL);
       channel.postMessage({type:'armory-acquisition-request',payload});
-      statusText='Sent '+payload.itemName+' x'+payload.qty+' to MM_Acquisitions · preferred '+payload.preferredSource+'. Final purchase remains manual.';
+      statusText='Sent '+payload.itemName+' x'+payload.qty+' to MM_Acquisitions · preferred '+payload.preferredSource+
+        ' · reference $'+fmt(referenceValue)+'. Final purchase remains manual.';
     }catch(error){
       statusText='Could not hand off acquisition: '+(error?.message||String(error));
     }
@@ -2466,20 +2485,51 @@
 
   function acquisitionPriceBand(row){
     const live=acquisitionSourceSnapshot(row);
-    const prices=[
-      num(row?.marketValue),
-      num(live.tornMarketPrice),
-      num(live.itemMarketPrice),
-      num(live.bazaarPrice),
-      num(live.travelPrice)
-    ].filter(value=>value>0);
+    const livePrices=[num(live.itemMarketPrice),num(live.bazaarPrice),num(live.travelPrice)].filter(value=>value>0);
+    const fallbackPrices=[num(live.tornMarketPrice),num(row?.marketValue)].filter(value=>value>0);
+    const comparisonPrices=livePrices.length?livePrices:fallbackPrices;
     const qty=Math.max(0,Math.round(num(row?.qty)));
-    const planningUnit=num(live.bestPlanning?.price)||num(row?.marketValue);
-    const planningSource=String(live.bestPlanning?.source||(planningUnit?'Armory reference':''));
-    if(!prices.length)return {low:0,high:0,lowTotal:0,highTotal:0,planningUnit:0,planningTotal:0,planningSource:'',priced:false};
-    const low=Math.min(...prices);
-    const high=Math.max(...prices);
-    return {low,high,lowTotal:low*qty,highTotal:high*qty,planningUnit,planningTotal:planningUnit*qty,planningSource,priced:Boolean(planningUnit)};
+    const planningUnit=num(live.bestPlanning?.price);
+    const planningSource=String(live.bestPlanning?.source||'');
+    if(!comparisonPrices.length||!planningUnit){
+      return {
+        low:0,high:0,lowTotal:0,highTotal:0,
+        planningUnit:0,planningTotal:0,planningSource:'',
+        planningFetchedAt:'',priceEvidence:'UNPRICED',priced:false
+      };
+    }
+    const low=Math.min(...comparisonPrices);
+    const high=Math.max(...comparisonPrices);
+    return {
+      low,high,lowTotal:low*qty,highTotal:high*qty,
+      planningUnit,planningTotal:planningUnit*qty,planningSource,
+      planningFetchedAt:String(live.bestPlanning?.fetchedAt||''),
+      priceEvidence:String(live.priceEvidence||''),
+      priced:true,
+      liveRange:Boolean(livePrices.length)
+    };
+  }
+
+  function acquisitionAccuracyPlan(){
+    const base=logic.acquisitionPlan(state?.factionInventory||{},{
+      mode:stockMode,
+      procurementMode,
+      budgetCap:acquisitionBudget
+    });
+    const quotes={};
+    for(const row of base.list){
+      const band=acquisitionPriceBand(row);
+      quotes[logic.acquisitionQuoteKey(row.category,row.item)]={
+        planningUnit:band.planningUnit,
+        planningSource:band.planningSource,
+        planningFetchedAt:band.planningFetchedAt,
+        priceEvidence:band.priceEvidence,
+        low:band.low,
+        high:band.high,
+        liveRange:band.liveRange
+      };
+    }
+    return logic.reconcileAcquisitionPricing(base,quotes,acquisitionBudget);
   }
 
   function leaderAcquisitionReport(){
