@@ -5,6 +5,130 @@
   const marketPulse = globalThis.MMTornMarketPulse;
 
   const asId = value => String(value ?? '').trim();
+  const TRAVEL_DURATION_RETENTION_MS = 45 * 86400000;
+  const TRAVEL_DURATION_SAMPLES_MAX = 5;
+  const TRAVEL_DURATION_KEYS_MAX = 36;
+
+  function travelDurationKey(destination,method='Unknown'){
+    return String(destination||'').trim().toLowerCase()+'|'+String(method||'Unknown').trim().toLowerCase();
+  }
+
+  function medianNumber(values=[]){
+    const rows=(Array.isArray(values)?values:[]).map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
+    if(!rows.length)return 0;
+    const mid=Math.floor(rows.length/2);
+    return rows.length%2?rows[mid]:(rows[mid-1]+rows[mid])/2;
+  }
+
+  function travelDurationObservation(payload,observedAt=Date.now()){
+    const travel=payload?.travel??payload?.data?.travel??null;
+    if(!travel||typeof travel!=='object')return null;
+    const destination=String(travel.destination||'').trim();
+    const method=String(travel.method||'').trim()||'Unknown';
+    const departedAt=Math.max(0,Math.round(Number(travel.departed_at||0)));
+    const arrivalAt=Math.max(0,Math.round(Number(travel.arrival_at||0)));
+    const durationSec=arrivalAt-departedAt;
+    if(!destination||destination.toLowerCase()==='torn'||!(departedAt>0)||!(arrivalAt>departedAt)||durationSec<60||durationSec>24*3600)return null;
+    return {
+      schema:1,key:travelDurationKey(destination,method),destination,method,
+      departedAt,arrivalAt,durationSec,observedAt:Math.max(0,Number(observedAt)||Date.now()),
+      source:'Torn API v2 /user/travel'
+    };
+  }
+
+  function recordTravelDuration(travelIntel,observation,nowMs=Date.now()){
+    const travel=travelIntel&&typeof travelIntel==='object'?travelIntel:{};
+    const before=JSON.stringify(travel.travelDurations||{});
+    const obs=observation&&typeof observation==='object'?observation:null;
+    if(!obs?.key||!(Number(obs.durationSec)>0))return {changed:false,key:'',record:null};
+    const records=travel.travelDurations&&typeof travel.travelDurations==='object'&&!Array.isArray(travel.travelDurations)?travel.travelDurations:{};
+    const cutoff=Number(nowMs)-TRAVEL_DURATION_RETENTION_MS;
+    const current=records[obs.key]&&typeof records[obs.key]==='object'?records[obs.key]:{
+      schema:1,key:obs.key,destination:String(obs.destination||''),method:String(obs.method||'Unknown'),
+      source:'Torn API v2 /user/travel',samples:[]
+    };
+    current.samples=(Array.isArray(current.samples)?current.samples:[])
+      .filter(row=>Number(row?.observedAt||0)>=cutoff);
+    const duplicate=current.samples.some(row=>Number(row?.departedAt||0)===Number(obs.departedAt)&&Number(row?.arrivalAt||0)===Number(obs.arrivalAt));
+    if(!duplicate){
+      current.samples.push({
+        departedAt:Number(obs.departedAt),arrivalAt:Number(obs.arrivalAt),
+        durationSec:Number(obs.durationSec),observedAt:Number(obs.observedAt)
+      });
+    }
+    current.samples=current.samples.sort((a,b)=>Number(a.observedAt||0)-Number(b.observedAt||0)).slice(-TRAVEL_DURATION_SAMPLES_MAX);
+    current.updatedAt=current.samples.reduce((max,row)=>Math.max(max,Number(row.observedAt||0)),0);
+    current.medianDurationSec=medianNumber(current.samples.map(row=>row.durationSec));
+    current.sampleCount=current.samples.length;
+    records[obs.key]=current;
+
+    for(const [key,row] of Object.entries(records)){
+      const samples=(Array.isArray(row?.samples)?row.samples:[]).filter(sample=>Number(sample?.observedAt||0)>=cutoff);
+      if(!samples.length){delete records[key];continue;}
+      row.samples=samples.slice(-TRAVEL_DURATION_SAMPLES_MAX);
+      row.updatedAt=row.samples.reduce((max,sample)=>Math.max(max,Number(sample.observedAt||0)),0);
+      row.medianDurationSec=medianNumber(row.samples.map(sample=>sample.durationSec));
+      row.sampleCount=row.samples.length;
+    }
+    const keys=Object.keys(records).sort((a,b)=>Number(records[b]?.updatedAt||0)-Number(records[a]?.updatedAt||0));
+    for(const key of keys.slice(TRAVEL_DURATION_KEYS_MAX))delete records[key];
+    travel.travelDurations=records;
+    const after=JSON.stringify(records);
+    return {changed:before!==after,key:obs.key,record:records[obs.key]||null};
+  }
+
+  function travelDurationEstimate(travelIntel,destination,nowMs=Date.now()){
+    const target=String(destination||'').trim().toLowerCase();
+    if(!target)return {available:false,usable:false,reason:'destination_unknown'};
+    const records=Object.values(travelIntel?.travelDurations||{})
+      .filter(row=>String(row?.destination||'').trim().toLowerCase()===target&&Number(row?.medianDurationSec||0)>0)
+      .sort((a,b)=>Number(b?.updatedAt||0)-Number(a?.updatedAt||0));
+    const record=records[0];
+    if(!record)return {available:false,usable:false,reason:'no_observed_duration'};
+    const ageMs=Math.max(0,Number(nowMs)-Number(record.updatedAt||0));
+    const stale=ageMs>TRAVEL_DURATION_RETENTION_MS;
+    const sampleCount=Math.max(0,Number(record.sampleCount||record.samples?.length||0));
+    return {
+      available:true,usable:!stale,stale,reason:stale?'duration_stale':'ok',
+      destination:String(record.destination||destination),method:String(record.method||'Unknown'),
+      durationSec:Number(record.medianDurationSec||0),sampleCount,updatedAt:Number(record.updatedAt||0),ageMs,
+      confidence:sampleCount>=3?'HIGH':sampleCount>=2?'MEDIUM':'OBSERVED',
+      source:String(record.source||'Torn API v2 /user/travel')
+    };
+  }
+
+  function departureTiming(restockRecord,durationEstimate,nowMs=Date.now()){
+    const confidence=String(restockRecord?.confidence||'INSUFFICIENT').toUpperCase();
+    const centerAt=Date.parse(String(restockRecord?.etaAt||''))||0;
+    const earlyAt=Date.parse(String(restockRecord?.etaEarlyAt||''))||0;
+    const lateAt=Date.parse(String(restockRecord?.etaLateAt||''))||0;
+    const durationSec=Math.max(0,Number(durationEstimate?.durationSec||0));
+    const base={
+      status:'ETA UNRELIABLE',usable:false,departureAt:0,departureEarlyAt:0,departureLateAt:0,
+      durationSec,durationMethod:String(durationEstimate?.method||''),durationSamples:Number(durationEstimate?.sampleCount||0),
+      restockConfidence:confidence,reason:''
+    };
+    if(!centerAt||!earlyAt||!lateAt||confidence==='INSUFFICIENT'){
+      return {...base,reason:'Restock ETA does not have a usable observed window.'};
+    }
+    if(!durationEstimate?.usable||!(durationSec>0)){
+      return {...base,reason:'No recent observed travel duration is available for this destination.'};
+    }
+    const durationMs=durationSec*1000;
+    const departureAt=centerAt-durationMs;
+    const departureEarlyAt=earlyAt-durationMs;
+    const departureLateAt=lateAt-durationMs;
+    const weak=confidence==='LOW'||String(durationEstimate?.confidence||'OBSERVED')==='OBSERVED';
+    let status='POSSIBLE DEPARTURE WINDOW';
+    if(Number(nowMs)>departureLateAt)status='LIKELY TOO LATE';
+    else if(weak)status='WATCH';
+    else if(Number(nowMs)<departureEarlyAt)status='TOO EARLY';
+    return {
+      ...base,status,usable:true,departureAt,departureEarlyAt,departureLateAt,
+      restockEarlyAt:earlyAt,restockCenterAt:centerAt,restockLateAt:lateAt,
+      reason:weak?'Timing exists but evidence is still low-confidence.':'Timing is derived from the observed restock window minus your observed travel duration.'
+    };
+  }
 
   function businessRules(db) {
     const r = db?.businessRules || {};
@@ -458,7 +582,8 @@
     rankCachedOpportunities,
     rankPricelistUniverse,
     rankCachedTravel,
-    rankTravelDestinations
+    rankTravelDestinations,
+    travelDurationObservation,recordTravelDuration,travelDurationEstimate,departureTiming
   });
 
   Object.defineProperty(globalThis,'MMTornAcquisitionsLogic',{
