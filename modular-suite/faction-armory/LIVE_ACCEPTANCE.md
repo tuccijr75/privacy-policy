@@ -1,7 +1,16 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.5**
+Status: **NON-PRODUCTION / alpha.24.6**
 
+
+## Alpha.24.6 advisory member-message tone
+
+- Build messages are framed as optional war-prep suggestions rather than instructions.
+- The message explicitly says members do not need to change anything if they prefer their current setup.
+- TARGET BUILD is replaced by OPTIONAL WAR-PREP SUGGESTIONS.
+- Vault, acquisition, owned-item, and review language is phrased as options to consider.
+- Requests for better data are optional and intended only to improve recommendation accuracy.
+- Closing language states that the goal is to make useful preparation options available to members who want help.
 
 ## Alpha.24.5 plain-language equipment override menu
 
