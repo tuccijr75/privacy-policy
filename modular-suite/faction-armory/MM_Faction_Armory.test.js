@@ -344,7 +344,7 @@ new Function(userSource);
 assert(userSource.includes("const VERSION='8.0.0-alpha.23';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
-assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b7b667ade46725d0900d51d1f4a93c3432590bc4/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
+assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9109ad4eff4ff9fc2ac688018b8fdc4e014312bc/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -582,6 +582,17 @@ if(alpha23OverrideRow){
 const alpha23Coverage=logic.coverageComparison(alpha23Faction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
 assert.strictEqual(alpha23Coverage.memberCoverage.length,16,'coverage export must emit eight standard combat slots per two-member fixture');
 assert.strictEqual(alpha23Coverage.factionCoverage.length,8,'coverage export must emit one faction summary per standard combat slot');
+assert.strictEqual(alpha23Coverage.consistencyIssues.length,0,'normalized Morpheus fixture must have no route/floor consistency defects');
+
+const unmappedFaction=JSON.parse(JSON.stringify(alpha23Faction));
+unmappedFaction.memberReadiness.roster['2303']={memberId:'2303',memberName:'Unmapped Gear',level:20};
+unmappedFaction.memberReadiness.profiles['2303']={
+  stats:{strength:1000,defense:1000,speed:1000,dexterity:1000},
+  equipment:{summary:'',items:[{name:'Unknown Combat Object',slotId:99,damage:70,accuracy:60}]},
+  verifiedAt:alpha23VerifiedAt
+};
+const unmappedCoverage=logic.coverageComparison(unmappedFaction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+assert(unmappedCoverage.consistencyIssues.some(issue=>issue.type==='UNMAPPED_EQUIPMENT'&&issue.memberId==='2303'),'coverage scan must flag equipped API combat records that cannot be mapped to a standard slot');
 
 assert(userSourceValue.includes('Pass / Exclude Acquisition'));
 assert(userSourceValue.includes('PROCUREMENT PASS'));
@@ -594,4 +605,6 @@ assert(userSourceValue.includes('PLANNED BUY'));
 assert(userSourceValue.includes('data-view="coverage"'));
 assert(userSourceValue.includes("xmlSheet('Coverage'"));
 assert(userSourceValue.includes("xmlSheet('Faction Coverage'"));
+assert(userSourceValue.includes("xmlSheet('Consistency'"));
+assert(userSourceValue.includes('CONSISTENCY FLAGS'));
 console.log('MM Faction Armory alpha.23 audit regressions: PASS');
