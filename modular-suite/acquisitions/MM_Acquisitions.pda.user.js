@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.28-pda.15
+// @version      8.0.0-alpha.29-pda.16
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -5085,6 +5085,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function armoryRequestHtml(){
     if(!armoryRequest)return '';
+    const inventoryRestock=armoryRequest?.requestKind==='inventory-restock';
+    const requestLabel=inventoryRestock?'Inventory restock request':'Faction Armory request';
+    const requestReason=String(armoryRequest.armoryReason||(inventoryRestock?'Inventory replenishment':'Faction requirement'));
     const sources=Array.isArray(armorySources?.sources)?armorySources.sources:[];
     const rows=sources.length?sources.map(source=>
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:6px 0;font-size:11px;">'+
@@ -5093,10 +5096,12 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         '<button data-armory-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(source.source===armoryRequest.preferredSource)+(busy?'opacity:.5;':'')+'">Use '+esc(source.source)+'</button>'+
       '</div>'
     ).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">No live source comparison loaded yet.</div>';
-    return card(
+    return (armoryRequest?.requestKind==='inventory-restock'?armoryRequestHtml():'')+
+    inventoryRestockHtml()+
+    card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-        '<div><b>Faction Armory request: '+esc(armoryRequest.itemName)+'</b>'+
-          '<div style="font-size:10px;color:#888;">Need '+Number(armoryRequest.qty||1).toLocaleString()+' · '+esc(armoryRequest.armoryReason||'Faction requirement')+'</div>'+
+        '<div><b>'+esc(requestLabel)+': '+esc(armoryRequest.itemName)+'</b>'+
+          '<div style="font-size:10px;color:#888;">Need '+Number(armoryRequest.qty||1).toLocaleString()+' · '+esc(requestReason)+'</div>'+
         '</div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
           '<button id="mm-acq-armory-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Compare Sources</button>'+
@@ -5143,7 +5148,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       }else{
         statusText='Could not route '+armoryRequest.itemName+': '+String(result?.reason||'no live source')+'.';
       }
-    }catch(error){statusText='Armory procurement routing failed: '+(error?.message||String(error));}
+    }catch(error){statusText='Procurement routing failed: '+(error?.message||String(error));}
     finally{busy=false;render();}
   }
 
@@ -5152,8 +5157,15 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     try{
       channel=new BroadcastChannel(CHANNEL);
       channel.addEventListener('message',event=>{
-        if(event?.data?.type!=='armory-acquisition-request')return;
-        armoryRequest={...(event.data.payload||{})};
+        const type=String(event?.data?.type||'');
+        if(type==='state-updated'){
+          const root=document.getElementById(ROOT_ID);
+          if(!root||root.style.display==='none')return;
+          readSharedState().then(next=>{state=next;render();}).catch(()=>{});
+          return;
+        }
+        if(type!=='armory-acquisition-request')return;
+        armoryRequest={...(event.data.payload||{}),requestKind:'faction-armory'};
         armorySources=null;
         activeView=String(armoryRequest.preferredSource||'').toLowerCase()==='overseas'?'travel':'deals';
         open();
@@ -5391,6 +5403,41 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       busy=false;
       render();
     }
+  }
+
+  function inventoryRestockDemands(){
+    const raw=state?.operations?.inventoryRoi?.restockDemand;
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return [];
+    const priority={URGENT:0,HIGH:1,NORMAL:2};
+    return Object.values(raw)
+      .filter(row=>/^\d+$/.test(String(row?.itemId||''))&&Number(row?.deficit||0)>0&&String(row?.status||'OPEN')==='OPEN')
+      .sort((a,b)=>
+        (priority[String(a?.urgency||'NORMAL')]??9)-(priority[String(b?.urgency||'NORMAL')]??9)||
+        Number(b?.sellVelocityUnitsPerDay||0)-Number(a?.sellVelocityUnitsPerDay||0)||
+        Number(b?.deficit||0)-Number(a?.deficit||0)||
+        String(a?.itemName||'').localeCompare(String(b?.itemName||''))
+      );
+  }
+
+  function inventoryRestockHtml(){
+    const rows=inventoryRestockDemands();
+    if(!rows.length)return '';
+    const urgent=rows.filter(row=>String(row?.urgency||'')==='URGENT').length;
+    return card(
+      '<details open><summary style="cursor:pointer;"><b>Inventory Restock Demand</b> · '+rows.length.toLocaleString()+' item(s)'+(urgent?' · '+urgent+' urgent':'')+'</summary>'+
+      '<div style="font-size:10px;color:#888;margin:5px 0;">Produced by MM_Inventory Manager. Acquisitions only reads this queue and verifies sourcing; final purchase/travel remains manual.</div>'+
+      '<div style="max-height:280px;overflow:auto;">'+rows.map(row=>{
+        const urgency=String(row?.urgency||'NORMAL');
+        const color=urgency==='URGENT'?'#ffaaaa':urgency==='HIGH'?'#ffd18a':'#aaa';
+        const freshness=String(row?.marketFreshness||'MISSING');
+        return '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:7px 0;font-size:11px;">'+
+          '<div style="min-width:0;flex:1 1 auto;"><b>'+esc(row?.itemName||('Item '+row?.itemId))+'</b> <span style="color:#777;">['+esc(row?.itemId||'')+']</span> <b style="font-size:10px;color:'+color+';">'+esc(urgency)+'</b>'+
+          '<div style="font-size:10px;color:#888;margin-top:2px;">Need '+Number(row?.deficit||0).toLocaleString()+' · stock '+Number(row?.currentQuantity||0).toLocaleString()+'/'+Number(row?.desiredQuantity||0).toLocaleString()+
+          ' · sell '+Number(row?.sellVelocityUnitsPerDay||0).toFixed(2)+'/day · liquidity '+Number(row?.liquidityScore||0).toFixed(0)+' · market '+esc(freshness)+'</div></div>'+
+          '<button data-inventory-restock-id="'+esc(row?.itemId||'')+'" data-inventory-restock-name="'+esc(row?.itemName||'')+'" data-inventory-restock-qty="'+esc(row?.deficit||1)+'" style="'+button(urgency==='URGENT')+'white-space:nowrap;">Compare Sources</button>'+
+        '</div>';
+      }).join('')+'</div></details>'
+    );
   }
 
   function pricelistRows(){
@@ -6269,7 +6316,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.28-pda.15 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.29-pda.16 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -6330,6 +6377,16 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     root.querySelector('#mm-acq-pl-prev')?.addEventListener('click',()=>{pricelistPage=Math.max(0,pricelistPage-1);render();});
     root.querySelector('#mm-acq-pl-next')?.addEventListener('click',()=>{pricelistPage++;render();});
     root.querySelectorAll('[data-pricelist-source]').forEach(b=>b.addEventListener('click',()=>routePricelistSource(b.dataset.pricelistId,b.dataset.pricelistName,b.dataset.pricelistSource)));
+    root.querySelectorAll('[data-inventory-restock-id]').forEach(b=>b.addEventListener('click',()=>{
+      const id=String(b.dataset.inventoryRestockId||'');
+      const itemName=String(b.dataset.inventoryRestockName||('Item '+id));
+      const qty=Math.max(1,Number(b.dataset.inventoryRestockQty||1));
+      armoryRequest={itemId:id,itemName,qty,preferredSource:'Best',requestKind:'inventory-restock',armoryReason:'Inventory deficit · source replacement stock'};
+      armorySources=null;
+      statusText='Inventory restock requested '+itemName+' x'+qty.toLocaleString()+'. Comparing Bazaar, Item Market and travel sources…';
+      render();
+      setTimeout(refreshArmorySources,80);
+    }));
     root.querySelectorAll('[data-pricelist-check]').forEach(b=>b.addEventListener('click',()=>{
       const id=String(b.dataset.pricelistCheck||'');
       const name=String(b.dataset.pricelistName||'');
@@ -6362,7 +6419,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     }));
     root.querySelector('#mm-acq-armory-refresh')?.addEventListener('click',refreshArmorySources);
     root.querySelector('#mm-acq-armory-travel-agency')?.addEventListener('click',()=>{location.href='https://www.torn.com/travelagency.php';});
-    root.querySelector('#mm-acq-armory-clear')?.addEventListener('click',()=>{armoryRequest=null;armorySources=null;statusText='Faction Armory acquisition request cleared.';render();});
+    root.querySelector('#mm-acq-armory-clear')?.addEventListener('click',()=>{const kind=armoryRequest?.requestKind;armoryRequest=null;armorySources=null;statusText=kind==='inventory-restock'?'Inventory restock source comparison cleared.':'Faction Armory acquisition request cleared.';render();});
     root.querySelectorAll('[data-armory-route]').forEach(b=>b.addEventListener('click',()=>routeArmoryRequest(b.dataset.armoryRoute||'Best')));
     root.querySelector('#mm-acq-catalog-refresh')?.addEventListener('click',()=>refreshItemCatalog({silent:false}));
     root.querySelector('#mm-acq-pricelist-refresh')?.addEventListener('click',refreshPricelist);
