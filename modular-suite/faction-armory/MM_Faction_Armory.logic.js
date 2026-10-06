@@ -1017,6 +1017,38 @@
       }
     }
 
+    const consistencyIssues=[];
+    for(const row of memberCoverage){
+      if(row.memberHas&&row.memberHasScore>0&&row.needFloor>0&&row.memberHasScore>=row.needFloor&&
+        !row.ready&&!['WAR READY','PROCUREMENT PASS'].includes(row.route)){
+        consistencyIssues.push({
+          type:'EQUIPMENT_SCORE_MISMATCH',
+          memberId:row.memberId,
+          memberName:row.memberName,
+          slot:row.slot,
+          item:row.memberHas,
+          detail:'Current equipped score '+row.memberHasScore.toFixed(2)+' meets/exceeds floor '+row.needFloor.toFixed(2)+' but route is '+row.route+'.'
+        });
+      }
+    }
+    for(const member of rows){
+      for(const item of Array.isArray(member?.profile?.equipment?.items)?member.profile.equipment.items:[]){
+        const numericSlot=Number(item?.slotId??item?.slot_id??item?.slot);
+        const explicit=[item?.slot,item?.type,item?.subType,item?.sub_type].map(value=>String(value||'').toLowerCase()).join(' ');
+        if(numericSlot===5||/\btemporary\b/.test(explicit))continue;
+        if(String(item?.name||'').trim()&&!equipmentSlot(item)){
+          consistencyIssues.push({
+            type:'UNMAPPED_EQUIPMENT',
+            memberId:member.memberId,
+            memberName:member.memberName,
+            slot:'',
+            item:String(item.name||''),
+            detail:'Equipped combat item could not be mapped to a standard slot; review API slot/type normalization.'
+          });
+        }
+      }
+    }
+
     const factionCoverage=STANDARD_SLOTS.map(slot=>{
       const stock=Object.values(factionInventory?.current||{}).filter(item=>equipmentSlot(item)===slot);
       const activeMemberRows=memberCoverage.filter(row=>row.slot===slot&&!['WAR READY','PROCUREMENT PASS'].includes(row.route));
@@ -1035,7 +1067,7 @@
       };
     });
 
-    return {mode,procurementMode,members:rows,memberCoverage,factionCoverage,plan};
+    return {mode,procurementMode,members:rows,memberCoverage,factionCoverage,consistencyIssues,plan};
   }
 
   function loanMap(factionInventory={}){
