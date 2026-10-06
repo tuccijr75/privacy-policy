@@ -2490,8 +2490,8 @@
       procurementMode,
       budgetCap:acquisitionBudget
     });
-    const minimums=isWar?null:logic.minimumProposal(state?.factionInventory||{},{
-      mode:'peace',
+    const minimums=logic.minimumProposal(state?.factionInventory||{},{
+      mode:stockMode,
       procurementMode
     });
     const procurementPasses=members.filter(row=>row.procurementPassCurrent);
@@ -2501,7 +2501,8 @@
     const memberNeeds=isWar
       ? plan.assignments.filter(row=>row.route==='ACQUIRE'&&nonReady.has(row.memberId))
       : [];
-    const minNeeds=isWar?[]:(minimums?.actionable||[]).filter(row=>num(row.shortfall)>0);
+    const minNeeds=(minimums?.actionable||[]).filter(row=>num(row.shortfall)>0&&(isWar?row.kind!=='equipment':true));
+    const heldNeeds=(minimums?.held||[]).filter(row=>num(row.shortfall)>0&&(isWar?row.kind!=='equipment':true));
     const priceRows=plan.list.map(row=>({row,band:acquisitionPriceBand(row)}));
     const priced=priceRows.filter(item=>item.band.priced);
     const plannedTotal=priced.reduce((sum,item)=>sum+item.band.planningTotal,0);
@@ -2520,8 +2521,11 @@
         'Approved War Ready: '+members.filter(row=>row.readinessStatus==='WAR READY').length,
         'Procurement Pass / Excluded: '+procurementPasses.length,
         'Active acquisition members: '+nonReady.size,
-        'Scope: WAR ONLY — active member equipment plus war equipment spares.',
-        'Routine minimum-stock replenishment is deferred until Peace mode.',
+        'Scope: WAR — active member equipment, two equipment spares per slot, and approved war-stock shortfalls.',
+        minimums?.xanax
+          ? 'Xanax: '+minimums.xanax.policy.investmentPosture.toUpperCase()+' vs '+(minimums.xanax.opponentFactionName||'unresolved rival')+
+            ' · matchup target '+fmt(minimums.xanax.recommendedTarget)+' · leadership ceiling '+fmt(minimums.xanax.leadershipCeiling)
+          : 'Xanax: estimator unavailable.',
         '',
         'INDIVIDUAL MEMBER WAR BUILD NEEDS'
       );
@@ -2536,6 +2540,19 @@
         }
       }else{
         lines.push('- No member build equipment currently requires purchase.');
+      }
+
+      lines.push('','WAR STOCK SHORTFALLS');
+      if(minNeeds.length){
+        for(const need of minNeeds){
+          lines.push('- '+need.item+' · have '+fmt(need.current)+' / min '+fmt(need.effectiveMin)+' · acquire '+fmt(need.shortfall));
+        }
+      }else{
+        lines.push('- No approved war-stock shortfalls currently require acquisition.');
+      }
+      if(heldNeeds.length){
+        lines.push('','SHORTFALLS ON HOLD');
+        for(const need of heldNeeds)lines.push('- '+need.item+' · short '+fmt(need.shortfall)+' · HOLD / DO NOT ORDER');
       }
     }else{
       lines.push(
@@ -2738,7 +2755,8 @@
 
   function sourceStrip(){
     const fi=state?.factionInventory||{};
-    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · equipment prices '+when(fi.equipmentMarketCatalog?.fetchedAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
+    const rival=fi.warPlanning?.currentWar?.opponentFactionName||'none';
+    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · market refs '+when(fi.equipmentMarketCatalog?.fetchedAt)+' · rival '+esc(rival)+' '+when(fi.warPlanning?.opponent?.fetchedAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
   }
 
   function createPanel(){
