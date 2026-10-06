@@ -341,9 +341,10 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.22.5';"));
-assert(userSource.includes('// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/faction-armory/MM_Faction_Armory.user.js'));
-assert(userSource.includes('// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/faction-armory/MM_Faction_Armory.user.js'));
+assert(userSource.includes("const VERSION='8.0.0-alpha.23';"));
+assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
+assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
+assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b7b667ade46725d0900d51d1f4a93c3432590bc4/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -352,7 +353,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.22.5';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.23';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -360,7 +361,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.22.5';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.23';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -459,8 +460,8 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.22.5';"));
-assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.4'));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.23';"));
+assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
 assert(userSourceValue.includes('Find Best Source'));
@@ -500,7 +501,7 @@ assert(userSourceValue.includes('function leaderAcquisitionReport'),'leader acqu
 assert(userSourceValue.includes('ESTIMATED TOTAL ACQUISITION COST'),'leader report must contain total low/high acquisition cost');
 assert(userSourceValue.includes('PRICE RANGE'),'Acquire rows must expose low/high price estimates');
 assert(userSourceValue.includes('#mce_0'),'Armory messaging must use the shared current Torn TinyMCE compose contract');
-assert(userSourceValue.includes('MM_Faction_Armory.logic.js?v=8.0.0-alpha.4'),'alpha20 must load the expanded logic contract');
+assert(userSourceValue.includes('MM_Faction_Armory.logic.js'),'Armory must load the expanded logic contract');
 assert(userSourceValue.includes("/torn/items?cat=All&sort=ASC"),'explicit faction refresh must collect broad Torn market-price references');
 assert(userSourceValue.includes('equipmentMarketCatalog'),'current Torn equipment-price references must be cached in faction state');
 assert(userSourceValue.includes('function equipmentStatsText'),'equipment stat display helper must exist');
@@ -517,3 +518,77 @@ assert(userSourceValue.includes("!item.ready&&!['OWNED','LOANED'].includes(item.
 assert.strictEqual((userSourceValue.match(/MutationObserver/g)||[]).length,0,'equipment alternatives must not add document-wide mutation observers');
 assert.strictEqual((userSourceValue.match(/setInterval\(/g)||[]).length,1,'equipment alternatives must not add new background polling intervals');
 console.log('MM Faction Armory acquisition handoff regression: PASS');
+
+// Alpha.23 equipment-ingestion, procurement-pass, quantity-override and coverage regressions.
+assert.strictEqual(logic.equipmentSlot({name:'Unknown Primary',slotId:1,damage:70,accuracy:60}),'primary','authoritative numeric equipment slot 1 must map to primary');
+assert.strictEqual(logic.equipmentSlot({name:'Unknown Melee',slot:3,damage:70,accuracy:60}),'melee','authoritative numeric equipment slot 3 must map to melee');
+assert.strictEqual(logic.equipmentSlot({name:'Metal Nunchaku'}),'melee','common singular Metal Nunchaku spelling must resolve to the canonical melee catalog entry');
+
+const alpha23VerifiedAt=new Date().toISOString();
+const alpha23Faction={
+  current:{},
+  memberReadiness:{
+    roster:{
+      '2301':{memberId:'2301',memberName:'Morpheus2126',level:50},
+      '2302':{memberId:'2302',memberName:'No Data',level:20}
+    },
+    profiles:{
+      '2301':{
+        stats:{strength:1000,defense:1000,speed:1000,dexterity:1000},
+        equipment:{summary:'',items:[
+          {name:'AK-47',slotId:1,damage:70,accuracy:65},
+          {name:'BT MP9',slotId:2,damage:70,accuracy:65},
+          {name:'Metal Nunchaku',slotId:3,damage:66,accuracy:65},
+          {name:'Combat Vest',slotId:4,armor:45},
+          {name:'Combat Helmet',slotId:6,armor:45},
+          {name:'Combat Pants',slotId:7,armor:45},
+          {name:'Combat Boots',slotId:8,armor:45},
+          {name:'Combat Gloves',slotId:9,armor:45}
+        ]},
+        ownedEquipment:{items:[]},
+        verifiedAt:alpha23VerifiedAt
+      },
+      '2302':{
+        equipment:{summary:'',items:[]},
+        procurementPass:{status:'PASS',approvedAt:alpha23VerifiedAt,verifiedAt:'',reason:'No current member data'}
+      }
+    },
+    settings:{staleHours:72}
+  }
+};
+const alpha23Rows=logic.memberRows(alpha23Faction,[],{procurementMode:'budget'});
+const alpha23Morpheus=alpha23Rows.find(row=>row.memberId==='2301');
+const alpha23Melee=alpha23Morpheus.buildAssessment.items.find(item=>item.slot==='melee');
+assert.strictEqual(alpha23Melee.currentName,'Metal Nunchaku');
+assert.strictEqual(alpha23Melee.route,'KEEP','current Metal Nunchaku above the melee readiness floor must never be acquired/replaced');
+assert.strictEqual(alpha23Melee.ready,true);
+
+const alpha23Passed=alpha23Rows.find(row=>row.memberId==='2302');
+assert.strictEqual(alpha23Passed.procurementPassCurrent,true);
+assert.strictEqual(alpha23Passed.acquisitionDisposition,'PROCUREMENT PASS');
+const alpha23Plan=logic.acquisitionPlan(alpha23Faction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+assert(!alpha23Plan.assignments.some(row=>row.memberId==='2302'),'current Procurement Pass must remove a missing-data member from War acquisition blockers');
+
+const alpha23OverrideRow=alpha23Plan.list[0];
+if(alpha23OverrideRow){
+  const overrideKey=logic.acquisitionOverrideKey('war','budget',alpha23OverrideRow);
+  alpha23Faction.acquisitionPlanning={quantityOverrides:{[overrideKey]:{qty:0,updatedAt:alpha23VerifiedAt}}};
+  const overridden=logic.acquisitionPlan(alpha23Faction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+  const row=overridden.list.find(item=>item.quantityOverrideKey===overrideKey);
+  assert(row&&row.systemQty>=0);
+  assert.strictEqual(row.qty,0,'manual per-item planned quantity must support zero');
+  assert.strictEqual(row.manualQtyOverride,0);
+}
+const alpha23Coverage=logic.coverageComparison(alpha23Faction,{mode:'war',procurementMode:'budget',budgetCap:15000000});
+assert.strictEqual(alpha23Coverage.memberCoverage.length,16,'coverage export must emit eight standard combat slots per two-member fixture');
+assert.strictEqual(alpha23Coverage.factionCoverage.length,8,'coverage export must emit one faction summary per standard combat slot');
+
+assert(userSourceValue.includes('Pass / Exclude Acquisition'));
+assert(userSourceValue.includes('PROCUREMENT PASS'));
+assert(userSourceValue.includes('data-save-acq-qty'));
+assert(userSourceValue.includes('SYSTEM BUY'));
+assert(userSourceValue.includes('PLANNED BUY'));
+assert(userSourceValue.includes('data-view="coverage"'));
+assert(userSourceValue.includes("xmlSheet('Coverage'"));
+assert(userSourceValue.includes("xmlSheet('Faction Coverage'"));
+console.log('MM Faction Armory alpha.23 audit regressions: PASS');
