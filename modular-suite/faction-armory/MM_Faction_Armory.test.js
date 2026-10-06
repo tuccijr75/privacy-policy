@@ -344,7 +344,7 @@ new Function(userSource);
 assert(userSource.includes("const VERSION='8.0.0-alpha.24.2';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
-assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9109ad4eff4ff9fc2ac688018b8fdc4e014312bc/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
+assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@2c85d554254bdcc4e3d1334f9fdc23eb3fd5ba42/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -635,4 +635,22 @@ assert(userSourceValue.includes('emptyConfirmed:equipmentEmptyConfirmed'),'valid
 assert(userSourceValue.includes('No combat equipment equipped (API confirmed)'),'Members UI must distinguish confirmed-empty combat equipment from missing/stale data');
 assert(!userSourceValue.includes('No equipped items could be parsed; no profile was changed.'),'valid empty equipment must no longer be rejected by the obsolete summary guard');
 console.log('MM Faction Armory alpha.24.2 empty-equipment regression: PASS');
+
+const morpheusLiveProfile={
+  stats:{strength:2017,defense:1716,speed:1015,dexterity:1453},
+  equipment:{summary:'MELEE: Metal Nunchaku: DMG 62.13/ACC 60.18',items:[
+    {name:'Metal Nunchaku',slotId:3,slot:'melee',damage:62.13,accuracy:60.18}
+  ]},
+  verifiedAt:new Date().toISOString()
+};
+const morpheusLiveRow={memberId:'4482483',memberName:'Morpheus2126',stats:morpheusLiveProfile.stats,profile:morpheusLiveProfile,loanItems:[]};
+const morpheusLiveBuild=logic.compareMemberBuild(morpheusLiveRow,{current:{}},[morpheusLiveRow],{procurementMode:'budget'});
+const morpheusLiveMelee=morpheusLiveBuild.items.find(item=>item.slot==='melee');
+assert(morpheusLiveMelee,'Morpheus live melee row must exist');
+assert.strictEqual(morpheusLiveMelee.currentName,'Metal Nunchaku');
+assert.strictEqual(morpheusLiveMelee.route,'KEEP','neutral readiness must not turn Morpheus\'s adequate Metal Nunchaku into an upgrade because of style bias');
+assert(morpheusLiveMelee.currentScore>=morpheusLiveMelee.readinessFloor,'Morpheus live Metal Nunchaku must clear the objective melee floor');
+assert(userSourceValue.includes('neutral gear performance determines readiness, while member style ranks qualifying alternatives')||logic.warReadinessStandard(morpheusLiveRow,{current:{}},[morpheusLiveRow],{procurementMode:'budget'}).methodology.includes('neutral gear performance determines readiness'),'readiness methodology must separate objective pass/fail from alternative ranking');
+console.log('MM Faction Armory alpha.24.2 objective-readiness regression: PASS');
+
 
