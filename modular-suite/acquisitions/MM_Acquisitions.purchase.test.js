@@ -169,7 +169,7 @@ const pdaBuilder=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
 assert(pdaBuilder.includes('def replace_once('));
 assert(pdaBuilder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(pdaBuilder.includes('"MMTornMarketPulse"'));
-assert(pdaBuilder.includes('default=13'));
+assert(pdaBuilder.includes('default=14'));
 assert(pdaBuilder.includes('f"v{base_version}"'));
 assert(pdaBuilder.includes('f"v{pda_version}"'));
 assert(!pdaBuilder.includes('PROFIT / RANKED / TRAVEL'));
