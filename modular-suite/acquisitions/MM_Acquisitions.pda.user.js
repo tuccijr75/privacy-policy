@@ -2,7 +2,7 @@
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
 // @version      8.0.0-alpha.26-pda.13
-// @description  Easy TornPDA buying workflow: find items, compare Bazaar, Item Market and travel prices, then open a source and buy manually.
+// @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
