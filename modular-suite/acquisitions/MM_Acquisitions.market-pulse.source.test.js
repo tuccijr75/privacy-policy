@@ -44,7 +44,7 @@ for(let i=1;i<sectionOrder.length;i++)assert(sectionOrder[i]>sectionOrder[i-1],'
 
 assert(builder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(builder.includes('"MMTornMarketPulse"'));
-assert(builder.includes('default=13'));
+assert(builder.includes('default=14'));
 assert(builder.includes('MM_Acquisitions.market-pulse.js'));
 
 for(const re of [
