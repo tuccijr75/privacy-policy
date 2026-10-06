@@ -626,8 +626,8 @@ assert(userSourceValue.includes("if(route==='KEEP')return String(item.currentNam
 assert(userSourceValue.includes("if(route==='ISSUE')return String(item.factionOptionName"),'ISSUE rows must display the faction item being issued');
 assert(userSourceValue.includes('Advanced / Full Roster Builds'),'detailed build evidence must remain available behind the compact interface');
 assert(userSourceValue.includes('function minimumOpenInputs'),'Minimums must compute explicit unresolved manager/leadership inputs');
-assert(userSourceValue.includes('Manager Minimums Proposal'),'Minimums must present the calculated values as the manager proposal');
-assert(userSourceValue.includes('These are Inventory Manager numbers for Leadership approval'),'Leadership must approve/adjust proposed quantities rather than invent them');
+assert(userSourceValue.includes('War Stock Control'),'Minimums must present live Have / Suggested / Effective Minimum / Shortfall controls');
+assert(userSourceValue.includes('Acquire uses the same effective minimum shown here.'),'Minimums must state that dependent acquisition values derive from the same state');
 assert(userSourceValue.includes("xmlSheet('Open Inputs'"),'Leadership workbook must include unresolved proposal inputs');
 assert.strictEqual((userSourceValue.match(/function buildsHtml\(/g)||[]).length,1,'Quick Build must remain the single normal Builds renderer');
 assert.strictEqual((userSourceValue.match(/function advancedBuildsHtml\(/g)||[]).length,1,'detailed build renderer must exist once');
