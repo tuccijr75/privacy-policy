@@ -1,7 +1,7 @@
 # MM Trade Manager
 
 **Status:** non-production foundation candidate  
-**Version:** `0.1.0-alpha.2`  
+**Version:** `0.1.0-alpha.3`  
 **Responsibility:** `TRADE / VALUE / RECORD`
 
 MM Trade Manager is a separate operational product from **MM Trade Chat Assistant**. Trade Chat Assistant remains responsible for trade-chat/forum messaging. Trade Manager is responsible for direct trade contents, valuation, completed-trade records, margin context, and inventory reconciliation handoff.
@@ -83,7 +83,7 @@ No stable/customer publication is authorized by this foundation.
 
 ## TornPDA
 
-TornPDA uses a self-contained `0.1.0-alpha.2-pda.2` bundle. The bundle:
+TornPDA uses a self-contained `0.1.0-alpha.3-pda.2` bundle. The bundle:
 
 - uses lexical `PDA_storage` for durable shared state;
 - uses `PDA_httpGet` only as a thin GET fallback when the runtime does not provide `GM_xmlhttpRequest`;
