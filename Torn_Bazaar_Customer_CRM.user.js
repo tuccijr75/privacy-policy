@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn Bazaar Customer CRM
 // @namespace    manic-mike.torn.crm
-// @version      7.4.20
+// @version      7.4.21
 // @description  Bazaar operations CRM with unified smart refresh, trusted market pricing, procurement intelligence, financial exports, customer automation, travel intelligence, and IndexedDB storage.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v7.4-faction-inventory-manager/Torn_Bazaar_Customer_CRM.user.js
@@ -29,7 +29,7 @@
     // CONFIGURATION
     // ============================================================
 
-    const VERSION = '7.4.20';
+    const VERSION = '7.4.21';
     const SHOP_NAME = "MANIC'S MAD HOUSE";
     const FAVORITE_PLAYER_NAME = 'Manic-Mike';
     const OWNER_TORN_ID = '4325346';
@@ -155,7 +155,7 @@
         pricing: 'Use the 7-day average Item Market/Bazaar price as the buying baseline. Up to a 5% premium may be paid when immediate restocking is required for an upcoming war or chain. Anything above a 5% premium requires separate Leadership approval before purchase.',
         stock: 'Leadership authorized the Inventory Manager to establish provisional minimum stock levels and war reserves from current usage and upcoming-war estimates. Bring provisional numbers to Leadership before the next Ranked War for formal sign-off; signed-off values become official faction thresholds.',
         precedent: 'Leadership reports approximately 3,000 sweets were restocked after the September Ranked War and more than 1,800 remain, illustrating that properly managed inventory can have a long lifespan.',
-        loans: 'All members may borrow armor and temporary weapons for chains, Ranked Wars, and training. Send a courteous reminder at 7 days, a final warning at 10 days, and escalate at 14 days to Leadership and the Supervisor if the item remains unreturned without prior arrangement. Leadership retains formal enforcement and vault-deduction authority.',
+        loans: 'All members may borrow permitted weapons, armor, and temporary items for chains, Ranked Wars, and training. Send a courteous reminder at 7 days, a final warning at 10 days, and escalate at 14 days to Leadership and the Supervisor if the item remains unreturned without prior arrangement. Leadership retains formal enforcement and vault-deduction authority.',
         highValue: 'High-value Ranked War equipment remains in the vault and is distributed by leadership immediately before war.',
         purchasing: 'Routine medical supplies, blood bags, and essential temporary replenishment may use pre-approved faction funds up to $5,000,000 per transaction and $15,000,000 per week. Any single purchase or restock batch above $5,000,000 requires explicit Leadership or Banker approval. Log transactions, receipts, and market purchases in the logistics ledger for Banker reconciliation.',
         reporting: 'Deliver a Pre-War Readiness Report 24–48 hours before every Ranked War, a Weekly Inventory Summary every Sunday, and immediate escalation for major shortages, missing high-value gear, or unexplained inventory losses.'
@@ -11980,9 +11980,9 @@
             { phase:'1. Establish armory control', cadence:'Now / once, then verify after permission changes', action:'Confirm Faction → Inventory API access; maintain a clean baseline; verify unlocked armories; audit access and submit recommended permission changes. Direct permission control remains with Leadership during the 2–3 week stabilization period.', owner:'Inventory Manager + Leadership for permission changes', status:Object.keys(db.factionInventory?.current || {}).length ? 'ACTIVE' : 'BLOCKED — API/SNAPSHOT', evidence:'Torn snapshot + access audit entry' },
             { phase:'2. Establish accountable records', cadence:'Every material transaction', action:'Record purchases, distributions, returns, loans, adjustments, access audits, and readiness checks. Purchases require receipts/market evidence and approval references where applicable.', owner:'Inventory Manager', status:ledger.length ? 'ACTIVE — ' + ledger.length + ' ledger entry(s)' : 'START NOW', evidence:'Logistics Ledger + snapshot/event history' },
             { phase:'3. Establish and maintain minimums', cadence:'Weekly recalculation + formal review before next Ranked War', action:'Maintain the Manager Minimums Proposal: 14-day observed depletion plus explicit reserves for stackables, and a 25% roster + two-spare routine loaner pool per weapon/armor slot. Filled blood-bag mix remains data-required. Submit min/max bands to Leadership for approval.', owner:'Inventory Manager proposes; Leadership approves thresholds', status:minimums.actionable.length ? 'ACTION — '+minimums.actionable.length+' proposal shortfall(s)' : minimums.dataRequired.length ? 'DATA REQUIRED — '+minimums.dataRequired.length : 'READY', evidence:minimums.proposals.length+' proposal row(s); confidence '+minimums.confidence+'; '+minimums.observedDays.toFixed(1)+' observed day(s)' },
-            { phase:'4. Maintain readiness', cadence:'24–48h before every Ranked War + daily exceptions', action:'Check medical stock, blood-bag capacity/type mix, Ipecac, essential temporary weapons, consumables, armor availability, and shortage risk. Escalate major shortages, missing high-value gear, or unexplained inventory loss immediately.', owner:'Inventory Manager', status:critical.length ? 'CRITICAL — ' + critical.length + ' severe shortfall(s)' : shortfalls.length ? 'ACTION — ' + shortfalls.length + ' configured shortfall(s)' : 'MONITOR', evidence:'Pre-War Readiness Report + War Readiness Baseline' },
+            { phase:'4. Maintain readiness', cadence:'24–48h before every Ranked War + daily exceptions', action:'Check medical stock, blood-bag capacity/type mix, Ipecac, core temporary items, consumables, weapon pools, armor availability, and shortage risk. Escalate major shortages, missing high-value gear, or unexplained inventory loss immediately.', owner:'Inventory Manager', status:critical.length ? 'CRITICAL — ' + critical.length + ' severe shortfall(s)' : shortfalls.length ? 'ACTION — ' + shortfalls.length + ' configured shortfall(s)' : 'MONITOR', evidence:'Pre-War Readiness Report + War Readiness Baseline' },
             { phase:'5. Source and replenish', cadence:'After material use / when below target', action:'Use faction-member bazaars first when pricing matches market, then trusted aligned/bulk sellers, then Item Market/public bazaars. Use the 7-day market/bazaar average as baseline; urgent premium cap is '+FACTION_PRICE_PREMIUM_CAP_PCT+'%. Routine authority is '+money(FACTION_PURCHASE_TRANSACTION_LIMIT)+' per transaction / '+money(FACTION_PURCHASE_WEEKLY_LIMIT)+' per week; exceptions require Leadership/Banker approval.', owner:'Inventory Manager within approved funds; Bankers/Leadership for exceptions', status:baseline.belowTarget || shortfalls.length ? 'ACTION' : 'MONITOR', evidence:'War Readiness Baseline + Restock Plan + logistics ledger' },
-            { phase:'6. Control loans and distribution', cadence:'Daily exception review + active war/chain support', action:'Track armor/temp loans. Send reminder at '+FACTION_LOAN_REMINDER_DAYS+' days, final warning at '+FACTION_LOAN_FINAL_WARNING_DAYS+' days, and escalate to Leadership + Supervisor at '+FACTION_LOAN_ESCALATION_DAYS+' days absent prior arrangement. High-value RW distribution remains leadership-controlled.', owner:'Inventory Manager; Leadership/Supervisor handle formal enforcement', status:loanEscalations ? 'ESCALATE — '+loanEscalations : loanWarnings ? 'FINAL WARNING — '+loanWarnings : loanReminders ? 'REMIND — '+loanReminders : loans.length ? 'MONITOR — '+loans.length+' loan row(s)' : 'CLEAR', evidence:'Loan ledger + UID/snapshot persistence' },
+            { phase:'6. Control loans and distribution', cadence:'Daily exception review + active war/chain support', action:'Track weapon/armor/temp loans. Send reminder at '+FACTION_LOAN_REMINDER_DAYS+' days, final warning at '+FACTION_LOAN_FINAL_WARNING_DAYS+' days, and escalate to Leadership + Supervisor at '+FACTION_LOAN_ESCALATION_DAYS+' days absent prior arrangement. High-value RW distribution remains leadership-controlled.', owner:'Inventory Manager; Leadership/Supervisor handle formal enforcement', status:loanEscalations ? 'ESCALATE — '+loanEscalations : loanWarnings ? 'FINAL WARNING — '+loanWarnings : loanReminders ? 'REMIND — '+loanReminders : loans.length ? 'MONITOR — '+loans.length+' loan row(s)' : 'CLEAR', evidence:'Loan ledger + UID/snapshot persistence' },
             { phase:'7. Report and improve', cadence:'Sunday weekly + 24–48h pre-war + immediate exceptions', action:'Deliver the Weekly Inventory Summary every Sunday and Pre-War Readiness Report 24–48 hours before Ranked Wars. Immediate exception reporting applies to major shortages, missing high-value gear, or unexplained inventory losses.', owner:'Inventory Manager', status:'ACTIVE', evidence:'Faction Inventory Leadership Workbook' }
         ];
         return { plan, rows, report, loans, baseline, minimums, ledger, configured, shortfalls, critical, estimatedRestockCost, questions:factionLeadershipQuestions(db) };
@@ -12734,7 +12734,7 @@
                 'API: <b>'+escapeHtml(keyMode)+'</b> · Torn source snapshot: <b>'+escapeHtml(fmtDate(state.inventoryTimestamp))+'</b> · Last fetch: '+escapeHtml(fmtDate(state.lastSyncAt))+'<br>'+
                 'Source rows / metadata: <b>'+escapeHtml(sourceCountText || 'No source-category diagnostics yet')+'</b><br>'+
                 'Next useful refresh: ~'+escapeHtml(nextRefresh)+' because Torn caches the inventory selection for one hour. CRM snapshots remain local and historical.<br>'+
-                'Planning basis: available for armor/temporary weapons, owned for medical/consumables. <b>Read-only:</b> this module never gives, retrieves, moves, buys, or consumes faction items.'+
+                'Planning basis: available for weapons/armor/temporary items, owned for medical/consumables. <b>Read-only:</b> this module never gives, retrieves, moves, buys, or consumes faction items.'+
             '</div>'+
             '<div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin-top:8px;">'+
                 '<div style="background:#121212;border:1px solid #333;border-radius:5px;padding:6px;"><b>'+allRows.length+'</b><br><span style="font-size:9px;color:#888;">ITEM TYPES</span></div>'+
@@ -12946,6 +12946,10 @@
     function factionInventorySelfTest() {
         const sourceAt = 1_700_000_000_000;
         const groups = [
+            {category:'weapons',inventoryTimestamp:sourceAt,rows:[
+                {id:10,name:'Test Rifle',type:'Rifle',damage:60,accuracy:55,amount:2,uids:[101,102],loaned:null},
+                {id:11,name:'Test Pistol',type:'Pistol',damage:45,accuracy:60,amount:1,uids:[111],loaned:null}
+            ]},
             {category:'armor',inventoryTimestamp:sourceAt,rows:[
                 {id:1,name:'Test Armor',type:'Armor',amount:2,uids:[11,12],loaned:null},
                 {id:1,name:'Test Armor',type:'Armor',amount:1,uids:[13],loaned:{id:99,name:'Member'}}
@@ -12956,6 +12960,7 @@
         ];
         const current = normalizeFactionInventoryResults(groups, sourceAt + 1000);
         const equipment = current['armor|1'];
+        const weapon = current['weapons|10'];
         const state = {snapshots:[],events:[]};
         const first = recordFactionInventorySnapshot(state,current,sourceAt,sourceAt+1000);
         const changed = deepClone(current);
@@ -12963,11 +12968,36 @@
         changed['armor|1'].loanedCount = 2;
         const second = recordFactionInventorySnapshot(state,changed,sourceAt+3600000,sourceAt+3601000);
         const merged = mergeFactionInventoryStates(
-            {current,inventoryTimestamp:new Date(sourceAt+3600000).toISOString(),lastSyncAt:new Date(sourceAt+3601000).toISOString(),snapshots:state.snapshots,events:state.events,thresholds:{'1':{target:3,basis:'available',updatedAt:new Date(sourceAt+1).toISOString()}},settings:{updatedAt:new Date(sourceAt+1).toISOString()},diagnostics:[]},
-            {current:{},inventoryTimestamp:new Date(sourceAt).toISOString(),lastSyncAt:new Date(sourceAt+1000).toISOString(),snapshots:[],events:[],thresholds:{},settings:{},diagnostics:[]}
+            {current,inventoryTimestamp:new Date(sourceAt+3600000).toISOString(),lastSyncAt:new Date(sourceAt+3601000).toISOString(),snapshots:state.snapshots,events:state.events,thresholds:{'1':{target:3,basis:'available',updatedAt:new Date(sourceAt+1).toISOString()}},sourceCategorySummary:{weapons:{rows:2,metadataTotal:2}},settings:{updatedAt:new Date(sourceAt+1).toISOString()},diagnostics:[]},
+            {current:{},inventoryTimestamp:new Date(sourceAt).toISOString(),lastSyncAt:new Date(sourceAt+1000).toISOString(),snapshots:[],events:[],thresholds:{},sourceCategorySummary:{},settings:{},diagnostics:[]}
         );
+
+        const member = {
+            memberId:'99',
+            memberName:'Member',
+            level:25,
+            statProfile:{ total:100000, dominant:'Strength', label:'STRENGTH-FOCUSED' }
+        };
+        const roster = [
+            member,
+            {memberId:'100',memberName:'Peer',level:20,statProfile:{total:50000,dominant:'Speed',label:'SPEED-FOCUSED'}},
+            {memberId:'101',memberName:'Peer2',level:30,statProfile:{total:150000,dominant:'Defense',label:'DEFENSE-FOCUSED'}},
+            {memberId:'102',memberName:'Peer3',level:15,statProfile:{total:25000,dominant:'Dexterity',label:'DEXTERITY-FOCUSED'}}
+        ];
+        const build = factionSimpleMemberBuild(member,roster,[
+            {itemId:'10',name:'Test Rifle',type:'Rifle',category:'weapon',damage:60,accuracy:55,quality:0,available:2,acquisition:'ISSUE FROM ARMORY'},
+            {itemId:'11',name:'Test Pistol',type:'Pistol',category:'weapon',damage:45,accuracy:60,quality:0,available:1,acquisition:'ISSUE FROM ARMORY'},
+            {itemId:'12',name:'Test Knife',type:'Slashing',category:'weapon',damage:40,accuracy:50,quality:0,available:0,acquisition:'PROCURE'},
+            {itemId:'20',name:'Test Helmet',type:'Helmet',category:'armor',armor:30,quality:0,available:1,acquisition:'ISSUE FROM ARMORY'}
+        ]);
+
         return {
             pass:
+                FACTION_INVENTORY_CATEGORIES.includes('weapons') &&
+                FACTION_INVENTORY_LOAN_CATEGORIES.includes('weapons') &&
+                weapon?.amountOwned===2 &&
+                weapon?.availableCount===2 &&
+                factionWeaponSlot(weapon)==='primary' &&
                 equipment?.amountOwned===3 &&
                 equipment?.availableCount===2 &&
                 equipment?.loanedCount===1 &&
@@ -12975,8 +13005,14 @@
                 first.snapshotAdded===true &&
                 second.eventsAdded===1 &&
                 merged.current?.['armor|1']?.amountOwned===3 &&
-                merged.thresholds?.['1']?.target===3,
+                merged.thresholds?.['1']?.target===3 &&
+                merged.sourceCategorySummary?.weapons?.rows===2 &&
+                build.items.some(item=>item.slot==='primary' && item.name==='Test Rifle') &&
+                build.items.some(item=>item.slot==='secondary' && item.name==='Test Pistol'),
+            weapon,
             equipment,
+            buildSummary:build.summary,
+            buildSlots:build.items.map(item=>item.slot),
             first,
             second,
             mergedCurrentCount:Object.keys(merged.current||{}).length
