@@ -86,7 +86,7 @@ assert(userSrc.includes('Bazaar restock snapshot'),'customer subject must descri
 assert(userSrc.includes('Here’s what was listed in my Bazaar when I refreshed it'),'customer message must use time-bounded snapshot wording');
 assert(!userSrc.includes("Here’s what’s currently available at "),'unbounded current-availability wording must not remain');
 assert(userSrc.includes('bazaarSnapshotAt:snapshot.localFetchedAtIso'),'prepared restock state must preserve the exact source snapshot timestamp');
-assert(userSrc.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@63d47b40c0cebf546032218d7166ad4e5b5cef18/modular-suite/customers/MM_Customers.logic.js'),'changed Customers logic must be immutable-SHA pinned');
+assert(userSrc.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b07cc05e6366f164f5f8e37dd00c1c98a7f47832/modular-suite/customers/MM_Customers.logic.js'),'changed Customers logic must be immutable-SHA pinned to a commit containing alpha.21 freshness logic');
 assert.strictEqual((userSrc.match(/composeMessage\(/g)||[]).length,5,'four message actions must share one compose transport');
 assert(userSrc.includes('Prepare Cashback Reminder'));
 assert(userSrc.includes('QUALIFYING PURCHASE'));
