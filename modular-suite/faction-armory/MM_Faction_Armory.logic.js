@@ -33,8 +33,24 @@
     'temporary|Tear Gas':5,
     'temporary|HEG':5,
     'temporary|Grenade':5,
-    'temporary|Pepper Spray':5,
-    'drugs|Xanax':3
+    'temporary|Pepper Spray':5
+  });
+  const WAR_STOCK_ITEM_DEFS=Object.freeze([
+    ...Object.entries(WAR_SUPPLY_PER_MEMBER).map(([key,perMember])=>{
+      const split=key.indexOf('|');
+      return Object.freeze({category:key.slice(0,split),name:key.slice(split+1),perMember});
+    }),
+    Object.freeze({category:'drugs',name:'Xanax',special:'xanax'})
+  ]);
+  const DEFAULT_XANAX_POLICY=Object.freeze({
+    investmentPosture:'conserve',
+    reasonableRatio:0.80,
+    highThreshold:25000,
+    mediumThreshold:5000,
+    highCeiling:4,
+    mediumCeiling:3,
+    lowCeiling:2,
+    memberOverrides:Object.freeze({})
   });
   const RANK_TRIGGER_COUNT=Object.freeze({
     'absolute beginner':0,'beginner':1,'inexperienced':2,'rookie':3,'novice':4,
@@ -1366,6 +1382,122 @@
     if(exact!=null)return n(exact);
     if(String(category||'')==='consumables'&&/energy drink/i.test(String(name||'')))return 5;
     return 0;
+  }
+
+
+  function minimumOverrideKey(mode,category,item,slot=''){
+    const basis=String(slot||item||'').trim().toLowerCase();
+    return [String(mode||'war').toLowerCase(),String(category||'other').toLowerCase(),basis].join('|');
+  }
+
+  function minimumOverrideFor(factionInventory={},mode,row={}){
+    const key=minimumOverrideKey(mode,row?.category,row?.item,row?.slot);
+    const raw=factionInventory?.stockPlanning?.minimumOverrides?.[key];
+    const hasMin=raw&&Object.prototype.hasOwnProperty.call(raw,'min')&&Number.isFinite(Number(raw.min));
+    return {
+      key,
+      active:Boolean(hasMin),
+      min:hasMin?Math.max(0,Math.round(Number(raw.min))):null,
+      orderEnabled:raw?.orderEnabled!==false,
+      updatedAt:String(raw?.updatedAt||'')
+    };
+  }
+
+  function xanaxPolicy(factionInventory={}){
+    const raw=factionInventory?.warPlanning?.xanaxPolicy;
+    const overrides=raw?.memberOverrides&&typeof raw.memberOverrides==='object'&&!Array.isArray(raw.memberOverrides)
+      ? clone(raw.memberOverrides):{};
+    return {
+      investmentPosture:['off','conserve','compete','push'].includes(String(raw?.investmentPosture||'').toLowerCase())
+        ?String(raw.investmentPosture).toLowerCase():DEFAULT_XANAX_POLICY.investmentPosture,
+      reasonableRatio:Math.max(0.1,Math.min(2,Number(raw?.reasonableRatio)||DEFAULT_XANAX_POLICY.reasonableRatio)),
+      highThreshold:Math.max(1,Math.round(Number(raw?.highThreshold)||DEFAULT_XANAX_POLICY.highThreshold)),
+      mediumThreshold:Math.max(1,Math.round(Number(raw?.mediumThreshold)||DEFAULT_XANAX_POLICY.mediumThreshold)),
+      highCeiling:Math.max(0,Math.round(Number(raw?.highCeiling)??DEFAULT_XANAX_POLICY.highCeiling)),
+      mediumCeiling:Math.max(0,Math.round(Number(raw?.mediumCeiling)??DEFAULT_XANAX_POLICY.mediumCeiling)),
+      lowCeiling:Math.max(0,Math.round(Number(raw?.lowCeiling)??DEFAULT_XANAX_POLICY.lowCeiling)),
+      memberOverrides:overrides
+    };
+  }
+
+  function xanaxTier(total,policy=DEFAULT_XANAX_POLICY){
+    const value=n(total);
+    if(value>=n(policy.highThreshold))return 'HIGH';
+    if(value>=n(policy.mediumThreshold))return 'MEDIUM';
+    return 'LOW';
+  }
+
+  function xanaxCeilingForTier(tier,policy=DEFAULT_XANAX_POLICY){
+    if(tier==='HIGH')return n(policy.highCeiling);
+    if(tier==='MEDIUM')return n(policy.mediumCeiling);
+    return n(policy.lowCeiling);
+  }
+
+  function xanaxEstimator(factionInventory={},options={}){
+    const rows=memberRows(factionInventory,[],{procurementMode:options?.procurementMode||'budget'});
+    const policy=xanaxPolicy(factionInventory);
+    const opponentBlock=factionInventory?.warPlanning?.opponent||{};
+    const rawOpp=opponentBlock?.members;
+    const opponents=Array.isArray(rawOpp)?rawOpp:Object.values(rawOpp&&typeof rawOpp==='object'?rawOpp:{});
+    const usableOpponents=opponents.filter(row=>n(row?.estimatedTotal||row?.statEstimate?.total||row?.totalStats)>0);
+    const currentWar=factionInventory?.warPlanning?.currentWar||null;
+    const have=Object.values(factionInventory?.current||{})
+      .filter(row=>String(row?.name||'').trim().toLowerCase()==='xanax')
+      .reduce((sum,row)=>sum+n(row?.availableCount??row?.amountOwned),0);
+    const members=rows.map(row=>{
+      const total=n(row?.statProfile?.total);
+      const tier=xanaxTier(total,policy);
+      const ceiling=xanaxCeilingForTier(tier,policy);
+      const credible=usableOpponents.filter(opp=>{
+        const oppTotal=n(opp?.estimatedTotal||opp?.statEstimate?.total||opp?.totalStats);
+        return oppTotal>0&&total/oppTotal>=policy.reasonableRatio;
+      });
+      const overrideRaw=policy.memberOverrides?.[asId(row.memberId)];
+      const override=Number.isFinite(Number(overrideRaw))?Math.max(0,Math.min(ceiling,Math.round(Number(overrideRaw)))):null;
+      let recommended=0;
+      if(override!=null){
+        recommended=override;
+      }else if(policy.investmentPosture==='off'){
+        recommended=0;
+      }else if(usableOpponents.length){
+        if(policy.investmentPosture==='push')recommended=credible.length?ceiling:0;
+        else if(policy.investmentPosture==='compete')recommended=credible.length?Math.min(ceiling,Math.max(1,Math.ceil((credible.length+ceiling)/2))):0;
+        else recommended=Math.min(ceiling,credible.length);
+      }
+      return {
+        memberId:asId(row.memberId),
+        memberName:String(row.memberName||''),
+        statsTotal:total,
+        statsEstimated:Boolean(row.statsEstimated),
+        tier,
+        ceiling,
+        credibleTargets:credible.length,
+        recommended,
+        manualOverride:override,
+        targetNames:credible.slice(0,ceiling).map(opp=>String(opp?.memberName||opp?.name||opp?.memberId||'')).filter(Boolean)
+      };
+    });
+    const leadershipCeiling=members.reduce((sum,row)=>sum+n(row.ceiling),0);
+    const recommendedTarget=members.reduce((sum,row)=>sum+n(row.recommended),0);
+    const ready=Boolean(currentWar&&usableOpponents.length);
+    return {
+      ready,
+      currentWar:clone(currentWar),
+      opponentFactionId:asId(opponentBlock?.factionId),
+      opponentFactionName:String(opponentBlock?.factionName||''),
+      opponentFetchedAt:String(opponentBlock?.fetchedAt||''),
+      opponentMemberCount:opponents.length,
+      opponentEstimatedCount:usableOpponents.length,
+      policy,
+      members,
+      leadershipCeiling,
+      recommendedTarget:ready?recommendedTarget:0,
+      available:have,
+      shortfall:ready?Math.max(0,recommendedTarget-have):0,
+      rationale:ready
+        ? 'Opponent-weighted '+policy.investmentPosture.toUpperCase()+' posture: one or more Xanax only where the member has credible rival targets, capped by Leadership 4/3/2-style tier limits.'
+        : 'Current rival estimates are not ready; no automatic Xanax purchase is recommended until opponent data is available or Leadership sets a manual minimum.'
+    };
   }
 
   function minimumProposal(factionInventory={},options={}){
