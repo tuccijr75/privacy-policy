@@ -1408,7 +1408,7 @@
       const med=row.profile?.supplyReadiness?.medical||{};
       return '<details class="mm-fa-build-member">'+
         '<summary>'+
-          '<span class="mm-fa-build-summary-main"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</span>'+
+          '<span class="mm-fa-build-summary-main"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(row.procurementPassCurrent?'<span class="mm-fa-pill mm-fa-good">PROCUREMENT PASS</span>':'')+(row.procurementPassStale?'<span class="mm-fa-pill mm-fa-warn">PASS NEEDS REVIEW</span>':'')+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</span>'+
           '<span class="mm-fa-muted">'+(row.statsEstimated?'~'+fmt(row.statProfile.total)+' estimated stats':row.hasStats?fmt(row.statProfile.total)+' stats':'stats missing')+'</span>'+
         '</summary>'+
         '<div class="mm-fa-build-body">'+
@@ -1418,6 +1418,8 @@
             ((!row.hasVerifiedStats||!row.profileHasEquipment)&&!reminderSent(row.memberId)?'<button data-remind-member="'+esc(row.memberId)+'" style="'+button(true)+'">Send Data Reminder</button>':'')+
             (row.readinessStatus==='READY FOR REVIEW'&&row.buildWarReady?'<button data-war-ready="'+esc(row.memberId)+'" style="'+button(true)+'">Approve / War Ready</button>':'')+
             (row.readinessStatus==='WAR READY'?'<button data-reopen-review="'+esc(row.memberId)+'" style="'+button()+'">Reopen Review</button>':'')+
+            (row.readinessStatus!=='WAR READY'&&!row.procurementPassCurrent?'<button data-procurement-pass="'+esc(row.memberId)+'" style="'+button()+'">Pass / Exclude Acquisition</button>':'')+
+            (row.procurementPassCurrent?'<button data-reopen-procurement="'+esc(row.memberId)+'" style="'+button()+'">Reopen Procurement</button>':'')+
           '</div></div>'+
           '<div class="mm-fa-tiles">'+
             tile('STR',row.hasStats?(row.statsEstimated?'~':'')+fmt(s.strength):'—')+
@@ -1430,8 +1432,10 @@
             (row.publicIntel?.ageDays?tile('TORN AGE',fmt(row.publicIntel.ageDays)+'d'):'')+
             (row.publicIntel?.rank?tile('RANK',row.publicIntel.rank,{wide:true}):'')+
             tile('READINESS',row.readinessStatus||'—')+
+            tile('PROCUREMENT',row.acquisitionDisposition||'ACTIVE')+
             tile('BUILD BASELINE',row.buildWarReady?'PASS':'ACTION NEEDED')+
             (row.readinessApprovedAt?tile('APPROVED',when(row.readinessApprovedAt),{wide:true}):'')+
+            (row.procurementPassAt?tile('PASS',when(row.procurementPassAt)+(row.procurementPassReason?' · '+row.procurementPassReason:''),{wide:true}):'')+
             tile('LOANS',row.loans?row.loans+' units':'—')+
             (source?tile('SOURCE',source+' · '+when(row.profile?.verifiedAt),{wide:true}):tile('SOURCE','No current profile',{wide:true}))+
           '</div>'+
@@ -1465,6 +1469,7 @@
             '<b>'+esc(row.memberName)+'</b>'+
             '<span class="mm-fa-pill">Lv '+num(row.level)+'</span>'+
             '<span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+
+            (row.procurementPassCurrent?'<span class="mm-fa-pill mm-fa-good">PROCUREMENT PASS</span>':'')+
           '</span>'+
           '<span class="mm-fa-muted">'+
             (row.readinessStatus==='WAR READY'?'approved war ready':
@@ -1516,6 +1521,53 @@
         '</div>'+
       '</details>';
     }).join('');
+  }
+
+  function coverageHtml(){
+    const coverage=logic.coverageComparison(state?.factionInventory||{},{
+      mode:'war',procurementMode,budgetCap:acquisitionBudget,savedKeyIds:savedKeyIds()
+    });
+    const factionRows=coverage.factionCoverage.map(row=>
+      '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.slot.toUpperCase())+'</b></div>'+
+      '<div class="mm-fa-tiles">'+
+        tile('FACTION OWNED',fmt(row.owned))+tile('AVAILABLE',fmt(row.available))+tile('LOANED',fmt(row.loaned))+
+        tile('MEMBER GAPS',fmt(row.memberGaps),{cls:row.memberGaps?'mm-fa-warn':''})+
+        tile('ISSUE',fmt(row.issueAssignments))+tile('SYSTEM BUY',fmt(row.systemBuyQty))+
+        tile('PLANNED BUY',fmt(row.plannedBuyQty),{cls:row.plannedBuyQty!==row.systemBuyQty?'mm-fa-warn':''})+
+      '</div></div>'
+    ).join('');
+    const byMember=new Map();
+    for(const row of coverage.memberCoverage){
+      if(!byMember.has(row.memberId))byMember.set(row.memberId,[]);
+      byMember.get(row.memberId).push(row);
+    }
+    const memberHtml=coverage.members.map(member=>{
+      const rows=byMember.get(member.memberId)||[];
+      const gapCount=rows.filter(row=>!row.ready&&!['OWNED','LOANED','WAR READY','PROCUREMENT PASS'].includes(row.route)).length;
+      return '<details class="mm-fa-build-member">'+
+        '<summary><span class="mm-fa-build-summary-main"><b>'+esc(member.memberName)+'</b>'+
+          '<span class="'+readinessStatusClass(member.readinessStatus)+'">'+esc(member.readinessStatus)+'</span>'+
+          (member.procurementPassCurrent?'<span class="mm-fa-pill mm-fa-good">PROCUREMENT PASS</span>':'')+
+        '</span><span class="mm-fa-muted">'+gapCount+' active gap'+(gapCount===1?'':'s')+'</span></summary>'+
+        '<div class="mm-fa-build-body">'+rows.map(row=>
+          '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.slot.toUpperCase())+'</b>'+
+            '<div class="mm-fa-muted">HAS: '+esc(row.memberHas||'—')+' · '+(row.memberHasScore?fmt(row.memberHasScore)+' score':'score unavailable')+'</div>'+
+            '<div class="mm-fa-muted">NEED: '+esc(row.needTarget||'—')+' · '+(row.needFloor?fmt(row.needFloor)+' floor':'floor unavailable')+'</div>'+
+          '</div><div class="mm-fa-tiles">'+
+            tile('ROUTE',row.route||'—')+tile('FACTION QUALIFYING',fmt(row.factionAvailableQualifying))+
+            (row.assignedLoan?tile('ASSIGNED LOAN',row.assignedLoan,{wide:true}):'')+
+            (row.ownedAlternative?tile('OWNED ALT',row.ownedAlternative,{wide:true}):'')+
+            (row.factionQualifyingItems.length?tile('FACTION OPTIONS',row.factionQualifyingItems.join(' | '),{wide:true}):'')+
+          '</div></div>'
+        ).join('')+'</div></details>';
+    }).join('');
+    return '<div class="mm-fa-card mm-fa-compact">'+
+      '<div class="mm-fa-module-head"><div><b>Member ↔ faction coverage</b> <span class="mm-fa-muted">WAR · '+procurementMode.toUpperCase()+' · '+coverage.members.length+' members</span></div>'+
+      '<button id="mm-fa-export-coverage" style="'+button(true)+'">Export Comparison</button></div>'+
+      '<div class="mm-fa-muted">Side-by-side operational view: what each member has, the readiness floor/target, qualifying faction stock, assignment route, and computed versus manually planned purchases. Procurement Pass suppresses acquisition without claiming verified War Ready.</div>'+
+      '</div>'+
+      '<details class="mm-fa-build-member" open><summary><span class="mm-fa-build-summary-main"><b>FACTION COVERAGE SUMMARY</b></span><span class="mm-fa-muted">8 combat slots</span></summary><div class="mm-fa-build-body">'+factionRows+'</div></details>'+
+      memberHtml;
   }
 
   function inventoryHtml(){
