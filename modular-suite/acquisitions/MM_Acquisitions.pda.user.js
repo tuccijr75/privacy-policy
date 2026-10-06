@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.26-pda.13
+// @version      8.0.0-alpha.27-pda.14
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -61,7 +61,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.13';
+  const CORE_VERSION = '8.0.0-alpha.14';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -229,7 +229,33 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     return merged;
   }
 
-  function openLegacyDb() {
+  function createEmptySharedState(at = new Date().toISOString()) {
+    const createdAt = String(at || new Date().toISOString());
+    return {
+      schema: LEGACY.schema,
+      customers: {},
+      sales: {},
+      coupons: {},
+      refunds: {},
+      subscribers: {},
+      removedCustomers: {},
+      notificationHistory: [],
+      businessRules: {},
+      syncState: {},
+      procurement: {},
+      operations: {},
+      marketIntel: {},
+      travelIntel: {},
+      factionInventory: {},
+      meta: {
+        createdAt,
+        createdBy: 'MM Torn Core',
+        bootstrap: 'fresh-install'
+      }
+    };
+  }
+
+  function openLegacyDb({ allowCreate = false } = {}) {
     if (typeof indexedDB === 'undefined') {
       return Promise.reject(new Error('IndexedDB is unavailable in this runtime.'));
     }
@@ -238,10 +264,49 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error('Legacy IndexedDB open failed.'));
       request.onupgradeneeded = () => {
-        try { request.transaction?.abort(); } catch {}
-        reject(new Error('Legacy IndexedDB does not exist; read-only Core will not create it.'));
+        if (!allowCreate) {
+          try { request.transaction?.abort(); } catch {}
+          reject(new Error('Legacy IndexedDB does not exist; read-only Core will not create it.'));
+          return;
+        }
+        try {
+          const db = request.result;
+          if (db.objectStoreNames.contains(LEGACY.store)) {
+            throw new Error(`Existing IndexedDB unexpectedly entered bootstrap upgrade with store '${LEGACY.store}' already present.`);
+          }
+          const store = db.createObjectStore(LEGACY.store);
+          store.put(createEmptySharedState(), LEGACY.key);
+        } catch (error) {
+          try { request.transaction?.abort(); } catch {}
+          reject(error);
+        }
       };
     });
+  }
+
+  async function ensureSharedState() {
+    const db = await openLegacyDb({ allowCreate: true });
+    try {
+      if (!db.objectStoreNames.contains(LEGACY.store)) {
+        throw new Error(`Shared IndexedDB store '${LEGACY.store}' is missing; refusing destructive repair.`);
+      }
+      const value = await new Promise((resolve, reject) => {
+        const tx = db.transaction(LEGACY.store, 'readonly');
+        const req = tx.objectStore(LEGACY.store).get(LEGACY.key);
+        req.onsuccess = () => resolve(req.result ?? null);
+        req.onerror = () => reject(req.error || new Error('Shared IndexedDB bootstrap read failed.'));
+      });
+      if (value == null) {
+        throw new Error('Shared IndexedDB exists but main state is missing; refusing to overwrite existing storage.');
+      }
+      const validation = validateLegacyState(value);
+      if (!validation.ok) {
+        throw new Error('Shared state failed validation: ' + validation.errors.join('; '));
+      }
+      return deepClone(value);
+    } finally {
+      try { db.close(); } catch {}
+    }
   }
 
   async function readLegacyState() {
@@ -276,7 +341,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const key = String(domain || '').toLowerCase();
     if (!WRITABLE_DOMAIN_PATHS[key]) throw new Error(`Domain is not writable through Core: ${domain}`);
 
-    const db = await openLegacyDb();
+    const db = await openLegacyDb({ allowCreate: true });
     try {
       if (!db.objectStoreNames.contains(LEGACY.store)) {
         throw new Error(`Legacy IndexedDB store '${LEGACY.store}' is missing.`);
@@ -1151,6 +1216,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     freshnessSnapshot,
     getDomainSlice,
     applyDomainSlice,
+    createEmptySharedState,
+    ensureSharedState,
     readLegacyState,
     inspectLegacyState,
     updateDomainState,
@@ -3828,6 +3895,11 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const rankedLogic=globalThis.MMTornRankedProfitLogic;
   const ledger=globalThis.MMTornAcquisitionLedger;
 
+  async function readSharedState(){
+    if(core?.ensureSharedState)return core.ensureSharedState();
+    return core.readLegacyState();
+  }
+
   const esc=value=>String(value??'')
     .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
     .replaceAll('"','&quot;').replaceAll("'",'&#039;');
@@ -4240,7 +4312,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       return;
     }
     try{
-      const next=await core.readLegacyState();
+      const next=await readSharedState();
       const validation=core.validateLegacyState(next);
       if(!validation.ok)throw new Error(validation.errors.join('; '));
       state=next;
@@ -4286,7 +4358,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       draft.businessRules={...(draft.businessRules||{}),...values,updatedAt:new Date().toISOString()};
       return draft;
     });
-    state=await core.readLegacyState();
+    state=await readSharedState();
     statusText='Shared business rules saved.';
     render();
   }
@@ -4319,7 +4391,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
             : reason==='live-verification-unavailable'
               ? 'Live verification unavailable'+(warningSources.length?' for '+warningSources.join(' / '):'')+'. No purchase route was opened.'
               : 'Could not route purchase: '+reason;
-        state=await core.readLegacyState();
+        state=await readSharedState();
       }
     }catch(error){
       statusText='Live verification failed: '+(error?.message||String(error));
@@ -4399,7 +4471,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(!ledger)throw new Error('Acquisition ledger dependency missing.');
     busy=true;statusText='Syncing Bazaar + Item Market purchase logs…';render();
     try{
-      const current=await core.readLegacyState();const proc=ledger.ensureProcurement(current?.procurement||{});
+      const current=await readSharedState();const proc=ledger.ensureProcurement(current?.procurement||{});
       const fromMs=ledger.syncWindowStart(proc,Date.now(),180,24);const fetched={};
       for(const [logId,source] of Object.entries(ledger.ACQUISITION_LOG_IDS))fetched[logId]={source,rows:await fetchPurchaseLogs(Number(logId),fromMs/1000,50)};
       let added=0;
@@ -4408,7 +4480,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         for(const pack of Object.values(fetched))added+=ledger.mergeAcquisitionLogRows(draft.procurement,pack.rows,pack.source);
         draft.procurement.lastAcquisitionSyncAt=new Date().toISOString();return draft;
       });
-      state=await core.readLegacyState();statusText='Purchase ledger synced: '+added+' new lot'+(added===1?'':'s')+'.';
+      state=await readSharedState();statusText='Purchase ledger synced: '+added+' new lot'+(added===1?'':'s')+'.';
     }catch(error){statusText='Purchase sync failed: '+(error?.message||String(error));}
     finally{busy=false;render();}
   }
@@ -4419,7 +4491,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const panelOpen=Boolean(root&&root.style.display!=='none');
     autoRefreshRunning=true;
     try{
-      state=await core.readLegacyState();
+      state=await readSharedState();
       if(panelOpen){
         try{await importTravelCapture({silent:true});}catch{}
         if(apiKey())try{await refreshTravelContext({force:false,silent:true});}catch{}
@@ -4457,7 +4529,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(!apiKey()){statusText='Save a Torn API key in Settings before refreshing Market Pulse.';activeView='settings';render();return;}
     busy=true;statusText='Refreshing one Market Pulse item from Torn API…';render();
     try{
-      state=await core.readLegacyState();
+      state=await readSharedState();
       const itemId=pulse.trackedItemIds(state,1)[0]||'';
       if(!itemId){statusText='Market Pulse has no tracked acquisition item yet. Refresh Opportunities or Pricelist first.';return;}
       const result=await pulseEngine.tick({itemId});
@@ -4536,7 +4608,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     busy=true;statusText='Comparing Bazaar, Item Market and overseas sources for '+armoryRequest.itemName+'…';render();
     try{
       armorySources=await service.procurementSourceOptions(armoryRequest.itemId,armoryRequest.itemName);
-      state=armorySources?.state||await core.readLegacyState();
+      state=armorySources?.state||await readSharedState();
       statusText=armorySources?.sources?.length
         ?'Source comparison ready for '+armoryRequest.itemName+'. Final purchase remains manual.'
         :'No live source is currently cached/available for '+armoryRequest.itemName+'.';
@@ -4746,7 +4818,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     render();
     try{
       const result=await service.routeProcurementRequest({itemId:id,itemName:name,preferredSource});
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       if(result?.routed){
         statusText='Opened '+result.source+' for '+(name||result.itemName||('item '+id))+'. Final purchase remains manual.';
       }else{
@@ -4829,7 +4901,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     render();
     try{
       const result=await service.refreshGlobal();
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       statusText='Pricelist market data refreshed. Use Check Prices on an item for exact live Bazaar / Item Market verification.';
     }catch(error){
       statusText='Pricelist market refresh failed: '+(error?.message||String(error));
@@ -4854,7 +4926,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     try{
       await refreshTravelContext({force:true,silent:true});
       const result=await service.routeProcurementRequest({itemId:id,itemName:name,preferredSource:source});
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       statusText=result?.routed
         ?('Opened '+result.source+' for '+name+'. Complete the purchase manually on Torn.')
         :(source+' is not currently available for '+name+'. Use Check Prices for the full comparison.');
@@ -4976,7 +5048,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       ranked.settings=settings;
       return draft;
     });
-    state=await core.readLegacyState();
+    state=await readSharedState();
     statusText='Ranked profit settings saved.';
     render();
   }
@@ -4988,7 +5060,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     render();
     try{
       const result=await service.refreshPricelist(rankedSettings().pricelistUserId);
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       statusText='Pricelist updated: '+Number(result?.priced||0).toLocaleString()+' priced items · '+money(result?.bbRate||0)+'/BB.';
     }catch(error){statusText='Pricelist refresh failed: '+(error?.message||String(error));}
     finally{busy=false;render();}
@@ -5002,7 +5074,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     render();
     try{
       const result=await service.refreshRankedLive({pagesPerType:cfg.pagesPerType,auctionPages:cfg.auctionPages,limit:100});
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       const liveRows=Array.isArray(result?.market)?result.market:[];
       const bazaarCount=liveRows.filter(row=>String(row?.source||'').toLowerCase()==='bazaar').length;
       const itemMarketCount=liveRows.filter(row=>String(row?.source||'').toLowerCase()==='item market'||String(row?.source||'').toLowerCase()==='market').length;
@@ -5039,7 +5111,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     render();
     try{
       const result=await service.refreshRankedHistory(id,{days:rankedSettings().historyDays,maxPages:8});
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       verifiedSalesItemId=id;
       statusText='Verified sales updated for '+String(catalog.name||('Item '+id))+': '+Number(result?.rows?.length||0).toLocaleString()+' completed Auction House sales.';
     }catch(error){statusText='Auction history failed: '+(error?.message||String(error));}
@@ -5105,7 +5177,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         statusText='Auction history '+(i+1)+'/'+ids.length+': '+name+'…';
         render();
         const result=await service.refreshRankedHistory(ids[i],{days:cfg.historyDays,maxPages:8});
-        state=result?.state||await core.readLegacyState();
+        state=result?.state||await readSharedState();
       }
       statusText='Official Auction House history updated for '+ids.length+' visible weapon types.';
     }catch(error){statusText='Ranked history batch stopped: '+(error?.message||String(error));}
@@ -5299,7 +5371,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     render();
     try{
       const result=await service.refreshItemCatalog();
-      state=result?.state||await core.readLegacyState();
+      state=result?.state||await readSharedState();
       const count=Number(state?.procurement?.catalogItemCount||result?.rows?.length||0);
       const buyable=Number(state?.procurement?.catalogBuyableCount||0);
       statusText='Torn item catalog updated: '+count.toLocaleString()+' items · '+buyable.toLocaleString()+' buyable.';
@@ -5333,7 +5405,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     render();
     try{
       itemSources=await service.procurementSourceOptions(item.id,item.name);
-      state=itemSources?.state||await core.readLegacyState();
+      state=itemSources?.state||await readSharedState();
       statusText=itemSources?.sources?.length
         ?'Price comparison ready for '+item.name+'. Lowest available source is listed first.'
         :'No current purchase source was found for '+item.name+'.';
@@ -5623,7 +5695,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.26-pda.13 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.27-pda.14 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
