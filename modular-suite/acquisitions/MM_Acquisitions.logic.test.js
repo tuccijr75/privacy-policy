@@ -118,6 +118,20 @@ function baseDb(){
 
 {
   const db=baseDb();
+  db.marketIntel.marketplace={};
+  db.marketIntel.marketplaceGeneratedAt='';
+  db.procurement.marketSnapshots={};
+  db.procurement.catalog['1']={name:'Item 1',type:'Supply',marketPrice:9999999};
+  db.procurement.pricelist={items:{'1':{itemId:'1',name:'Item 1',buyPrice:1000}}};
+  const rows=logic.rankPricelistUniverse(db,now);
+  assert.strictEqual(rows.length,1,'pricelist row should still exist with only a catalog MV');
+  assert.strictEqual(rows[0].marketReference,9999999,'catalog MV should remain available as reference metadata');
+  assert.strictEqual(rows[0].bestExit,0,'catalog MV must not become a live resale price');
+  assert.strictEqual(rows[0].hasMarketEvidence,false,'catalog MV alone is not live Bazaar or Item Market evidence');
+}
+
+{
+  const db=baseDb();
   db.travelIntel.rows=[
     {itemName:'A',country:'Japan',stock:10,profit:1000,sourceProfitPerHour:100},
     {itemName:'B',country:'Mexico',stock:10,profit:500,sourceProfitPerHour:200},
