@@ -61,12 +61,44 @@ assert.strictEqual(unknownRow.pricing.recommendedPrice,0);
 const invalidRecon=logic.ensureInventorySlice({operations:{inventoryRoi:{tradeReconciliation:{bad:{tradeId:'bad',completedAt:now,status:'PENDING',effects:[],evidence:{confidence:'NOPE'}}}}}});
 const invalidAck=logic.acknowledgeTradeReconciliations(invalidRecon,now);assert.strictEqual(invalidAck.changed,0);assert.strictEqual(invalidAck.invalid,1);
 
+
+const outOfStockPricing=logic.pricingRecommendation({
+  bazaarPrice:0,bazaarQty:0,personalQty:0,avgCost:0,avgSoldPrice30:100,
+  pulse:{available:true,stale:false,floorPrice:125,confidencePct:90,liquidityScore:90,marketDepth:10,source:'fixture',sourceTimestamp:now,fetchedAt:now}
+});
+assert.strictEqual(outOfStockPricing.state,'OUT OF STOCK');
+assert.strictEqual(outOfStockPricing.recommendedPrice,0);
+
+
+const namedFromCatalog=logic.ensureInventorySlice({
+  procurement:{catalog:{'180':{name:'Vicodin',catalogSource:'Torn API v2'}}},
+  operations:{inventoryRoi:{}}
+});
+logic.updateShopSnapshot(namedFromCatalog,{bazaar:[{id:180,name:'Item 180',quantity:0,price:0}],inventory:[]});
+assert.strictEqual(logic.listingRows(namedFromCatalog).find(row=>row.id==='180').name,'Vicodin');
+
+const namedFromPulse=logic.ensureInventorySlice({
+  marketIntel:{marketPulse:{items:{'258':{itemId:'258',itemName:'Xanax'}}}},
+  operations:{inventoryRoi:{}}
+});
+logic.updateShopSnapshot(namedFromPulse,{bazaar:[{id:258,quantity:0,price:0}],inventory:[]});
+assert.strictEqual(logic.listingRows(namedFromPulse).find(row=>row.id==='258').name,'Xanax');
+
+const namedFromMarketplace=logic.ensureInventorySlice({
+  marketIntel:{marketplace:{'310':{itemId:'310',itemName:'Morphine'}}},
+  operations:{inventoryRoi:{}}
+});
+logic.updateShopSnapshot(namedFromMarketplace,{bazaar:[{id:310,quantity:0,price:0}],inventory:[]});
+assert.strictEqual(logic.listingRows(namedFromMarketplace).find(row=>row.id==='310').name,'Morphine');
+assert.strictEqual(logic.usableItemName('Item 310','310'),'');
+assert.strictEqual(logic.sharedItemName(namedFromMarketplace,'310','Item 310'),'Morphine');
+
 console.log('MM Inventory ROI logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Inventory_Manager_ROI_Tracker.user.js','utf8');
 assert(!/async\s+function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml must remain synchronous because render concatenates its return value directly into HTML');
 assert(/function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml declaration missing');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.12';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.14';"));
 assert(userSource.includes('Bazaar / Inventory Dashboard'));
 assert(userSource.includes('Market Pulse is read-only context from MM_Acquisitions.'));
 assert(userSource.includes('Pricing recommendations are explainable decision support only'));
@@ -77,7 +109,7 @@ assert(userSource.includes('CURRENT COST COVERAGE'));
 assert(userSource.includes("logic.replaceRestockDemand(draft,rows,Date.now())"));
 assert(userSource.includes("tile('RECOMMENDED'"));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js'));
-assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@bb32ea39494ef4465a58acd76c4c3993cc8568b4/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js'));
+assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@217ed83f2e74684f704fd442d1477be785f2815c/modular-suite/inventory-roi/MM_Inventory_ROI.logic.js'));
 assert(!userSource.includes('// @updateURL'));
 assert(!userSource.includes('// @downloadURL'));
 assert(userSource.includes('core?.ensureSharedState'),'fresh-install Core bootstrap missing');

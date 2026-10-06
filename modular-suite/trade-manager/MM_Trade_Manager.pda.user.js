@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Trade Manager PDA
 // @namespace    manic-mike.torn.trade-manager.pda
-// @version      0.1.0-alpha.2-pda.2
+// @version      0.1.0-alpha.3-pda.3
 // @description  TornPDA API-confirmed trade valuation, completed-trade history and Inventory reconciliation; final trade actions remain manual.
 // @match        https://www.torn.com/*
 // @run-at       document-end
@@ -2234,7 +2234,7 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
 (() => {
   'use strict';
 
-  const VERSION='0.1.0-alpha.2-pda.2';
+  const VERSION='0.1.0-alpha.3-pda.3';
   const ROOT_ID='mm-trade-manager';
   const LAUNCHER_ID='mm-trade-manager-launcher';
   const STYLE_ID='mm-trade-manager-style';
@@ -2253,6 +2253,7 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
   let state=null;
   let selfProfile=null;
   let ongoingTrades=[];
+  let liveTradesLoaded=false;
   let selectedTrade=null;
   let activeView='live';
   let statusText='Ready. Trade reads and completion sync run only when requested.';
@@ -2354,6 +2355,7 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
     state=await readSharedState();logic.ensureTradeSlice(state);
     await ensureProfile();
     ongoingTrades=await listTrades('ongoing');
+    liveTradesLoaded=true;
     selectedTrade=null;
     return 'Live trades refreshed: '+ongoingTrades.length+' ongoing trade(s). No trade action was taken.';
   }
@@ -2382,12 +2384,10 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
       }catch(error){errors.push('trade '+String(summary?.id||'?')+': '+String(error?.message||error));}
     }
     let outcome={inserted:0,duplicates:0,conflicts:0,reconciliations:0,checked:records.length};
-    if(records.length){
-      state=await core.updateDomainState('bazaar',draft=>{
-        outcome=logic.recordCompletedTrades(draft,records,Date.now());
-        return draft;
-      });
-    }
+    state=await core.updateDomainState('bazaar',draft=>{
+      outcome=logic.recordCompletedTrades(draft,records,Date.now());
+      return draft;
+    });
     const deferred=Math.max(0,summaries.filter(row=>!existing[String(row?.id||'')]).length-candidates.length);
     return 'Completed sync: '+outcome.inserted+' recorded · '+outcome.reconciliations+' Inventory handoff(s) · '+outcome.conflicts+' conflict(s)'+(errors.length?' · '+errors.length+' rejected/error':'')+(deferred?' · '+deferred+' deferred to next manual sync':'')+'.';
   }
@@ -2451,7 +2451,7 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
   function liveHtml(){
     const profile=selfProfile?selfProfile.name+' ['+selfProfile.id+']':'API identity not loaded';
     return card('<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;"><div><b>Live trades</b><div class="mm-tm-muted">'+esc(profile)+' · Torn API v2 ongoing trades. Read/valuation only.</div></div><button id="mm-tm-refresh-live" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Live Trades</button></div>')+
-      (ongoingTrades.length?card(ongoingTrades.map(row=>{const other=counterpartyFromSummary(row);return '<div class="mm-tm-row"><div><b>'+esc(row.description||('Trade '+row.id))+'</b><div class="mm-tm-mini">API trade '+esc(row.id)+' · '+esc(other.name)+' · modified '+esc(when(row.modified_at||0))+(row.expires_at?' · expires '+new Date(Number(row.expires_at)*1000).toLocaleString():'')+'</div></div><button data-trade-inspect="'+esc(row.id)+'" style="'+button()+'">Inspect</button></div>';}).join('')):card('<div class="mm-tm-muted">No live trade list loaded. Press Refresh Live Trades.</div>'))+
+      (ongoingTrades.length?card(ongoingTrades.map(row=>{const other=counterpartyFromSummary(row);return '<div class="mm-tm-row"><div><b>'+esc(row.description||('Trade '+row.id))+'</b><div class="mm-tm-mini">API trade '+esc(row.id)+' · '+esc(other.name)+' · modified '+esc(when(row.modified_at||0))+(row.expires_at?' · expires '+new Date(Number(row.expires_at)*1000).toLocaleString():'')+'</div></div><button data-trade-inspect="'+esc(row.id)+'" style="'+button()+'">Inspect</button></div>';}).join('')):card('<div class="mm-tm-muted">'+(liveTradesLoaded?'No ongoing trades found.':'No live trade list loaded. Press Refresh Live Trades.')+'</div>'))+
       evaluationHtml(selectedTrade);
   }
 
@@ -2487,7 +2487,7 @@ const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';
     root.querySelectorAll('[data-trade-inspect]').forEach(b=>b.addEventListener('click',()=>run('Loading detailed trade…',()=>inspectTrade(b.dataset.tradeInspect))));
     root.querySelector('#mm-tm-sync-completed')?.addEventListener('click',()=>run('Syncing API-confirmed completed trades…',syncCompletedTrades));
     root.querySelector('#mm-tm-save-api')?.addEventListener('click',()=>{const value=root.querySelector('#mm-tm-api')?.value||'';saveApiKey(value);selfProfile=null;statusText=value.trim()?'Trade Manager API key saved locally.':'Enter an API key first.';render();});
-    root.querySelector('#mm-tm-clear-api')?.addEventListener('click',()=>{saveApiKey('');selfProfile=null;ongoingTrades=[];selectedTrade=null;statusText='Trade Manager API key cleared.';render();});
+    root.querySelector('#mm-tm-clear-api')?.addEventListener('click',()=>{saveApiKey('');selfProfile=null;ongoingTrades=[];liveTradesLoaded=false;selectedTrade=null;statusText='Trade Manager API key cleared.';render();});
   }
 
   function createPanel(){

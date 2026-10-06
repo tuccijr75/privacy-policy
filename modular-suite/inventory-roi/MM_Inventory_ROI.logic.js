@@ -58,6 +58,7 @@
   function pricingRecommendation({bazaarPrice=0,bazaarQty=0,personalQty=0,avgCost=0,avgSoldPrice30=0,pulse={}}={}){
     const listingPrice=Math.max(0,n(bazaarPrice));
     const availableQty=Math.max(0,n(personalQty));
+    const totalQty=Math.max(0,n(bazaarQty)+availableQty);
     const cost=Math.max(0,n(avgCost));
     const historical=Math.max(0,n(avgSoldPrice30));
     const floor=Math.max(0,n(pulse?.floorPrice));
@@ -71,6 +72,9 @@
       fetchedAt:n(pulse?.fetchedAt),confidencePct:confidence,liquidityScore:liquidity,
       explanation:''
     };
+    if(!(totalQty>0)){
+      return {...base,state:'OUT OF STOCK',explanation:'No owned or listed units are available, so listing-price guidance is withheld.'};
+    }
     if(!pulse?.available){
       return {...base,explanation:'No current Market Pulse evidence is available for this item.'};
     }
@@ -262,6 +266,48 @@
     return out;
   }
 
+  function usableItemName(value,itemId=''){
+    const text=String(value??'').trim();
+    if(!text)return '';
+    const id=asId(itemId);
+    if(/^item(?:\s+\d+)?$/i.test(text))return '';
+    if(id&&text.toLowerCase()===('item '+id).toLowerCase())return '';
+    return text;
+  }
+
+  function sharedItemName(slice,itemId,...candidates){
+    const id=asId(itemId);
+    const catalog=slice?.procurement?.catalog?.[id]||{};
+    const pulse=slice?.marketIntel?.marketPulse?.items?.[id]||{};
+    const marketplace=slice?.marketIntel?.marketplace?.[id]||{};
+    const snapshot=slice?.procurement?.marketSnapshots?.[id]||{};
+    const restock=slice?.operations?.inventoryRoi?.restockDemand?.[id]||{};
+    const travel=Array.isArray(slice?.travelIntel?.rows)
+      ?slice.travelIntel.rows.find(row=>asId(row?.itemId)===id)
+      :null;
+    let tradeName='';
+    for(const record of Object.values(slice?.operations?.inventoryRoi?.tradeReconciliation||{})){
+      const effect=(Array.isArray(record?.effects)?record.effects:[]).find(row=>asId(row?.itemId)===id);
+      const found=usableItemName(effect?.itemName,id);
+      if(found){tradeName=found;break;}
+    }
+    const names=[
+      catalog?.name,
+      ...candidates,
+      pulse?.itemName,
+      marketplace?.itemName,
+      snapshot?.itemName,
+      restock?.itemName,
+      travel?.itemName,
+      tradeName
+    ];
+    for(const value of names){
+      const name=usableItemName(value,id);
+      if(name)return name;
+    }
+    return id?'Item '+id:'Item';
+  }
+
   function salesItemMetrics(slice,at=Date.now()){
     const cutoff30=Number(at)-30*86400000;
     const cutoff7=Number(at)-7*86400000;
@@ -315,7 +361,7 @@
       else if(bazaarQty>0)action='HEALTHY';
       const price=n(listing.price)||Math.round(n(metric.avgSoldPrice30)||n(metric.avgSoldPriceAll));
       rows.push({
-        id,name:String(listing.name||inventory.name||metric.name||('Item '+id)),
+        id,name:sharedItemName(slice,id,listing.name,inventory.name,metric.name),
         bazaarQty,bazaarPrice:n(listing.price),personalQty,
         units7d:n(metric.units7d),units30d:n(metric.units30d),daily30:daily,
         avgSoldPrice30:n(metric.avgSoldPrice30),lastSaleAt:n(metric.lastSaleAt),targetListed,addToBazaar,
@@ -612,7 +658,7 @@
   const api=Object.freeze({
     BAZAAR_SELL_LOG_ID,
     ensureInventorySlice,normalizeItems,extractBazaarSale,importSalesEntries,
-    parseStackableRows,salesItemMetrics,listingRows,updateShopSnapshot,
+    parseStackableRows,usableItemName,sharedItemName,salesItemMetrics,listingRows,updateShopSnapshot,
     marketPulseEvidence,pricingRecommendation,salesByItemDetailed,tradeInventoryEvents,tradeReconciliationSummary,acknowledgeTradeReconciliations,fifoLedger,realizedProfitMetrics,inventoryRoiRows,restockDemandRows,replaceRestockDemand,dashboardSummary
   });
 
