@@ -1,7 +1,7 @@
 # MM Faction Armory — Build Readiness Method
 
 Status: non-production / alpha research model  
-Date: 2026-10-02
+Date: 2026-10-06
 
 ## Purpose
 
@@ -79,7 +79,9 @@ The routine catalog currently contains examples such as:
 - Combat Pants
 - Combat Boots
 
-Weapon comparisons use a simple expected-output proxy based primarily on Damage × Accuracy. The build's offensive need gives only a modest adjustment.
+Weapon comparisons use a simple expected-output proxy based primarily on Damage × Accuracy.
+
+**Readiness pass/fail is neutral.** The member's Strength/Speed-derived offensive preference does not move the readiness floor and does not downgrade otherwise adequate current gear. Offensive preference is used only to rank already-qualifying alternatives when several choices meet the same objective floor.
 
 A recommended item's **minimum normal stat roll**, rather than its midpoint roll, is used as the readiness floor. A normal copy of a recommended item therefore does not fail readiness merely because it rolled below the item's midpoint.
 
