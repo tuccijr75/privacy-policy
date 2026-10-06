@@ -341,7 +341,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.24.1';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.24.2';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9109ad4eff4ff9fc2ac688018b8fdc4e014312bc/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
@@ -353,7 +353,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.24.1';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.24.2';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -361,7 +361,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.24.1';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.24.2';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -460,7 +460,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.1';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.2';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
@@ -628,3 +628,11 @@ assert(userSourceValue.includes("xmlSheet('Open Inputs'"),'Leadership workbook m
 assert.strictEqual((userSourceValue.match(/function buildsHtml\(/g)||[]).length,1,'Quick Build must remain the single normal Builds renderer');
 assert.strictEqual((userSourceValue.match(/function advancedBuildsHtml\(/g)||[]).length,1,'detailed build renderer must exist once');
 console.log('MM Faction Armory alpha.24 build/minimums regressions: PASS');
+
+assert(userSourceValue.includes("const rawEquipment=Array.isArray(equipData?.equipment)?equipData.equipment:null;"),'member import must distinguish a valid empty equipment array from a malformed response');
+assert(userSourceValue.includes("if(rawEquipment.length&&!items.length)throw new Error('Equipped combat items were returned but could not be normalized; no profile was changed.');"),'non-empty Torn equipment that normalizes to zero must still fail closed');
+assert(userSourceValue.includes('emptyConfirmed:equipmentEmptyConfirmed'),'valid empty equipment must be stored as explicit fresh evidence');
+assert(userSourceValue.includes('No combat equipment equipped (API confirmed)'),'Members UI must distinguish confirmed-empty combat equipment from missing/stale data');
+assert(!userSourceValue.includes('No equipped items could be parsed; no profile was changed.'),'valid empty equipment must no longer be rejected by the obsolete summary guard');
+console.log('MM Faction Armory alpha.24.2 empty-equipment regression: PASS');
+
