@@ -61,12 +61,20 @@ assert.strictEqual(unknownRow.pricing.recommendedPrice,0);
 const invalidRecon=logic.ensureInventorySlice({operations:{inventoryRoi:{tradeReconciliation:{bad:{tradeId:'bad',completedAt:now,status:'PENDING',effects:[],evidence:{confidence:'NOPE'}}}}}});
 const invalidAck=logic.acknowledgeTradeReconciliations(invalidRecon,now);assert.strictEqual(invalidAck.changed,0);assert.strictEqual(invalidAck.invalid,1);
 
+
+const outOfStockPricing=logic.pricingRecommendation({
+  bazaarPrice:0,bazaarQty:0,personalQty:0,avgCost:0,avgSoldPrice30:100,
+  pulse:{available:true,stale:false,floorPrice:125,confidencePct:90,liquidityScore:90,marketDepth:10,source:'fixture',sourceTimestamp:now,fetchedAt:now}
+});
+assert.strictEqual(outOfStockPricing.state,'OUT OF STOCK');
+assert.strictEqual(outOfStockPricing.recommendedPrice,0);
+
 console.log('MM Inventory ROI logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Inventory_Manager_ROI_Tracker.user.js','utf8');
 assert(!/async\s+function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml must remain synchronous because render concatenates its return value directly into HTML');
 assert(/function\s+inventoryHtml\s*\(/.test(userSource),'inventoryHtml declaration missing');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.12';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.13';"));
 assert(userSource.includes('Bazaar / Inventory Dashboard'));
 assert(userSource.includes('Market Pulse is read-only context from MM_Acquisitions.'));
 assert(userSource.includes('Pricing recommendations are explainable decision support only'));
