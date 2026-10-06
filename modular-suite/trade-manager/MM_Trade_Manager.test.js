@@ -113,3 +113,37 @@ assert(!userSource.includes('// @updateURL'));
 assert(!userSource.includes('// @downloadURL'));
 assert(!/trade\.php#step=(?:view|logview)/.test(userSource),'API trade IDs must not be assumed to equal Torn UI trade IDs');
 console.log('MM Trade Manager userscript contract tests: PASS');
+
+
+const pdaSource=fs.readFileSync(__dirname+'/MM_Trade_Manager.pda.user.js','utf8');
+new Function(pdaSource);
+const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
+assert(pdaSource.includes('// @version      0.1.0-alpha.1-pda.1'));
+assert(!pdaHeader.includes('@require'));
+assert(pdaSource.includes("const __MM_TRADE_PDA_API_KEY='###PDA-APIKEY###';"));
+assert(pdaSource.includes("const unresolved='###PDA-'+'APIKEY###'"));
+assert(pdaSource.includes('PDA_storage'));
+assert(pdaSource.includes('PDA_httpGet'));
+assert(pdaSource.includes('mm_trade_manager_pda_state_v1'));
+assert(pdaSource.includes('position:fixed;right:10px;bottom:86px;'));
+assert(pdaSource.includes('MMTornInventoryRoiLogic'));
+assert(pdaSource.includes('function fifoLedger'));
+assert(pdaSource.includes('Inventory FIFO logic (pinned immutable snapshot 4ef4197)'));
+assert(pdaSource.includes('final trade actions remain manual'));
+
+const adapterSource=fs.readFileSync(__dirname+'/MM_Trade_Manager.pda.adapter.js','utf8');
+assert(adapterSource.includes("typeof globalThis.GM_getValue!=='function'"));
+assert(adapterSource.includes("typeof PDA_storage!=='undefined'"));
+assert(adapterSource.includes('async function ensureSharedState()'));
+assert(adapterSource.includes('async function updateDomainState(domain,updater)'));
+
+const builderSource=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
+assert(builderSource.includes('MM_Inventory_ROI.logic.4ef4197.js'));
+assert(builderSource.includes('default=1'));
+assert(builderSource.includes('PDA lexical API key fallback'));
+assert(builderSource.includes('PDA metadata must not contain @require'));
+
+const vendorSource=fs.readFileSync(__dirname+'/vendor/MM_Inventory_ROI.logic.4ef4197.js','utf8');
+assert(vendorSource.includes('function fifoLedger'));
+assert(vendorSource.includes('MMTornInventoryRoiLogic'));
+console.log('MM Trade Manager PDA static/parity tests: PASS');
