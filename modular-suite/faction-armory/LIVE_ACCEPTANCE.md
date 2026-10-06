@@ -1,6 +1,6 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.22**
+Status: **NON-PRODUCTION / alpha.23**
 
 ## Historical acceptance notes
 
@@ -538,3 +538,83 @@ Production remains unchanged until live acceptance passes and the owner explicit
 - [ ] In DevTools, inspect `document.querySelector('#mm-torn-module-dock').dataset` and confirm the live dock/native-row geometry fields match the visible placement.
 
 Production remains unchanged until live acceptance passes and the owner explicitly approves promotion.
+
+
+## Alpha.23 member-equipment / acquisition audit — 2026-10-06
+
+### Source defects corrected
+
+- Member equipment ingestion now preserves Torn's numeric equipment-slot signal before applying catalog/name heuristics. This prevents valid API-returned equipped items from disappearing merely because their item name is not in the curated Armory catalog.
+- Cosmetic clothing is no longer fed into combat-armor readiness.
+- `Metal Nunchaku` is normalized to the existing `Metal Nunchakus` catalog entry. Exact API item stats still take precedence where present.
+- Build comparison keeps any known equipped item whose computed score meets/exceeds the active floor.
+- Coverage now performs a roster-wide consistency scan and flags:
+  - `EQUIPMENT_SCORE_MISMATCH` when an equipped item meets the floor but the route is not KEEP;
+  - `UNMAPPED_EQUIPMENT` when an equipped API combat item cannot be mapped to a standard slot.
+
+### Procurement control
+
+- `WAR READY` remains evidence-backed: the eight-slot baseline must pass before leadership can approve it.
+- New **Procurement Pass / Exclude Acquisition** is a separate leadership decision for members whose acquisition should not block the war plan even when readiness evidence is incomplete.
+- Procurement Pass does not claim that the member is verified War Ready.
+- A pass is bound to the current member `verifiedAt`; newly imported private member data invalidates the prior pass for review.
+- Every acquisition row exposes:
+  - **SYSTEM** quantity;
+  - editable **PLANNED** quantity;
+  - Save Qty;
+  - Reset to system quantity.
+- A manual quantity of zero is valid and cannot be converted into a forced quantity-one Acquisitions handoff.
+- Manual quantities affect planning/report/handoff only; they do not rewrite readiness, equipment, or faction-inventory facts.
+
+### Leader estimate correction
+
+The Leader report no longer presents the maximum value seen across all cached sources as the acquisition estimate.
+
+- Planned line/total cost uses the best current planning source available to Armory, with the Armory reference as fallback.
+- A wider cross-source min/max remains visible only as a diagnostic range.
+- MM_Acquisitions still performs live price/availability verification before any manual purchase.
+
+### Coverage output
+
+New **Coverage** view and export worksheets provide:
+
+- member HAS item / score by standard slot;
+- member NEED target / floor;
+- readiness/acquisition route;
+- owned alternative and assigned faction loan;
+- qualifying faction-stock count/items;
+- faction Owned / Available / Loaned totals by slot;
+- Member Gaps / Issue assignments;
+- System Buy Qty vs Planned Buy Qty;
+- consistency flags.
+
+### Static validation
+
+- [x] Logic syntax PASS.
+- [x] Userscript syntax PASS.
+- [x] Existing Armory regression suite PASS.
+- [x] Numeric Primary/Melee slot normalization fixture PASS.
+- [x] Singular Metal Nunchaku maps to Melee PASS.
+- [x] Morpheus-style Metal Nunchaku above floor resolves KEEP PASS.
+- [x] Missing-data Procurement Pass suppresses War acquisition PASS.
+- [x] Per-item quantity override including zero PASS.
+- [x] Coverage emits all eight standard slots/member PASS.
+- [x] Unmapped equipment consistency flag PASS.
+- [x] Best-planning-source Leader estimate contract PASS.
+
+### Live acceptance required before merge
+
+- [ ] Install alpha.23 candidate and reload Torn.
+- [ ] Unlock the saved member-key vault and refresh saved profiles.
+- [ ] Confirm **NedFlanders69** shows all API-returned equipped combat items.
+- [ ] Confirm **Morpheus2126** shows Metal Nunchaku as Melee and KEEP when its current stats clear the floor.
+- [ ] Open Coverage and inspect every consistency flag; any score/floor routing mismatch is a DEFECT.
+- [ ] Confirm no legitimate equipped combat item appears as UNMAPPED_EQUIPMENT.
+- [ ] Apply Procurement Pass to one incomplete-information member; confirm the member remains non-WAR-READY but disappears from individual War acquisition.
+- [ ] Refresh/import new private data for that member and confirm the prior pass requires review.
+- [ ] Override one acquisition item downward, one to zero, and reset one; confirm System vs Planned remain distinct.
+- [ ] Confirm the Leader report uses Planned quantities and the best planning-source total, with cross-source range labeled diagnostic.
+- [ ] Confirm zero-planned lines are not sent to MM_Acquisitions.
+- [ ] Open/export Coverage and verify member HAS/NEED vs faction stock matches visible live data.
+- [ ] Verify shared dock placement/collision remains unchanged.
+- [ ] Do not merge/publish until owner accepts live results.
