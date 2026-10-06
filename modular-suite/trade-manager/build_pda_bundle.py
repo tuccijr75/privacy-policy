@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 HERE=Path(__file__).resolve().parent
-CORE=HERE.parent/"core"/"MM_Torn_Core.js"
+CORE=HERE/"vendor"/"MM_Torn_Core.b6d2202.js"
 ADAPTER=HERE/"MM_Trade_Manager.pda.adapter.js"
 INVENTORY=HERE/"vendor"/"MM_Inventory_ROI.logic.4ef4197.js"
 LOGIC=HERE/"MM_Trade_Manager.logic.js"
