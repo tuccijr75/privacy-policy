@@ -6,7 +6,7 @@
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b7b667ade46725d0900d51d1f4a93c3432590bc4/modular-suite/faction-armory/MM_Faction_Armory.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9109ad4eff4ff9fc2ac688018b8fdc4e014312bc/modular-suite/faction-armory/MM_Faction_Armory.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -1527,6 +1527,13 @@
     const coverage=logic.coverageComparison(state?.factionInventory||{},{
       mode:'war',procurementMode,budgetCap:acquisitionBudget,savedKeyIds:savedKeyIds()
     });
+    const issueHtml=coverage.consistencyIssues.length
+      ? '<details class="mm-fa-build-member" open><summary><span class="mm-fa-build-summary-main"><b>CONSISTENCY FLAGS</b><span class="mm-fa-pill mm-fa-bad">'+coverage.consistencyIssues.length+'</span></span><span class="mm-fa-muted">review before acquisition</span></summary><div class="mm-fa-build-body">'+
+        coverage.consistencyIssues.map(issue=>
+          '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(issue.memberName)+(issue.slot?' · '+esc(issue.slot.toUpperCase()):'')+'</b>'+
+          '<div class="mm-fa-bad">'+esc(issue.type)+'</div><div class="mm-fa-muted">'+esc(issue.item||'')+' · '+esc(issue.detail||'')+'</div></div></div>'
+        ).join('')+'</div></details>'
+      : '<div class="mm-fa-card mm-fa-compact"><span class="mm-fa-good"><b>Consistency scan:</b> no equipped-item/floor routing mismatches or unmapped combat equipment detected in the cached roster.</span></div>';
     const factionRows=coverage.factionCoverage.map(row=>
       '<div class="mm-fa-row"><div class="mm-fa-main"><b>'+esc(row.slot.toUpperCase())+'</b></div>'+
       '<div class="mm-fa-tiles">'+
@@ -1566,6 +1573,7 @@
       '<button id="mm-fa-export-coverage" style="'+button(true)+'">Export Comparison</button></div>'+
       '<div class="mm-fa-muted">Side-by-side operational view: what each member has, the readiness floor/target, qualifying faction stock, assignment route, and computed versus manually planned purchases. Procurement Pass suppresses acquisition without claiming verified War Ready.</div>'+
       '</div>'+
+      issueHtml+
       '<details class="mm-fa-build-member" open><summary><span class="mm-fa-build-summary-main"><b>FACTION COVERAGE SUMMARY</b></span><span class="mm-fa-muted">8 combat slots</span></summary><div class="mm-fa-build-body">'+factionRows+'</div></details>'+
       memberHtml;
   }
@@ -2321,6 +2329,9 @@
       xmlSheet('Faction Coverage',['Slot','Faction Owned','Available','Loaned','Member Gaps','Issue Assignments','Acquire Assignments','System Buy Qty','Planned Buy Qty'],coverage.factionCoverage.map(r=>({
         'Slot':r.slot,'Faction Owned':num(r.owned),'Available':num(r.available),'Loaned':num(r.loaned),'Member Gaps':num(r.memberGaps),
         'Issue Assignments':num(r.issueAssignments),'Acquire Assignments':num(r.acquireAssignments),'System Buy Qty':num(r.systemBuyQty),'Planned Buy Qty':num(r.plannedBuyQty)
+      })))+
+      xmlSheet('Consistency',['Type','Member ID','Member','Slot','Item','Detail'],coverage.consistencyIssues.map(r=>({
+        'Type':r.type,'Member ID':r.memberId,'Member':r.memberName,'Slot':r.slot,'Item':r.item,'Detail':r.detail
       })))+
       xmlSheet('Acquire',['Category','Item','System Qty','Planned Qty','Manual Override','Buy Now Qty','Deferred Qty','Reference Source','Reference Unit Value','Buy Now Cost','Reasons'],acquisition.list.map(r=>({
         'Category':r.category,'Item':r.item,'System Qty':num(r.systemQty),'Planned Qty':num(r.qty),'Manual Override':r.manualQtyOverride!=null?'YES':'NO',
