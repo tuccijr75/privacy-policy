@@ -1,7 +1,17 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.2**
+Status: **NON-PRODUCTION / alpha.24.3**
 
+
+## Alpha.24.3 leadership override + manual data control
+
+- Fresh confirmed-empty combat equipment is labeled **NO COMBAT GEAR EQUIPPED**, not **MISSING DATA**.
+- Every faction member can be marked **WAR READY** individually by Leadership, regardless of automatic build/data status. The automatic baseline remains visible and is not falsified.
+- An individual WAR READY decision persists across API refreshes and procurement-mode changes until Leadership explicitly reopens that member.
+- Every member exposes **Edit Data Override**. Overrides are partial JSON overlays over the stored source/API profile, so omitted fields continue using source data and the source profile remains preserved underneath.
+- Manual overrides can replace nested readiness inputs including battle stats, equipment, owned equipment, supplies, medical state, public intel, member name/level, notes, or other profile fields.
+- Manual overrides are individually clearable and disclosed in the Leadership export with timestamp, reason, and override JSON.
+- War acquisition excludes Leadership-marked WAR READY members, while the underlying automatic build assessment remains available for audit.
 
 ## Alpha.24.2 confirmed-empty equipment correction
 
