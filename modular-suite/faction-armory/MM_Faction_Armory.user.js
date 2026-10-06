@@ -1,14 +1,12 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.22.5
+// @version      8.0.0-alpha.23
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
-// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/faction-armory/MM_Faction_Armory.user.js
-// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/faction-armory/MM_Faction_Armory.user.js
 // @match        https://www.torn.com/*
 // @run-at       document-idle
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/core/MM_Torn_Core.js?v=8.0.0-alpha.13
-// @require      https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/faction-armory/MM_Faction_Armory.logic.js?v=8.0.0-alpha.4
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b7b667ade46725d0900d51d1f4a93c3432590bc4/modular-suite/faction-armory/MM_Faction_Armory.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -19,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.22.5';
+  const VERSION='8.0.0-alpha.23';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -541,15 +539,19 @@
       const name=String(item.name??item.item_name??itemObj.name??(id?'Item '+id:'')).trim();
       const subType=String(item.sub_type??item.subType??itemObj.sub_type??'').trim();
       const type=String(item.type??item.category??itemObj.type??'').trim();
-      const slot=String(item.slot??'').trim();
-      const semantic=(subType&&!/^\d+$/.test(subType)?subType:type&&!/^\d+$/.test(type)?type:slot&&!/^\d+$/.test(slot)?slot:fallback);
+      const rawSlot=item.slot??item.slot_id??itemObj.slot;
+      const slotText=String(rawSlot??'').trim();
+      const semantic=(subType&&!/^\d+$/.test(subType)?subType:type&&!/^\d+$/.test(type)?type:slotText&&!/^\d+$/.test(slotText)?slotText:fallback);
       if(!name&&!id)return;
-      const key=uid||[id,semantic,name].join('|');
+      const key=uid||[id,slotText||semantic,name].join('|');
       if(seen.has(key))return;
       seen.add(key);
       const stats=item.stats&&typeof item.stats==='object'?item.stats:(itemObj.stats&&typeof itemObj.stats==='object'?itemObj.stats:{});
-      rows.push({
-        uid,itemId:id,name,slot:semantic,type,subType,
+      const parsedSlot=Number(rawSlot);
+      const normalized={
+        uid,itemId:id,name,
+        slotId:Number.isInteger(parsedSlot)?parsedSlot:null,
+        slot:semantic,type,subType,
         damage:num(item.damage??stats.damage),
         accuracy:num(item.accuracy??stats.accuracy),
         armor:num(item.armor??stats.armor??stats.protection),
@@ -557,10 +559,13 @@
         quality:num(item.quality??stats.quality),
         bonuses:item.bonuses&&typeof item.bonuses==='object'?item.bonuses:(itemObj.bonuses&&typeof itemObj.bonuses==='object'?itemObj.bonuses:null),
         mods:Array.isArray(item.mods)?item.mods.map(m=>({id:asId(m?.id),name:String(m?.name||'')})):[]
-      });
+      };
+      normalized.slot=logic?.equipmentSlot?.(normalized)||semantic;
+      rows.push(normalized);
     };
     for(const item of Array.isArray(data?.equipment)?data.equipment:[])push('',item);
-    for(const item of Array.isArray(data?.clothing)?data.clothing:[])push('armor',item);
+    // Torn clothing is cosmetic/non-combat data. Do not let a clothing name satisfy
+    // a combat armor slot; readiness is derived only from /user/equipment equipment.
     for(const [key,value] of Object.entries(data||{})){
       if(['equipment','clothing'].includes(key))continue;
       if(value&&typeof value==='object'&&!Array.isArray(value)&&('name' in value||'item' in value||'item_id' in value))push(key,value);
@@ -1237,6 +1242,59 @@
     });
     state=await core.readLegacyState();
     return {memberId:id,memberName:row.memberName,approved};
+  }
+
+  async function setMemberProcurementPass(memberId,approved,reason=''){
+    const id=asId(memberId);
+    if(!id)throw new Error('Member ID is required.');
+    state=await core.readLegacyState();
+    const roster=state?.factionInventory?.memberReadiness?.roster||{};
+    const member=roster[id];
+    if(!member)throw new Error('Faction member not found.');
+    const at=new Date().toISOString();
+    await core.updateDomainState('faction',draft=>{
+      const fi=draft.factionInventory;
+      fi.memberReadiness=fi.memberReadiness&&typeof fi.memberReadiness==='object'?fi.memberReadiness:{};
+      fi.memberReadiness.profiles=fi.memberReadiness.profiles&&typeof fi.memberReadiness.profiles==='object'?fi.memberReadiness.profiles:{};
+      const profile=fi.memberReadiness.profiles[id]&&typeof fi.memberReadiness.profiles[id]==='object'
+        ?fi.memberReadiness.profiles[id]
+        :{memberId:id};
+      fi.memberReadiness.profiles[id]=profile;
+      if(approved){
+        profile.procurementPass={
+          status:'PASS',
+          approvedAt:at,
+          verifiedAt:String(profile.verifiedAt||''),
+          reason:String(reason||'Leader procurement pass').trim()
+        };
+      }else{
+        delete profile.procurementPass;
+      }
+      return draft;
+    });
+    state=await core.readLegacyState();
+    return {memberId:id,memberName:String(member.memberName||id),approved};
+  }
+
+  async function setAcquisitionQuantityOverride(row,value){
+    if(!row)throw new Error('Acquisition row is required.');
+    const raw=String(value??'').trim();
+    const key=logic.acquisitionOverrideKey(stockMode,procurementMode,row);
+    const qty=raw===''?null:Number(raw);
+    if(qty!=null&&(!Number.isFinite(qty)||qty<0||!Number.isInteger(qty)))throw new Error('Planned quantity must be a whole number of zero or more.');
+    const at=new Date().toISOString();
+    await core.updateDomainState('faction',draft=>{
+      const fi=draft.factionInventory;
+      fi.acquisitionPlanning=fi.acquisitionPlanning&&typeof fi.acquisitionPlanning==='object'?fi.acquisitionPlanning:{schema:1};
+      fi.acquisitionPlanning.schema=1;
+      fi.acquisitionPlanning.quantityOverrides=fi.acquisitionPlanning.quantityOverrides&&typeof fi.acquisitionPlanning.quantityOverrides==='object'
+        ?fi.acquisitionPlanning.quantityOverrides:{};
+      if(qty==null)delete fi.acquisitionPlanning.quantityOverrides[key];
+      else fi.acquisitionPlanning.quantityOverrides[key]={qty,updatedAt:at};
+      return draft;
+    });
+    state=await core.readLegacyState();
+    return {key,qty};
   }
 
   function equipmentStatsText(stats,{mode='current'}={}){
