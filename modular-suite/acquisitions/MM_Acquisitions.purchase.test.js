@@ -169,6 +169,9 @@ assert(pdaBuilder.includes('def replace_once('));
 assert(pdaBuilder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(pdaBuilder.includes('"MMTornMarketPulse"'));
 assert(pdaBuilder.includes('default=13'));
+assert(pdaBuilder.includes('f"v{base_version}"'));
+assert(pdaBuilder.includes('f"v{pda_version}"'));
+assert(!pdaBuilder.includes('PROFIT / RANKED / TRAVEL'));
 assert(pdaBuilder.includes('PDA cross-origin Travel storage'));
 assert(pdaBuilder.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
 
