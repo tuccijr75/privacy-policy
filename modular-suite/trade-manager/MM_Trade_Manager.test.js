@@ -151,7 +151,7 @@ assert(adapterSource.includes('async function updateDomainState(domain,updater)'
 
 const builderSource=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
 assert(builderSource.includes('MM_Torn_Core.b6d2202.js'));
-assert(builderSource.includes('MM_Inventory_ROI.logic.4ef4197.js'));
+assert(builderSource.includes('MM_Inventory_ROI.logic.bb32ea3.js'));
 assert(builderSource.includes('default=1'));
 assert(builderSource.includes('PDA lexical API key fallback'));
 assert(builderSource.includes('PDA metadata must not contain @require'));
@@ -159,7 +159,9 @@ assert(builderSource.includes('PDA metadata must not contain @require'));
 const coreVendorSource=fs.readFileSync(__dirname+'/vendor/MM_Torn_Core.b6d2202.js','utf8');
 assert(coreVendorSource.includes("const CORE_VERSION = '8.0.0-alpha.14'"));
 assert(coreVendorSource.includes('async function ensureSharedState'));
-const vendorSource=fs.readFileSync(__dirname+'/vendor/MM_Inventory_ROI.logic.4ef4197.js','utf8');
+const vendorSource=fs.readFileSync(__dirname+'/vendor/MM_Inventory_ROI.logic.bb32ea3.js','utf8');
 assert(vendorSource.includes('function fifoLedger'));
+assert(vendorSource.includes('function tradeInventoryEvents'));
+assert(vendorSource.includes('function acknowledgeTradeReconciliations'));
 assert(vendorSource.includes('MMTornInventoryRoiLogic'));
 console.log('MM Trade Manager PDA static/parity tests: PASS');
