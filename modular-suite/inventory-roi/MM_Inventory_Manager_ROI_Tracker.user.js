@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Inventory Manager/ROI Tracker
 // @namespace    manic-mike.torn.inventory-roi
-// @version      8.0.0-alpha.9
+// @version      8.0.0-alpha.10
 // @description  Connected Bazaar/inventory dashboard with sales velocity, FIFO ROI, Market Pulse context and restock readiness.
 // @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js
 // @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/crm-v8-modular-suite/modular-suite/inventory-roi/MM_Inventory_Manager_ROI_Tracker.user.js
@@ -19,7 +19,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.9';
+  const VERSION='8.0.0-alpha.10';
   const ROOT_ID='mm-inventory-roi';
   const LAUNCHER_ID='mm-inventory-roi-launcher';
   const STYLE_ID='mm-inventory-roi-style';
@@ -194,6 +194,19 @@
     state=await core.readLegacyState();
   }
 
+  async function syncRestockDemand(){
+    const snapshot=await core.readLegacyState();
+    logic.ensureInventorySlice(snapshot);
+    const rows=logic.restockDemandRows(snapshot);
+    let outcome={changed:false,count:rows.length};
+    await core.updateDomainState('bazaar',draft=>{
+      outcome=logic.replaceRestockDemand(draft,rows,Date.now());
+      return draft;
+    });
+    if(outcome.changed)state=await core.readLegacyState();
+    return outcome;
+  }
+
   async function refreshSales({backfill=false}={}){
     if(!apiKey())throw new Error('Save a Torn API key in Settings first.');
     if(!state)state=await core.readLegacyState();
@@ -209,6 +222,7 @@
       if(needsBackfill)inv.salesBackfillCompleteAt=new Date().toISOString();
       return draft;
     });
+    await syncRestockDemand();
     return {...result,backfilled:needsBackfill,lookbackMs:lookback};
   }
 
@@ -240,6 +254,7 @@
       };
       return draft;
     });
+    await syncRestockDemand();
     return {bazaarOk,inventoryOk,bazaarError,inventoryError};
   }
 
@@ -302,7 +317,7 @@
         tile('PULSE COVERAGE',summary.skuCount?pulseCoverage+'% fresh':'—',summary.pulseStaleCount||summary.pulseMissingCount?'mm-ir-warn':'mm-ir-good')+
         (shop.inventoryError?tile('INVENTORY','API unavailable','mm-ir-warn'):'')+
       '</div>'+
-      '<div class="mm-ir-mini" style="margin-top:5px;">Market Pulse is read-only context from MM_Acquisitions. Pricing recommendations are explainable decision support only; this module does not reprice, list items, or create a second market collector.</div>'
+      '<div class="mm-ir-mini" style="margin-top:5px;">Market Pulse is read-only context from MM_Acquisitions. Pricing recommendations are explainable decision support only. Restock demand is published into Inventory-owned shared state for Acquisitions to source; this module does not reprice, purchase, list items, or create a second market collector.</div>'
     )+
     (rows.length?rows.map(row=>{
       const attention=row.needsAttention?row.attentionReasons.join(' · '):'OK';
