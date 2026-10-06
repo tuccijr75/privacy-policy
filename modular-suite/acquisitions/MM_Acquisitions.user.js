@@ -574,20 +574,27 @@
   async function updateTravelData(){
     if(busy||watchRunning)return;
     busy=true;
-    statusText='Refreshing TornW3B Travel Stock…';
+    statusText='Refreshing Torn Intel Travel Stock…';
     render();
     try{
-      const html=await gmText('https://weav3r.dev/travel-stock');
-      const rows=live.parseTravelStockHtml(html);
-      const feed=writeTravelFeed(rows,Date.now());
-      state=await service.importTravelRows(feed.rows,feed.capturedAt);
-      statusText='Travel updated: '+rows.length+' current routes.';
-    }catch(error){
-      busy=false;
-      statusText='Direct refresh blocked; opening live TornW3B page for capture…';
+      const result=await refreshTornIntelTravel({silent:true});
+      statusText='Travel updated from Torn Intel: '+Number(result?.rows?.length||0)+' current item/country rows.';
+    }catch(tornIntelError){
+      statusText='Torn Intel refresh unavailable; trying TornW3B fallback…';
       render();
-      beginTravelCapture();
-      return;
+      try{
+        const html=await gmText('https://weav3r.dev/travel-stock');
+        const rows=live.parseTravelStockHtml(html);
+        const feed=writeTravelFeed(rows,Date.now());
+        state=await service.importTravelRows(feed.rows,feed.capturedAt);
+        statusText='Travel updated from TornW3B fallback: '+rows.length+' current routes.';
+      }catch(fallbackError){
+        busy=false;
+        statusText='Direct travel refresh unavailable; opening TornW3B fallback page for capture…';
+        render();
+        beginTravelCapture();
+        return;
+      }
     }
     busy=false;
     render();
@@ -595,7 +602,7 @@
 
   async function reloadCachedState(){
     loadError='';
-    if(!core||!pulse||!logic||!live||!rankedLogic||!ledger||!service||!pulseEngine){
+    if(!core||!pulse||!logic||!live||!rankedLogic||!ledger||!restockIntel||!service||!pulseEngine){
       loadError='MM Acquisitions dependencies did not load.';
       state=null;
       render();
