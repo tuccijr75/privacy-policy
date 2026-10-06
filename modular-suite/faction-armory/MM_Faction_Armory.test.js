@@ -341,7 +341,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.23';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.24';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9109ad4eff4ff9fc2ac688018b8fdc4e014312bc/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
@@ -353,7 +353,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.23';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.24';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -361,7 +361,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.23';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.24';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
@@ -460,7 +460,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.23';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
@@ -608,3 +608,19 @@ assert(userSourceValue.includes("xmlSheet('Faction Coverage'"));
 assert(userSourceValue.includes("xmlSheet('Consistency'"));
 assert(userSourceValue.includes('CONSISTENCY FLAGS'));
 console.log('MM Faction Armory alpha.23 audit regressions: PASS');
+
+assert(userSourceValue.includes("const buckets=[...standard,...(unclassified.length?['unclassified']:[])];"),'weapon inventory must retain an UNCLASSIFIED bucket instead of dropping unresolved weapon rows');
+assert(userSourceValue.includes('Torn weapons source:'),'Stock must expose Torn weapon-source row diagnostics');
+assert(userSourceValue.includes('API type '),'weapon rows must expose raw API classification fields for diagnosis');
+assert(userSourceValue.includes('<b>Quick Build</b>'),'Builds must expose the compact Quick Build interface');
+assert(userSourceValue.includes('id="mm-fa-quick-build-member"'),'Quick Build must have a member selector');
+assert(userSourceValue.includes('id="mm-fa-quick-build-message"'),'Quick Build must offer a manual-send build message');
+assert(userSourceValue.includes('function quickBuildMessage'),'Quick Build message must reuse current build assessment');
+assert(userSourceValue.includes('Advanced / Full Roster Builds'),'detailed build evidence must remain available behind the compact interface');
+assert(userSourceValue.includes('function minimumOpenInputs'),'Minimums must compute explicit unresolved manager/leadership inputs');
+assert(userSourceValue.includes('Manager Minimums Proposal'),'Minimums must present the calculated values as the manager proposal');
+assert(userSourceValue.includes('These are Inventory Manager numbers for Leadership approval'),'Leadership must approve/adjust proposed quantities rather than invent them');
+assert(userSourceValue.includes("xmlSheet('Open Inputs'"),'Leadership workbook must include unresolved proposal inputs');
+assert.strictEqual((userSourceValue.match(/function buildsHtml\(/g)||[]).length,1,'Quick Build must remain the single normal Builds renderer');
+assert.strictEqual((userSourceValue.match(/function advancedBuildsHtml\(/g)||[]).length,1,'detailed build renderer must exist once');
+console.log('MM Faction Armory alpha.24 build/minimums regressions: PASS');
