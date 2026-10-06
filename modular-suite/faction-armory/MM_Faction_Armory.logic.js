@@ -1502,7 +1502,8 @@
 
   function minimumProposal(factionInventory={},options={}){
     const mode=String(options?.mode||'peace').toLowerCase()==='war'?'war':'peace';
-    const rosterRows=memberRows(factionInventory,[],{procurementMode:options?.procurementMode||'budget'});
+    const procurementMode=options?.procurementMode||'budget';
+    const rosterRows=memberRows(factionInventory,[],{procurementMode});
     const rosterCount=Object.keys(factionInventory?.memberReadiness?.roster||{}).length;
     const participants=rosterCount;
     const peacePoolMin=Math.max(2,Math.ceil(rosterCount*0.25)+2);
@@ -1510,19 +1511,19 @@
     const current=Object.values(factionInventory?.current||{});
     const cons=consumptionMap(factionInventory);
     const proposals=[];
+    const marketValueFor=name=>n(factionInventory?.equipmentMarketCatalog?.byName?.[String(name||'').trim().toLowerCase()]?.marketPrice);
 
     for(const slot of STANDARD_SLOTS){
       const slotItems=current.filter(item=>equipmentSlot(item)===slot);
       const available=slotItems.reduce((sum,item)=>sum+n(item?.availableCount),0);
       const loaned=slotItems.reduce((sum,item)=>sum+n(item?.loanedCount),0);
-
       let targetMin=peacePoolMin;
       let targetMax=peacePoolMax;
       let coverageNeeded=null;
       if(mode==='war'){
         const participating=rosterRows.slice(0,participants);
         coverageNeeded=participating.filter(member=>{
-          const build=member.buildAssessment||compareMemberBuild(member,factionInventory,rosterRows,{procurementMode:options?.procurementMode||'budget'});
+          const build=member.buildAssessment||compareMemberBuild(member,factionInventory,rosterRows,{procurementMode});
           const row=build.items.find(item=>item.slot===slot);
           return !row?.ready;
         }).length;
@@ -1531,19 +1532,12 @@
         targetMin=Math.max(peacePoolMin,Math.min(participants+2,coverageNeeded+2));
         targetMax=Math.max(targetMin,Math.min(participants+2,targetMin+2));
       }
-
       proposals.push({
-        kind:'equipment',
-        mode,
+        kind:'equipment',mode,
         category:['primary','secondary','melee'].includes(slot)?'weapons':'armor',
-        item:'Routine '+slot+' pool',
-        slot,
-        current:available,
-        loaned,
-        coverageNeeded,
-        recommendedMin:targetMin,
-        recommendedMax:targetMax,
-        shortfall:Math.max(0,targetMin-available),
+        item:'Routine '+slot+' pool',slot,
+        current:available,loaned,coverageNeeded,
+        recommendedMin:targetMin,recommendedMax:targetMax,
         dataRequired:false,
         rationale:mode==='war'
           ? 'War mode: current faction roster ('+participants+' members); cover every member whose current '+slot+' is unverified/below standard, plus two spares.'
@@ -1555,15 +1549,17 @@
       const category=String(item?.category||'');
       if(!['medical','temporary','consumables','drugs','boosters'].includes(category))continue;
       const name=String(item?.name||'');
+      const available=n(item?.availableCount||item?.amountOwned);
       if(/blood bag/i.test(name)&&!/empty blood bag/i.test(name)){
         proposals.push({
           kind:'stackable',mode,category,item:name,itemId:asId(item?.itemId),
-          current:n(item?.availableCount||item?.amountOwned),
-          recommendedMin:null,recommendedMax:null,shortfall:null,dataRequired:true,
+          current:available,marketValue:marketValueFor(name),
+          recommendedMin:null,recommendedMax:null,dataRequired:true,
           rationale:'Filled blood-bag mix requires the participating members\' blood-type distribution.'
         });
         continue;
       }
+      if(mode==='war'&&name.trim().toLowerCase()==='xanax')continue;
       const rate=n(cons[category+'|'+asId(item?.itemId)]);
       const critical=category==='medical'?CRITICAL_MEDICAL.has(name):category==='temporary'?CRITICAL_TEMPORARY.has(name):false;
       const peaceTarget=Math.ceil(rate*14)+(critical?rosterCount:0);
@@ -1571,13 +1567,12 @@
       const warPackage=perMember*participants;
       const target=mode==='war'?Math.max(peaceTarget,warPackage):peaceTarget;
       if(target<=0)continue;
-      const available=n(item?.availableCount||item?.amountOwned);
       proposals.push({
         kind:'stackable',mode,category,item:name,itemId:asId(item?.itemId),
-        current:available,consumptionPerDay:rate,perMemberWarUnits:perMember,
+        current:available,marketValue:marketValueFor(name),
+        consumptionPerDay:rate,perMemberWarUnits:perMember,
         recommendedMin:target,
         recommendedMax:mode==='war'?Math.ceil(target*1.20):Math.ceil(target*1.5),
-        shortfall:Math.max(0,target-available),
         dataRequired:false,
         rationale:mode==='war'
           ? (perMember>0
@@ -1596,13 +1591,57 @@
         const target=perMember*participants;
         proposals.push({
           kind:'stackable',mode,category,item:name,itemId:'',
-          current:0,consumptionPerDay:0,perMemberWarUnits:perMember,
+          current:0,marketValue:marketValueFor(name),
+          consumptionPerDay:0,perMemberWarUnits:perMember,
           recommendedMin:target,recommendedMax:Math.ceil(target*1.20),
-          shortfall:target,dataRequired:false,synthetic:true,
+          dataRequired:false,synthetic:true,
           rationale:'War mode: '+perMember+' per participating member × '+participants+'; item is not currently present in faction stock.'
         });
       }
+
+      const xanax=xanaxEstimator(factionInventory,{procurementMode});
+      proposals.push({
+        kind:'stackable',mode,category:'drugs',item:'Xanax',
+        itemId:String(current.find(item=>String(item?.name||'').trim().toLowerCase()==='xanax')?.itemId||''),
+        current:xanax.available,
+        marketValue:marketValueFor('Xanax'),
+        recommendedMin:xanax.recommendedTarget,
+        recommendedMax:xanax.recommendedTarget,
+        dataRequired:!xanax.ready,
+        synthetic:!current.some(item=>String(item?.name||'').trim().toLowerCase()==='xanax'),
+        xanaxEstimator:xanax,
+        rationale:xanax.rationale
+      });
     }
+
+    const finalized=proposals.map(row=>{
+      const override=minimumOverrideFor(factionInventory,mode,row);
+      const suggestedMin=row.recommendedMin==null?null:Math.max(0,Math.round(n(row.recommendedMin)));
+      const effectiveDataRequired=Boolean(row.dataRequired&&override.min==null);
+      const effectiveMin=override.min!=null?override.min:suggestedMin;
+      const suggestedMax=row.recommendedMax==null?null:Math.max(0,Math.round(n(row.recommendedMax)));
+      const effectiveMax=effectiveMin==null?null:override.min!=null
+        ?Math.max(effectiveMin,Math.ceil(effectiveMin*(mode==='war'?1.20:1.50)))
+        :suggestedMax;
+      const shortfall=effectiveDataRequired||effectiveMin==null?null:Math.max(0,effectiveMin-n(row.current));
+      const orderEnabled=override.orderEnabled;
+      return {
+        ...row,
+        suggestedMin,
+        suggestedMax,
+        manualMin:override.min,
+        minimumOverrideKey:override.key,
+        minimumOverrideActive:override.active,
+        minimumOverrideUpdatedAt:override.updatedAt,
+        orderEnabled,
+        recommendedMin:effectiveMin,
+        effectiveMin,
+        recommendedMax:effectiveMax,
+        dataRequired:effectiveDataRequired,
+        shortfall,
+        status:effectiveDataRequired?'DATA REQUIRED':shortfall>0?(orderEnabled?'ORDER':'SHORT / HOLD'):'ENOUGH'
+      };
+    });
 
     const days=observedDays(factionInventory);
     const confidence=days>=7?'HIGH':days>=3?'MEDIUM':'LOW';
@@ -1616,11 +1655,13 @@
       peacePoolMax,
       observedDays:days,
       confidence,
-      proposals,
-      actionable:proposals.filter(p=>!p.dataRequired&&n(p.shortfall)>0),
-      dataRequired:proposals.filter(p=>p.dataRequired),
+      proposals:finalized,
+      actionable:finalized.filter(p=>!p.dataRequired&&p.orderEnabled&&n(p.shortfall)>0),
+      held:finalized.filter(p=>!p.dataRequired&&!p.orderEnabled&&n(p.shortfall)>0),
+      dataRequired:finalized.filter(p=>p.dataRequired),
+      xanax:mode==='war'?finalized.find(p=>p.item==='Xanax')?.xanaxEstimator||null:null,
       assumptions:mode==='war'
-        ? 'WAR: derived from the current faction roster ('+participants+' members); equipment covers all unverified/below-standard members plus two spares; core medical/temp supplies use per-member war packages.'
+        ? 'WAR: equipment covers unresolved member slots plus two spares; medical/temp minimums scale from the current roster; Xanax is opponent-weighted and Leadership-adjustable.'
         : 'PEACE: routine equipment pool is 25% of roster plus two spares; stackables use 14-day observed depletion with one-per-member reserve for critical items.'
     };
   }
