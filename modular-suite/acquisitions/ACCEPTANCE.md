@@ -1,8 +1,8 @@
 # MM_Acquisitions Acceptance
 
 Candidate:
-- Desktop: 8.0.0-alpha.27
-- TornPDA: 8.0.0-alpha.27-pda.14
+- Desktop: 8.0.0-alpha.28
+- TornPDA: 8.0.0-alpha.28-pda.15
 - Branch: crm-v8-acquisitions-alpha22-clarity
 - Base: crm-v8-acquisitions-ranked-profit
 - Stable/customer publication: not approved
@@ -163,6 +163,41 @@ PASS:
 - no $1/low bid is presented as a guaranteed purchase;
 - completed-sale history and current auction bids remain distinct.
 
+### Customer feedback regressions
+
+- In **Ranked Weapons → All sources**, confirm an Auction House listing with a tiny early bid (for example $119), fewer than 3 bids, below 20% of estimated fair value, and more than 2 hours remaining is **not** presented in the normal profit opportunity list.
+- Switch the source filter to **Auction** and confirm that same kind of listing may be inspected as **EARLY BID · WATCH ONLY** with **PROVISIONAL** bid status rather than estimated profit/ROI.
+- Confirm near-close or meaningfully bid auctions remain inspectable as auction-watch opportunities.
+- Find an item whose Torn catalog reports a Market Value but where no current Bazaar/Item Market evidence exists.
+- Confirm the catalog MV may remain reference metadata but is **not** presented as a live Bazaar/Item Market listing, resale route, or source availability.
+- Confirm Bazaar routing still requires actual Bazaar evidence and Item Market routing still uses a fresh exact Item Market snapshot.
+
+PASS:
+- opening/immature auction bids cannot create misleading profit opportunities;
+- catalog MV cannot masquerade as a current seller/listing price.
+
+### Torn Intel travel + Restock ETA
+
+- Open **More → Travel Deals** and run **Refresh Travel Stock**.
+- Confirm Torn Intel Travel Table is attempted first and provider provenance is shown.
+- Confirm provider source timestamp and local fetch time are displayed separately; local fetch time must not make stale upstream stock appear fresh.
+- Confirm TornW3B remains a fallback if Torn Intel live stock is unavailable.
+- Confirm no Torn Intel client key is required for the normal live-stock attempt.
+- Under **More → Setup / Advanced**, save an approved Torn Intel client key and confirm it remains in userscript GM storage only.
+- Load **Restock History / Estimate Restock** for a supported country/item.
+- Confirm the history request uses an explicit on-demand action, a 48-hour window, and the client-key rate guard.
+- Confirm ETA is not shown until at least 3 usable completed empty→restock cycles exist.
+- Confirm observations with transition gaps over 5 minutes are rejected from ETA evidence.
+- Confirm the display identifies the result as an MM estimate from Torn Intel observed history, not Torn Intel's private prediction.
+- Confirm stored shared state contains only bounded/sanitized derived model evidence, never the Torn Intel client key.
+- Confirm travel and all purchases remain manual.
+
+PASS:
+- Torn Intel is integrated as procurement-safe travel intelligence;
+- source/fetch freshness is truthful;
+- restock predictions are bounded, transparent and evidence-gated;
+- no private Torn Intel prediction endpoint or key leakage is used.
+
 ### 5. Market Pulse
 
 Allow enough time for at least two valid Item Market snapshots for a tracked item.
@@ -233,7 +268,7 @@ PASS:
 
 ## TornPDA
 
-Install 8.0.0-alpha.27-pda.14.
+Install 8.0.0-alpha.28-pda.15.
 
 - Confirm TornPDA also opens on Pricelist and shows only Pricelist / Ranked Weapons / More as primary navigation.
 
