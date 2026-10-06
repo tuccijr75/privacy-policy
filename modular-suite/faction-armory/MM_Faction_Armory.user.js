@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.2
+// @version      8.0.0-alpha.24.3
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@2c85d554254bdcc4e3d1334f9fdc23eb3fd5ba42/modular-suite/faction-armory/MM_Faction_Armory.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@67c6282894d1a6767047c4e19c42cb53683804ac/modular-suite/faction-armory/MM_Faction_Armory.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.2';
+  const VERSION='8.0.0-alpha.24.3';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -1211,33 +1211,36 @@
   function readinessStatusClass(status){
     const value=String(status||'');
     if(value==='WAR READY'||value==='READY FOR REVIEW')return 'mm-fa-good';
-    if(value==='MISSING DATA'||value==='STALE DATA')return 'mm-fa-bad';
+    if(value==='MISSING DATA'||value==='STALE DATA'||value==='NO COMBAT GEAR EQUIPPED')return 'mm-fa-bad';
     return 'mm-fa-warn';
   }
 
-  async function setMemberWarReady(memberId,approved){
+  async function setMemberWarReady(memberId,approved,reason=''){
     const id=asId(memberId);
     if(!id)throw new Error('Member ID is required.');
     state=await core.readLegacyState();
     const rows=logic.memberRows(state?.factionInventory||{},savedKeyIds(),{procurementMode});
     const row=rows.find(item=>item.memberId===id);
     if(!row)throw new Error('Faction member not found.');
-    if(approved&&(row.readinessStatus!=='READY FOR REVIEW'||!row.buildWarReady)){
-      throw new Error('Member is not currently eligible for War Ready approval.');
-    }
     const at=new Date().toISOString();
     await core.updateDomainState('faction',draft=>{
       const fi=draft.factionInventory;
       fi.memberReadiness=fi.memberReadiness&&typeof fi.memberReadiness==='object'?fi.memberReadiness:{};
       fi.memberReadiness.profiles=fi.memberReadiness.profiles&&typeof fi.memberReadiness.profiles==='object'?fi.memberReadiness.profiles:{};
-      const profile=fi.memberReadiness.profiles[id];
-      if(!profile)throw new Error('No readiness profile exists for this member.');
+      const profile=fi.memberReadiness.profiles[id]&&typeof fi.memberReadiness.profiles[id]==='object'
+        ?fi.memberReadiness.profiles[id]
+        :{memberId:id};
+      fi.memberReadiness.profiles[id]=profile;
       if(approved){
         profile.readinessApproval={
           status:'WAR READY',
           approvedAt:at,
-          verifiedAt:String(profile.verifiedAt||''),
-          procurementMode
+          manual:true,
+          reason:String(reason||'Leadership manual decision').trim(),
+          sourceVerifiedAt:String(profile.verifiedAt||''),
+          procurementModeAtApproval:procurementMode,
+          baselinePassedAtApproval:Boolean(row.buildWarReady),
+          dataStatusAtApproval:String(row.dataReadinessStatus||'')
         };
       }else{
         delete profile.readinessApproval;
@@ -1246,6 +1249,50 @@
     });
     state=await core.readLegacyState();
     return {memberId:id,memberName:row.memberName,approved};
+  }
+
+  async function setMemberManualOverrides(memberId,values,reason=''){
+    const id=asId(memberId);
+    if(!id)throw new Error('Member ID is required.');
+    if(!values||typeof values!=='object'||Array.isArray(values))throw new Error('Manual override must be a JSON object.');
+    state=await core.readLegacyState();
+    const roster=state?.factionInventory?.memberReadiness?.roster||{};
+    const member=roster[id];
+    if(!member)throw new Error('Faction member not found.');
+    const at=new Date().toISOString();
+    await core.updateDomainState('faction',draft=>{
+      const fi=draft.factionInventory;
+      fi.memberReadiness=fi.memberReadiness&&typeof fi.memberReadiness==='object'?fi.memberReadiness:{};
+      fi.memberReadiness.profiles=fi.memberReadiness.profiles&&typeof fi.memberReadiness.profiles==='object'?fi.memberReadiness.profiles:{};
+      const profile=fi.memberReadiness.profiles[id]&&typeof fi.memberReadiness.profiles[id]==='object'
+        ?fi.memberReadiness.profiles[id]
+        :{memberId:id};
+      fi.memberReadiness.profiles[id]=profile;
+      profile.manualOverrides={
+        values:JSON.parse(JSON.stringify(values)),
+        updatedAt:at,
+        reason:String(reason||'Manual Armory data override').trim()
+      };
+      return draft;
+    });
+    state=await core.readLegacyState();
+    return {memberId:id,memberName:String(member.memberName||id),updatedAt:at};
+  }
+
+  async function clearMemberManualOverrides(memberId){
+    const id=asId(memberId);
+    if(!id)throw new Error('Member ID is required.');
+    state=await core.readLegacyState();
+    const roster=state?.factionInventory?.memberReadiness?.roster||{};
+    const member=roster[id];
+    if(!member)throw new Error('Faction member not found.');
+    await core.updateDomainState('faction',draft=>{
+      const profile=draft.factionInventory?.memberReadiness?.profiles?.[id];
+      if(profile&&typeof profile==='object')delete profile.manualOverrides;
+      return draft;
+    });
+    state=await core.readLegacyState();
+    return {memberId:id,memberName:String(member.memberName||id)};
   }
 
   async function setMemberProcurementPass(memberId,approved,reason=''){
@@ -1383,13 +1430,14 @@
   function membersHtml(){
     const rows=memberRows();
     const missing=rows.filter(r=>['MISSING DATA','STALE DATA','ESTIMATED — NEEDS DATA'].includes(r.readinessStatus)).length;
+    const noGear=rows.filter(r=>r.readinessStatus==='NO COMBAT GEAR EQUIPPED').length;
     const vault=getVault();
     const savedCount=savedKeyIds().length;
     const staleSaved=staleSavedMemberCount();
     const vaultUnlocked=Boolean(vaultSession?.key);
     return '<div class="mm-fa-card mm-fa-compact">'+
       '<div class="mm-fa-module-head">'+
-        '<div><b>Member readiness</b> <span class="mm-fa-muted">'+rows.length+' roster members · '+missing+' missing/stale/estimated · '+savedCount+' saved member API key'+(savedCount===1?'':'s')+'</span></div>'+
+        '<div><b>Member readiness</b> <span class="mm-fa-muted">'+rows.length+' roster members · '+missing+' missing/stale/estimated · '+noGear+' confirmed no combat gear · '+savedCount+' saved member API key'+(savedCount===1?'':'s')+'</span></div>'+
         '<div class="mm-fa-actions">'+
           (vault&&savedCount&&!vaultUnlocked?'<button id="mm-fa-unlock-vault" style="'+button(true)+'">Unlock Vault</button>':'')+
           '<button id="mm-fa-refresh-keys" style="'+button()+'">Refresh Keys</button><button id="mm-fa-copy-request" style="'+button()+'">Copy Request</button>'+
@@ -1406,22 +1454,24 @@
     (rows.length?rows.map(row=>{
       const s=row.stats||{};
       const source=String(row.profile?.source||'');
-      const gear=String(row.equipmentSummary||'')||(row.profile?.equipment?.emptyConfirmed?'No combat equipment equipped (API confirmed)':'');
+      const gear=String(row.equipmentSummary||'')||(row.equipmentEmptyConfirmed?'No combat gear equipped (confirmed)':'');
       const entry=vault?.entries?.[row.memberId];
       const statusClass=readinessStatusClass(row.readinessStatus);
       const med=row.profile?.supplyReadiness?.medical||{};
       return '<details class="mm-fa-build-member">'+
         '<summary>'+
-          '<span class="mm-fa-build-summary-main"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(row.procurementPassCurrent?'<span class="mm-fa-pill mm-fa-good">PROCUREMENT PASS</span>':'')+(row.procurementPassStale?'<span class="mm-fa-pill mm-fa-warn">PASS NEEDS REVIEW</span>':'')+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</span>'+
+          '<span class="mm-fa-build-summary-main"><b>'+esc(row.memberName)+'</b><span class="mm-fa-pill">Lv '+num(row.level)+'</span><span class="'+statusClass+'">'+esc(row.readinessStatus)+'</span>'+(row.manualOverrideActive?'<span class="mm-fa-pill mm-fa-warn">MANUAL OVERRIDE</span>':'')+(row.procurementPassCurrent?'<span class="mm-fa-pill mm-fa-good">PROCUREMENT PASS</span>':'')+(row.procurementPassStale?'<span class="mm-fa-pill mm-fa-warn">PASS NEEDS REVIEW</span>':'')+(entry?'<span class="mm-fa-pill">API SAVED</span>':'')+'</span>'+
           '<span class="mm-fa-muted">'+(row.statsEstimated?'~'+fmt(row.statProfile.total)+' estimated stats':row.hasStats?fmt(row.statProfile.total)+' stats':'stats missing')+'</span>'+
         '</summary>'+
         '<div class="mm-fa-build-body">'+
           '<div class="mm-fa-module-head"><div class="mm-fa-buttons">'+
             (entry?'<button data-refresh-member="'+esc(row.memberId)+'" style="'+button(true)+'">Refresh</button><button data-remove-member="'+esc(row.memberId)+'" style="'+button()+'">Remove Key</button>':'')+
             '<button data-paste-reply="'+esc(row.memberId)+'" style="'+button()+'">Paste Reply</button>'+
-            ((!row.hasVerifiedStats||!row.profileHasEquipment)&&!reminderSent(row.memberId)?'<button data-remind-member="'+esc(row.memberId)+'" style="'+button(true)+'">Send Data Reminder</button>':'')+
-            (row.readinessStatus==='READY FOR REVIEW'&&row.buildWarReady?'<button data-war-ready="'+esc(row.memberId)+'" style="'+button(true)+'">Approve / War Ready</button>':'')+
-            (row.readinessStatus==='WAR READY'?'<button data-reopen-review="'+esc(row.memberId)+'" style="'+button()+'">Reopen Review</button>':'')+
+            ((!row.hasVerifiedStats||!row.equipmentEvidenceKnown)&&!reminderSent(row.memberId)?'<button data-remind-member="'+esc(row.memberId)+'" style="'+button(true)+'">Send Data Reminder</button>':'')+
+            (row.readinessStatus!=='WAR READY'?'<button data-war-ready="'+esc(row.memberId)+'" style="'+button(true)+'">Mark War Ready</button>':'')+
+            (row.readinessStatus==='WAR READY'?'<button data-reopen-review="'+esc(row.memberId)+'" style="'+button()+'">Reopen Readiness</button>':'')+
+            '<button data-edit-override="'+esc(row.memberId)+'" style="'+button()+'">Edit Data Override</button>'+
+            (row.manualOverrideActive?'<button data-clear-override="'+esc(row.memberId)+'" style="'+button()+'">Clear Override</button>':'')+
             (row.readinessStatus!=='WAR READY'&&!row.procurementPassCurrent?'<button data-procurement-pass="'+esc(row.memberId)+'" style="'+button()+'">Pass / Exclude Acquisition</button>':'')+
             (row.procurementPassCurrent?'<button data-reopen-procurement="'+esc(row.memberId)+'" style="'+button()+'">Reopen Procurement</button>':'')+
           '</div></div>'+
@@ -1438,10 +1488,11 @@
             tile('READINESS',row.readinessStatus||'—')+
             tile('PROCUREMENT',row.acquisitionDisposition||'ACTIVE')+
             tile('BUILD BASELINE',row.buildWarReady?'PASS':'ACTION NEEDED')+
-            (row.readinessApprovedAt?tile('APPROVED',when(row.readinessApprovedAt),{wide:true}):'')+
+            (row.readinessApprovedAt?tile('WAR READY OVERRIDE',when(row.readinessApprovedAt)+(row.readinessApprovalReason?' · '+row.readinessApprovalReason:''),{wide:true}):'')+
+            (row.manualOverrideActive?tile('DATA OVERRIDE',when(row.manualOverrideUpdatedAt)+(row.manualOverrideReason?' · '+row.manualOverrideReason:''),{wide:true}):'')+
             (row.procurementPassAt?tile('PASS',when(row.procurementPassAt)+(row.procurementPassReason?' · '+row.procurementPassReason:''),{wide:true}):'')+
             tile('LOANS',row.loans?row.loans+' units':'—')+
-            (source?tile('SOURCE',source+' · '+when(row.profile?.verifiedAt),{wide:true}):tile('SOURCE','No current profile',{wide:true}))+
+            (source?tile('SOURCE',(row.manualOverrideActive?'MANUAL OVERRIDE over ':'')+source+' · '+when(row.profile?.verifiedAt),{wide:true}):tile('SOURCE',row.manualOverrideActive?'MANUAL OVERRIDE over no source profile':'No current profile',{wide:true}))+
           '</div>'+
           (entry?.lastError?'<div class="mm-fa-bad mm-fa-mini" style="margin-top:3px;">API error: '+esc(entry.lastError)+'</div>':'')+
           memberEquipmentStatsHtml(row)+
@@ -2375,19 +2426,63 @@
       }catch(error){statusText='Could not prepare reminder: '+(error?.message||String(error));render();}
     }));
     root.querySelectorAll('[data-war-ready]').forEach(b=>b.addEventListener('click',async()=>{
-      if(busy)return;busy=true;statusText='Approving member as War Ready…';render();
+      const id=asId(b.dataset.warReady);
+      const row=memberRows().find(item=>item.memberId===id);
+      if(!row||busy)return;
+      const reason=prompt(
+        'Mark '+row.memberName+' WAR READY as an individual Leadership override. This will exclude the member from War acquisition until you reopen readiness. Optional reason:',
+        row.buildWarReady?'Leadership approved':'Leadership manual override'
+      );
+      if(reason==null)return;
+      busy=true;statusText='Marking '+row.memberName+' War Ready…';render();
       try{
-        const result=await setMemberWarReady(b.dataset.warReady,true);
-        statusText=result.memberName+' is now WAR READY across Members, Builds, and exports.';
-      }catch(error){statusText='War Ready approval failed: '+(error?.message||String(error));}
+        const result=await setMemberWarReady(id,true,reason);
+        statusText=result.memberName+' is WAR READY by individual Leadership decision. Automatic build/data status remains visible underneath.';
+      }catch(error){statusText='War Ready update failed: '+(error?.message||String(error));}
       finally{busy=false;render();}
     }));
     root.querySelectorAll('[data-reopen-review]').forEach(b=>b.addEventListener('click',async()=>{
       if(busy)return;busy=true;statusText='Reopening readiness review…';render();
       try{
         const result=await setMemberWarReady(b.dataset.reopenReview,false);
-        statusText=result.memberName+' returned to READY FOR REVIEW.';
+        statusText=result.memberName+' manual War Ready decision was cleared; automatic readiness is active again.';
       }catch(error){statusText='Readiness review update failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-edit-override]').forEach(b=>b.addEventListener('click',async()=>{
+      const id=asId(b.dataset.editOverride);
+      const row=memberRows().find(item=>item.memberId===id);
+      if(!row||busy)return;
+      const current=row.manualOverrideValues&&typeof row.manualOverrideValues==='object'?row.manualOverrideValues:{};
+      const raw=prompt(
+        'Manual data override for '+row.memberName+'. Enter a PARTIAL JSON object. Only fields you include replace source data; API/source data remains stored underneath. Examples: {"stats":{"strength":2500},"level":20} or {"equipment":{"summary":"MELEE: Macana","items":[{"name":"Macana","slot":"melee","damage":60,"accuracy":67}],"emptyConfirmed":false}}. Use {} then Clear Override to return fully to source data.',
+        JSON.stringify(current,null,2)
+      );
+      if(raw==null)return;
+      let values;
+      try{
+        values=JSON.parse(String(raw||'{}'));
+        if(!values||typeof values!=='object'||Array.isArray(values))throw new Error('Override must be a JSON object.');
+      }catch(error){
+        statusText='Manual override JSON is invalid: '+(error?.message||String(error));render();return;
+      }
+      const reason=prompt('Optional reason / audit note for this manual override:',row.manualOverrideReason||'Leadership manual correction');
+      if(reason==null)return;
+      busy=true;statusText='Saving manual data override…';render();
+      try{
+        const result=await setMemberManualOverrides(id,values,reason);
+        statusText=result.memberName+' manual data override saved. Source/API data remains preserved underneath.';
+      }catch(error){statusText='Manual override failed: '+(error?.message||String(error));}
+      finally{busy=false;render();}
+    }));
+    root.querySelectorAll('[data-clear-override]').forEach(b=>b.addEventListener('click',async()=>{
+      const id=asId(b.dataset.clearOverride);
+      if(busy)return;
+      busy=true;statusText='Clearing manual data override…';render();
+      try{
+        const result=await clearMemberManualOverrides(id);
+        statusText=result.memberName+' manual data override cleared; source/API data is authoritative again.';
+      }catch(error){statusText='Clear override failed: '+(error?.message||String(error));}
       finally{busy=false;render();}
     }));
     root.querySelectorAll('[data-procurement-pass]').forEach(b=>b.addEventListener('click',async()=>{
@@ -2501,6 +2596,8 @@
       {Metric:'Ready for review',Value:members.filter(r=>r.readinessStatus==='READY FOR REVIEW').length},
       {Metric:'Action needed',Value:members.filter(r=>r.readinessStatus==='ACTION NEEDED'||r.readinessStatus==='SUPPLY ACTION').length},
       {Metric:'Missing / stale',Value:members.filter(r=>r.readinessStatus==='MISSING DATA'||r.readinessStatus==='STALE DATA').length},
+      {Metric:'No combat gear equipped (confirmed)',Value:members.filter(r=>r.readinessStatus==='NO COMBAT GEAR EQUIPPED').length},
+      {Metric:'Member manual data overrides',Value:members.filter(r=>r.manualOverrideActive).length},
       {Metric:'Armory member API keys saved',Value:savedKeyIds().length},
       {Metric:'Inventory rows',Value:inventory.length},
       {Metric:'Observed inventory days',Value:Number(minimums.observedDays.toFixed(1))},
@@ -2509,7 +2606,7 @@
       {Metric:'Minimum proposal approval status',Value:'PROVISIONAL — LEADERSHIP APPROVAL REQUIRED'},
       {Metric:'Open manager / leadership inputs',Value:minimumOpenInputs(minimums).filter(r=>!['READY','COMPLETE','MATURE','READY TO DESIGN'].includes(r.status)).length}
     ];
-    const memberHeaders=['Member ID','Member','Level','Torn Age Days','API Saved','Stats Source','Estimate Confidence','Readiness','War Ready','Procurement Disposition','Procurement Pass At','Procurement Pass Reason','Baseline Pass','Approved At','Approval Mode','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
+    const memberHeaders=['Member ID','Member','Level','Torn Age Days','API Saved','Stats Source','Estimate Confidence','Readiness','War Ready','War Ready Reason','Procurement Disposition','Procurement Pass At','Procurement Pass Reason','Baseline Pass','Approved At','Approval Mode','Manual Override','Override Updated At','Override Reason','Override JSON','Build Style','Offense Need','Defense Style','Premium Priority','Strength','Defense','Speed','Dexterity','Total','Equipment','Faction Loans','Source','Verified At'];
     const memberData=members.map(r=>{
       const build=r.buildAssessment||logic.compareMemberBuild(r,state.factionInventory||{},members,{procurementMode});
       return {
@@ -2517,13 +2614,15 @@
         'Stats Source':r.statsEstimated?'PUBLIC ESTIMATE':'VERIFIED','Estimate Confidence':r.statsEstimated?String(r.statEstimate?.confidence||'LOW'):'',
         'Readiness':r.readinessStatus,
         'War Ready':r.readinessStatus==='WAR READY'?'YES':'NO',
+        'War Ready Reason':r.readinessApprovalReason||'',
         'Procurement Disposition':r.acquisitionDisposition||'ACTIVE',
         'Procurement Pass At':r.procurementPassAt||'',
         'Procurement Pass Reason':r.procurementPassReason||'',
         'Baseline Pass':build.warReady?'YES':'NO','Approved At':r.readinessApprovedAt||'','Approval Mode':r.readinessApprovalMode||'',
+        'Manual Override':r.manualOverrideActive?'YES':'NO','Override Updated At':r.manualOverrideUpdatedAt||'','Override Reason':r.manualOverrideReason||'','Override JSON':r.manualOverrideActive?JSON.stringify(r.manualOverrideValues||{}):'',
         'Build Style':build.buildStyle,'Offense Need':build.offensiveNeed,'Defense Style':build.defensiveStyle,'Premium Priority':build.priority?.label||'',
         'Strength':r.hasStats?num(r.stats?.strength):'','Defense':r.hasStats?num(r.stats?.defense):'','Speed':r.hasStats?num(r.stats?.speed):'','Dexterity':r.hasStats?num(r.stats?.dexterity):'','Total':r.hasStats?num(r.statProfile.total):'',
-        'Equipment':r.equipmentSummary,'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
+        'Equipment':r.equipmentSummary||(r.equipmentEmptyConfirmed?'No combat gear equipped (confirmed)':''),'Faction Loans':r.loanItems.map(i=>i.name+' x'+i.amount).join(' | '),'Source':String(r.profile?.source||''),'Verified At':String(r.profile?.verifiedAt||'')
       };
     });
     const invHeaders=['Category','Item ID','Item','Owned','Available','Loaned','Damage','Accuracy','Armor'];
