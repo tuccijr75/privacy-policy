@@ -1,6 +1,6 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.23**
+Status: **NON-PRODUCTION / alpha.24.1**
 
 ## Historical acceptance notes
 
@@ -680,3 +680,12 @@ New **Coverage** view and export worksheets provide:
 - [ ] Export Leadership Excel and inspect Minimums + Open Inputs.
 - [ ] Verify dock/collision behavior is unchanged.
 - [ ] Do not merge/publish until owner accepts live results.
+
+
+### Alpha.24.1 Quick Build evidence correction
+
+- Quick Build no longer labels an adequate member-owned-but-not-equipped item as **KEEP**; it is **OWNED / EQUIP**.
+- **KEEP** displays the actual equipped item.
+- **LOANED / VERIFY**, **ISSUE**, and **ACQUIRE** display the specific route item instead of the generic baseline target.
+- Member build messages use the same route-specific action item, preventing a message from telling a member to replace adequate current gear with the baseline example.
+- Static regression covers these route semantics before live acceptance.
