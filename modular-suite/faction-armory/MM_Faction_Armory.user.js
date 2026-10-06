@@ -1684,10 +1684,16 @@
 
   function handoffAcquisition(row,preferredSource='Best'){
     const source=acquisitionSourceSnapshot(row);
+    const requestedQty=row?.fundedQty!=null?Math.round(num(row.fundedQty)):Math.round(num(row?.qty));
+    if(requestedQty<=0){
+      statusText='Planned / funded quantity is 0 for '+String(row?.item||'this item')+'. Nothing was sent to MM_Acquisitions.';
+      render();
+      return;
+    }
     const payload={
       itemName:String(row?.item||''),
       itemId:source.itemId,
-      qty:Math.max(1,Math.round(num(row?.fundedQty)||num(row?.qty)||1)),
+      qty:requestedQty,
       preferredSource:String(preferredSource||'Best'),
       referenceValue:num(row?.marketValue),
       sourceCountry:source.travelCountry,
