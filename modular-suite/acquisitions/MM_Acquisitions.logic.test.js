@@ -158,4 +158,43 @@ function baseDb(){
   assert.strictEqual(destinations[1].country,'Japan');
 }
 
+{
+  const observedAt=now;
+  const observation=logic.travelDurationObservation({travel:{destination:'Mexico',method:'Airstrip',departed_at:1000,arrival_at:4600,time_left:1200}},observedAt);
+  assert(observation,'official travel payload should produce an observation');
+  assert.strictEqual(observation.destination,'Mexico');
+  assert.strictEqual(observation.durationSec,3600);
+  assert.strictEqual(logic.travelDurationObservation({travel:{destination:'Torn',method:'Airstrip',departed_at:1000,arrival_at:4600}},observedAt),null,'return-to-Torn trip does not identify foreign origin safely');
+
+  const travelIntel={};
+  const first=logic.recordTravelDuration(travelIntel,observation,observedAt);
+  assert.strictEqual(first.changed,true);
+  const duplicate=logic.recordTravelDuration(travelIntel,observation,observedAt+1000);
+  assert.strictEqual(duplicate.changed,false,'same official trip must not create duplicate duration samples');
+  const observation2=logic.travelDurationObservation({travel:{destination:'Mexico',method:'Airstrip',departed_at:5000,arrival_at:8700,time_left:1000}},observedAt+2000);
+  assert.strictEqual(logic.recordTravelDuration(travelIntel,observation2,observedAt+2000).changed,true);
+  const estimate=logic.travelDurationEstimate(travelIntel,'Mexico',observedAt+3000);
+  assert.strictEqual(estimate.usable,true);
+  assert.strictEqual(estimate.sampleCount,2);
+  assert.strictEqual(estimate.durationSec,3650);
+  assert.strictEqual(estimate.confidence,'MEDIUM');
+
+  const restock={
+    confidence:'MEDIUM',
+    etaEarlyAt:new Date(now+3*3600000).toISOString(),
+    etaAt:new Date(now+3.5*3600000).toISOString(),
+    etaLateAt:new Date(now+4*3600000).toISOString()
+  };
+  const early=logic.departureTiming(restock,estimate,now);
+  assert.strictEqual(early.status,'TOO EARLY');
+  const inWindow=logic.departureTiming(restock,estimate,now+2.5*3600000);
+  assert.strictEqual(inWindow.status,'POSSIBLE DEPARTURE WINDOW');
+  const low=logic.departureTiming({...restock,confidence:'LOW'},estimate,now+2.5*3600000);
+  assert.strictEqual(low.status,'WATCH');
+  const late=logic.departureTiming(restock,estimate,now+3.5*3600000);
+  assert.strictEqual(late.status,'LIKELY TOO LATE');
+  const noDuration=logic.departureTiming(restock,{available:false,usable:false},now);
+  assert.strictEqual(noDuration.status,'ETA UNRELIABLE');
+}
+
 console.log('MM_Acquisitions ranking + travel regression tests: PASS');
