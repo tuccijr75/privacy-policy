@@ -1,7 +1,43 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.6**
+Status: **NON-PRODUCTION / alpha.24.7**
 
+
+## Alpha.24.7 live war stock + opponent-weighted Xanax
+
+- **Minimums** is now **War Stock Control**: every supported war-stock line shows live **HAVE / SUGGESTED / EFFECTIVE MIN / SHORT / STATUS**.
+- Suggested War defaults remain pre-filled from the current roster:
+  - First Aid Kit / Small First Aid Kit / Morphine: 10 per current member;
+  - Ipecac Syrup: 1 per current member;
+  - Empty Blood Bag: 5 per current member;
+  - Flash / Smoke / Tear Gas / HEG / Grenade / Pepper Spray: 5 per current member.
+- Every minimum can be replaced by an explicit whole-number manager minimum, reset to the live suggestion, or placed on **HOLD / DO NOT ORDER**.
+- War **Acquire** consumes the exact same effective minimum state. Approved shortfall is `max(0, effective minimum - current available)`; held rows do not enter Acquire.
+- Xanax no longer uses a fixed 3-per-member buy target. The Leadership 4 / 3 / 2 tier policy is a ceiling.
+- Xanax defaults:
+  - High: 25,000+ total battle stats, ceiling 4;
+  - Medium: 5,000–24,999, ceiling 3;
+  - Low: below 5,000, ceiling 2;
+  - reasonable matchup threshold: own estimated/verified total >= 80% of rival estimate;
+  - current investment posture default: **CONSERVE**.
+- **CONSERVE** recommends up to one Xanax per credible rival target, capped by the member's tier ceiling. OFF / COMPETE / PUSH, tier thresholds, ceilings, ratio and each member's allocation are adjustable.
+- Rival context comes from Torn `/faction/wars`; rival roster comes from `/faction/{id}/members`. Public opponent profile estimates are cached for 6 hours and carry local fetch timestamps.
+- If no current rival / usable rival estimates exist, Xanax fails safe: no automatic Xanax acquisition is generated unless Leadership sets a manual minimum.
+- Internal edits are derived, not copied: member stats / readiness, rival estimates, Xanax policy, member Xanax overrides, stock minimums, order/hold decisions and faction inventory all recompute the downstream shortfall, Acquire list, leader report and workbook.
+- Purchase / transfer remains manual. Armory can hand an approved quantity to MM_Acquisitions but does not buy or request a transfer automatically.
+
+### Alpha.24.7 live acceptance gate
+
+1. Install alpha.24.7 and refresh faction data.
+2. In **War Stock Control**, verify current meds/temps show HAVE, suggested minimum, effective minimum, shortfall and order status.
+3. Change one medical minimum; confirm its shortfall and matching Acquire quantity change immediately.
+4. Put that line on HOLD; confirm it remains visibly short but disappears from Acquire. Re-enable Order Shortfall and confirm it returns.
+5. Refresh Rival. Verify current ranked-war opponent and opponent-estimate coverage are shown with cache age.
+6. In Xanax War Estimator, verify Leadership ceiling is separate from Matchup Target.
+7. Change CONSERVE/ratio/tier caps or one member Xanax allocation; confirm Matchup Target, effective Xanax minimum, shortfall and Acquire quantity recompute.
+8. With rival data unavailable, confirm automatic Xanax purchase target fails safe to DATA / zero unless a manual Xanax minimum is entered.
+9. Verify leader report and Leadership Excel match the same minimums/Xanax values.
+10. Do not execute a purchase or transfer during acceptance; final acquisition remains manual.
 
 ## Alpha.24.6 advisory member-message tone
 
