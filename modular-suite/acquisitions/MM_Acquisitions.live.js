@@ -711,16 +711,21 @@
     }
 
     async function importTravelRows(rows,capturedAt=Date.now()) {
-      const safeRows=(Array.isArray(rows)?rows:[]).map(row=>({...row,source:String(row?.source||'TornW3B Travel Stock')}));
+      const safeRows=(Array.isArray(rows)?rows:[]).map(row=>({...row,source:String(row?.source||'Travel Stock')}));
       if(!safeRows.length)throw new Error('No travel rows to import.');
       const at=Number(capturedAt||Date.now());
+      const sourceNames=[...new Set(safeRows.map(row=>String(row?.source||'').trim()).filter(Boolean))];
+      const sourceLabel=sourceNames.length===1?sourceNames[0]:(sourceNames.length?'Mixed travel sources':'Travel Stock');
+      const sourceTimes=safeRows.map(row=>Date.parse(String(row?.sourceUpdatedAt||''))||Number(row?.observedAt||0)).filter(value=>Number.isFinite(value)&&value>0);
+      const newestSourceAt=sourceTimes.length?Math.max(...sourceTimes):0;
       await core.updateDomainState('market',draft=>{
         const travel=draft.travelIntel || (draft.travelIntel={});
         travel.rows=safeRows;
         travel.lastSyncAt=new Date(at).toISOString();
-        travel.source='TornW3B Travel Stock';
+        travel.source=sourceLabel;
+        travel.sourceUpdatedAt=newestSourceAt?new Date(newestSourceAt).toISOString():'';
         travel.diagnostics=Array.isArray(travel.diagnostics)?travel.diagnostics:[];
-        travel.diagnostics.unshift({at:nowIso(),text:'MM Acquisitions Travel import: '+safeRows.length+' rows.'});
+        travel.diagnostics.unshift({at:nowIso(),text:'MM Acquisitions Travel import: '+safeRows.length+' rows from '+sourceLabel+'.'});
         travel.diagnostics=travel.diagnostics.slice(0,30);
         recordTravelSnapshots(travel,safeRows,at);
         return draft;
