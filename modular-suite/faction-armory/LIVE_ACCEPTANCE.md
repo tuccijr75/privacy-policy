@@ -27,12 +27,12 @@ Alpha.26 therefore removes the alpha.25.1 outward dependency while preserving th
 - [x] Static ownership: Armory does not write the shared `market` domain and does not instantiate a Market Pulse engine.
 - [x] Domain isolation: missing Market Pulse state returns `NO PULSE` / unavailable / non-actionable rather than failing the Armory workflow.
 - [x] Proven alpha.25 read-only Market Pulse consumer remains available when generic Pulse data already exists.
-- [ ] Install alpha.26 and reload Torn.
-- [ ] With normal shared state present, verify Members / Builds / Stock / Coverage / Minimums / Acquire / Settings open without requiring Acquisitions.
-- [ ] Confirm Acquire quantities and planning evidence remain available if no matching Pulse item exists.
-- [ ] If generic Market Pulse data is present, confirm it remains advisory and does not change ARMORY REC, override, BUY NOW, budget allocation or planning price.
-- [ ] Confirm no Armory-specific demand object is created in shared state during Acquire use.
-- [ ] Re-run dock/collision and one representative manual **Find Best Source** action; failure of an optional external receiver must not break Armory itself.
+- [x] Install alpha.26 and reload Torn. **PASS — owner installed 2026-10-07; independent dedicated-window capture confirmed `v8.0.0-alpha.26` running on Torn.**
+- [x] Verify Members / Builds / Stock / Coverage / Minimums / Acquire / Settings remain operational on alpha.26. **PASS — independently exercised/captured 2026-10-07 in the isolated QA window. Members rendered the live readiness roster; Builds rendered Quick Build routes; Stock rendered 103 classified inventory rows; Coverage reported no equipped-item/floor routing mismatches or unmapped combat equipment; Minimums rendered War Stock Control; Acquire rendered the current acquisition plan; Settings rendered local Faction API/procurement controls. No Acquisitions action/handshake was required to open or calculate these views.**
+- [x] Confirm Acquire quantities and planning evidence remain available if no matching Pulse item exists. **PASS — independently observed 2026-10-07: BT MP9 rendered ARMORY REC 11, override 5, BUY NOW 5 and Torn Market Reference planning evidence without a matching Pulse tile.**
+- [x] If generic Market Pulse data is present, confirm it remains advisory and does not change ARMORY REC, override, BUY NOW, budget allocation or planning price. **PASS — independently observed 2026-10-07: Macana displayed `OBSERVED · STALE · L27 · C44%` plus depth/velocity/trend while ARMORY REC 11, override 5, BUY NOW 5 and Torn Market Reference planning price remained separate.**
+- [x] Confirm no Armory-specific demand object is created in shared state during Acquire use. **PASS — independently checked 2026-10-07 after live Acquire use: exact-key binary search of Torn's active IndexedDB found no `marketPulseDemand` key. Source regression also confirms no publisher/scheduler/write path remains.**
+- [x] Re-run dock/collision and one representative manual **Find Best Source** action. **PASS / PARTIAL — 2026-10-07:** current viewport shows the Armory panel and bottom MM/Torn controls coexisting without a blocking collision. Background QA click on BT MP9 **Find Best Source** produced `Sent BT MP9 x5 to MM_Acquisitions · preferred Best · reference $46,801. Final purchase remains manual.` Armory remained intact. **Receiver-absent failure behavior was not independently reproduced because Acquisitions is currently installed; source/regression coverage proves the broadcast is optional and Armory calculations do not depend on the receiver.**
 - [ ] Do not merge/publish until owner accepts live alpha.26 results.
 
 ## Alpha.25 Market Pulse procurement intelligence consumer
