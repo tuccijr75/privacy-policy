@@ -25,6 +25,8 @@ Alpha.33 fixes that boundary without adding a second collector:
 
 ### Alpha.33 live acceptance
 
+- [x] **LIVE PRICELIST PASS — 2026-10-06:** independently observed Acquisitions `8.0.0-alpha.33` open on Torn with `Data status: READY`, 125 priced items loaded, top navigation `Pricelist / Ranked Weapons / More`, `Check Prices`, explicit `GO TO BAZAAR` / `GO TO ITEM MARKET` actions, `GO TO TRAVEL AGENCY` where applicable, source-price comparisons, and the explicit statement that final purchase/travel remains manual.
+
 - [x] **CURRENT-HEAD FULL REGRESSION — 2026-10-06:** all Acquisitions test files pass on PR head `f35df7b51778e1e60503302378882236d104aa3d`; PDA rebuild parity also passes.
 
 - [x] Owner-confirmed paired install: Acquisitions `8.0.0-alpha.33` and Faction Armory `8.0.0-alpha.25.1` are current in Torn. **OWNER-CONFIRMED — 2026-10-06**
