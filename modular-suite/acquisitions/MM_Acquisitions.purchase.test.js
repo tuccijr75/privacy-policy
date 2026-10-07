@@ -12,7 +12,7 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.31'));
+assert(userSource.includes('// @version      8.0.0-alpha.32'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@81cda9d1dce86eb6244f6fa7d88235b153d4634f/modular-suite/acquisitions/MM_Acquisitions.logic.js'));
@@ -66,7 +66,9 @@ assert(userSource.includes('data-pricelist-source="Item Market"'));
 assert(userSource.includes('data-pricelist-check'));
 assert(userSource.includes('function pricelistRows(){'));
 assert(userSource.includes('function pricelistHtml(){'));
-assert(userSource.includes('return inventoryRestockHtml()+card('),'Pricelist must surface Inventory-owned restock demand');
+assert(userSource.includes("const restockRequestHtml=armoryRequest?.requestKind==='inventory-restock'?armoryRequestHtml():'';"),'Pricelist must render an active Inventory restock comparison card');
+assert(userSource.includes('return inventoryRestockHtml()+restockRequestHtml+card('),'Pricelist must surface Inventory restock queue plus request result');
+assert(!userSource.includes("armoryRequest?.requestKind==='inventory-restock'?armoryRequestHtml():'' )"),'Inventory restock renderer must not recurse');
 assert(userSource.includes('function routePricelistSource('));
 assert(userSource.includes('UNDER BB VALUE'));
 assert(userSource.includes('INVESTMENT CANDIDATE'));
@@ -152,7 +154,7 @@ console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS
 const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      8.0.0-alpha.31-pda.18'));
+assert(pdaSource.includes('// @version      8.0.0-alpha.32-pda.19'));
 assert(!pdaHeader.includes('@require'));
 assert(!pdaSource.includes('globalThis.GM_getValue=function'));
 assert(pdaSource.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
@@ -235,7 +237,7 @@ assert(liveSource.includes('Torn API finished Auction House'));
 
 const userSourceArmory=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceArmory);
-assert(userSourceArmory.includes('// @version      8.0.0-alpha.31'));
+assert(userSourceArmory.includes('// @version      8.0.0-alpha.32'));
 assert(userSourceArmory.includes('MM_Acquisitions.live.js'));
 assert(userSourceArmory.includes("type==='state-updated'"));
 assert(userSourceArmory.includes("type!=='armory-acquisition-request'"));
