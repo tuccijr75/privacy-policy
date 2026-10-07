@@ -1328,6 +1328,8 @@
   }
 
   function marketPulseEvidence(state={},itemId,nowMs=Date.now()){
+    const rawNum=value=>Number.isFinite(Number(value))?Number(value):0;
+    const bounded=(value,min,max)=>Math.max(min,Math.min(max,rawNum(value)));
     const id=asId(itemId);
     const pulse=state?.marketIntel?.marketPulse;
     const schema=Math.round(n(pulse?.schema));
@@ -1343,14 +1345,14 @@
     if(schema!==1)return {...empty,status:'UNSUPPORTED SCHEMA'};
     const item=pulse?.items?.[id];
     if(!item||typeof item!=='object')return {...empty,status:'NO ITEM DATA'};
-    const ttlMs=clamp(n(pulse?.settings?.ttlMs)||45*60*1000,10*60*1000,6*60*60*1000);
+    const ttlMs=bounded(n(pulse?.settings?.ttlMs)||45*60*1000,10*60*1000,6*60*60*1000);
     const fetchedAt=Math.max(0,n(item?.fetchedAt||item?.lastSnapshot?.fetchedAt));
     const sourceTimestamp=Math.max(0,n(item?.sourceTimestamp||item?.lastSnapshot?.sourceTimestamp));
     const fetchAgeMs=fetchedAt?Math.max(0,nowMs-fetchedAt):Infinity;
     const sourceAgeMs=sourceTimestamp?Math.max(0,nowMs-sourceTimestamp):Infinity;
     const stale=!fetchedAt||fetchAgeMs>ttlMs;
-    const confidencePct=Math.round(clamp(item?.confidencePct,0,100));
-    const liquidityScore=Math.round(clamp(item?.liquidityScore,0,100));
+    const confidencePct=Math.round(bounded(item?.confidencePct,0,100));
+    const liquidityScore=Math.round(bounded(item?.liquidityScore,0,100));
     const usable=!stale&&confidencePct>=30;
     return {
       itemId:id,
@@ -1367,7 +1369,7 @@
       turnoverPerHour:Math.max(0,n(item?.turnoverPerHour)),
       liquidityScore,
       confidencePct,
-      trendPct:n(item?.trendPct),
+      trendPct:rawNum(item?.trendPct),
       sourceTimestamp,
       fetchedAt,
       upstreamCacheDelayMs:Math.max(0,n(item?.upstreamCacheDelayMs||item?.lastSnapshot?.upstreamCacheDelayMs)),
