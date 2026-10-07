@@ -347,7 +347,7 @@ new Function(userSource);
 assert(userSource.includes("const VERSION='8.0.0-alpha.25';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
-assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@1e24b83e6507e4e029da3fbbc8aae518f1de42ee/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
+assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@98519cd5b5ffa5ea3747f7e50198569bd8cb22d9/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -1070,6 +1070,7 @@ assert(userSourceValue.includes("['faction','market','core']"),'Armory must refr
 assert(userSourceValue.includes("tile('MARKET PULSE'"),'Acquire must surface Market Pulse context');
 assert(userSourceValue.includes("'Pulse Liquidity'"),'Leadership export must carry Market Pulse metrics');
 assert(userSourceValue.includes('Market Pulse is Acquisitions-owned advisory context only.'),'leader report must disclose Market Pulse advisory scope');
+assert(userSourceValue.includes('privacy-policy@98519cd5b5ffa5ea3747f7e50198569bd8cb22d9/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'installed alpha.25 must pin the immutable commit containing marketPulseEvidence');
 assert(userSourceValue.includes('it never substitutes for the live-price rule or changes planned quantity.'),'Acquire must disclose that Pulse does not control pricing or quantity');
 assert(!userSourceValue.includes('MMTornMarketPulse.createEngine'),'Faction Armory must not instantiate the Acquisitions Market Pulse producer');
 assert(!userSourceValue.includes('marketPulseEngine'),'Faction Armory must not add a duplicate Market Pulse engine');
