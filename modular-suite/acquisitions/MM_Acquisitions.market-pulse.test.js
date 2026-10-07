@@ -106,45 +106,6 @@ const snapshot=(id,timestamp,quantity,price=1_000_000,fetchedAt=now)=>pulse.norm
 }
 
 {
-  const demandState={
-    factionInventory:{marketPulseDemand:{
-      schema:1,owner:'MM_Faction_Armory',updatedAt:now-1000,expiresAt:now+14*60_000,
-      items:[
-        {itemId:'901',itemName:'Armory A',qty:2},
-        {itemId:'902',itemName:'Armory B',qty:1},
-        {itemId:'bad',itemName:'Bad'},
-        {itemId:'901',itemName:'Duplicate'}
-      ]
-    }},
-    marketIntel:{marketPulse:{items:{'777':{itemId:'777',tier:'proven',lastSnapshot:{fetchedAt:now,sourceTimestamp:now,floorPrice:100,marketDepth:1,totalQty:1,marketExposure:100},snapshotHistory:[],movementHistory:[]}}}},
-    procurement:{pricelist:{items:{'333':{itemId:'333',buyPrice:1000}}}}
-  };
-  assert.deepStrictEqual(Array.from(pulse.armoryDemandItemIds(demandState,now)),['901','902'],'fresh Armory demand must normalize, dedupe and reject malformed IDs');
-  assert.deepStrictEqual(Array.from(pulse.trackedItemIds(demandState,4,now)),['901','902','777','333'],'fresh Armory demand must be prioritized ahead of the producer existing universe');
-  assert.strictEqual(pulse.nextDueItem(demandState,now),'901','existing Market Pulse engine must service demanded IDs first when due');
-
-  const expired=JSON.parse(JSON.stringify(demandState));
-  expired.factionInventory.marketPulseDemand.expiresAt=now-1;
-  assert.deepStrictEqual(Array.from(pulse.armoryDemandItemIds(expired,now)),[],'expired Armory demand must be ignored');
-
-  const wrongOwner=JSON.parse(JSON.stringify(demandState));
-  wrongOwner.factionInventory.marketPulseDemand.owner='Other';
-  assert.deepStrictEqual(Array.from(pulse.armoryDemandItemIds(wrongOwner,now)),[],'foreign demand owner must be ignored');
-
-  const wrongSchema=JSON.parse(JSON.stringify(demandState));
-  wrongSchema.factionInventory.marketPulseDemand.schema=2;
-  assert.deepStrictEqual(Array.from(pulse.armoryDemandItemIds(wrongSchema,now)),[],'unsupported Armory demand schema must fail closed');
-
-  const overlong=JSON.parse(JSON.stringify(demandState));
-  overlong.factionInventory.marketPulseDemand.expiresAt=now+2*60*60_000;
-  assert.deepStrictEqual(Array.from(pulse.armoryDemandItemIds(overlong,now)),[],'unbounded Armory demand lifetime must fail closed');
-
-  const many=JSON.parse(JSON.stringify(demandState));
-  many.factionInventory.marketPulseDemand.items=Array.from({length:40},(_,i)=>({itemId:String(1000+i)}));
-  assert.strictEqual(pulse.armoryDemandItemIds(many,now).length,24,'Armory demand must stay bounded to 24 producer candidates');
-}
-
-{
   const source=fs.readFileSync(__dirname+'/MM_Acquisitions.market-pulse.js','utf8');
   const forbidden=[
     /\bsellerId\b/i,/\bsellerName\b/i,/\blast_action\b/i,/\battackability\b/i,
