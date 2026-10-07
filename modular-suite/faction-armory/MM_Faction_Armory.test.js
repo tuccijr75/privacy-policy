@@ -953,7 +953,7 @@ const priceSourceStart=userSourceValue.indexOf('  function priceTimestampMs(valu
 const priceSourceEnd=userSourceValue.indexOf("\n  function handoffAcquisition(row,preferredSource='Best'){",priceSourceStart);
 assert(priceSourceStart>=0&&priceSourceEnd>priceSourceStart,'acquisition price-source function block must be present');
 const priceSourceBlock=userSourceValue.slice(priceSourceStart,priceSourceEnd);
-const priceSnapshotFactory=new Function('num','sharedItemRecordByName','state',
+const priceSnapshotFactory=new Function('num','sharedItemRecordByName','state','logic',
   'return (()=>{'+priceSourceBlock+'; return acquisitionSourceSnapshot;})();'
 );
 const numLocal=value=>{const v=Number(value);return Number.isFinite(v)?v:0;};
@@ -976,7 +976,7 @@ let priceState={
     rows:[{itemId:'900',itemName:'Test Item',stock:5,shopCost:30,country:'Japan'}]
   }
 };
-let priceSnapshot=priceSnapshotFactory(numLocal,()=>priceRecord,priceState)({item:'Test Item',marketValue:300});
+let priceSnapshot=priceSnapshotFactory(numLocal,()=>priceRecord,priceState,logic)({item:'Test Item',marketValue:300});
 assert.strictEqual(priceSnapshot.liveCandidates.length,0,'stale cached sources must not remain eligible live candidates');
 assert.strictEqual(priceSnapshot.bestPlanning.source,'Torn Market Reference','stale cheap cached sources must not undercut a reference fallback');
 assert.strictEqual(priceSnapshot.bestPlanning.price,200);
@@ -990,7 +990,7 @@ priceState={
     bazaar:{lowest:0,fetchedAt:staleAt}
   }}}
 };
-priceSnapshot=priceSnapshotFactory(numLocal,()=>priceRecord,priceState)({item:'Test Item',marketValue:300});
+priceSnapshot=priceSnapshotFactory(numLocal,()=>priceRecord,priceState,logic)({item:'Test Item',marketValue:300});
 assert.strictEqual(priceSnapshot.bestPlanning.source,'Item Market','fresh Item Market must remain eligible');
 assert.strictEqual(priceSnapshot.bestPlanning.price,120,'stale Bazaar/Travel prices must not undercut fresh Item Market evidence');
 assert(priceSnapshot.staleSources.some(source=>source.source==='Bazaar'));
