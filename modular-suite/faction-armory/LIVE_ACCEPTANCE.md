@@ -25,6 +25,9 @@ Acquisitions remains the only Market Pulse producer. Its producer candidate must
 
 ### Alpha.25.1 live acceptance
 
+- [x] Owner-confirmed paired install: Faction Armory `8.0.0-alpha.25.1` and Acquisitions `8.0.0-alpha.33` are current in Torn. **OWNER-CONFIRMED — 2026-10-06**
+- [x] Tampermonkey downgrade warning observed for Armory `.25.1`; classified as an installer version-comparison artifact, not evidence of older product code. Future Armory candidates should resume monotonic integer prerelease numbering at `alpha.26` to avoid repeat ambiguity. **OWNER-CONFIRMED — 2026-10-06**
+
 - [ ] Install Armory alpha.25.1 and the matching Acquisitions producer candidate.
 - [ ] Open Armory → Acquire and confirm the current acquisition demand is published without changing planned quantities.
 - [ ] Confirm Acquisitions begins collecting the demanded item IDs through its existing Market Pulse engine.
