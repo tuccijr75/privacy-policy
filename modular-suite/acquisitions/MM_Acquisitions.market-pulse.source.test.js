@@ -96,7 +96,7 @@ assert(acceptance.includes('8.0.0-alpha.34'),'acceptance sheet must match deskto
 assert(acceptance.includes('8.0.0-alpha.34-pda.21'),'acceptance sheet must match PDA candidate');
 assert(acceptance.includes('Verified Sales'),'acceptance sheet must cover official completed-sale evidence');
 assert(acceptance.includes('Cross-tab ownership'),'acceptance sheet must cover one-engine lease behavior');
-assert(acceptance.includes('manual-action boundary'),'acceptance sheet must preserve manual final actions');
+assert(/manual-action boundary/i.test(acceptance),'acceptance sheet must preserve manual final actions');
 assert(acceptance.includes('After Acquisitions Market Pulse is proven'),'downstream consumers must remain gated on proof');
 assert(!/armory|faction/i.test(acceptance),'acceptance must not require or name a private companion product');
 
