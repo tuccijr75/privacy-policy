@@ -719,3 +719,37 @@ Quick Build is not allowed to reinterpret the canonical route:
 - `REVIEW` names the current item when known and never implies replacement.
 
 Member-facing build messages must use the same route-specific action item; the generic baseline target is evidence context, not always the member action.
+
+
+## Alpha.25 Market Pulse consumer
+
+Faction Armory consumes Acquisitions-owned Market Pulse as **read-only procurement context**.
+
+Authoritative shared state:
+
+`state.marketIntel.marketPulse.items[itemId]`
+
+Armory accepts only schema 1 and fails closed on missing/unsupported producer state. It reads the producer's current TTL from `marketPulse.settings.ttlMs` (default 45 minutes) and recomputes freshness at read time.
+
+Consumed fields:
+
+- floor price;
+- market depth / total units;
+- observed events per hour;
+- observed units per hour;
+- turnover per hour;
+- liquidity score;
+- confidence percentage;
+- trend percentage;
+- tier;
+- source timestamp;
+- local fetch timestamp;
+- upstream cache delay.
+
+The consumer does **not** create or run a Market Pulse engine, scheduler, lease, API request, or duplicate cache. Acquisitions remains the single producer.
+
+Market Pulse is advisory procurement intelligence only. Its 45-minute producer TTL is intentionally looser than Armory's current live-price planning rules. Therefore Pulse floor price cannot replace fresh Item Market/Bazaar/Travel evidence, cannot determine the planning unit price, cannot consume budget, and cannot change planned quantity.
+
+Acquire, the leader acquisition snapshot, and Leadership Excel expose Pulse context. Stale or low-confidence Pulse remains diagnostic and is not represented as current actionable evidence.
+
+Armory listens for shared `market` domain state updates so Pulse changes can appear while the panel is open without adding a second polling loop.
