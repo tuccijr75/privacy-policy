@@ -15,6 +15,21 @@ Faction inventory does **not** define the readiness standard. It only changes th
 
 The module deliberately does not query Item Market or player Bazaars for live listings. Acquisition uses a curated reference catalog of normal Torn equipment that is broadly obtainable through city/abroad shops or commonly traded player-market supply.
 
+## Member private-data freshness
+
+Saved member keys are an input to current readiness, not a one-time import.
+
+- **Refresh All Saved Members** runs the same canonical member-import path for every saved encrypted member key.
+- Manual member refresh and refresh-all use Torn's unique `timestamp` request parameter so current-state reads do not unintentionally reuse the service cache.
+- Automatic refresh uses a separate **1-hour private-member target** while Armory is open and the vault is unlocked. This cadence is intentionally independent of the longer readiness-staleness classification.
+- A successful refresh replaces the stored equipment snapshot, including replacing a previously confirmed-empty equipment list when Torn now returns equipped items.
+- Local `fetchedAt` / `lastPrivateRefreshAt` records when Armory obtained the response.
+- Upstream/API source or cache time is stored separately when Torn provides it. A local fetch timestamp is never represented as Torn source freshness.
+- Malformed equipment or non-empty equipment that cannot be normalized fails closed and does not replace the prior profile.
+- A valid empty `equipment: []` response remains explicit evidence: **NO COMBAT GEAR EQUIPPED**.
+
+The automatic scheduler reuses this same member refresh path; there is no second collector or competing member-profile source of truth.
+
 ## Combat-stat interpretation
 
 Torn separates the main combat comparisons:
