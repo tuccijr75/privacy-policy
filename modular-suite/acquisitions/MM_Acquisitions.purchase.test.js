@@ -68,7 +68,7 @@ assert(userSource.includes('function pricelistRows(){'));
 assert(userSource.includes('function pricelistHtml(){'));
 assert(userSource.includes("const restockRequestHtml=armoryRequest?.requestKind==='inventory-restock'?armoryRequestHtml():'';"),'Pricelist must render an active Inventory restock comparison card');
 assert(userSource.includes('return inventoryRestockHtml()+restockRequestHtml+card('),'Pricelist must surface Inventory restock queue plus request result');
-assert(!userSource.includes("armoryRequest?.requestKind==='inventory-restock'?armoryRequestHtml():'' )"),'Inventory restock renderer must not recurse');
+assert(!userSource.includes("return (armoryRequest?.requestKind==='inventory-restock'?armoryRequestHtml():'')+"),'Inventory restock renderer must not recurse');
 assert(userSource.includes('function routePricelistSource('));
 assert(userSource.includes('UNDER BB VALUE'));
 assert(userSource.includes('INVESTMENT CANDIDATE'));
