@@ -466,7 +466,7 @@ new Function(userSourceValue);
 assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.11';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
-assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
+assert(userSourceValue.includes('Refresh All Saved Members: '),'refresh-all completion summary must remain explicit');
 assert(userSourceValue.includes('Find Best Source'));
 assert(userSourceValue.includes('data-armory-acquire'));
 assert(userSourceValue.includes("type:'armory-acquisition-request'"));
