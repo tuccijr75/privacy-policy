@@ -25,16 +25,18 @@ Alpha.33 fixes that boundary without adding a second collector:
 
 ### Alpha.33 live acceptance
 
+- [x] **CURRENT-HEAD FULL REGRESSION — 2026-10-06:** all Acquisitions test files pass on PR head `f35df7b51778e1e60503302378882236d104aa3d`; PDA rebuild parity also passes.
+
 - [x] Owner-confirmed paired install: Acquisitions `8.0.0-alpha.33` and Faction Armory `8.0.0-alpha.25.1` are current in Torn. **OWNER-CONFIRMED — 2026-10-06**
 
 - [ ] Install desktop alpha.33 with Faction Armory alpha.25.1.
 - [x] Open Armory → Acquire and confirm its current demanded IDs are picked up by the existing Acquisitions Market Pulse engine. **PASS — independently observed 2026-10-06:** all five current Equipment demand rows gained Pulse snapshots after alpha.33.
 - [x] Confirm at least one demanded Equipment row gains Pulse metrics after the producer collects it. **PASS — independently observed 2026-10-06:** all five Equipment rows show Pulse tier/status, depth, velocity and trend tiles.
-- [ ] Confirm an expired Armory demand hint no longer influences producer selection.
-- [ ] Confirm normal Pricelist / Ranked / Travel Market Pulse tracking remains available after Armory-demand priority.
+- [ ] Confirm an expired Armory demand hint no longer influences producer selection. **DETERMINISTIC REGRESSION PASS — 2026-10-06:** current alpha.33 tests reject expired, wrong-owner, wrong-schema, malformed and overlong hints; live expiry transition remains pending.
+- [ ] Confirm normal Pricelist / Ranked / Travel Market Pulse tracking remains available after Armory-demand priority. **SOURCE/REGRESSION PASS — 2026-10-06:** all Acquisitions catalog/ranking/travel/source/ranked-live tests pass at current head; live primary-workflow clickthrough remains pending.
 - [x] Confirm no second Market Pulse scheduler/lease/API collector exists. **PASS — source/regression verified:** alpha.33 only extends tracked-item priority inside the existing Market Pulse engine.
 - [x] Confirm final market actions remain manual. **PASS — source/regression verified:** alpha.33 changes tracked-item priority only; purchase/bid/travel actions remain manual.
-- [ ] Repeat on TornPDA alpha.33-pda.20 where applicable to Acquisitions runtime behavior.
+- [ ] Repeat on TornPDA alpha.33-pda.20 where applicable to Acquisitions runtime behavior. **BUILD/PARITY PASS — 2026-10-06:** self-contained PDA rebuild matches committed bundle byte-for-byte, SHA-256 `C9590A9862191E5F73C4F37BC53F9672FC5955111E56A1B964C9802A849427E9`; real PDA device acceptance remains pending.
 
 ## Focused customer workflow
 
