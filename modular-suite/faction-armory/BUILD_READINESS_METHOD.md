@@ -755,12 +755,19 @@ Acquire, the leader acquisition snapshot, and Leadership Excel expose Pulse cont
 Armory listens for shared `market` domain state updates so Pulse changes can appear while the panel is open without adding a second polling loop.
 
 
-## Alpha.25.1 Market Pulse demand handoff
+## Alpha.26 private-build isolation
 
-The alpha.25 consumer alone cannot guarantee useful Pulse coverage because Acquisitions cannot infer Faction Armory's current acquisition rows from its own tracked-item universe.
+Faction Armory must remain independently usable as Michael's private/personal product. It may consume already-available generic shared evidence, but it must not create an Armory-specific requirement that a customer-facing product needs to understand.
 
-Armory therefore publishes one bounded, expiring demand hint inside its own `factionInventory` domain. This is planning metadata, not market truth.
+The alpha.25.1 `factionInventory.marketPulseDemand` contract is retired in alpha.26. Armory no longer publishes, renews or schedules any Market Pulse demand hint.
 
-The hint is derived only from the canonical reconciled acquisition plan and contains at most 24 item IDs with planned quantity/category/reason. It expires after 15 minutes and is not rewritten when its signature is unchanged and enough lifetime remains.
+The alpha.25 Market Pulse reader remains allowed only as an optional read-only consumer:
 
-This does not make Armory a Market Pulse producer. Armory never writes `marketIntel.marketPulse`, never calls Item Market for Pulse collection, and never creates a Pulse scheduler or lease. Acquisitions remains responsible for deciding when/how to refresh those requested IDs under its existing API budget, integrity, cache-delay and one-engine rules.
+- no Pulse producer/engine/lease/API collector in Armory;
+- no Armory write to the shared `market` domain;
+- no outward Armory-specific demand contract;
+- missing Pulse state is `NO PULSE`, not an error or workflow blocker;
+- stale/low-confidence Pulse remains diagnostic;
+- Pulse never controls readiness, minimums, planning price, planned quantity, budget funding, reports or final actions.
+
+The existing **Find Best Source** broadcast is an optional manual integration path rather than an Armory prerequisite. Any external product-side receiver must remain product-neutral and must be changed only in that product's own build conversation.

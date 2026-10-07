@@ -1,44 +1,39 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.25.1**
+Status: **NON-PRODUCTION / alpha.26**
 
 
 
-## Alpha.25.1 Armory-demand → Market Pulse producer repair
+## Alpha.26 private-build isolation cleanup
 
-Live alpha.25 acceptance on 2026-10-06 confirmed that the Armory consumer was loaded and reading a fresh Acquisitions Market Pulse timestamp, but none of the five current Equipment acquisition rows rendered Pulse metrics. This is classified **EFFECTIVENESS GAP**.
+Alpha.25.1 introduced an Armory-specific outward demand contract so an external Market Pulse producer could prioritize Armory items. That architecture is now **RETIRED**.
 
-Root cause: Acquisitions Market Pulse tracked its own prior Pulse/pricelist/marketplace/ranked/travel item IDs, but had no durable input identifying the items currently required by Faction Armory.
+Faction Armory is a private/personal build. Customer-facing suite products must not depend on Armory state, require Armory to be installed, expose Armory-specific workflow, or prioritize work because Armory published a private demand object.
 
-Alpha.25.1 adds a bounded Armory-owned demand hint at `factionInventory.marketPulseDemand`:
+Alpha.26 therefore removes the alpha.25.1 outward dependency while preserving the proven Armory feature set:
 
-- schema 1;
-- owner `MM_Faction_Armory`;
-- at most 24 current acquisition items;
-- item ID, name, planned quantity, category and bounded reason only;
-- explicit `updatedAt` and 15-minute `expiresAt`;
-- signature-based write suppression, with renewal only as expiry approaches;
-- published only while Acquire is being used / rendered from the canonical acquisition plan;
-- no Torn API call, market-domain write, Market Pulse engine, lease, polling loop or purchase action.
+- removes all `MARKET_PULSE_DEMAND_*` constants;
+- removes the demand snapshot, publisher, renewal timer and Acquire-render scheduling hook;
+- removes all writes/reads of `factionInventory.marketPulseDemand`;
+- adds no replacement outbound state contract, collector, scheduler or network request;
+- retains the alpha.25 Market Pulse reader only as **optional read-only advisory input**;
+- missing Market Pulse state fails closed as `NO PULSE` and does not block Armory;
+- Armory planning price, quantities, budget, readiness, minimums, reports and exports remain based on Armory/shared factual inputs, not Pulse;
+- the existing **Find Best Source** handoff remains an optional integration path and is not required for Armory to calculate or display its acquisition plan. Any customer-suite Armory-specific receiver/wording must be corrected in that product's own build conversation.
 
-Acquisitions remains the only Market Pulse producer. Its producer candidate must consume only fresh schema-1 Armory demand hints and prioritize those item IDs through the existing engine.
+### Alpha.26 acceptance
 
-### Alpha.25.1 live acceptance
-
-- [x] **CURRENT-HEAD FULL REGRESSION — 2026-10-06:** Armory logic/user/test parse and complete regression corpus pass through alpha.25.1 on PR head `de66fd673622e4ac18f3145ece725327cf717d96`.
-
-- [x] Owner-confirmed paired install: Faction Armory `8.0.0-alpha.25.1` and Acquisitions `8.0.0-alpha.33` are current in Torn. **OWNER-CONFIRMED — 2026-10-06**
-- [x] Tampermonkey downgrade warning observed for Armory `.25.1`; classified as an installer version-comparison artifact, not evidence of older product code. Future Armory candidates should resume monotonic integer prerelease numbering at `alpha.26` to avoid repeat ambiguity. **OWNER-CONFIRMED — 2026-10-06**
-
-- [ ] Install Armory alpha.25.1 and the matching Acquisitions producer candidate.
-- [x] Open Armory → Acquire and confirm the current acquisition demand is published without changing planned quantities. **PASS — independently observed 2026-10-06:** Equipment remained 24 planned / 20 buy now with row quantities 5, 5, 5, 5, 4, matching the pre-repair live state.
-- [x] Confirm Acquisitions begins collecting the demanded item IDs through its existing Market Pulse engine. **PASS — independently observed 2026-10-06:** all five current Equipment rows gained live Pulse context after the paired alpha.25.1/alpha.33 repair.
-- [x] Confirm matching Armory rows begin showing Market Pulse tiles as producer snapshots arrive. **PASS — independently observed 2026-10-06:** all five Equipment rows render MARKET PULSE, PULSE DEPTH, PULSE VELOCITY and PULSE TREND.
-- [ ] Confirm expired Armory demand is ignored by Acquisitions. **DETERMINISTIC REGRESSION PASS — 2026-10-06:** current alpha.33 tests reject expired, wrong-owner, wrong-schema, malformed and overlong hints; live 15-minute expiry transition has not been independently observed.
-- [x] Confirm no duplicate Market Pulse collector/scheduler/API loop appears in Armory. **PASS — source/regression verified:** Armory publishes only the bounded faction-domain demand hint and does not instantiate/write the Market Pulse producer.
-- [x] Confirm planning price, BUY NOW quantity and Armory recommendation remain unchanged by Pulse metrics. **PASS — independently observed 2026-10-06:** Pulse tiles coexist with ARMORY REC / YOUR OVERRIDE or PLANNED / BUY NOW; 24 planned / 20 buy now and per-row quantities remained unchanged.
-- [ ] Re-run manual Armory → Acquisitions routing and dock/collision acceptance. **PARTIAL PASS — 2026-10-06:** live screenshot confirms Armory panel and MM dock coexist without visible overlap/clipping; manual routing clickthrough remains pending.
-- [ ] Do not merge/publish until owner accepts live results.
+- [x] Static isolation: no `marketPulseDemand`, `MARKET_PULSE_DEMAND_*`, demand publisher or demand scheduling hook remains in the Armory runtime.
+- [x] Static ownership: Armory does not write the shared `market` domain and does not instantiate a Market Pulse engine.
+- [x] Domain isolation: missing Market Pulse state returns `NO PULSE` / unavailable / non-actionable rather than failing the Armory workflow.
+- [x] Proven alpha.25 read-only Market Pulse consumer remains available when generic Pulse data already exists.
+- [ ] Install alpha.26 and reload Torn.
+- [ ] With normal shared state present, verify Members / Builds / Stock / Coverage / Minimums / Acquire / Settings open without requiring Acquisitions.
+- [ ] Confirm Acquire quantities and planning evidence remain available if no matching Pulse item exists.
+- [ ] If generic Market Pulse data is present, confirm it remains advisory and does not change ARMORY REC, override, BUY NOW, budget allocation or planning price.
+- [ ] Confirm no Armory-specific demand object is created in shared state during Acquire use.
+- [ ] Re-run dock/collision and one representative manual **Find Best Source** action; failure of an optional external receiver must not break Armory itself.
+- [ ] Do not merge/publish until owner accepts live alpha.26 results.
 
 ## Alpha.25 Market Pulse procurement intelligence consumer
 

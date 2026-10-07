@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.25.1
+// @version      8.0.0-alpha.26
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.25.1';
+  const VERSION='8.0.0-alpha.26';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -33,10 +33,6 @@
   const FACTION_STALE_FALLBACK_MS=60*60*1000;
   const AUTO_MEMBER_BATCH=2;
   const MEMBER_REFRESH_MAX_AGE_MS=60*60*1000;
-  const MARKET_PULSE_DEMAND_SCHEMA=1;
-  const MARKET_PULSE_DEMAND_MAX_ITEMS=24;
-  const MARKET_PULSE_DEMAND_TTL_MS=15*60*1000;
-  const MARKET_PULSE_DEMAND_RENEW_MS=5*60*1000;
   const PUBLIC_INTEL_BATCH=20;
   const PUBLIC_INTEL_MAX_AGE_MS=24*60*60*1000;
   const WAR_OPPONENT_INTEL_MAX_AGE_MS=6*60*60*1000;
@@ -64,8 +60,6 @@
   let channel=null;
   let autoRefreshRunning=false;
   let autoRefreshTimer=null;
-  let marketPulseDemandPublishTimer=null;
-  let marketPulseDemandPublishRunning=false;
   let equipmentOptionPriceMemo=new Map();
 
   const asId=value=>String(value??'').trim();
@@ -2637,73 +2631,6 @@
     return logic.reconcileAcquisitionPricing(base,quotes,acquisitionBudget);
   }
 
-  function marketPulseDemandSnapshot(nowMs=Date.now()){
-    const plan=acquisitionAccuracyPlan();
-    const seen=new Set();
-    const items=[];
-    for(const row of plan.list){
-      const qty=Math.max(0,Math.round(num(row?.qty)));
-      if(!qty)continue;
-      const source=acquisitionSourceSnapshot(row);
-      const itemId=asId(source.itemId);
-      if(!/^\d+$/.test(itemId)||seen.has(itemId))continue;
-      seen.add(itemId);
-      items.push({
-        itemId,
-        itemName:String(row?.item||('Item '+itemId)).slice(0,120),
-        qty,
-        category:String(row?.category||'').slice(0,40),
-        reason:String(row?.reasons||'Faction Armory requirement').slice(0,180)
-      });
-      if(items.length>=MARKET_PULSE_DEMAND_MAX_ITEMS)break;
-    }
-    const signature=JSON.stringify({
-      schema:MARKET_PULSE_DEMAND_SCHEMA,
-      mode:stockMode,
-      procurementMode,
-      items:items.map(row=>[row.itemId,row.qty,row.category])
-    });
-    return {
-      schema:MARKET_PULSE_DEMAND_SCHEMA,
-      owner:'MM_Faction_Armory',
-      mode:stockMode,
-      procurementMode,
-      updatedAt:nowMs,
-      expiresAt:nowMs+MARKET_PULSE_DEMAND_TTL_MS,
-      signature,
-      items
-    };
-  }
-
-  async function publishMarketPulseDemand(){
-    if(marketPulseDemandPublishRunning||!core?.updateDomainState||!state)return;
-    marketPulseDemandPublishRunning=true;
-    try{
-      const nowMs=Date.now();
-      const demand=marketPulseDemandSnapshot(nowMs);
-      const existing=state?.factionInventory?.marketPulseDemand;
-      if(existing?.signature===demand.signature&&num(existing?.expiresAt)>nowMs+MARKET_PULSE_DEMAND_RENEW_MS)return;
-      state=await core.updateDomainState('faction',draft=>{
-        const fi=draft.factionInventory&&typeof draft.factionInventory==='object'?draft.factionInventory:{};
-        fi.marketPulseDemand=demand;
-        draft.factionInventory=fi;
-        return draft;
-      });
-    }catch(error){
-      console.warn('[MM Faction Armory] Market Pulse demand publish failed',error);
-    }finally{
-      marketPulseDemandPublishRunning=false;
-    }
-  }
-
-  function scheduleMarketPulseDemandPublish(){
-    if(activeView!=='acquire'||marketPulseDemandPublishTimer)return;
-    marketPulseDemandPublishTimer=setTimeout(()=>{
-      marketPulseDemandPublishTimer=null;
-      publishMarketPulseDemand();
-    },250);
-  }
-
   function leaderAcquisitionReport(){
     const members=memberRows();
     const isWar=stockMode==='war';
@@ -3089,8 +3016,6 @@
         '<div class="mm-fa-scroll">'+viewHtml+'</div>'+
       '</div>'+
       equipmentOverrideMenuHtml();
-
-    if(activeView==='acquire')scheduleMarketPulseDemandPublish();
 
     core?.makePanelDraggable?.(
       root,
