@@ -183,6 +183,175 @@ test('stale life is not used for precise group sizing', () => {
   assert.equal(rec.reason, 'no-proven-safe-solo-matchup');
 });
 
+test('energy regeneration model distinguishes subscriber/donator from standard', () => {
+  const subscriber = logic.recentAttackLoad([
+    attack({ attackId: 'e1', attackerId: 9, defenderId: 1, ended: 1000 }),
+    attack({ attackId: 'e2', attackerId: 9, defenderId: 2, ended: 1600 }),
+  ], '9', 2200, 3600, { donatorStatusKnown: true, donatorStatus: 'Subscriber' });
+  const standard = logic.recentAttackLoad([
+    attack({ attackId: 'e1', attackerId: 9, defenderId: 1, ended: 1000 }),
+    attack({ attackId: 'e2', attackerId: 9, defenderId: 2, ended: 1600 }),
+  ], '9', 2200, 3600, { donatorStatusKnown: true, donatorStatus: null });
+  assert.equal(subscriber.regen.tickSeconds, 600);
+  assert.equal(subscriber.regen.naturalCap, 150);
+  assert.equal(subscriber.potentialNaturalRegen, 10);
+  assert.equal(subscriber.netObservedPressure, 40);
+  assert.equal(subscriber.assumedNaturalEnergy, 110);
+  assert.equal(standard.regen.tickSeconds, 900);
+  assert.equal(standard.regen.naturalCap, 100);
+  assert.equal(standard.potentialNaturalRegen, 5);
+  assert.equal(standard.netObservedPressure, 45);
+  assert.equal(standard.assumedNaturalEnergy, 55);
+});
+
+test('unknown donator status never fabricates enemy regeneration', () => {
+  const load = logic.recentAttackLoad([
+    attack({ attackId: 'e1', attackerId: 9, defenderId: 1, ended: 1000 }),
+  ], '9', 1500, 3600, null);
+  assert.equal(load.regen.known, false);
+  assert.equal(load.potentialNaturalRegen, null);
+  assert.equal(load.netObservedPressure, null);
+});
+
+test('solo recommendation conserves stronger attackers when a weaker safe fit exists', () => {
+  const rec = logic.targetRecommendation({
+    target: member(9, { lastActionStatus: 'Online' }),
+    attackers: [
+      member(1, { name: 'Very Strong', lastActionStatus: 'Online' }),
+      member(2, { name: 'Safe Fit', lastActionStatus: 'Online' }),
+    ],
+    intelById: {
+      '1': intel(5000000),
+      '2': intel(1500000),
+      '9': intel(1000000),
+    },
+    attacks: [],
+    nowSeconds: 1000,
+  });
+  assert.equal(rec.mode, 'solo');
+  assert.equal(rec.candidates[0].member.id, '2');
+});
+
+test('assignment plan never assigns one faction member to multiple targets', () => {
+  const plan = logic.assignmentPlan({
+    targets: [
+      member(9, { name: 'Target A', lastActionStatus: 'Online' }),
+      member(10, { name: 'Target B', lastActionStatus: 'Online' }),
+    ],
+    attackers: [
+      member(1, { name: 'Attacker A', lastActionStatus: 'Online' }),
+      member(2, { name: 'Attacker B', lastActionStatus: 'Online' }),
+    ],
+    intelById: {
+      '1': intel(3000000),
+      '2': intel(2500000),
+      '9': intel(1000000),
+      '10': intel(1000000),
+    },
+    lifeById: {},
+    attacks: [],
+    claimsByTarget: {},
+    completedTargets: {},
+    nowSeconds: 1000,
+  });
+  const assigned = Array.from(plan.rows.flatMap(row => row.assigned.map(x => String(x.member.id))));
+  assert.equal(new Set(assigned).size, assigned.length);
+});
+
+test('locked assignments reserve members before automatic matching', () => {
+  const plan = logic.assignmentPlan({
+    targets: [
+      member(9, { name: 'Target A', lastActionStatus: 'Online' }),
+      member(10, { name: 'Target B', lastActionStatus: 'Online' }),
+    ],
+    attackers: [
+      member(1, { name: 'Locked Member', lastActionStatus: 'Online' }),
+      member(2, { name: 'Free Member', lastActionStatus: 'Online' }),
+    ],
+    intelById: {
+      '1': intel(4000000),
+      '2': intel(3000000),
+      '9': intel(1000000),
+      '10': intel(1000000),
+    },
+    lifeById: {},
+    attacks: [],
+    claimsByTarget: {},
+    completedTargets: {},
+    lockedAssignments: { '10': ['1'] },
+    nowSeconds: 1000,
+  });
+  const locked = plan.rows.find(row => row.target.id === '10');
+  assert.equal(locked.source, 'locked');
+  assert.deepEqual(Array.from(locked.assigned, x => x.member.id), ['1']);
+  const otherIds = plan.rows
+    .filter(row => row.target.id !== '10')
+    .flatMap(row => row.assigned.map(x => x.member.id));
+  assert.equal(otherIds.includes('1'), false);
+});
+
+test('lock on unavailable target does not strand its attacker', () => {
+  const plan = logic.assignmentPlan({
+    targets: [
+      member(9, { name: 'Hospitalized', state: 'Hospital', lastActionStatus: 'Online' }),
+      member(10, { name: 'Live Target', lastActionStatus: 'Online' }),
+    ],
+    attackers: [
+      member(1, { name: 'Reusable', lastActionStatus: 'Online' }),
+    ],
+    intelById: {
+      '1': intel(3000000),
+      '9': intel(1000000),
+      '10': intel(1000000),
+    },
+    lifeById: {},
+    attacks: [],
+    claimsByTarget: {},
+    completedTargets: {},
+    lockedAssignments: { '9': ['1'] },
+    nowSeconds: 1000,
+  });
+  const live = plan.rows.find(row => row.target.id === '10');
+  assert.ok(live);
+  assert.deepEqual(Array.from(live.assigned, x => x.member.id), ['1']);
+});
+
+test('blocked attackers are excluded from assignment plan', () => {
+  const plan = logic.assignmentPlan({
+    targets: [member(9, { lastActionStatus: 'Online' })],
+    attackers: [
+      member(1, { lastActionStatus: 'Online' }),
+      member(2, { lastActionStatus: 'Online' }),
+    ],
+    blockedAttackerIds: ['1'],
+    intelById: {
+      '1': intel(5000000),
+      '2': intel(3000000),
+      '9': intel(1000000),
+    },
+    lifeById: {},
+    attacks: [],
+    claimsByTarget: {},
+    completedTargets: {},
+    nowSeconds: 1000,
+  });
+  const assigned = plan.rows.flatMap(row => row.assigned.map(x => String(x.member.id)));
+  assert.equal(assigned.includes('1'), false);
+});
+
+test('loss recovery advice uses matchup evidence for medkit versus ipecac guidance', () => {
+  const close = logic.lossRecoveryAdvice({
+    attack: attack({ attackId: 'l1', attackerId: 1, defenderId: 9, result: 'Lost', hits: 6, misses: 4 }),
+    intelById: { '1': intel(900000), '9': intel(1000000) },
+  });
+  const bad = logic.lossRecoveryAdvice({
+    attack: attack({ attackId: 'l2', attackerId: 1, defenderId: 9, result: 'Lost', hits: 1, misses: 9 }),
+    intelById: { '1': intel(300000), '9': intel(1000000) },
+  });
+  assert.equal(close.action, 'medkit');
+  assert.equal(bad.action, 'ipecac');
+});
+
 test('sanitized export removes both stored API keys', () => {
   const clean = logic.sanitizeState({
     settings: { tornApiKey: 'ABCDEFGHIJKLMNOP', ffscouterKey: '1234567890ABCDEF', enemyFactionId: '5' },
@@ -196,6 +365,19 @@ test('runtime source enforces bounded collectors and does not echo keys into DOM
   assert.match(source, /MAX_ATTACK_PAGES=3/);
   assert.match(source, /LEASE_MS=45000/);
   assert.match(source, /REQUEST_TIMEOUT_MS=10000/);
+  assert.match(source, /OUTCOME_POLL_MS=12000/);
+  assert.match(source, /ATTACK_ENERGY_COST=25/);
+  assert.match(source, /donator_status/);
+  assert.match(source, /user\/bars/);
+  assert.match(source, /watchOutcomes\(\)/);
+  assert.match(source, /assignmentPlan/);
+  assert.match(source, /mmi-copy-plan/);
+  assert.match(source, /data-ready/);
+  assert.match(source, /data-lock/);
+  assert.match(source, /lockedAssignments/);
+  assert.match(source, /assumedNaturalEnergy/);
+  assert.match(source, /profileFetchedAt/);
+  assert.match(source, /clearInterval\(outcomeTicker\)/);
   assert.match(source, /Promise\.allSettled\(toRead\.map/);
   assert.match(source, /Promise\.allSettled\(due\.map/);
   assert.match(source, /renewLease\(\)/);
