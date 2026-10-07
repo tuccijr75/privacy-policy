@@ -206,3 +206,31 @@ Before merge/publication:
 - path diff proves unrelated private-product files were not modified;
 - live customer acceptance passes without any private-product installation requirement;
 - owner explicitly approves merge/publication.
+
+## Live alpha.35 desktop verification — 2026-10-07
+
+Verified against the installed desktop candidate `8.0.0-alpha.35`.
+
+PASS:
+- customer Pricelist starts unconfigured; no customer-specific profile is prefilled;
+- legacy cached Pricelist rows remain preserved but inactive while no profile is configured;
+- invalid foreign profile input does not activate or replace the customer profile;
+- owner-authorized customer profile Save & Refresh succeeds and normalizes the numeric reference to the canonical Weav3r Pricelist URL;
+- authorized profile produced 125 priced items and a shared BB rate of `$6,043,500`;
+- Ranked Weapons consumed that same `$6,043,500` BB rate and exposed no duplicate customer-ID field;
+- clearing the customer profile disabled customer buy-rate/BB-floor use while preserving all 125 cached rows as inactive;
+- the authorized customer profile was restored after the Clear test and left active;
+- Ranked live Bazaar / Item Market / Auction evidence and completed-sale history remained available independently of the optional customer profile;
+- Find One Item live-tested with Xanax and returned Bazaar, Item Market and Travel choices without executing a purchase;
+- Find One Item explicitly preserved the manual final-purchase boundary;
+- Best Deals rendered live Recommended Deals / Refresh Deals / Check & Open controls without automatic purchase behavior;
+- shared MM dock launcher and alpha.35 panel restoration were observed on live Torn pages;
+- Inventory Restock Demand surfaced in the standalone Acquisitions Pricelist workflow without private-product wording.
+
+Pending:
+- Travel Deals subview live acceptance because the current Opera accessibility bridge does not reliably dispatch that custom tab control;
+- actual abroad/travel-state route-guard acceptance;
+- Setup / Advanced Market Pulse diagnostic disclosure live acceptance because the current Opera accessibility bridge does not reliably dispatch that custom tab control;
+- TornPDA `8.0.0-alpha.35-pda.22` real-device acceptance.
+
+No merge, stable publication or customer publication is authorized by this verification.
