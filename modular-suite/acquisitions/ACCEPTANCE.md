@@ -25,6 +25,8 @@ Alpha.33 fixes that boundary without adding a second collector:
 
 ### Alpha.33 live acceptance
 
+- [x] **LIVE RANKED WEAPONS PASS — 2026-10-06:** independently observed Acquisitions `8.0.0-alpha.33` with populated ranked feeds (111 Bazaar / 189 Item Market / 307 Auction), completed-sale history for 6 weapon types, Primary / Secondary / Melee filters, BB-value flags, current bid/price, estimated profit/ROI, break-even bid ceilings, valuation-detail disclosures, SALES 7 / 30 / 90 DAYS, early-bid quarantine language, and `OPEN AUCTION FINDER` routing rather than automated bidding.
+
 - [x] **LIVE PRICELIST PASS — 2026-10-06:** independently observed Acquisitions `8.0.0-alpha.33` open on Torn with `Data status: READY`, 125 priced items loaded, top navigation `Pricelist / Ranked Weapons / More`, `Check Prices`, explicit `GO TO BAZAAR` / `GO TO ITEM MARKET` actions, `GO TO TRAVEL AGENCY` where applicable, source-price comparisons, and the explicit statement that final purchase/travel remains manual.
 
 - [x] **CURRENT-HEAD FULL REGRESSION — 2026-10-06:** all Acquisitions test files pass on PR head `f35df7b51778e1e60503302378882236d104aa3d`; PDA rebuild parity also passes.
