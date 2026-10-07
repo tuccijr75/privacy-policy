@@ -33,7 +33,7 @@ Alpha.26 therefore removes the alpha.25.1 outward dependency while preserving th
 - [x] If generic Market Pulse data is present, confirm it remains advisory and does not change ARMORY REC, override, BUY NOW, budget allocation or planning price. **PASS — independently observed 2026-10-07: Macana displayed `OBSERVED · STALE · L27 · C44%` plus depth/velocity/trend while ARMORY REC 11, override 5, BUY NOW 5 and Torn Market Reference planning price remained separate.**
 - [x] Confirm no Armory-specific demand object is created in shared state during Acquire use. **PASS — independently checked 2026-10-07 after live Acquire use: exact-key binary search of Torn's active IndexedDB found no `marketPulseDemand` key. Source regression also confirms no publisher/scheduler/write path remains.**
 - [x] Re-run dock/collision and one representative manual **Find Best Source** action. **PASS / PARTIAL — 2026-10-07:** current viewport shows the Armory panel and bottom MM/Torn controls coexisting without a blocking collision. Background QA click on BT MP9 **Find Best Source** produced `Sent BT MP9 x5 to MM_Acquisitions · preferred Best · reference $46,801. Final purchase remains manual.` Armory remained intact. **Receiver-absent failure behavior was not independently reproduced because Acquisitions is currently installed; source/regression coverage proves the broadcast is optional and Armory calculations do not depend on the receiver.**
-- [ ] Do not merge/publish until owner accepts live alpha.26 results.
+- [x] Do not merge/publish until owner accepts live alpha.26 results. **OWNER ACCEPTED — 2026-10-07. Merge/publication still require a separate explicit owner command.**
 
 ## Alpha.25 Market Pulse procurement intelligence consumer
 
