@@ -28,12 +28,12 @@ Alpha.33 fixes that boundary without adding a second collector:
 - [x] Owner-confirmed paired install: Acquisitions `8.0.0-alpha.33` and Faction Armory `8.0.0-alpha.25.1` are current in Torn. **OWNER-CONFIRMED — 2026-10-06**
 
 - [ ] Install desktop alpha.33 with Faction Armory alpha.25.1.
-- [ ] Open Armory → Acquire and confirm its current demanded IDs are picked up by the existing Acquisitions Market Pulse engine.
-- [ ] Confirm at least one demanded Equipment row gains Pulse metrics after the producer collects it.
+- [x] Open Armory → Acquire and confirm its current demanded IDs are picked up by the existing Acquisitions Market Pulse engine. **PASS — independently observed 2026-10-06:** all five current Equipment demand rows gained Pulse snapshots after alpha.33.
+- [x] Confirm at least one demanded Equipment row gains Pulse metrics after the producer collects it. **PASS — independently observed 2026-10-06:** all five Equipment rows show Pulse tier/status, depth, velocity and trend tiles.
 - [ ] Confirm an expired Armory demand hint no longer influences producer selection.
 - [ ] Confirm normal Pricelist / Ranked / Travel Market Pulse tracking remains available after Armory-demand priority.
-- [ ] Confirm no second Market Pulse scheduler/lease/API collector exists.
-- [ ] Confirm final market actions remain manual.
+- [x] Confirm no second Market Pulse scheduler/lease/API collector exists. **PASS — source/regression verified:** alpha.33 only extends tracked-item priority inside the existing Market Pulse engine.
+- [x] Confirm final market actions remain manual. **PASS — source/regression verified:** alpha.33 changes tracked-item priority only; purchase/bid/travel actions remain manual.
 - [ ] Repeat on TornPDA alpha.33-pda.20 where applicable to Acquisitions runtime behavior.
 
 ## Focused customer workflow
