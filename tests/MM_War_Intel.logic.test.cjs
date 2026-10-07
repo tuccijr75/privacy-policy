@@ -377,6 +377,9 @@ test('runtime source enforces bounded collectors and does not echo keys into DOM
   assert.match(source, /lockedAssignments/);
   assert.match(source, /assumedNaturalEnergy/);
   assert.match(source, /profileFetchedAt/);
+  assert.match(source, /attackLogCodes/);
+  assert.match(source, /state\.fetch\.attackLogCodes=\[\.\.\.seenCodes\]\.slice\(-1000\)/);
+  assert.doesNotMatch(source, /new Set\(state\.attacks\.map\(x=>x\.code\)/);
   assert.match(source, /clearInterval\(outcomeTicker\)/);
   assert.match(source, /Promise\.allSettled\(toRead\.map/);
   assert.match(source, /Promise\.allSettled\(due\.map/);
