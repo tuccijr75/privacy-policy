@@ -1327,6 +1327,58 @@
     };
   }
 
+  function marketPulseEvidence(state={},itemId,nowMs=Date.now()){
+    const rawNum=value=>Number.isFinite(Number(value))?Number(value):0;
+    const bounded=(value,min,max)=>Math.max(min,Math.min(max,rawNum(value)));
+    const id=asId(itemId);
+    const pulse=state?.marketIntel?.marketPulse;
+    const schema=Math.round(n(pulse?.schema));
+    const empty={
+      itemId:id,schema,available:false,usable:false,status:'NO DATA',tier:'',
+      floorPrice:0,marketDepth:0,totalQty:0,observedEventsPerHour:0,observedUnitsPerHour:0,
+      turnoverPerHour:0,liquidityScore:0,confidencePct:0,trendPct:0,
+      sourceTimestamp:0,fetchedAt:0,upstreamCacheDelayMs:0,
+      sourceAgeMs:Infinity,fetchAgeMs:Infinity,ttlMs:45*60*1000
+    };
+    if(!id)return {...empty,status:'NO ITEM ID'};
+    if(!pulse||!schema)return {...empty,status:'NO PULSE'};
+    if(schema!==1)return {...empty,status:'UNSUPPORTED SCHEMA'};
+    const item=pulse?.items?.[id];
+    if(!item||typeof item!=='object')return {...empty,status:'NO ITEM DATA'};
+    const ttlMs=bounded(n(pulse?.settings?.ttlMs)||45*60*1000,10*60*1000,6*60*60*1000);
+    const fetchedAt=Math.max(0,n(item?.fetchedAt||item?.lastSnapshot?.fetchedAt));
+    const sourceTimestamp=Math.max(0,n(item?.sourceTimestamp||item?.lastSnapshot?.sourceTimestamp));
+    const fetchAgeMs=fetchedAt?Math.max(0,nowMs-fetchedAt):Infinity;
+    const sourceAgeMs=sourceTimestamp?Math.max(0,nowMs-sourceTimestamp):Infinity;
+    const stale=!fetchedAt||fetchAgeMs>ttlMs;
+    const confidencePct=Math.round(bounded(item?.confidencePct,0,100));
+    const liquidityScore=Math.round(bounded(item?.liquidityScore,0,100));
+    const usable=!stale&&confidencePct>=30;
+    return {
+      itemId:id,
+      schema,
+      available:true,
+      usable,
+      status:stale?'STALE':confidencePct<30?'LOW CONFIDENCE':'READY',
+      tier:String(item?.tier||'observed').toUpperCase(),
+      floorPrice:Math.max(0,n(item?.floorPrice||item?.lastSnapshot?.floorPrice)),
+      marketDepth:Math.max(0,Math.round(n(item?.marketDepth||item?.lastSnapshot?.marketDepth))),
+      totalQty:Math.max(0,Math.round(n(item?.totalQty||item?.lastSnapshot?.totalQty))),
+      observedEventsPerHour:Math.max(0,n(item?.observedEventsPerHour)),
+      observedUnitsPerHour:Math.max(0,n(item?.observedUnitsPerHour)),
+      turnoverPerHour:Math.max(0,n(item?.turnoverPerHour)),
+      liquidityScore,
+      confidencePct,
+      trendPct:rawNum(item?.trendPct),
+      sourceTimestamp,
+      fetchedAt,
+      upstreamCacheDelayMs:Math.max(0,n(item?.upstreamCacheDelayMs||item?.lastSnapshot?.upstreamCacheDelayMs)),
+      sourceAgeMs,
+      fetchAgeMs,
+      ttlMs
+    };
+  }
+
   function memberRows(factionInventory={},savedKeyIds=[],options={}){
     const readiness=factionInventory?.memberReadiness||{};
     const roster=Object.values(readiness?.roster||{});
@@ -1974,6 +2026,7 @@
     acquisitionQuantityOverride,
     acquisitionQuoteKey,
     reconcileAcquisitionPricing,
+    marketPulseEvidence,
     procurementPassIsCurrent,
     coverageComparison,
     loanMap,

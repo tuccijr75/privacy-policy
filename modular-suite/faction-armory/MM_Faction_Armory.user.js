@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.11
+// @version      8.0.0-alpha.26
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@1e24b83e6507e4e029da3fbbc8aae518f1de42ee/modular-suite/faction-armory/MM_Faction_Armory.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@98519cd5b5ffa5ea3747f7e50198569bd8cb22d9/modular-suite/faction-armory/MM_Faction_Armory.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.11';
+  const VERSION='8.0.0-alpha.26';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -2454,6 +2454,7 @@
     const snap=itemId?state?.procurement?.marketSnapshots?.[itemId]||{}:{};
     const detail=itemId?state?.marketIntel?.details?.[itemId]||{}:{};
     const now=Date.now();
+    const marketPulse=logic.marketPulseEvidence(state,itemId,now);
     const marketMaxAgeMs=Math.max(30,num(state?.businessRules?.maxListingAgeSec)||180)*1000;
     const travelMaxAgeMs=15*60*1000;
 
@@ -2542,6 +2543,7 @@
       bestPlanning,
       liveCandidates,
       staleSources,
+      marketPulse,
       priceEvidence:best?'LIVE CACHED SOURCE':tornMarketPrice?'TORN MARKET REFERENCE':num(row?.marketValue)?'ARMORY STATIC REFERENCE':'UNPRICED'
     };
   }
@@ -2660,7 +2662,11 @@
       'Generated: '+new Date().toISOString(),
       'Roster: '+members.length+' members · fetched '+stamp(fi.memberReadiness?.lastRosterSyncAt),
       'Faction inventory: Torn source '+stamp(fi.inventoryTimestamp)+' · locally fetched '+stamp(fi.lastSyncAt),
-      'Market reference cache: '+stamp(fi.equipmentMarketCatalog?.fetchedAt)
+      'Market reference cache: '+stamp(fi.equipmentMarketCatalog?.fetchedAt),
+      'Market Pulse: Acquisitions-owned read-only context · '+
+        (num(state?.marketIntel?.marketPulse?.updatedAt)
+          ?'producer updated '+new Date(num(state.marketIntel.marketPulse.updatedAt)).toISOString()
+          :'no producer data')
     ];
 
     if(isWar){
@@ -2735,6 +2741,15 @@
       for(const row of plan.list){
         const manual=row.manualQtyOverride!=null?' · your override '+fmt(row.qty)+' · Armory recommendation '+fmt(row.systemQty):'';
         const quote=row.quote||{};
+        const pulse=acquisitionSourceSnapshot(row).marketPulse;
+        const pulseText=pulse?.available
+          ?pulse.status==='STALE'
+            ?' · Market Pulse STALE · fetched '+(pulse.fetchedAt?when(new Date(pulse.fetchedAt).toISOString()):'unavailable')+' · excluded from current procurement context'
+            :' · Market Pulse '+pulse.tier+' / '+pulse.status+
+              ' · liquidity '+fmt(pulse.liquidityScore)+'/100 · confidence '+fmt(pulse.confidencePct)+'%'+
+              ' · depth '+fmt(pulse.marketDepth)+' listings / '+fmt(pulse.totalQty)+' units'+
+              ' · velocity '+fmt(pulse.observedUnitsPerHour)+' units/h · trend '+(pulse.trendPct>=0?'+':'')+fmt(pulse.trendPct)+'%'
+          :'';
         const staleText=(quote.staleSources||[]).length
           ?' · ignored stale '+quote.staleSources.map(source=>
             String(source.source||'source')+' $'+fmt(source.price)+' ('+(source.fetchedAt?when(source.fetchedAt):'timestamp unavailable')+')'
@@ -2743,7 +2758,7 @@
         if(!num(row.planningUnit)){
           lines.push(
             '- '+row.item+' · planned x'+fmt(row.qty)+' · buy now x0 · defer x'+fmt(row.deferredQty)+manual+
-            ' · PRICE UNRESOLVED — excluded from budget-funded estimate'+staleText+
+            ' · PRICE UNRESOLVED — excluded from budget-funded estimate'+staleText+pulseText+
             (row.reasons?' · '+row.reasons:'')
           );
           continue;
@@ -2764,7 +2779,7 @@
           ' · full-line est $'+fmt(row.plannedKnownCost)+
           (quote.liveRange&&num(quote.low)>0&&num(quote.high)>0&&num(quote.low)!==num(quote.high)
             ?' · fresh live range $'+fmt(quote.low)+'–$'+fmt(quote.high):'')+
-          staleText+
+          staleText+pulseText+
           (row.reasons?' · '+row.reasons:'')
         );
       }
@@ -2793,7 +2808,8 @@
       'Accuracy note: only fresh cached Bazaar / Item Market / overseas evidence is eligible as live planning evidence. '+
       'Bazaar/Item Market freshness follows Acquisitions market-age policy (default 180 seconds); overseas data older than 15 minutes is ignored. '+
       'Stale cached sources are disclosed but excluded. Reference-only values are labeled and used only when no fresh cached buyable source is available. '+
-      'These are planning estimates, not purchase quotes. MM_Acquisitions must verify live availability and price before any manual purchase.',
+      'Market Pulse is Acquisitions-owned advisory context only. Its floor/depth/velocity/liquidity/confidence/trend signals do not replace the stricter live-price freshness rules, do not change Armory quantities, and are not purchase quotes. '+
+      'These are planning estimates; MM_Acquisitions must verify live availability and price before any manual purchase.',
       '',
       '— Manic Mike',
       'Inventory Manager'
@@ -2827,6 +2843,7 @@
           const live=acquisitionSourceSnapshot(row);
           const quote=row.quote||{};
           const best=live.best;
+          const pulse=live.marketPulse||{};
           const staleSources=quote.staleSources||[];
           const staleNote=staleSources.length
             ?' Ignored stale evidence: '+staleSources.map(source=>String(source.source||'source')+' $'+fmt(source.price)+' · '+(source.fetchedAt?when(source.fetchedAt):'timestamp unavailable')).join('; ')+'.'
@@ -2868,6 +2885,10 @@
               (quote.liveRange&&num(quote.low)>0&&num(quote.high)>0&&num(quote.low)!==num(quote.high)
                 ?tile('FRESH LIVE RANGE','$'+fmt(quote.low)+' – $'+fmt(quote.high),{wide:true}):'')+
               (staleSources.length?tile('STALE IGNORED',staleSources.map(source=>source.source+' $'+fmt(source.price)).join(' · '),{wide:true,cls:'mm-fa-warn'}):'')+
+              (pulse.available?tile('MARKET PULSE',pulse.tier+' · '+pulse.status+' · L'+fmt(pulse.liquidityScore)+' · C'+fmt(pulse.confidencePct)+'%',{wide:true,cls:pulse.status==='STALE'||pulse.status==='LOW CONFIDENCE'?'mm-fa-warn':''}):'')+
+              (pulse.available?tile('PULSE DEPTH',fmt(pulse.marketDepth)+' listings · '+fmt(pulse.totalQty)+' units',{wide:true}):'')+
+              (pulse.available?tile('PULSE VELOCITY',fmt(pulse.observedUnitsPerHour)+' units/h · $'+fmt(pulse.turnoverPerHour)+'/h',{wide:true}):'')+
+              (pulse.available?tile('PULSE TREND',(pulse.trendPct>=0?'+':'')+fmt(pulse.trendPct)+'% · floor $'+fmt(pulse.floorPrice),{wide:true}):'')+
             '</div>'+
           '</div>';
         }).join('')+
@@ -2916,6 +2937,7 @@
           : 'Peace mode replenishes enabled faction minimum-stock shortfalls only; member equipment gaps are deferred until War mode. ')+
         'Approved War Ready and current Procurement Pass members generate no individual equipment acquisition. Your Override changes procurement output only; Armory Recommendation remains visible for comparison and neither value rewrites readiness or inventory facts. '+
         'Fresh cached Item Market, Bazaar and overseas evidence is preferred for budget planning; stale cached evidence is ignored and disclosed. Torn market/static references are fallback-only and visibly labeled. Unpriced rows are not treated as budget-funded. '+
+        'Market Pulse is read-only Acquisitions-owned context for depth, velocity, liquidity, confidence and trend; it never substitutes for the live-price rule or changes planned quantity. '+
         'MM_Acquisitions must still verify live availability and price before any manual purchase.'+
       '</div>'+
       (plan.unresolvedCount
@@ -2952,7 +2974,9 @@
   function sourceStrip(){
     const fi=state?.factionInventory||{};
     const rival=fi.warPlanning?.currentWar?.opponentFactionName||'none';
-    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · market refs '+when(fi.equipmentMarketCatalog?.fetchedAt)+' · rival '+esc(rival)+' '+when(fi.warPlanning?.opponent?.fetchedAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
+    const pulseUpdated=num(state?.marketIntel?.marketPulse?.updatedAt);
+    const pulseAge=pulseUpdated?when(new Date(pulseUpdated).toISOString()):'unavailable';
+    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · market refs '+when(fi.equipmentMarketCatalog?.fetchedAt)+' · Market Pulse '+pulseAge+' · rival '+esc(rival)+' '+when(fi.warPlanning?.opponent?.fetchedAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
   }
 
   function createPanel(){
@@ -3523,13 +3547,21 @@
       xmlSheet('Consistency',['Type','Member ID','Member','Slot','Item','Detail'],coverage.consistencyIssues.map(r=>({
         'Type':r.type,'Member ID':r.memberId,'Member':r.memberName,'Slot':r.slot,'Item':r.item,'Detail':r.detail
       })))+
-      xmlSheet('Acquire',['Category','Item','System Qty','Planned Qty','Manual Override','Funding Status','Buy Now Qty','Deferred Qty','Planning Source','Price Evidence','Planning Unit Value','Buy Now Estimate','Full Line Estimate','Deferred Estimate','Reasons'],acquisition.list.map(r=>({
-        'Category':r.category,'Item':r.item,'System Qty':num(r.systemQty),'Planned Qty':num(r.qty),'Manual Override':r.manualQtyOverride!=null?'YES':'NO',
-        'Funding Status':r.fundingStatus,'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),
-        'Planning Source':r.planningSource,'Price Evidence':r.priceEvidence,'Planning Unit Value':num(r.planningUnit),
-        'Buy Now Estimate':num(r.fundedEstimatedValue),'Full Line Estimate':num(r.plannedKnownCost),'Deferred Estimate':num(r.deferredEstimatedValue),
-        'Reasons':r.reasons
-      })))+
+      xmlSheet('Acquire',['Category','Item','System Qty','Planned Qty','Manual Override','Funding Status','Buy Now Qty','Deferred Qty','Planning Source','Price Evidence','Planning Unit Value','Buy Now Estimate','Full Line Estimate','Deferred Estimate','Pulse Status','Pulse Tier','Pulse Floor','Pulse Market Depth','Pulse Units','Pulse Units / Hour','Pulse Turnover / Hour','Pulse Liquidity','Pulse Confidence %','Pulse Trend %','Pulse Source Timestamp','Pulse Fetched At','Pulse Cache Delay ms','Reasons'],acquisition.list.map(r=>{
+        const pulse=acquisitionSourceSnapshot(r).marketPulse||{};
+        return {
+          'Category':r.category,'Item':r.item,'System Qty':num(r.systemQty),'Planned Qty':num(r.qty),'Manual Override':r.manualQtyOverride!=null?'YES':'NO',
+          'Funding Status':r.fundingStatus,'Buy Now Qty':num(r.fundedQty),'Deferred Qty':num(r.deferredQty),
+          'Planning Source':r.planningSource,'Price Evidence':r.priceEvidence,'Planning Unit Value':num(r.planningUnit),
+          'Buy Now Estimate':num(r.fundedEstimatedValue),'Full Line Estimate':num(r.plannedKnownCost),'Deferred Estimate':num(r.deferredEstimatedValue),
+          'Pulse Status':pulse.available?pulse.status:'NO DATA','Pulse Tier':pulse.tier||'','Pulse Floor':num(pulse.floorPrice),
+          'Pulse Market Depth':num(pulse.marketDepth),'Pulse Units':num(pulse.totalQty),'Pulse Units / Hour':num(pulse.observedUnitsPerHour),
+          'Pulse Turnover / Hour':num(pulse.turnoverPerHour),'Pulse Liquidity':num(pulse.liquidityScore),'Pulse Confidence %':num(pulse.confidencePct),
+          'Pulse Trend %':num(pulse.trendPct),'Pulse Source Timestamp':pulse.sourceTimestamp?new Date(pulse.sourceTimestamp).toISOString():'',
+          'Pulse Fetched At':pulse.fetchedAt?new Date(pulse.fetchedAt).toISOString():'','Pulse Cache Delay ms':num(pulse.upstreamCacheDelayMs),
+          'Reasons':r.reasons
+        };
+      }))+
       '</Workbook>';
     const blob=new Blob([xml],{type:'application/vnd.ms-excel'});
     const url=URL.createObjectURL(blob);
@@ -3583,7 +3615,7 @@
     try{
       channel=new BroadcastChannel(CHANNEL);
       channel.addEventListener('message',event=>{
-        if(event?.data?.type==='state-updated'&&['faction','core'].includes(String(event.data.domain||''))){
+        if(event?.data?.type==='state-updated'&&['faction','market','core'].includes(String(event.data.domain||''))){
           reloadState().catch(()=>{});
         }
       });

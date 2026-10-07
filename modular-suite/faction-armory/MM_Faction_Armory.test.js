@@ -344,10 +344,10 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.24.11';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.26';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
-assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@1e24b83e6507e4e029da3fbbc8aae518f1de42ee/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
+assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@98519cd5b5ffa5ea3747f7e50198569bd8cb22d9/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
 assert(userSource.includes('AUTO_MEMBER_BATCH=2'));
@@ -356,7 +356,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.24.11';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.26';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -364,7 +364,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.24.11';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.26';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic due-profile refresh enabled while Armory is open'));
@@ -463,7 +463,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.11';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.26';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('Refresh All Saved Members: '),'refresh-all completion summary must remain explicit');
@@ -953,7 +953,7 @@ const priceSourceStart=userSourceValue.indexOf('  function priceTimestampMs(valu
 const priceSourceEnd=userSourceValue.indexOf("\n  function handoffAcquisition(row,preferredSource='Best'){",priceSourceStart);
 assert(priceSourceStart>=0&&priceSourceEnd>priceSourceStart,'acquisition price-source function block must be present');
 const priceSourceBlock=userSourceValue.slice(priceSourceStart,priceSourceEnd);
-const priceSnapshotFactory=new Function('num','sharedItemRecordByName','state',
+const priceSnapshotFactory=new Function('num','sharedItemRecordByName','state','logic',
   'return (()=>{'+priceSourceBlock+'; return acquisitionSourceSnapshot;})();'
 );
 const numLocal=value=>{const v=Number(value);return Number.isFinite(v)?v:0;};
@@ -976,7 +976,7 @@ let priceState={
     rows:[{itemId:'900',itemName:'Test Item',stock:5,shopCost:30,country:'Japan'}]
   }
 };
-let priceSnapshot=priceSnapshotFactory(numLocal,()=>priceRecord,priceState)({item:'Test Item',marketValue:300});
+let priceSnapshot=priceSnapshotFactory(numLocal,()=>priceRecord,priceState,logic)({item:'Test Item',marketValue:300});
 assert.strictEqual(priceSnapshot.liveCandidates.length,0,'stale cached sources must not remain eligible live candidates');
 assert.strictEqual(priceSnapshot.bestPlanning.source,'Torn Market Reference','stale cheap cached sources must not undercut a reference fallback');
 assert.strictEqual(priceSnapshot.bestPlanning.price,200);
@@ -990,7 +990,7 @@ priceState={
     bazaar:{lowest:0,fetchedAt:staleAt}
   }}}
 };
-priceSnapshot=priceSnapshotFactory(numLocal,()=>priceRecord,priceState)({item:'Test Item',marketValue:300});
+priceSnapshot=priceSnapshotFactory(numLocal,()=>priceRecord,priceState,logic)({item:'Test Item',marketValue:300});
 assert.strictEqual(priceSnapshot.bestPlanning.source,'Item Market','fresh Item Market must remain eligible');
 assert.strictEqual(priceSnapshot.bestPlanning.price,120,'stale Bazaar/Travel prices must not undercut fresh Item Market evidence');
 assert(priceSnapshot.staleSources.some(source=>source.source==='Bazaar'));
@@ -1007,8 +1007,8 @@ assert(userSourceValue.includes("' · your override '+fmt(row.qty)+' · Armory r
 assert(!userSourceValue.includes('manual planned qty (system '),'cryptic manual/system wording must be removed');
 console.log('MM Faction Armory alpha.24.10 acquisition-wording regressions: PASS');
 
-assert(userSourceValue.includes("// @version      8.0.0-alpha.24.11"),'userscript header must advance to alpha.24.11');
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.11';"),'runtime version must advance to alpha.24.11');
+assert(userSourceValue.includes("// @version      8.0.0-alpha.26"),'userscript header must advance to alpha.26');
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.26';"),'runtime version must advance to alpha.26');
 assert(userSourceValue.includes("const MEMBER_REFRESH_MAX_AGE_MS=60*60*1000;"),'saved member private data must have an independent one-hour refresh target');
 assert(userSourceValue.includes("function apiRequest(pathOrUrl,key,{fresh=false}={})"),'API wrapper must expose explicit fresh-request semantics');
 assert(userSourceValue.includes("if(fresh)url.searchParams.set('timestamp',String(Math.floor(Date.now()/1000)));"),'fresh member reads must bypass Torn service cache with a unique timestamp parameter');
@@ -1021,6 +1021,73 @@ assert(userSourceValue.includes(">Refresh All Saved Members</button>"),'Members 
 assert(userSourceValue.includes("Refreshing every saved member with fresh Torn API requests"),'refresh-all status must disclose fresh-request behavior');
 assert(!userSourceValue.includes("const staleHours=Math.max(1,Number(state?.factionInventory?.memberReadiness?.settings?.staleHours||72));\n    const cutoff=Date.now()-staleHours*3600000;"),'automatic saved-member refresh must no longer inherit the 72-hour readiness threshold');
 console.log('MM Faction Armory alpha.24.11 member-refresh freshness regressions: PASS');
+
+const pulseNow=Date.parse('2026-10-07T01:00:00Z');
+const pulseState={
+  marketIntel:{
+    marketPulse:{
+      schema:1,
+      updatedAt:pulseNow,
+      settings:{ttlMs:45*60*1000},
+      items:{
+        '900':{
+          itemId:'900',itemName:'Pulse Test',tier:'proven',
+          floorPrice:123456,marketDepth:12,totalQty:48,
+          observedEventsPerHour:1.5,observedUnitsPerHour:7.25,turnoverPerHour:895056,
+          liquidityScore:82,confidencePct:76,trendPct:-3.5,
+          sourceTimestamp:pulseNow-30000,fetchedAt:pulseNow-10000,upstreamCacheDelayMs:30000
+        }
+      }
+    }
+  }
+};
+let pulseEvidence=logic.marketPulseEvidence(pulseState,'900',pulseNow);
+assert.strictEqual(pulseEvidence.available,true,'Armory must read current Acquisitions Market Pulse state by item ID');
+assert.strictEqual(pulseEvidence.usable,true,'fresh sufficiently confident Pulse evidence must be usable as advisory context');
+assert.strictEqual(pulseEvidence.status,'READY');
+assert.strictEqual(pulseEvidence.tier,'PROVEN');
+assert.strictEqual(pulseEvidence.floorPrice,123456);
+assert.strictEqual(pulseEvidence.marketDepth,12);
+assert.strictEqual(pulseEvidence.totalQty,48);
+assert.strictEqual(pulseEvidence.liquidityScore,82);
+assert.strictEqual(pulseEvidence.confidencePct,76);
+assert.strictEqual(pulseEvidence.trendPct,-3.5);
+pulseEvidence=logic.marketPulseEvidence(pulseState,'900',pulseNow+46*60*1000);
+assert.strictEqual(pulseEvidence.status,'STALE','Armory must honor the producer TTL and fail Pulse context stale');
+assert.strictEqual(pulseEvidence.usable,false,'stale Pulse evidence must never be usable current context');
+pulseState.marketIntel.marketPulse.items['900'].fetchedAt=pulseNow;
+pulseState.marketIntel.marketPulse.items['900'].confidencePct=20;
+pulseEvidence=logic.marketPulseEvidence(pulseState,'900',pulseNow);
+assert.strictEqual(pulseEvidence.status,'LOW CONFIDENCE');
+assert.strictEqual(pulseEvidence.usable,false,'low-confidence Pulse evidence must remain diagnostic only');
+const unsupportedPulse=JSON.parse(JSON.stringify(pulseState));
+unsupportedPulse.marketIntel.marketPulse.schema=2;
+pulseEvidence=logic.marketPulseEvidence(unsupportedPulse,'900',pulseNow);
+assert.strictEqual(pulseEvidence.status,'UNSUPPORTED SCHEMA','unknown producer schema must fail closed');
+assert.strictEqual(pulseEvidence.available,false);
+assert(userSourceValue.includes("const marketPulse=logic.marketPulseEvidence(state,itemId,now);"),'Armory source adapter must consume shared Market Pulse state');
+assert(userSourceValue.includes("['faction','market','core']"),'Armory must refresh shared state when Acquisitions updates the market domain');
+assert(userSourceValue.includes("tile('MARKET PULSE'"),'Acquire must surface Market Pulse context');
+assert(userSourceValue.includes("'Pulse Liquidity'"),'Leadership export must carry Market Pulse metrics');
+assert(userSourceValue.includes('Market Pulse is Acquisitions-owned advisory context only.'),'leader report must disclose Market Pulse advisory scope');
+assert(userSourceValue.includes('privacy-policy@98519cd5b5ffa5ea3747f7e50198569bd8cb22d9/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'installed alpha.25 must pin the immutable commit containing marketPulseEvidence');
+assert(userSourceValue.includes('it never substitutes for the live-price rule or changes planned quantity.'),'Acquire must disclose that Pulse does not control pricing or quantity');
+assert(!userSourceValue.includes('MMTornMarketPulse.createEngine'),'Faction Armory must not instantiate the Acquisitions Market Pulse producer');
+assert(!userSourceValue.includes('marketPulseEngine'),'Faction Armory must not add a duplicate Market Pulse engine');
+console.log('MM Faction Armory alpha.25 Market Pulse consumer regressions: PASS');
+
+const absentPulse=logic.marketPulseEvidence({},'900',pulseNow);
+assert.strictEqual(absentPulse.available,false,'Faction Armory must remain functional when no Market Pulse producer/state exists');
+assert.strictEqual(absentPulse.usable,false,'missing optional Pulse must not become actionable evidence');
+assert.strictEqual(absentPulse.status,'NO PULSE','missing optional Pulse must fail closed without creating a dependency');
+assert(!userSourceValue.includes('MARKET_PULSE_DEMAND_'),'alpha.26 must not publish an Armory-specific Market Pulse demand contract');
+assert(!userSourceValue.includes('marketPulseDemand'),'alpha.26 must not write/read an Armory demand hint for an external producer');
+assert(!userSourceValue.includes('publishMarketPulseDemand'),'alpha.26 must not contain the retired outward demand publisher');
+assert(!userSourceValue.includes('scheduleMarketPulseDemandPublish'),'alpha.26 must not schedule outward demand publication');
+assert(!userSourceValue.includes("updateDomainState('market',draft=>"),'Faction Armory must not write shared market state');
+assert(!userSourceValue.includes('MMTornMarketPulse.createEngine'),'Faction Armory must not instantiate a Market Pulse producer');
+assert(userSourceValue.includes('const marketPulse=logic.marketPulseEvidence(state,itemId,now);'),'optional read-only Market Pulse consumption must remain available');
+console.log('MM Faction Armory alpha.26 isolation regressions: PASS');
 
 
 

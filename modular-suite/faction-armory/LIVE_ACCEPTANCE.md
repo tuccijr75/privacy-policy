@@ -1,6 +1,66 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.11**
+Status: **NON-PRODUCTION / alpha.26**
+
+
+
+## Alpha.26 private-build isolation cleanup
+
+Alpha.25.1 introduced an Armory-specific outward demand contract so an external Market Pulse producer could prioritize Armory items. That architecture is now **RETIRED**.
+
+Faction Armory is a private/personal build. Customer-facing suite products must not depend on Armory state, require Armory to be installed, expose Armory-specific workflow, or prioritize work because Armory published a private demand object.
+
+Alpha.26 therefore removes the alpha.25.1 outward dependency while preserving the proven Armory feature set:
+
+- removes all `MARKET_PULSE_DEMAND_*` constants;
+- removes the demand snapshot, publisher, renewal timer and Acquire-render scheduling hook;
+- removes all writes/reads of `factionInventory.marketPulseDemand`;
+- adds no replacement outbound state contract, collector, scheduler or network request;
+- retains the alpha.25 Market Pulse reader only as **optional read-only advisory input**;
+- missing Market Pulse state fails closed as `NO PULSE` and does not block Armory;
+- Armory planning price, quantities, budget, readiness, minimums, reports and exports remain based on Armory/shared factual inputs, not Pulse;
+- the existing **Find Best Source** handoff remains an optional integration path and is not required for Armory to calculate or display its acquisition plan. Any customer-suite Armory-specific receiver/wording must be corrected in that product's own build conversation.
+
+### Alpha.26 acceptance
+
+- [x] Static isolation: no `marketPulseDemand`, `MARKET_PULSE_DEMAND_*`, demand publisher or demand scheduling hook remains in the Armory runtime.
+- [x] Static ownership: Armory does not write the shared `market` domain and does not instantiate a Market Pulse engine.
+- [x] Domain isolation: missing Market Pulse state returns `NO PULSE` / unavailable / non-actionable rather than failing the Armory workflow.
+- [x] Proven alpha.25 read-only Market Pulse consumer remains available when generic Pulse data already exists.
+- [x] Install alpha.26 and reload Torn. **PASS — owner installed 2026-10-07; independent dedicated-window capture confirmed `v8.0.0-alpha.26` running on Torn.**
+- [x] Verify Members / Builds / Stock / Coverage / Minimums / Acquire / Settings remain operational on alpha.26. **PASS — independently exercised/captured 2026-10-07 in the isolated QA window. Members rendered the live readiness roster; Builds rendered Quick Build routes; Stock rendered 103 classified inventory rows; Coverage reported no equipped-item/floor routing mismatches or unmapped combat equipment; Minimums rendered War Stock Control; Acquire rendered the current acquisition plan; Settings rendered local Faction API/procurement controls. No Acquisitions action/handshake was required to open or calculate these views.**
+- [x] Confirm Acquire quantities and planning evidence remain available if no matching Pulse item exists. **PASS — independently observed 2026-10-07: BT MP9 rendered ARMORY REC 11, override 5, BUY NOW 5 and Torn Market Reference planning evidence without a matching Pulse tile.**
+- [x] If generic Market Pulse data is present, confirm it remains advisory and does not change ARMORY REC, override, BUY NOW, budget allocation or planning price. **PASS — independently observed 2026-10-07: Macana displayed `OBSERVED · STALE · L27 · C44%` plus depth/velocity/trend while ARMORY REC 11, override 5, BUY NOW 5 and Torn Market Reference planning price remained separate.**
+- [x] Confirm no Armory-specific demand object is created in shared state during Acquire use. **PASS — independently checked 2026-10-07 after live Acquire use: exact-key binary search of Torn's active IndexedDB found no `marketPulseDemand` key. Source regression also confirms no publisher/scheduler/write path remains.**
+- [x] Re-run dock/collision and one representative manual **Find Best Source** action. **PASS / PARTIAL — 2026-10-07:** current viewport shows the Armory panel and bottom MM/Torn controls coexisting without a blocking collision. Background QA click on BT MP9 **Find Best Source** produced `Sent BT MP9 x5 to MM_Acquisitions · preferred Best · reference $46,801. Final purchase remains manual.` Armory remained intact. **Receiver-absent failure behavior was not independently reproduced because Acquisitions is currently installed; source/regression coverage proves the broadcast is optional and Armory calculations do not depend on the receiver.**
+- [x] Do not merge/publish until owner accepts live alpha.26 results. **OWNER ACCEPTED — 2026-10-07. Merge/publication still require a separate explicit owner command.**
+
+## Alpha.25 Market Pulse procurement intelligence consumer
+
+- Acquisitions remains the only Market Pulse producer.
+- Armory reads `state.marketIntel.marketPulse.items[itemId]` without adding a collector/scheduler/lease/API path.
+- Current schema 1 fields shown in Acquire: tier/status, floor, depth, total units, units/hour, turnover/hour, liquidity, confidence and trend.
+- Producer TTL is honored; stale Pulse is visibly stale and excluded from current procurement context.
+- Confidence below 30% remains diagnostic / low confidence.
+- Pulse never replaces Armory's stricter fresh Item Market/Bazaar/Travel price rule and never changes planned quantity or funded quantity.
+- Leader acquisition snapshot and Leadership Excel include the same read-only Pulse evidence.
+- Shared `market` state updates refresh the Armory view without a new polling interval.
+
+### Alpha.25 live acceptance
+
+- [x] alpha.25 candidate installed/updated. **OWNER-CONFIRMED — 2026-10-06**
+- [x] MM Faction Armory launcher present on live Torn page after update. **INDEPENDENT BROWSER OBSERVATION — 2026-10-06**
+- [ ] With Acquisitions Market Pulse populated, open Armory → Acquire and confirm matching items show Market Pulse tier/status, depth, velocity, liquidity/confidence and trend.
+- [ ] Confirm the Armory source strip shows Market Pulse producer age.
+- [ ] Compare one row's Pulse values against Acquisitions and confirm the values agree.
+- [ ] Age/fixture Pulse beyond its producer TTL and confirm Armory shows **STALE** rather than current evidence.
+- [ ] Confirm stale/low-confidence Pulse does not change planning price, BUY NOW quantity, budget allocation, or Armory recommendation.
+- [ ] Confirm a fresh Pulse floor older than the 180-second live-price window does not become Armory's planning price.
+- [ ] Prepare the leader snapshot and confirm Pulse is labeled Acquisitions-owned advisory context.
+- [ ] Export Leadership Excel and inspect the Pulse columns in **Acquire**.
+- [ ] Confirm no additional Market Pulse network requests or scheduler appear in Faction Armory.
+- [ ] Re-run dock/collision and Armory → Acquisitions manual handoff checks.
+- [ ] Do not merge/publish until owner accepts live results.
 
 
 ## Alpha.24.11 member refresh freshness hardening
