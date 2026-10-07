@@ -6,10 +6,18 @@ if (!c) throw new Error('MMTornCore unavailable');
 
 const fs = require('fs');
 const coreSource = fs.readFileSync(__dirname + '/core/MM_Torn_Core.js', 'utf8');
-if (!coreSource.includes("CORE_VERSION = '8.0.0-alpha.14'")) throw new Error('core ordered-dock version missing');
+if (!coreSource.includes("CORE_VERSION = '8.0.0-alpha.15'")) throw new Error('core ordered-dock version missing');
 if (!coreSource.includes('const LAUNCHER_SNAP_GAP=4')) throw new Error('fixed launcher gap missing');
 if (!coreSource.includes('const NATIVE_DOCK_CLEARANCE=6')) throw new Error('native Torn clearance floor missing');
 if (!coreSource.includes('function launcherTooClose')) throw new Error('launcher overlap guard missing');
+if (!coreSource.includes("const PANEL_LAYOUT_EVENT='mm-torn-panel-layout-change'")) throw new Error('panel layout event missing');
+if (!coreSource.includes('function resolvePanelPlacement')) throw new Error('panel placement resolver missing');
+if (!coreSource.includes('function suppressPanelForCollision')) throw new Error('panel collision suppression missing');
+if (!coreSource.includes('function restorePanelsSuppressedBy')) throw new Error('panel collision restoration missing');
+if (!coreSource.includes("panel.dataset.mmPanelKey=panelKey")) throw new Error('cross-userscript panel identity missing');
+if (!coreSource.includes("visibilityObserver?.observe(panel,{attributes:true,attributeFilter:['style']})")) throw new Error('panel-local visibility observer missing');
+if (!coreSource.includes("document.querySelectorAll('[data-mm-panel-key]')")) throw new Error('cross-userscript panel discovery missing');
+
 if (!coreSource.includes('function resolveLauncherPosition')) throw new Error('launcher snap resolver missing');
 if (!coreSource.includes('native?.controls')) throw new Error('native Torn icon collision targets missing');
 if (!coreSource.includes('obstacles:launcherObstacleRects(button)')) throw new Error('floating drag collision snapshot missing');
@@ -32,6 +40,36 @@ if (!coreSource.includes('openLegacyDb({ allowCreate: true })')) throw new Error
 if (!coreSource.includes("bootstrap: 'fresh-install'")) throw new Error('fresh-install provenance missing');
 if (typeof c.createEmptySharedState !== 'function') throw new Error('empty shared-state factory missing');
 if (typeof c.ensureSharedState !== 'function') throw new Error('shared-state bootstrap export missing');
+if (typeof c.resolvePanelPlacement !== 'function') throw new Error('panel placement export missing');
+if (typeof c.panelRectsOverlap !== 'function') throw new Error('panel overlap export missing');
+
+const freePlacement = c.resolvePanelPlacement({
+  left:700, top:80, width:300, height:300,
+  viewportWidth:1200, viewportHeight:900,
+  obstacles:[{left:700,top:80,width:300,height:300}]
+});
+if (!freePlacement) throw new Error('wide viewport should find a collision-free slot');
+if (c.panelRectsOverlap(
+  {left:freePlacement.left,top:freePlacement.top,width:300,height:300},
+  {left:700,top:80,width:300,height:300}
+)) throw new Error('wide viewport placement still overlaps');
+
+const preservedPlacement = c.resolvePanelPlacement({
+  left:40, top:80, width:300, height:300,
+  viewportWidth:1200, viewportHeight:900,
+  obstacles:[{left:700,top:80,width:300,height:300}]
+});
+if (!preservedPlacement || preservedPlacement.left !== 40 || preservedPlacement.top !== 80) {
+  throw new Error('non-overlapping requested panel position should be preserved');
+}
+
+const impossiblePlacement = c.resolvePanelPlacement({
+  left:40, top:40, width:700, height:700,
+  viewportWidth:800, viewportHeight:800,
+  obstacles:[{left:40,top:40,width:700,height:700}]
+});
+if (impossiblePlacement !== null) throw new Error('narrow viewport should report no collision-free slot');
+
 
 const empty = c.createEmptySharedState('2026-10-06T00:00:00.000Z');
 const emptyValidation = c.validateLegacyState(empty);
