@@ -753,3 +753,14 @@ Market Pulse is advisory procurement intelligence only. Its 45-minute producer T
 Acquire, the leader acquisition snapshot, and Leadership Excel expose Pulse context. Stale or low-confidence Pulse remains diagnostic and is not represented as current actionable evidence.
 
 Armory listens for shared `market` domain state updates so Pulse changes can appear while the panel is open without adding a second polling loop.
+
+
+## Alpha.25.1 Market Pulse demand handoff
+
+The alpha.25 consumer alone cannot guarantee useful Pulse coverage because Acquisitions cannot infer Faction Armory's current acquisition rows from its own tracked-item universe.
+
+Armory therefore publishes one bounded, expiring demand hint inside its own `factionInventory` domain. This is planning metadata, not market truth.
+
+The hint is derived only from the canonical reconciled acquisition plan and contains at most 24 item IDs with planned quantity/category/reason. It expires after 15 minutes and is not rewritten when its signature is unchanged and enough lifetime remains.
+
+This does not make Armory a Market Pulse producer. Armory never writes `marketIntel.marketPulse`, never calls Item Market for Pulse collection, and never creates a Pulse scheduler or lease. Acquisitions remains responsible for deciding when/how to refresh those requested IDs under its existing API budget, integrity, cache-delay and one-engine rules.

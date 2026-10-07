@@ -1,7 +1,39 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.25**
+Status: **NON-PRODUCTION / alpha.25.1**
 
+
+
+## Alpha.25.1 Armory-demand → Market Pulse producer repair
+
+Live alpha.25 acceptance on 2026-10-06 confirmed that the Armory consumer was loaded and reading a fresh Acquisitions Market Pulse timestamp, but none of the five current Equipment acquisition rows rendered Pulse metrics. This is classified **EFFECTIVENESS GAP**.
+
+Root cause: Acquisitions Market Pulse tracked its own prior Pulse/pricelist/marketplace/ranked/travel item IDs, but had no durable input identifying the items currently required by Faction Armory.
+
+Alpha.25.1 adds a bounded Armory-owned demand hint at `factionInventory.marketPulseDemand`:
+
+- schema 1;
+- owner `MM_Faction_Armory`;
+- at most 24 current acquisition items;
+- item ID, name, planned quantity, category and bounded reason only;
+- explicit `updatedAt` and 15-minute `expiresAt`;
+- signature-based write suppression, with renewal only as expiry approaches;
+- published only while Acquire is being used / rendered from the canonical acquisition plan;
+- no Torn API call, market-domain write, Market Pulse engine, lease, polling loop or purchase action.
+
+Acquisitions remains the only Market Pulse producer. Its producer candidate must consume only fresh schema-1 Armory demand hints and prioritize those item IDs through the existing engine.
+
+### Alpha.25.1 live acceptance
+
+- [ ] Install Armory alpha.25.1 and the matching Acquisitions producer candidate.
+- [ ] Open Armory → Acquire and confirm the current acquisition demand is published without changing planned quantities.
+- [ ] Confirm Acquisitions begins collecting the demanded item IDs through its existing Market Pulse engine.
+- [ ] Confirm matching Armory rows begin showing Market Pulse tiles as producer snapshots arrive.
+- [ ] Confirm expired Armory demand is ignored by Acquisitions.
+- [ ] Confirm no duplicate Market Pulse collector/scheduler/API loop appears in Armory.
+- [ ] Confirm planning price, BUY NOW quantity and Armory recommendation remain unchanged by Pulse metrics.
+- [ ] Re-run manual Armory → Acquisitions routing and dock/collision acceptance.
+- [ ] Do not merge/publish until owner accepts live results.
 
 ## Alpha.25 Market Pulse procurement intelligence consumer
 
