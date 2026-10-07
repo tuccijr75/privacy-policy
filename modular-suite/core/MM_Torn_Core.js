@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const CORE_VERSION = '8.0.0-alpha.14';
+  const CORE_VERSION = '8.0.0-alpha.15';
   const LEGACY_CHANNEL = 'mm_bazaar_crm_cross_tab_v1';
   const CORE_INSTANCE_ID = 'v8-core-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
   const LEGACY = Object.freeze({
@@ -344,6 +344,10 @@
     'inventory-roi','acquisitions','customers','armory','trade-reminder'
   ]);
   const PANEL_POSITION_PREFIX='mm_torn_panel_position_v1:';
+  const PANEL_LAYOUT_EVENT='mm-torn-panel-layout-change';
+  const PANEL_GAP=8;
+  const PANEL_VIEWPORT_MARGIN=4;
+  const PANEL_BOTTOM_RESERVE=48;
   const LAUNCHER_EDGE_MARGIN=4;
   const LAUNCHER_SNAP_GAP=4;
   const NATIVE_DOCK_CLEARANCE=6;
@@ -1025,6 +1029,198 @@
     }catch{}
   }
 
+  function panelRect(value={}){
+    const left=Number(value.left)||0;
+    const top=Number(value.top)||0;
+    const width=Math.max(0,Number(value.width ?? ((Number(value.right)||0)-left))||0);
+    const height=Math.max(0,Number(value.height ?? ((Number(value.bottom)||0)-top))||0);
+    return {left,top,width,height,right:left+width,bottom:top+height};
+  }
+
+  function panelRectsOverlap(a,b,gap=PANEL_GAP){
+    const one=panelRect(a),two=panelRect(b),space=Math.max(0,Number(gap)||0);
+    return one.left<two.right+space&&one.right+space>two.left&&
+      one.top<two.bottom+space&&one.bottom+space>two.top;
+  }
+
+  function resolvePanelPlacement({
+    left=0,top=0,width=0,height=0,
+    viewportWidth=0,viewportHeight=0,
+    obstacles=[],gap=PANEL_GAP,bottomReserve=PANEL_BOTTOM_RESERVE
+  }={}){
+    const w=Math.max(1,Number(width)||1);
+    const h=Math.max(1,Number(height)||1);
+    const vw=Math.max(1,Number(viewportWidth)||1);
+    const vh=Math.max(1,Number(viewportHeight)||1);
+    const margin=PANEL_VIEWPORT_MARGIN;
+    const reserve=Math.max(0,Number(bottomReserve)||0);
+    const maxLeft=Math.max(margin,vw-w-margin);
+    const maxTop=Math.max(margin,vh-reserve-h);
+    if(w>vw-margin*2||h>vh-reserve-margin)return null;
+
+    const normalized=(Array.isArray(obstacles)?obstacles:[]).map(panelRect);
+    const candidate=(x,y)=>({
+      left:clamp(x,margin,maxLeft),
+      top:clamp(y,margin,maxTop),
+      width:w,height:h
+    });
+    const clear=rect=>normalized.every(other=>!panelRectsOverlap(rect,other,gap));
+    const desired=candidate(left,top);
+    if(clear(desired))return {left:desired.left,top:desired.top,collisionFree:true};
+
+    const choices=[];
+    const add=(x,y)=>choices.push(candidate(x,y));
+    for(const other of normalized){
+      add(other.left-w-gap,desired.top);
+      add(other.right+gap,desired.top);
+      add(desired.left,other.top-h-gap);
+      add(desired.left,other.bottom+gap);
+      add(other.left-w-gap,other.top);
+      add(other.right+gap,other.top);
+    }
+    add(margin,margin);
+    add(maxLeft,margin);
+    add(margin,maxTop);
+    add(maxLeft,maxTop);
+
+    const unique=[];
+    const seen=new Set();
+    for(const rect of choices){
+      const token=Math.round(rect.left)+':'+Math.round(rect.top);
+      if(seen.has(token))continue;
+      seen.add(token);
+      unique.push(rect);
+    }
+    unique.sort((a,b)=>{
+      const da=Math.hypot(a.left-desired.left,a.top-desired.top);
+      const db=Math.hypot(b.left-desired.left,b.top-desired.top);
+      return da-db;
+    });
+    const found=unique.find(clear);
+    return found?{left:found.left,top:found.top,collisionFree:true}:null;
+  }
+
+  function panelIsVisible(panel){
+    if(!(panel instanceof HTMLElement)||!document.body?.contains(panel))return false;
+    const cs=getComputedStyle(panel);
+    if(cs.display==='none'||cs.visibility==='hidden'||Number(cs.opacity||1)<=0)return false;
+    const rect=panel.getBoundingClientRect();
+    return rect.width>0&&rect.height>0;
+  }
+
+  function panelLauncherId(key){
+    return String(key||'')==='faction-armory'?'armory':String(key||'');
+  }
+
+  function managedVisiblePanels(except){
+    return [...document.querySelectorAll('[data-mm-panel-key]')]
+      .filter(panel=>panel!==except&&panelIsVisible(panel));
+  }
+
+  function clearPanelSuppression(panel){
+    if(!(panel instanceof HTMLElement))return;
+    delete panel.dataset.mmCollisionSuppressedBy;
+    delete panel.dataset.mmCollisionPreviousDisplay;
+  }
+
+  function suppressPanelForCollision(panel,byKey){
+    if(!(panel instanceof HTMLElement)||!panelIsVisible(panel))return false;
+    panel.dataset.mmCollisionPreviousDisplay=panel.style.display||'';
+    panel.dataset.mmCollisionSuppressedBy=String(byKey||'panel');
+    panel.style.display='none';
+    setDockLauncherActive(panelLauncherId(panel.dataset.mmPanelKey),false);
+    return true;
+  }
+
+  function restorePanelsSuppressedBy(key){
+    if(typeof document==='undefined')return 0;
+    const owner=String(key||'panel');
+    let restored=0;
+    for(const panel of document.querySelectorAll('[data-mm-collision-suppressed-by]')){
+      if(!(panel instanceof HTMLElement)||String(panel.dataset.mmCollisionSuppressedBy||'')!==owner)continue;
+      const prior=panel.dataset.mmCollisionPreviousDisplay||'block';
+      clearPanelSuppression(panel);
+      panel.style.display=prior||'block';
+      setDockLauncherActive(panelLauncherId(panel.dataset.mmPanelKey),true);
+      restored++;
+    }
+    return restored;
+  }
+
+  let panelLayoutDispatchPending=false;
+  function dispatchPanelLayoutChange(sourceKey=''){
+    if(typeof document==='undefined'||typeof requestAnimationFrame!=='function')return;
+    if(panelLayoutDispatchPending)return;
+    panelLayoutDispatchPending=true;
+    requestAnimationFrame(()=>{
+      panelLayoutDispatchPending=false;
+      try{document.dispatchEvent(new CustomEvent(PANEL_LAYOUT_EVENT,{detail:{sourceKey:String(sourceKey||'')}}));}catch{}
+    });
+  }
+
+  function resolveManagedPanelCollision(panel,key,{persist=false}={}){
+    if(!panelIsVisible(panel))return {visible:false};
+    const panelKey=String(key||'panel');
+    panel.dataset.mmPanelKey=panelKey;
+    panel.dataset.mmPanelManaged='1';
+    if(panel.dataset.mmCollisionSuppressedBy)clearPanelSuppression(panel);
+
+    const current=panel.getBoundingClientRect();
+    const others=managedVisiblePanels(panel);
+    const obstacles=others.map(other=>other.getBoundingClientRect());
+    const placement=resolvePanelPlacement({
+      left:current.left,top:current.top,width:current.width,height:current.height,
+      viewportWidth:window.innerWidth,viewportHeight:window.innerHeight,
+      obstacles
+    });
+
+    if(placement){
+      const changed=Math.abs(placement.left-current.left)>1||Math.abs(placement.top-current.top)>1;
+      if(changed){
+        panel.style.left=Math.round(placement.left)+'px';
+        panel.style.top=Math.round(placement.top)+'px';
+        panel.style.right='auto';
+        panel.style.bottom='auto';
+        panel.dataset.mmCollisionAuto='1';
+      }else{
+        delete panel.dataset.mmCollisionAuto;
+      }
+      if(persist){
+        const rect=panel.getBoundingClientRect();
+        writePanelPosition(panelKey,{left:rect.left,top:rect.top});
+      }
+      return {visible:true,placed:true,changed,suppressed:0};
+    }
+
+    // If the panel itself fits in the viewport but no collision-free slot exists,
+    // keep the newly opened/focused panel and temporarily suppress only panels
+    // that physically overlap it. Saved user coordinates are not changed.
+    const fitsAlone=resolvePanelPlacement({
+      left:current.left,top:current.top,width:current.width,height:current.height,
+      viewportWidth:window.innerWidth,viewportHeight:window.innerHeight,
+      obstacles:[]
+    });
+    if(!fitsAlone)return {visible:true,placed:false,changed:false,suppressed:0};
+
+    let suppressed=0;
+    for(const other of others){
+      if(panelRectsOverlap(current,other.getBoundingClientRect(),PANEL_GAP)&&
+        suppressPanelForCollision(other,panelKey))suppressed++;
+    }
+    if(suppressed){
+      panel.style.left=Math.round(fitsAlone.left)+'px';
+      panel.style.top=Math.round(fitsAlone.top)+'px';
+      panel.style.right='auto';
+      panel.style.bottom='auto';
+      panel.dataset.mmCollisionAuto='1';
+      if(persist){
+        const rect=panel.getBoundingClientRect();
+        writePanelPosition(panelKey,{left:rect.left,top:rect.top});
+      }
+    }
+    return {visible:true,placed:Boolean(suppressed),changed:Boolean(suppressed),suppressed};
+  }
+
   function applyPanelPosition(panel,key,defaults={}){
     const saved=readPanelPosition(key);
     if(saved){
@@ -1048,7 +1244,18 @@
     if(!(grip instanceof HTMLElement))return false;
     if(typeof panel.__mmPanelDragCleanup==='function')panel.__mmPanelDragCleanup();
 
-    applyPanelPosition(panel,key,defaults);
+    const panelKey=String(key||'panel');
+    panel.dataset.mmPanelKey=panelKey;
+    panel.dataset.mmPanelManaged='1';
+    if(panel.dataset.mmCollisionSuppressedBy&&panel.style.display!=='none')clearPanelSuppression(panel);
+
+    const relayout=()=>{
+      if(!panelIsVisible(panel))return;
+      applyPanelPosition(panel,panelKey,defaults);
+      resolveManagedPanelCollision(panel,panelKey);
+    };
+
+    applyPanelPosition(panel,panelKey,defaults);
     grip.style.cursor='move';
     grip.title='Drag to move · double-click header to reset position';
 
@@ -1081,26 +1288,42 @@
       drag=null;
       try{grip.releasePointerCapture(event.pointerId);}catch{}
       if(moved){
-        const rect=panel.getBoundingClientRect();
-        writePanelPosition(key,{left:rect.left,top:rect.top});
+        resolveManagedPanelCollision(panel,panelKey,{persist:true});
+        dispatchPanelLayoutChange(panelKey);
       }
     };
     const reset=event=>{
       if(interactive(event.target))return;
-      writePanelPosition(key,null);
-      applyPanelPosition(panel,key,defaults);
+      writePanelPosition(panelKey,null);
+      applyPanelPosition(panel,panelKey,defaults);
+      resolveManagedPanelCollision(panel,panelKey);
+      dispatchPanelLayoutChange(panelKey);
     };
     const resize=()=>{
-      const saved=readPanelPosition(key);
-      if(!saved)return;
-      const maxLeft=Math.max(4,window.innerWidth-panel.offsetWidth-4);
-      const maxTop=Math.max(4,window.innerHeight-42);
-      const left=clamp(parseFloat(panel.style.left)||saved.left,4,maxLeft);
-      const top=clamp(parseFloat(panel.style.top)||saved.top,4,maxTop);
-      panel.style.left=Math.round(left)+'px';
-      panel.style.top=Math.round(top)+'px';
-      writePanelPosition(key,{left,top});
+      if(drag)return;
+      relayout();
+      const saved=readPanelPosition(panelKey);
+      if(saved&&panelIsVisible(panel)){
+        const rect=panel.getBoundingClientRect();
+        writePanelPosition(panelKey,{left:rect.left,top:rect.top});
+      }
+      dispatchPanelLayoutChange(panelKey);
     };
+    const layoutEvent=event=>{
+      if(drag||String(event?.detail?.sourceKey||'')===panelKey)return;
+      relayout();
+    };
+    const visibilityObserver=typeof MutationObserver==='function'?new MutationObserver(()=>{
+      if(!panelIsVisible(panel)){
+        if(restorePanelsSuppressedBy(panelKey))dispatchPanelLayoutChange(panelKey);
+        return;
+      }
+      if(panel.dataset.mmCollisionSuppressedBy){
+        clearPanelSuppression(panel);
+        relayout();
+        dispatchPanelLayoutChange(panelKey);
+      }
+    }):null;
 
     grip.addEventListener('pointerdown',down);
     grip.addEventListener('pointermove',move);
@@ -1108,6 +1331,10 @@
     grip.addEventListener('pointercancel',up);
     grip.addEventListener('dblclick',reset);
     window.addEventListener('resize',resize,{passive:true});
+    document.addEventListener(PANEL_LAYOUT_EVENT,layoutEvent);
+    visibilityObserver?.observe(panel,{attributes:true,attributeFilter:['style']});
+
+    requestAnimationFrame(()=>resolveManagedPanelCollision(panel,panelKey));
 
     panel.__mmPanelDragCleanup=()=>{
       grip.removeEventListener('pointerdown',down);
@@ -1116,6 +1343,8 @@
       grip.removeEventListener('pointercancel',up);
       grip.removeEventListener('dblclick',reset);
       window.removeEventListener('resize',resize);
+      document.removeEventListener(PANEL_LAYOUT_EVENT,layoutEvent);
+      visibilityObserver?.disconnect();
     };
     return true;
   }
@@ -1165,6 +1394,8 @@
     registerDockLauncher,
     setDockLauncherActive,
     positionDock,
+    resolvePanelPlacement,
+    panelRectsOverlap,
     makePanelDraggable,
     adoptLegacyCrmLauncher,
     deepClone
