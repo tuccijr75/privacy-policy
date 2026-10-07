@@ -247,7 +247,7 @@ assert(!userSourceStandalone.includes('factionInventory'));
 assert(!userSourceStandalone.includes('marketPulseDemand'));
 assert(!userSourceStandalone.includes('MM_Faction_Armory'));
 assert(userSourceStandalone.includes('MM_Acquisitions.live.js'));
-assert(userSourceStandalone.includes("type==='state-updated'"));
+assert(userSourceStandalone.includes("if(type!=='state-updated')return;"));
 assert(userSourceStandalone.includes("requestKind:'inventory-restock'"));
 assert(userSourceStandalone.includes('Inventory Restock Demand'));
 assert(userSourceStandalone.includes('data-inventory-restock-id'));
