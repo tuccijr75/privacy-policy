@@ -29,12 +29,12 @@ Acquisitions remains the only Market Pulse producer. Its producer candidate must
 - [x] Tampermonkey downgrade warning observed for Armory `.25.1`; classified as an installer version-comparison artifact, not evidence of older product code. Future Armory candidates should resume monotonic integer prerelease numbering at `alpha.26` to avoid repeat ambiguity. **OWNER-CONFIRMED — 2026-10-06**
 
 - [ ] Install Armory alpha.25.1 and the matching Acquisitions producer candidate.
-- [ ] Open Armory → Acquire and confirm the current acquisition demand is published without changing planned quantities.
-- [ ] Confirm Acquisitions begins collecting the demanded item IDs through its existing Market Pulse engine.
-- [ ] Confirm matching Armory rows begin showing Market Pulse tiles as producer snapshots arrive.
+- [x] Open Armory → Acquire and confirm the current acquisition demand is published without changing planned quantities. **PASS — independently observed 2026-10-06:** Equipment remained 24 planned / 20 buy now with row quantities 5, 5, 5, 5, 4, matching the pre-repair live state.
+- [x] Confirm Acquisitions begins collecting the demanded item IDs through its existing Market Pulse engine. **PASS — independently observed 2026-10-06:** all five current Equipment rows gained live Pulse context after the paired alpha.25.1/alpha.33 repair.
+- [x] Confirm matching Armory rows begin showing Market Pulse tiles as producer snapshots arrive. **PASS — independently observed 2026-10-06:** all five Equipment rows render MARKET PULSE, PULSE DEPTH, PULSE VELOCITY and PULSE TREND.
 - [ ] Confirm expired Armory demand is ignored by Acquisitions.
-- [ ] Confirm no duplicate Market Pulse collector/scheduler/API loop appears in Armory.
-- [ ] Confirm planning price, BUY NOW quantity and Armory recommendation remain unchanged by Pulse metrics.
+- [x] Confirm no duplicate Market Pulse collector/scheduler/API loop appears in Armory. **PASS — source/regression verified:** Armory publishes only the bounded faction-domain demand hint and does not instantiate/write the Market Pulse producer.
+- [x] Confirm planning price, BUY NOW quantity and Armory recommendation remain unchanged by Pulse metrics. **PASS — independently observed 2026-10-06:** Pulse tiles coexist with ARMORY REC / YOUR OVERRIDE or PLANNED / BUY NOW; 24 planned / 20 buy now and per-row quantities remained unchanged.
 - [ ] Re-run manual Armory → Acquisitions routing and dock/collision acceptance.
 - [ ] Do not merge/publish until owner accepts live results.
 
