@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.25.1
+// @version      8.0.0-alpha.25.2
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@1c269906233fb7003c5b1e8945afe78c25bb7dae/modular-suite/core/MM_Torn_Core.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@98519cd5b5ffa5ea3747f7e50198569bd8cb22d9/modular-suite/faction-armory/MM_Faction_Armory.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.25.1';
+  const VERSION='8.0.0-alpha.25.2';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
