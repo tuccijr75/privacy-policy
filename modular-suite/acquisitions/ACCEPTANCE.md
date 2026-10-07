@@ -105,6 +105,7 @@ Required safeguards:
 - [ ] final purchase remains manual.
 
 ### Ranked Weapons
+- [ ] Verified Sales uses official Torn API finished Auction House evidence.
 - [ ] Bazaar / Item Market / Auction source filters work.
 - [ ] finished Auction House evidence is labeled official Torn API evidence.
 - [ ] early low bids remain watch-only/provisional.
