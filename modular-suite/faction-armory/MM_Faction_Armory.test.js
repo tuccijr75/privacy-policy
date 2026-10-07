@@ -344,9 +344,9 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.25.1';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.25.2';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
-assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
+assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@1c269906233fb7003c5b1e8945afe78c25bb7dae/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@98519cd5b5ffa5ea3747f7e50198569bd8cb22d9/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('async function autoRefreshArmory'));
 assert(userSource.includes('AUTO_CHECK_MS=5*60*1000'));
@@ -356,7 +356,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.25.1';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.25.2';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -364,7 +364,7 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.25.1';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.25.2';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
 assert(userSource3.includes('automatic due-profile refresh enabled while Armory is open'));
@@ -463,7 +463,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.25.1';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.25.2';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('Refresh All Saved Members: '),'refresh-all completion summary must remain explicit');
@@ -1007,8 +1007,8 @@ assert(userSourceValue.includes("' · your override '+fmt(row.qty)+' · Armory r
 assert(!userSourceValue.includes('manual planned qty (system '),'cryptic manual/system wording must be removed');
 console.log('MM Faction Armory alpha.24.10 acquisition-wording regressions: PASS');
 
-assert(userSourceValue.includes("// @version      8.0.0-alpha.25.1"),'userscript header must advance to alpha.25.1');
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.25.1';"),'runtime version must advance to alpha.25.1');
+assert(userSourceValue.includes("// @version      8.0.0-alpha.25.2"),'userscript header must advance to alpha.25.1');
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.25.2';"),'runtime version must advance to alpha.25.1');
 assert(userSourceValue.includes("const MEMBER_REFRESH_MAX_AGE_MS=60*60*1000;"),'saved member private data must have an independent one-hour refresh target');
 assert(userSourceValue.includes("function apiRequest(pathOrUrl,key,{fresh=false}={})"),'API wrapper must expose explicit fresh-request semantics');
 assert(userSourceValue.includes("if(fresh)url.searchParams.set('timestamp',String(Math.floor(Date.now()/1000)));"),'fresh member reads must bypass Torn service cache with a unique timestamp parameter');
