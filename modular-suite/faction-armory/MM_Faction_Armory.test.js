@@ -1007,6 +1007,21 @@ assert(userSourceValue.includes("' · your override '+fmt(row.qty)+' · Armory r
 assert(!userSourceValue.includes('manual planned qty (system '),'cryptic manual/system wording must be removed');
 console.log('MM Faction Armory alpha.24.10 acquisition-wording regressions: PASS');
 
+assert(userSourceValue.includes("// @version      8.0.0-alpha.24.11"),'userscript header must advance to alpha.24.11');
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.11';"),'runtime version must advance to alpha.24.11');
+assert(userSourceValue.includes("const MEMBER_REFRESH_MAX_AGE_MS=60*60*1000;"),'saved member private data must have an independent one-hour refresh target');
+assert(userSourceValue.includes("function apiRequest(pathOrUrl,key,{fresh=false}={})"),'API wrapper must expose explicit fresh-request semantics');
+assert(userSourceValue.includes("if(fresh)url.searchParams.set('timestamp',String(Math.floor(Date.now()/1000)));"),'fresh member reads must bypass Torn service cache with a unique timestamp parameter');
+assert(userSourceValue.includes("apiRequest('/user/equipment',clean,{fresh})"),'member equipment refresh must use the fresh request path');
+assert(userSourceValue.includes("fetchUserInventory(clean,{fresh})"),'member inventory refresh must use the same explicit fresh request path');
+assert(userSourceValue.includes("lastPrivateRefreshAt:verifiedAt"),'successful member refresh must record its local fetch time independently');
+assert(userSourceValue.includes("sourceTimestamp:equipmentSourceTimestamp||null"),'equipment provenance must retain an API source timestamp when Torn supplies one');
+assert(userSourceValue.includes("profile?.lastPrivateRefreshAt||profile?.fetchedAt||profile?.verifiedAt"),'automatic refresh cadence must prefer explicit local fetch provenance while preserving legacy profiles');
+assert(userSourceValue.includes(">Refresh All Saved Members</button>"),'Members UI must expose one-click refresh of every saved member');
+assert(userSourceValue.includes("Refreshing every saved member with fresh Torn API requests"),'refresh-all status must disclose fresh-request behavior');
+assert(!userSourceValue.includes("const staleHours=Math.max(1,Number(state?.factionInventory?.memberReadiness?.settings?.staleHours||72));\n    const cutoff=Date.now()-staleHours*3600000;"),'automatic saved-member refresh must no longer inherit the 72-hour readiness threshold');
+console.log('MM Faction Armory alpha.24.11 member-refresh freshness regressions: PASS');
+
 
 
 
