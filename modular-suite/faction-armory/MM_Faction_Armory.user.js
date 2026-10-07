@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.10
+// @version      8.0.0-alpha.24.11
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.10';
+  const VERSION='8.0.0-alpha.24.11';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -32,6 +32,7 @@
   const AUTO_CHECK_MS=5*60*1000;
   const FACTION_STALE_FALLBACK_MS=60*60*1000;
   const AUTO_MEMBER_BATCH=2;
+  const MEMBER_REFRESH_MAX_AGE_MS=60*60*1000;
   const PUBLIC_INTEL_BATCH=20;
   const PUBLIC_INTEL_MAX_AGE_MS=24*60*60*1000;
   const WAR_OPPONENT_INTEL_MAX_AGE_MS=6*60*60*1000;
@@ -166,12 +167,30 @@
     });
   }
 
-  function apiRequest(pathOrUrl,key){
+  function apiResponseTimestamp(data){
+    const raw=
+      data?._metadata?.timestamp ??
+      data?._metadata?.cache_timestamp ??
+      data?.timestamp ??
+      data?.cache_timestamp ??
+      data?.data?.timestamp ??
+      data?.data?.cache_timestamp ??
+      null;
+    if(raw==null||raw==='')return '';
+    const numeric=Number(raw);
+    const ms=Number.isFinite(numeric)&&numeric>0
+      ?(numeric<1e12?numeric*1000:numeric)
+      :(Date.parse(String(raw))||0);
+    return ms?new Date(ms).toISOString():'';
+  }
+
+  function apiRequest(pathOrUrl,key,{fresh=false}={}){
     const k=String(key||'').trim();
     if(!k)return Promise.reject(new Error('Torn API key is required.'));
     const url=new URL(String(pathOrUrl).startsWith('http')?pathOrUrl:API_BASE+pathOrUrl);
     url.searchParams.set('key',k);
     url.searchParams.set('comment','MM Faction Armory');
+    if(fresh)url.searchParams.set('timestamp',String(Math.floor(Date.now()/1000)));
     return gmJson(url.toString());
   }
 
@@ -867,13 +886,13 @@
   }
   function savedKeyIds(){return Object.keys(getVault()?.entries||{});}
 
-  async function fetchUserInventory(key){
+  async function fetchUserInventory(key,{fresh=false}={}){
     const rows=[];let offset=0,pages=0;
     while(pages<20){
       const url=new URL(API_BASE+'/user/inventory');
       url.searchParams.set('limit','100');
       if(offset)url.searchParams.set('offset',String(offset));
-      const data=await apiRequest(url.toString(),key);
+      const data=await apiRequest(url.toString(),key,{fresh});
       const page=inventoryArray(data);
       rows.push(...page);pages++;
       const total=Number(data?._metadata?.total??data?._metadata?.pagination?.total??0)||0;
@@ -883,15 +902,15 @@
     return rows;
   }
 
-  async function importMemberKey(key,{save=false}={}){
+  async function importMemberKey(key,{save=false,fresh=true}={}){
     const clean=String(key||'').trim();
     if(!clean)throw new Error('Paste a member Limited Access API key.');
     const [basic,statsData,equipData,inventory,ammoData]=await Promise.all([
-      apiRequest('/user/basic',clean),
-      apiRequest('/user/battlestats',clean),
-      apiRequest('/user/equipment',clean),
-      fetchUserInventory(clean).catch(()=>[]),
-      apiRequest('/user/ammo',clean).catch(()=>({ammo:[]}))
+      apiRequest('/user/basic',clean,{fresh}),
+      apiRequest('/user/battlestats',clean,{fresh}),
+      apiRequest('/user/equipment',clean,{fresh}),
+      fetchUserInventory(clean,{fresh}).catch(()=>[]),
+      apiRequest('/user/ammo',clean,{fresh}).catch(()=>({ammo:[]}))
     ]);
     const memberId=extractUserId(basic);
     if(!memberId)throw new Error('Could not determine the player ID from this key.');
@@ -911,6 +930,7 @@
     const supply=memberSupply(inventory,ammoData,items);
     const ownedEquipment=ownedEquipmentFromInventory(inventory);
     const verifiedAt=new Date().toISOString();
+    const equipmentSourceTimestamp=apiResponseTimestamp(equipData);
 
     await core.updateDomainState('faction',draft=>{
       const fi=draft.factionInventory;
@@ -919,13 +939,18 @@
       const previous=fi.memberReadiness.profiles[memberId]||{};
       fi.memberReadiness.profiles[memberId]={
         ...previous,memberId,stats,
-        equipment:{...(previous.equipment||{}),summary,items,rawImported:false,emptyConfirmed:equipmentEmptyConfirmed},
+        equipment:{
+          ...(previous.equipment||{}),summary,items,rawImported:false,emptyConfirmed:equipmentEmptyConfirmed,
+          fetchedAt:verifiedAt,sourceTimestamp:equipmentSourceTimestamp||null
+        },
         ownedEquipment,
         supplyReadiness:supply,
         medicalStatus:supply.medicalKnown?'API INVENTORY':String(previous.medicalStatus||'UNKNOWN'),
         ipecacStatus:supply.medicalKnown?(num(supply.medical?.ipecac)>0?'READY':'NEEDS IPECAC'):String(previous.ipecacStatus||'UNKNOWN'),
         source:'MM Faction Armory member Limited Access API',
-        verifiedAt
+        verifiedAt,
+        fetchedAt:verifiedAt,
+        lastPrivateRefreshAt:verifiedAt
       };
       if(fi.memberReadiness.roster?.[memberId])fi.memberReadiness.roster[memberId].memberName=memberName;
       return draft;
@@ -944,7 +969,13 @@
       vault.updatedAt=verifiedAt;saveVault(vault);
     }
     state=await core.readLegacyState();
-    return {memberId,memberName,total,save};
+    return {
+      memberId,memberName,total,save,
+      equipmentCount:items.length,
+      equipmentEmptyConfirmed,
+      fetchedAt:verifiedAt,
+      equipmentSourceTimestamp
+    };
   }
 
   async function refreshSavedMember(memberId){
@@ -984,21 +1015,23 @@
     return !last||now-last>=FACTION_STALE_FALLBACK_MS;
   }
 
+  function memberPrivateRefreshAt(profile={}){
+    return Date.parse(profile?.lastPrivateRefreshAt||profile?.fetchedAt||profile?.verifiedAt||'')||0;
+  }
+
   function staleSavedMemberIds(limit=AUTO_MEMBER_BATCH){
     if(!vaultSession?.key)return [];
     const vault=getVault(),profiles=state?.factionInventory?.memberReadiness?.profiles||{};
-    const staleHours=Math.max(1,Number(state?.factionInventory?.memberReadiness?.settings?.staleHours||72));
-    const cutoff=Date.now()-staleHours*3600000;
+    const cutoff=Date.now()-MEMBER_REFRESH_MAX_AGE_MS;
     return Object.keys(vault?.entries||{})
-      .filter(id=>(Date.parse(profiles[id]?.verifiedAt||'')||0)<cutoff)
+      .filter(id=>memberPrivateRefreshAt(profiles[id])<cutoff)
       .slice(0,Math.max(1,limit));
   }
 
   function staleSavedMemberCount(){
     const vault=getVault(),profiles=state?.factionInventory?.memberReadiness?.profiles||{};
-    const staleHours=Math.max(1,Number(state?.factionInventory?.memberReadiness?.settings?.staleHours||72));
-    const cutoff=Date.now()-staleHours*3600000;
-    return Object.keys(vault?.entries||{}).filter(id=>(Date.parse(profiles[id]?.verifiedAt||'')||0)<cutoff).length;
+    const cutoff=Date.now()-MEMBER_REFRESH_MAX_AGE_MS;
+    return Object.keys(vault?.entries||{}).filter(id=>memberPrivateRefreshAt(profiles[id])<cutoff).length;
   }
 
   async function autoRefreshArmory({forceFaction=false}={}){
@@ -1756,10 +1789,10 @@
         '<div><b>Member readiness</b> <span class="mm-fa-muted">'+rows.length+' roster members · '+missing+' missing/stale/estimated · '+noGear+' confirmed no combat gear · '+savedCount+' saved member API key'+(savedCount===1?'':'s')+'</span></div>'+
         '<div class="mm-fa-actions">'+
           (vault&&savedCount&&!vaultUnlocked?'<button id="mm-fa-unlock-vault" style="'+button(true)+'">Unlock Vault</button>':'')+
-          '<button id="mm-fa-refresh-keys" style="'+button()+'">Refresh Keys</button><button id="mm-fa-copy-request" style="'+button()+'">Copy Request</button>'+
+          '<button id="mm-fa-refresh-keys" style="'+button(true)+'">Refresh All Saved Members</button><button id="mm-fa-copy-request" style="'+button()+'">Copy Request</button>'+
         '</div>'+
       '</div>'+
-      '<div class="mm-fa-muted" style="margin-bottom:4px;">Member-key vault: '+(vault?(vaultUnlocked?'UNLOCKED':'LOCKED'):'NOT CREATED')+' · stale saved profiles: '+staleSaved+(vaultUnlocked?' · automatic stale-profile refresh enabled for this session':'')+'</div>'+
+      '<div class="mm-fa-muted" style="margin-bottom:4px;">Member-key vault: '+(vault?(vaultUnlocked?'UNLOCKED':'LOCKED'):'NOT CREATED')+' · due for private refresh: '+staleSaved+' · refresh target: hourly'+(vaultUnlocked?' · automatic due-profile refresh enabled while Armory is open':'')+'</div>'+
       '<div class="mm-fa-actions">'+
         '<input id="mm-fa-member-key" class="mm-fa-input" style="flex:1 1 260px;min-width:180px;" type="password" autocomplete="off" placeholder="Member Limited Access API key">'+
         '<button id="mm-fa-import-once" style="'+button()+'">Import Once</button>'+
@@ -1815,7 +1848,7 @@
             tile('LOANS',row.loans?row.loans+' units':'—')+
             tile('BUILD MSG',buildMessage.sent?'SENT '+when(buildMessage.sentAt)+' · x'+buildMessage.count:'NOT SENT',{cls:buildMessage.sent?'mm-fa-good':'mm-fa-warn',wide:true})+
             tile('DATA REQUEST',dataReminder.sent?'SENT '+when(dataReminder.sentAt):'NOT SENT',{cls:dataReminder.sent?'mm-fa-good':'',wide:true})+
-            (source?tile('SOURCE',(row.manualOverrideActive?'MANUAL OVERRIDE over ':'')+source+' · '+when(row.profile?.verifiedAt),{wide:true}):tile('SOURCE',row.manualOverrideActive?'MANUAL OVERRIDE over no source profile':'No current profile',{wide:true}))+
+            (source?tile('SOURCE',(row.manualOverrideActive?'MANUAL OVERRIDE over ':'')+source+' · fetched '+when(row.profile?.fetchedAt||row.profile?.verifiedAt)+(row.profile?.equipment?.sourceTimestamp?' · source '+when(row.profile.equipment.sourceTimestamp):''),{wide:true}):tile('SOURCE',row.manualOverrideActive?'MANUAL OVERRIDE over no source profile':'No current profile',{wide:true}))+
           '</div>'+
           (entry?.lastError?'<div class="mm-fa-bad mm-fa-mini" style="margin-top:3px;">API error: '+esc(entry.lastError)+'</div>':'')+
           memberEquipmentStatsHtml(row)+
@@ -3157,16 +3190,19 @@
     root.querySelector('#mm-fa-import-once')?.addEventListener('click',()=>importFromField(false));
     root.querySelector('#mm-fa-import-save')?.addEventListener('click',()=>importFromField(true));
     root.querySelector('#mm-fa-refresh-keys')?.addEventListener('click',async()=>{
-      if(busy)return;busy=true;statusText='Refreshing saved member keys…';render();
+      if(busy)return;busy=true;statusText='Refreshing every saved member with fresh Torn API requests…';render();
       try{
         const result=await refreshAllSaved();
-        statusText='Saved member-key refresh: '+result.total+' saved key'+(result.total===1?'':'s')+' found · '+result.ok+' refreshed successfully'+(result.failures.length?' · '+result.failures.length+' failed':'')+'. This is the number of saved member API keys, not faction members.';
-      }catch(error){statusText='Saved key refresh failed: '+(error?.message||String(error));}
+        statusText='Refresh All Saved Members: '+result.ok+'/'+result.total+' refreshed with cache-bypassing current-state requests'+(result.failures.length?' · '+result.failures.length+' failed':'')+'.';
+      }catch(error){statusText='Refresh All Saved Members failed: '+(error?.message||String(error));}
       finally{busy=false;render();}
     });
     root.querySelectorAll('[data-refresh-member]').forEach(b=>b.addEventListener('click',async()=>{
       if(busy)return;busy=true;statusText='Refreshing '+b.dataset.refreshMember+'…';render();
-      try{const r=await refreshSavedMember(b.dataset.refreshMember);statusText='Refreshed '+r.memberName+' ['+r.memberId+'].';}
+      try{
+        const r=await refreshSavedMember(b.dataset.refreshMember);
+        statusText='Refreshed '+r.memberName+' ['+r.memberId+'] · '+r.equipmentCount+' equipped combat item'+(r.equipmentCount===1?'':'s')+(r.equipmentEmptyConfirmed?' · API confirmed empty':'')+'.';
+      }
       catch(error){statusText='Member refresh failed: '+(error?.message||String(error));}
       finally{busy=false;render();}
     }));
