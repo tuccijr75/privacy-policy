@@ -16,6 +16,8 @@ Status: **NON-PRODUCTION / alpha.25**
 
 ### Alpha.25 live acceptance
 
+- [x] alpha.25 candidate installed/updated. **OWNER-CONFIRMED — 2026-10-06**
+- [x] MM Faction Armory launcher present on live Torn page after update. **INDEPENDENT BROWSER OBSERVATION — 2026-10-06**
 - [ ] With Acquisitions Market Pulse populated, open Armory → Acquire and confirm matching items show Market Pulse tier/status, depth, velocity, liquidity/confidence and trend.
 - [ ] Confirm the Armory source strip shows Market Pulse producer age.
 - [ ] Compare one row's Pulse values against Acquisitions and confirm the values agree.
