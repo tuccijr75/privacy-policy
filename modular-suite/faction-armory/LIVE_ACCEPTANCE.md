@@ -25,6 +25,8 @@ Acquisitions remains the only Market Pulse producer. Its producer candidate must
 
 ### Alpha.25.1 live acceptance
 
+- [x] **CURRENT-HEAD FULL REGRESSION — 2026-10-06:** Armory logic/user/test parse and complete regression corpus pass through alpha.25.1 on PR head `de66fd673622e4ac18f3145ece725327cf717d96`.
+
 - [x] Owner-confirmed paired install: Faction Armory `8.0.0-alpha.25.1` and Acquisitions `8.0.0-alpha.33` are current in Torn. **OWNER-CONFIRMED — 2026-10-06**
 - [x] Tampermonkey downgrade warning observed for Armory `.25.1`; classified as an installer version-comparison artifact, not evidence of older product code. Future Armory candidates should resume monotonic integer prerelease numbering at `alpha.26` to avoid repeat ambiguity. **OWNER-CONFIRMED — 2026-10-06**
 
@@ -32,10 +34,10 @@ Acquisitions remains the only Market Pulse producer. Its producer candidate must
 - [x] Open Armory → Acquire and confirm the current acquisition demand is published without changing planned quantities. **PASS — independently observed 2026-10-06:** Equipment remained 24 planned / 20 buy now with row quantities 5, 5, 5, 5, 4, matching the pre-repair live state.
 - [x] Confirm Acquisitions begins collecting the demanded item IDs through its existing Market Pulse engine. **PASS — independently observed 2026-10-06:** all five current Equipment rows gained live Pulse context after the paired alpha.25.1/alpha.33 repair.
 - [x] Confirm matching Armory rows begin showing Market Pulse tiles as producer snapshots arrive. **PASS — independently observed 2026-10-06:** all five Equipment rows render MARKET PULSE, PULSE DEPTH, PULSE VELOCITY and PULSE TREND.
-- [ ] Confirm expired Armory demand is ignored by Acquisitions.
+- [ ] Confirm expired Armory demand is ignored by Acquisitions. **DETERMINISTIC REGRESSION PASS — 2026-10-06:** current alpha.33 tests reject expired, wrong-owner, wrong-schema, malformed and overlong hints; live 15-minute expiry transition has not been independently observed.
 - [x] Confirm no duplicate Market Pulse collector/scheduler/API loop appears in Armory. **PASS — source/regression verified:** Armory publishes only the bounded faction-domain demand hint and does not instantiate/write the Market Pulse producer.
 - [x] Confirm planning price, BUY NOW quantity and Armory recommendation remain unchanged by Pulse metrics. **PASS — independently observed 2026-10-06:** Pulse tiles coexist with ARMORY REC / YOUR OVERRIDE or PLANNED / BUY NOW; 24 planned / 20 buy now and per-row quantities remained unchanged.
-- [ ] Re-run manual Armory → Acquisitions routing and dock/collision acceptance.
+- [ ] Re-run manual Armory → Acquisitions routing and dock/collision acceptance. **PARTIAL PASS — 2026-10-06:** live screenshot confirms Armory panel and MM dock coexist without visible overlap/clipping; manual routing clickthrough remains pending.
 - [ ] Do not merge/publish until owner accepts live results.
 
 ## Alpha.25 Market Pulse procurement intelligence consumer
