@@ -12,7 +12,7 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.34'));
+assert(userSource.includes('// @version      8.0.0-alpha.35'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e7dc3ee67948a527a83cda9c52c69c863680b264/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e7dc3ee67948a527a83cda9c52c69c863680b264/modular-suite/acquisitions/MM_Acquisitions.logic.js'));
@@ -159,7 +159,7 @@ console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS
 const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      8.0.0-alpha.34-pda.21'));
+assert(pdaSource.includes('// @version      8.0.0-alpha.35-pda.22'));
 const pdaUiSource=pdaSource.slice(pdaSource.indexOf('===== Acquisitions UI ====='));
 const pdaPulseSource=pdaSource.slice(pdaSource.indexOf('===== Market Pulse engine (bundled) ====='),pdaSource.indexOf('===== Acquisitions logic (bundled) ====='));
 assert(!/armory|factionInventory|marketPulseDemand|MM_Faction_Armory/i.test(pdaUiSource),'PDA Acquisitions UI must be standalone');
@@ -196,7 +196,7 @@ const pdaBuilder=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
 assert(pdaBuilder.includes('def replace_once('));
 assert(pdaBuilder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(pdaBuilder.includes('"MMTornMarketPulse"'));
-assert(pdaBuilder.includes('default=21'));
+assert(pdaBuilder.includes('default=22'));
 assert(pdaBuilder.includes('f"v{base_version}"'));
 assert(pdaBuilder.includes('f"v{pda_version}"'));
 assert(!pdaBuilder.includes('PROFIT / RANKED / TRAVEL'));
@@ -247,7 +247,7 @@ assert(liveSource.includes('Torn API finished Auction House'));
 
 const userSourceStandalone=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceStandalone);
-assert(userSourceStandalone.includes('// @version      8.0.0-alpha.34'));
+assert(userSourceStandalone.includes('// @version      8.0.0-alpha.35'));
 assert(!/armory/i.test(userSourceStandalone),'desktop Acquisitions must contain no Armory-specific UI/protocol plumbing');
 assert(!userSourceStandalone.includes('factionInventory'));
 assert(!userSourceStandalone.includes('marketPulseDemand'));

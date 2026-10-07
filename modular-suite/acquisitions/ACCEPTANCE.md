@@ -2,12 +2,41 @@
 
 ## Candidate
 
-- Desktop: 8.0.0-alpha.34
-- TornPDA: 8.0.0-alpha.34-pda.21
-- Branch: crm-v8-acquisitions-standalone-alpha34
+- Desktop: 8.0.0-alpha.35
+- TornPDA: 8.0.0-alpha.35-pda.22
+- Branch: crm-v8-acquisitions-standalone-pricelist-alpha35
+- Base: crm-v8-acquisitions-standalone-alpha34
+- Stable/customer publication: not approved
 - Status: non-production candidate
 - Final purchase, bid, travel and transfer actions remain manual.
 
+## Alpha.35 optional Customer Pricelist Profile
+
+### Contract
+
+- Acquisitions is the sole owner/writer/provider adapter for the optional Customer Pricelist Profile.
+- Canonical state is `procurement.pricelist.profile`, schema 1.
+- Accepted input is `https://weav3r.dev/pricelist/<numeric-id>`; a numeric ID may be normalized as a convenience.
+- No customer-specific Pricelist ID or URL is embedded as a runtime default.
+- Legacy cached Pricelist rows are preserved but inert until a valid profile is explicitly configured.
+- Save & Refresh validates and fetches before replacing the active profile.
+- Failed/invalid profile input does not replace the active profile.
+- The provider exposes no reliable source timestamp here, so `sourceUpdatedAt` remains `null`; `lastSyncAt` is local fetch time only.
+- Clearing the profile disables customer buy-rate and BB-floor use without deleting historical cached rows.
+- Ranked Weapons consumes the same active profile; there is no second customer-ID setting.
+- Market Pulse tracks Pricelist items only while the shared profile is active.
+- No new collector, scheduler, credential, provider, or automated purchase/bid/travel action is introduced.
+
+### Live acceptance
+
+- [ ] With no configured profile, customer-specific Pricelist rows/BB floors are inactive and no customer ID is prefilled.
+- [ ] Save & Refresh an authorized customer-owned Weav3r Pricelist link; rows and BB rate activate only after a successful fetch.
+- [ ] Ranked Weapons uses the same BB rate and exposes no duplicate Pricelist ID field.
+- [ ] Invalid/foreign input does not replace the active profile.
+- [ ] Clear the profile; cached rows remain preserved but inactive while unrelated workflows continue.
+- [ ] Recheck Pricelist, Find One Item, Best Deals, Ranked Weapons, Travel, Inventory Restock, Market Pulse freshness, route guards and manual-action boundaries.
+- [ ] Repeat the profile flow on TornPDA alpha.35-pda.22.
+- [ ] Do not merge or publish until owner accepts desktop and PDA live results.
 ## Product boundary
 
 MM_Acquisitions is a customer-facing standalone procurement and market-intelligence product.
