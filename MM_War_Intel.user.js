@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM War Intel
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.5
+// @version      0.1.0-alpha.6
 // @description  Ranked-war target assignments, rival intelligence, attack evidence, energy pressure, and defensive coordination.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -35,7 +35,8 @@
     lifeFreshSeconds: 120,
     highRisk: 70,
     watchRisk: 45,
-    maxSuggestedGroup: 6
+    maxSuggestedGroup: 6,
+    minimumGroupConfidence: 45
   });
 
   function finite(value) {
@@ -545,9 +546,24 @@
     const selectedKnownDamage = selected.filter(row => row.expectedDamage !== null).length;
     const damageConfidence = selected.length ? Math.round((selectedKnownDamage / selected.length) * 100) : 0;
 
+    const groupConfidence = clamp(Math.round(targetConfidence * 0.5 + damageConfidence * 0.5), 0, 100);
+    if (groupConfidence < LIMITS.minimumGroupConfidence) {
+      return {
+        mode: 'hold',
+        confidence: groupConfidence,
+        reason: 'group-confidence-too-low',
+        candidates: [],
+        suggestedCount: 0,
+        projectedDamage: selectedKnownDamage
+          ? selected.reduce((sum, row) => sum + (row.expectedDamage ?? 0), 0)
+          : null,
+        targetLife
+      };
+    }
+
     return {
       mode: 'group',
-      confidence: clamp(Math.round(targetConfidence * 0.5 + damageConfidence * 0.5), 0, 100),
+      confidence: groupConfidence,
       reason: requiredDamage !== null && selectedKnownDamage === selected.length
         ? 'observed-damage-group-sizing'
         : 'no-proven-safe-solo-matchup',
@@ -563,8 +579,8 @@
   function assignmentPlan(input) {
     const targets = Array.isArray(input && input.targets) ? input.targets : [];
     const blockedAttackerIds = new Set(Array.isArray(input && input.blockedAttackerIds) ? input.blockedAttackerIds.map(String) : []);
-    const attackers = (Array.isArray(input && input.attackers) ? input.attackers : [])
-      .filter(member => !blockedAttackerIds.has(String(member.id)));
+    const allAttackers = Array.isArray(input && input.attackers) ? input.attackers : [];
+    const attackers = allAttackers.filter(member => !blockedAttackerIds.has(String(member.id)));
     const intelById = input && input.intelById || {};
     const lifeById = input && input.lifeById || {};
     const attacks = input && input.attacks || [];
@@ -717,10 +733,23 @@
       });
     }
 
+    const readyUnassignedAttackers = attackers.filter(member =>
+      !used.has(String(member.id)) &&
+      isOkay(member) &&
+      activityBand(member, nowSeconds) !== 'cold'
+    );
+    const unavailableAttackers = allAttackers.filter(member =>
+      blockedAttackerIds.has(String(member.id)) ||
+      !isOkay(member) ||
+      activityBand(member, nowSeconds) === 'cold'
+    );
+
     return {
       rows,
       usedAttackerIds: [...used],
-      unassignedAttackers: attackers.filter(member => !used.has(String(member.id)))
+      unassignedAttackers: attackers.filter(member => !used.has(String(member.id))),
+      readyUnassignedAttackers,
+      unavailableAttackers
     };
   }
 
@@ -795,7 +824,7 @@
 
 (() => {
 'use strict';
-const APP='MM War Intel', VERSION='0.1.0-alpha.5', MODULE_ID='war-intel';
+const APP='MM War Intel', VERSION='0.1.0-alpha.6', MODULE_ID='war-intel';
 const STATE_KEY='mm-war-intel:state:v1', LEASE_KEY='mm-war-intel:lease:v1', RUNTIME_KEY='__MMWarIntelRuntimeV1';
 const REFRESH_MS=30000, OUTCOME_POLL_MS=12000, LEASE_MS=45000, STATS_MS=300000, LIFE_STALE_MS=120000, REQUEST_TIMEOUT_MS=10000;
 const MAX_LOGS=8, MAX_PROFILES=8, MAX_ATTACK_PAGES=3, ATTACK_ENERGY_COST=25;
@@ -1016,7 +1045,7 @@ function defense(){return logic.defensiveBoard({ownMembers:state.ownMembers,enem
 function targets(){const now=nowSec();return state.enemyMembers.map(t=>{const life=state.life[String(t.id)];const observed={...t,lifeCurrent:life?Number(life.current):null,lifeMaximum:life?Number(life.maximum):null,lifeFetchedAt:life?Math.floor(Number(life.fetchedAt)/1000):null};return{t,recommendation:logic.targetRecommendation({target:observed,attackers:state.ownMembers,intelById:state.intel,attacks:state.attacks,nowSeconds:now}),availability:logic.attackAvailability(t,now),claims:claims(t.id),energy:logic.recentAttackLoad(state.attacks,t.id,now,3600,life)};}).sort((a,b)=>(a.availability.state==='candidate'?0:1)-(b.availability.state==='candidate'?0:1)||lastAge(a.t)-lastAge(b.t));}
 function lifeText(id){const r=state.life[String(id)];return r?fmt(r.current)+' / '+fmt(r.maximum)+' · '+age(Date.now()-r.fetchedAt):'—';}
 function intelText(id){const x=state.intel[String(id)];if(!x)return'—';return fmt(x.bs_estimate)+' · '+String(x.source||'estimate')+(x.distribution?.distribution_human?' · '+x.distribution.distribution_human:'');}
-function reasonLabel(reason){return({'both-attack-capable':'Both attack-capable','enemy-active':'Rival Online','enemy-recently-active':'Rival recently active','enemy-estimate-much-stronger':'Rival estimate much stronger','enemy-estimate-stronger':'Rival estimate stronger','similar-estimated-strength':'Similar estimated strength','own-estimate-stronger':'Our estimate stronger','recent-observed-enemy-solo-win':'Recent enemy solo win','recent-observed-enemy-group-win':'Recent enemy group win','enemy-heavy-recent-attack-load':'Heavy enemy attack activity','enemy-recent-attack-load':'Recent enemy attack activity','one-side-not-okay':'One side unavailable','insufficient-data':'Insufficient data'})[reason]||String(reason||'');}
+function reasonLabel(reason){return({'both-attack-capable':'Both attack-capable','enemy-active':'Rival Online','enemy-recently-active':'Rival recently active','enemy-estimate-much-stronger':'Rival estimate much stronger','enemy-estimate-stronger':'Rival estimate stronger','similar-estimated-strength':'Similar estimated strength','own-estimate-stronger':'Our estimate stronger','recent-observed-enemy-solo-win':'Recent enemy solo win','recent-observed-enemy-group-win':'Recent enemy group win','enemy-heavy-recent-attack-load':'Heavy enemy attack activity','enemy-recent-attack-load':'Recent enemy attack activity','one-side-not-okay':'One side unavailable','insufficient-data':'Insufficient data','group-confidence-too-low':'Low group confidence','insufficient-available-attackers':'Not enough ready attackers','observed-solo-matchup-advantage':'Proven solo matchup','estimated-strength-advantage':'Estimated solo advantage','observed-damage-group-sizing':'Damage-backed group size','no-proven-safe-solo-matchup':'No safe solo proof'})[reason]||String(reason||'');}
 function selfEnergyText(){const fresh=Date.now()-Number(state.self.fetchedAt||0)<=60000;return fresh&&Number.isFinite(Number(state.self.energyCurrent))?Math.round(Number(state.self.energyCurrent))+'/'+Math.round(Number(state.self.energyMaximum||0))+'E':'E ?';}
 function energyPressureText(load){if(!load)return'E ?';const regen=load.regen||{},tag=regen.status==='Subscriber'?'Sub':regen.status==='Donator'?'Don':regen.status==='Standard'?'Std':'?';if(!load.attacks)return'E ? · 0atk · '+tag+(regen.tickSeconds?' 5/'+Math.round(regen.tickSeconds/60)+'m':'');const modeled=load.assumedNaturalEnergy==null?'?':Math.round(load.assumedNaturalEnergy)+(regen.naturalCap?'/'+regen.naturalCap:''),pressure=load.netObservedPressure==null?'?':Math.round(load.netObservedPressure);return'E~'+modeled+' · '+load.attacks+'atk · net-'+pressure+'E · '+tag+(regen.tickSeconds?' 5/'+Math.round(regen.tickSeconds/60)+'m':'');}
 function compactIntel(id){const x=state.intel[String(id)];if(!x)return'BS ?';return'BS '+fmt(x.bs_estimate)+' '+String(x.source||'estimate');}
@@ -1033,7 +1062,7 @@ function setPanelOpen(open){if(!ui?.panel)return;const visible=open===true;ui.pa
 function renderStatus(t){if(ui?.status)ui.status.textContent=t;}
 function summary(){return'<div class="mmi-summary"><span>War '+esc(state.war.id||'—')+'</span><span>Opp '+esc(state.war.enemyFactionId||'—')+'</span><span>'+state.ownMembers.length+' ours / '+state.enemyMembers.length+' rivals</span><span>'+esc(selfEnergyText())+'</span><span>'+state.attacks.length+' attacks</span><span>'+age(Date.now()-state.fetch.lastSyncAt)+' old</span></div>';}
 function renderOutcomeFeed(){const rows=state.coordination.outcomes.slice(0,5);if(!rows.length)return'';return'<div class="mmi-outcomes">'+rows.map(o=>{const held=Boolean(state.coordination.energyHolds?.[String(o.attackerId)]),label=o.advice?.label||o.result;return'<div class="mmi-outcome '+(o.won?'mmi-good':'mmi-watch')+'"><strong>'+(o.won?'WIN':'LOSS')+'</strong> '+esc(memberName(o.attackerId))+' → '+esc(targetName(o.targetId))+' · '+esc(label)+(held?'<button class="mmi-btn mmi-mini" data-ready="'+esc(o.attackerId)+'">Mark ready</button>':'')+'</div>';}).join('')+'</div>';}
-function renderAssignments(){const board=assignmentBoard();return summary()+renderOutcomeFeed()+'<div class="mmi-toolbar"><button id="mmi-copy-plan" class="mmi-btn">Copy assignments</button><button id="mmi-sync" class="mmi-btn">Refresh</button><span>'+board.rows.filter(r=>r.assigned.length).length+' assigned · '+board.unassignedAttackers.length+' free · enemy E is modeled, not live</span></div><div class="mmi-grid">'+board.rows.map(row=>{const t=row.target,rec=row.recommendation,lead=row.assigned[0],hist=lead?.history,assigned=row.assigned.map(x=>x.member?.name||x.member?.id||'?').join(' + ')||'HOLD',claimNames=row.claims.map(c=>c.claimer?.name||c.claimer?.player_id||'?').join(', '),locked=row.source==='locked',facts=['L'+t.level,lifeText(t.id),compactIntel(t.id),row.activity,energyPressureText(row.enemyEnergy)];const evidence=[];if(hist?.soloAttempts)evidence.push(hist.soloWins+'/'+hist.soloAttempts+' solo');if(hist?.hitRate!=null)evidence.push(Math.round(hist.hitRate*100)+'% hit');if(lead?.distributionEdge)evidence.push('dist '+(lead.distributionEdge>0?'+':'')+lead.distributionEdge);if(claimNames)evidence.push('claim '+claimNames);return'<article class="mmi-card mmi-compact '+(row.assigned.length?'mmi-good':'mmi-watch')+'"><h3>'+esc(t.name)+' ['+esc(t.id)+'] <span class="mmi-badge">'+esc(status(t))+' · '+esc(row.activity)+'</span></h3><div class="mmi-decision">→ '+esc(assigned)+' <span class="mmi-badge">'+esc(String(rec.mode||'hold').toUpperCase())+' '+Math.round(Number(rec.confidence)||0)+'%</span></div><div class="mmi-facts">'+facts.map(esc).join(' · ')+'</div>'+(evidence.length?'<div class="mmi-evidence">'+esc(evidence.join(' · '))+'</div>':'')+'<div class="mmi-actions"><a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+attackUrl(t.id)+'">Attack</a><a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+profileUrl(t.id)+'">Profile</a>'+(row.assigned.length?(locked?'<button class="mmi-btn mmi-mini" data-unlock="'+esc(t.id)+'">Unlock</button>':'<button class="mmi-btn mmi-mini" data-lock="'+esc(t.id)+'">Lock</button>'):'')+(validKey(state.settings.ffscouterKey)?'<button class="mmi-btn mmi-mini" data-claim="'+esc(t.id)+'">Claim</button><button class="mmi-btn mmi-mini" data-unclaim="'+esc(t.id)+'">Release</button>':'')+'</div></article>';}).join('')+'</div>';}
+function renderAssignments(){const board=assignmentBoard();return summary()+renderOutcomeFeed()+'<div class="mmi-toolbar"><button id="mmi-copy-plan" class="mmi-btn">Copy assignments</button><button id="mmi-sync" class="mmi-btn">Refresh</button><span>'+board.rows.filter(r=>r.assigned.length).length+' targets · '+board.usedAttackerIds.length+' members assigned · '+board.readyUnassignedAttackers.length+' ready free · '+board.unavailableAttackers.length+' unavailable · enemy E modeled</span></div><div class="mmi-grid">'+board.rows.map(row=>{const t=row.target,rec=row.recommendation,lead=row.assigned[0],hist=lead?.history,assigned=row.assigned.map(x=>x.member?.name||x.member?.id||'?').join(' + ')||'HOLD',claimNames=row.claims.map(c=>c.claimer?.name||c.claimer?.player_id||'?').join(', '),locked=row.source==='locked',facts=['L'+t.level,lifeText(t.id),compactIntel(t.id),row.activity,energyPressureText(row.enemyEnergy)];const evidence=[];if(hist?.soloAttempts)evidence.push(hist.soloWins+'/'+hist.soloAttempts+' solo');if(hist?.hitRate!=null)evidence.push(Math.round(hist.hitRate*100)+'% hit');if(lead?.distributionEdge)evidence.push('dist '+(lead.distributionEdge>0?'+':'')+lead.distributionEdge);if(claimNames)evidence.push('claim '+claimNames);if(rec.reason)evidence.push(reasonLabel(rec.reason));return'<article class="mmi-card mmi-compact '+(row.assigned.length?'mmi-good':'mmi-watch')+'"><h3>'+esc(t.name)+' ['+esc(t.id)+'] <span class="mmi-badge">'+esc(status(t))+' · '+esc(row.activity)+'</span></h3><div class="mmi-decision">→ '+esc(assigned)+' <span class="mmi-badge">'+esc(String(rec.mode||'hold').toUpperCase())+' '+Math.round(Number(rec.confidence)||0)+'%</span></div><div class="mmi-facts">'+facts.map(esc).join(' · ')+'</div>'+(evidence.length?'<div class="mmi-evidence">'+esc(evidence.join(' · '))+'</div>':'')+'<div class="mmi-actions"><a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+attackUrl(t.id)+'">Attack</a><a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+profileUrl(t.id)+'">Profile</a>'+(row.assigned.length?(locked?'<button class="mmi-btn mmi-mini" data-unlock="'+esc(t.id)+'">Unlock</button>':'<button class="mmi-btn mmi-mini" data-lock="'+esc(t.id)+'">Lock</button>'):'')+(validKey(state.settings.ffscouterKey)?'<button class="mmi-btn mmi-mini" data-claim="'+esc(t.id)+'">Claim</button><button class="mmi-btn mmi-mini" data-unclaim="'+esc(t.id)+'">Release</button>':'')+'</div></article>';}).join('')+'</div>';}
 function renderTargets(){return summary()+'<div class="mmi-grid">'+targets().map(r=>{const t=r.t,activity=logic.activityBand(t,nowSec()),load=r.energy,cs=r.claims;return'<article class="mmi-card mmi-compact '+(r.availability.state==='candidate'?'mmi-good':'')+'"><h3>'+esc(t.name)+' ['+esc(t.id)+'] <span class="mmi-badge">'+esc(status(t))+' · '+esc(activity)+'</span></h3><div class="mmi-facts">L'+esc(t.level)+' · '+esc(lifeText(t.id))+' · '+esc(compactIntel(t.id))+'</div><div class="mmi-evidence">'+esc(energyPressureText(load))+(cs.length?' · claimed '+esc(cs.map(c=>c.claimer?.name||c.claimer?.player_id||'?').join(', ')):'')+'</div><div class="mmi-actions"><a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+attackUrl(t.id)+'">Attack</a><a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+profileUrl(t.id)+'">Profile</a></div></article>';}).join('')+'</div>';}
 function renderDefense(){return summary()+'<div class="mmi-note"><strong>Advisory only.</strong> No hospitalization action is automated.</div><div class="mmi-grid" style="margin-top:8px">'+defense().map(r=>{const threatLoad=r.topThreat?logic.recentAttackLoad(state.attacks,r.topThreat.id,nowSec(),3600,state.life[String(r.topThreat.id)]):null;return'<article class="mmi-card mmi-compact '+(r.riskBand==='high'?'mmi-high':r.riskBand==='watch'?'mmi-watch':'')+'"><h3>'+esc(r.member.name)+' <span class="mmi-badge">'+esc(r.riskBand.toUpperCase())+' '+r.riskScore+'</span></h3><div class="mmi-decision">'+(r.topThreat?'Threat: '+esc(r.topThreat.name)+' ['+esc(r.topThreat.id)+']':'No current threat')+'</div><div class="mmi-facts">'+esc(r.reasons.map(reasonLabel).slice(0,3).join(' · ')||'No supporting evidence')+'</div>'+(threatLoad?'<div class="mmi-evidence">'+esc(energyPressureText(threatLoad))+'</div>':'')+(r.recommendHospitalization?'<div class="mmi-error"><strong>Hospitalization suggested</strong></div>':'')+'</article>';}).join('')+'</div>';}
 function renderRoster(){const table=(title,rows)=>'<h3>'+title+' ('+rows.length+')</h3><table class="mmi-table"><thead><tr><th>Player</th><th>Lvl</th><th>Status</th><th>Last action</th><th>FFScouter</th></tr></thead><tbody>'+rows.map(m=>'<tr><td><a target="_blank" rel="noopener" href="'+profileUrl(m.id)+'">'+esc(m.name)+' ['+esc(m.id)+']</a></td><td>'+esc(m.level)+'</td><td>'+esc(status(m))+'</td><td>'+esc(m.last_action.relative||'—')+'</td><td>'+esc(intelText(m.id))+'</td></tr>').join('')+'</tbody></table>';return summary()+table('Our faction',state.ownMembers)+table('Rivals',state.enemyMembers);}

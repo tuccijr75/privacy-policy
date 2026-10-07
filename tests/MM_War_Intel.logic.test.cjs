@@ -232,6 +232,42 @@ test('solo recommendation conserves stronger attackers when a weaker safe fit ex
   assert.equal(rec.candidates[0].member.id, '2');
 });
 
+test('low-confidence automatic groups are held instead of assigned', () => {
+  const rec = logic.targetRecommendation({
+    target: member(9, { lastActionStatus: 'Online' }),
+    attackers: [
+      member(1, { lastActionStatus: 'Online' }),
+      member(2, { lastActionStatus: 'Idle' }),
+    ],
+    intelById: {},
+    attacks: [],
+    nowSeconds: 1000,
+  });
+  assert.equal(rec.mode, 'hold');
+  assert.equal(rec.reason, 'group-confidence-too-low');
+  assert.equal(rec.suggestedCount, 0);
+  assert.deepEqual(Array.from(rec.candidates), []);
+});
+
+test('assignment plan reports ready-unassigned separately from unavailable members', () => {
+  const plan = logic.assignmentPlan({
+    targets: [member(9, { lastActionStatus: 'Online' })],
+    attackers: [
+      member(1, { name: 'Ready', lastActionStatus: 'Online' }),
+      member(2, { name: 'Cold', lastActionStatus: 'Offline' }),
+      member(3, { name: 'Hospital', state: 'Hospital', lastActionStatus: 'Online' }),
+    ],
+    intelById: {},
+    lifeById: {},
+    attacks: [],
+    claimsByTarget: {},
+    completedTargets: {},
+    nowSeconds: 1000,
+  });
+  assert.deepEqual(Array.from(plan.readyUnassignedAttackers, x => x.id), ['1']);
+  assert.deepEqual(Array.from(plan.unavailableAttackers, x => x.id).sort(), ['2', '3']);
+});
+
 test('assignment plan never assigns one faction member to multiple targets', () => {
   const plan = logic.assignmentPlan({
     targets: [
@@ -363,6 +399,9 @@ test('sanitized export removes both stored API keys', () => {
 
 test('runtime source enforces bounded collectors and does not echo keys into DOM', () => {
   assert.match(source, /MAX_ATTACK_PAGES=3/);
+  assert.match(source, /minimumGroupConfidence: 45/);
+  assert.match(source, /readyUnassignedAttackers/);
+  assert.match(source, /unavailableAttackers/);
   assert.match(source, /LEASE_MS=45000/);
   assert.match(source, /REQUEST_TIMEOUT_MS=10000/);
   assert.match(source, /OUTCOME_POLL_MS=12000/);
