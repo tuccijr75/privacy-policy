@@ -1,16 +1,16 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.33
+// @version      8.0.0-alpha.34
 // @description  Pricelist procurement and ranked-weapon investment assistant with direct Bazaar, Item Market, auction and travel routing; final actions remain manual.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@07663a47b9407b3ed6274299ddeb2c663b477175/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@81cda9d1dce86eb6244f6fa7d88235b153d4634f/modular-suite/acquisitions/MM_Acquisitions.logic.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@3b033e03b26faf17466fed7122adcb9c34077a0b/modular-suite/acquisitions/MM_Acquisitions.live.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@82af9b4bde8a0cd955bf33ab02285810f98ed8d9/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@82af9b4bde8a0cd955bf33ab02285810f98ed8d9/modular-suite/acquisitions/MM_Acquisitions.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@82af9b4bde8a0cd955bf33ab02285810f98ed8d9/modular-suite/acquisitions/MM_Acquisitions.live.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@7439f1289a0ac281515e2954b6c2a349d2aa6815/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6c2ababdb06ee105191e74126c457ac3b7fea53f/modular-suite/acquisitions/MM_Acquisitions.torn-intel.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@410dc43062b1f72e85b5ce5b53a2166473c5732a/modular-suite/acquisitions/MM_Acquisitions.purchase.logic.js
@@ -49,7 +49,6 @@
   const PRICELIST_PAGE_SIZE=40;
   const RANKED_LIVE_STALE_MS=300_000;
   const PRICELIST_STALE_MS=3600_000;
-  const DEFAULT_PRICELIST_USER_ID='4054377';
   const PANEL_OPEN_KEY='mm_acquisitions_panel_open_v1';
 
   let activeView='pricelist';
@@ -96,6 +95,8 @@
   const rankedLogic=globalThis.MMTornRankedProfitLogic;
   const ledger=globalThis.MMTornAcquisitionLedger;
   const restockIntel=globalThis.MMTornRestockIntel;
+  const customerPricelistProfile=()=>logic?.customerPricelistProfile?.(state)||null;
+  const activePricelist=()=>customerPricelistProfile()?(state?.procurement?.pricelist||{}):{};
 
   async function readSharedState(){
     if(core?.ensureSharedState)return core.ensureSharedState();
@@ -858,6 +859,8 @@
     const candidates=pulseItems.filter(row=>String(row?.tier||'')==='candidate').length;
     const budget=pulse?.budgetStatus?.(state)||{used:0,limit:0};
     const pulseAt=Number(pulseState.updatedAt||0);
+    const profile=customerPricelistProfile();
+    const pricelist=activePricelist();
     const hasMarket=Boolean(f.weav3rGeneratedAt||f.itemMarket);
     const label=!apiKey()?'SETUP NEEDED':hasMarket?'READY':'LOADING';
     const color=label==='READY'?'#9fe3a8':label==='LOADING'?'#ffd18a':'#ffb3b3';
@@ -868,7 +871,7 @@
         '<span>· Item Market '+esc(age(f.itemMarket))+'</span>'+
         '<span>· Market activity '+(pulseAt?esc(age(new Date(pulseAt).toISOString())):'not synced')+' ('+proven+' strong / '+candidates+' building · API budget '+Number(budget.used||0)+'/'+Number(budget.limit||0)+')</span>'+
         '<span>· Travel '+esc(age(f.travel))+'</span>'+
-        '<span>· Pricelist '+esc(age(state?.procurement?.pricelist?.lastSyncAt))+'</span>'+
+        '<span>· Pricelist '+(profile?esc(age(pricelist.lastSyncAt)):'not configured')+'</span>'+
         '<span>· Ranked weapons '+esc(age(state?.procurement?.ranked?.lastLiveAt))+'</span>'+
         '<span>· Purchases '+esc(age(state?.procurement?.lastAcquisitionSyncAt))+'</span>'+
         '<span>· Torn key '+(apiKey()?'saved':'not saved')+'</span>'+
@@ -1250,7 +1253,7 @@
   }
 
   function pricelistRows(){
-    const list=state?.procurement?.pricelist?.items||{};
+    const list=activePricelist().items||{};
     const catalog=state?.procurement?.catalog||{};
     const marketplace=state?.marketIntel?.marketplace||{};
     const snapshots=state?.procurement?.marketSnapshots||{};
@@ -1357,22 +1360,43 @@
 
   function pricelistHtml(){
     const rows=pricelistRows();
-    const allItems=Object.values(state?.procurement?.pricelist?.items||{}).filter(row=>Number(row?.buyPrice||0)>0).length;
+    const profile=customerPricelistProfile();
+    const pricelist=activePricelist();
+    const legacyCachedCount=!profile
+      ?Object.values(state?.procurement?.pricelist?.items||{}).filter(row=>Number(row?.buyPrice||0)>0).length
+      :0;
+    const allItems=Object.values(pricelist.items||{}).filter(row=>Number(row?.buyPrice||0)>0).length;
     const pages=Math.max(1,Math.ceil(rows.length/PRICELIST_PAGE_SIZE));
     pricelistPage=Math.max(0,Math.min(pricelistPage,pages-1));
     const visible=rows.slice(pricelistPage*PRICELIST_PAGE_SIZE,(pricelistPage+1)*PRICELIST_PAGE_SIZE);
     const withinCount=rows.filter(row=>row.underRate).length;
-    const sourceName=String(state?.procurement?.pricelist?.source||'TornW3B Pricelist');
+    const sourceName=profile?String(pricelist.source||'TornW3B Pricelist API'):'not configured';
     const restockRequestHtml=armoryRequest?.requestKind==='inventory-restock'?armoryRequestHtml():'';
-    return inventoryRestockHtml()+restockRequestHtml+card(
+    return inventoryRestockHtml()+restockRequestHtml+
+    card(
+      '<b>Customer Pricelist Profile · optional / shared across MM suite</b>'+
+      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">Paste the customer\'s own Weav3r Pricelist link. Acquisitions owns the shared profile; any MM module that uses customer buy rates reads this same shared pricelist. The suite works normally when this is blank.</div>'+
+      '<div style="display:grid;grid-template-columns:minmax(220px,1fr) auto auto;gap:5px;align-items:center;">'+
+        '<input id="mm-acq-pricelist-profile-url" value="'+esc(profile?.url||'')+'" placeholder="https://weav3r.dev/pricelist/1234567" style="'+inputCss()+'width:100%;">'+
+        '<button id="mm-acq-pricelist-profile-save" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Save & Refresh</button>'+
+        (profile?'<button id="mm-acq-pricelist-profile-clear" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Clear</button>':'')+
+      '</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:6px;">'+
+        (profile
+          ?('Active shared profile: '+esc(profile.url)+' · last refreshed '+esc(age(pricelist.lastSyncAt||'')))
+          :'No customer pricelist configured. Customer-specific buy rates and BB floors are disabled.')+
+        (legacyCachedCount?' · '+legacyCachedCount.toLocaleString()+' legacy cached row(s) preserved but inactive.':'')+
+      '</div>'
+    )+
+    card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-        '<div><b style="font-size:15px;">Customer Pricelist</b><div style="font-size:10px;color:#aaa;margin-top:3px;">This is the main non-ranked workflow. Look for <b style="color:#9fe3a8;">AT / UNDER BUY RATE</b>, then choose where to buy.</div></div>'+
+        '<div><b style="font-size:15px;">Customer Pricelist</b><div style="font-size:10px;color:#aaa;margin-top:3px;">This is the main non-ranked workflow when a customer profile is configured. Look for <b style="color:#9fe3a8;">AT / UNDER BUY RATE</b>, then choose where to buy.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
-          '<button id="mm-acq-pricelist-refresh-main" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Refresh Pricelist</button>'+
+          '<button id="mm-acq-pricelist-refresh-main" '+(busy||!profile?'disabled':'')+' style="'+button()+(busy||!profile?'opacity:.5;':'')+'">Refresh Pricelist</button>'+
           '<button id="mm-acq-pricelist-market-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Market Prices</button>'+
         '</div>'+
       '</div>'+
-      '<div style="font-size:10px;color:#888;margin-top:5px;">'+allItems.toLocaleString()+' priced items · source '+esc(sourceName)+' · updated '+esc(age(state?.procurement?.pricelist?.lastSyncAt||''))+' · '+withinCount.toLocaleString()+' currently at/under buy rate in this filtered view.</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:5px;">'+allItems.toLocaleString()+' priced items · source '+esc(sourceName)+' · updated '+(profile?esc(age(pricelist.lastSyncAt||'')):'not configured')+' · '+withinCount.toLocaleString()+' currently at/under buy rate in this filtered view.</div>'+
       '<div style="display:grid;grid-template-columns:minmax(160px,1fr) minmax(130px,.7fr) minmax(130px,.7fr) auto;gap:5px;margin-top:8px;">'+
         '<input id="mm-acq-pl-query" value="'+esc(pricelistQuery)+'" placeholder="Item name or ID" style="'+inputCss()+'width:100%;">'+
         '<select id="mm-acq-pl-status" style="'+inputCss()+'width:100%;">'+
@@ -1429,9 +1453,8 @@
 
   function rankedSettings(){
     const saved=state?.procurement?.ranked?.settings||{};
-    const pricelist=state?.procurement?.pricelist||{};
+    const pricelist=activePricelist();
     return {
-      pricelistUserId:String(saved.pricelistUserId||pricelist.userId||DEFAULT_PRICELIST_USER_ID),
       historyDays:Math.max(7,Number(saved.historyDays||90)),
       bonusBand:Math.max(1,Number(saved.bonusBand||5)),
       minComparableSales:Math.max(1,Number(saved.minComparableSales||3)),
@@ -1441,14 +1464,13 @@
       auctionPages:Math.max(1,Math.min(6,Number(saved.auctionPages||4))),
       maxLiveAgeHours:Math.max(1,Math.min(168,Number(saved.maxLiveAgeHours||24))),
       lowTierBonuses:Array.isArray(saved.lowTierBonuses)?saved.lowTierBonuses:['Achilles','Conserve'],
-      bbRate:Math.max(0,Number(pricelist.bunkerBuckRate||saved.bbRate||0))
+      bbRate:Math.max(0,Number(pricelist.bunkerBuckRate||0))
     };
   }
 
   async function saveRankedSettings(root){
     const read=(selector,fallback='')=>String(root.querySelector(selector)?.value??fallback).trim();
     const settings={
-      pricelistUserId:read('#mm-acq-rw-pricelist',DEFAULT_PRICELIST_USER_ID),
       historyDays:Math.max(7,Number(read('#mm-acq-rw-history','90'))||90),
       bonusBand:Math.max(1,Number(read('#mm-acq-rw-band','5'))||5),
       minComparableSales:Math.max(1,Math.round(Number(read('#mm-acq-rw-min-sales','3'))||3)),
@@ -1459,7 +1481,6 @@
       maxLiveAgeHours:Math.max(1,Math.min(168,Number(read('#mm-acq-rw-max-age','24'))||24)),
       lowTierBonuses:read('#mm-acq-rw-low-bonuses','Achilles,Conserve').split(',').map(x=>x.trim()).filter(Boolean)
     };
-    if(!/^\d+$/.test(settings.pricelistUserId))throw new Error('Pricelist ID must be a Torn user ID.');
     await core.updateDomainState('market',draft=>{
       const proc=draft.procurement || (draft.procurement={});
       const ranked=proc.ranked&&typeof proc.ranked==='object'?proc.ranked:(proc.ranked={});
@@ -1471,13 +1492,60 @@
     render();
   }
 
-  async function refreshPricelist(){
+  async function saveCustomerPricelistProfile(root){
     if(busy)return;
+    const raw=String(root?.querySelector('#mm-acq-pricelist-profile-url')?.value||'').trim();
+    const parsed=logic?.parseCustomerPricelistReference?.(raw);
+    if(!parsed){
+      statusText='Enter a valid Weav3r pricelist link, for example https://weav3r.dev/pricelist/1234567.';
+      render();
+      return;
+    }
     busy=true;
-    statusText='Refreshing customer pricelist and Bunker Buck rate from TornW3B…';
+    statusText='Saving and refreshing this customer pricelist…';
     render();
     try{
-      const result=await service.refreshPricelist(rankedSettings().pricelistUserId);
+      const result=await service.refreshPricelist(parsed.url);
+      state=result?.state||await readSharedState();
+      statusText='Customer pricelist saved for this suite: '+Number(result?.priced||0).toLocaleString()+' priced items · '+money(result?.bbRate||0)+'/BB.';
+    }catch(error){
+      statusText='Customer pricelist was not changed: '+(error?.message||String(error));
+    }finally{busy=false;render();}
+  }
+
+  async function clearCustomerPricelistProfile(){
+    if(busy||!state)return;
+    busy=true;
+    statusText='Disconnecting the optional customer pricelist…';
+    render();
+    try{
+      await core.updateDomainState('market',draft=>{
+        const proc=draft.procurement || (draft.procurement={});
+        const pricelist=proc.pricelist&&typeof proc.pricelist==='object'?proc.pricelist:(proc.pricelist={});
+        pricelist.profile={schema:1,configured:false,clearedAt:new Date().toISOString()};
+        delete pricelist.userId;
+        return draft;
+      });
+      state=await readSharedState();
+      statusText='Customer pricelist disconnected. Cached rows are preserved but inactive; the rest of the suite continues normally.';
+    }catch(error){
+      statusText='Could not disconnect customer pricelist: '+(error?.message||String(error));
+    }finally{busy=false;render();}
+  }
+
+  async function refreshPricelist(){
+    if(busy)return;
+    const profile=customerPricelistProfile();
+    if(!profile){
+      statusText='No customer pricelist is configured. Paste the customer’s Weav3r Pricelist link in Customer Pricelist to enable this optional data.';
+      render();
+      return;
+    }
+    busy=true;
+    statusText='Refreshing the configured customer pricelist and Bunker Buck rate from TornW3B…';
+    render();
+    try{
+      const result=await service.refreshPricelist(profile.url);
       state=result?.state||await readSharedState();
       statusText='Pricelist updated: '+Number(result?.priced||0).toLocaleString()+' priced items · '+money(result?.bbRate||0)+'/BB.';
     }catch(error){statusText='Pricelist refresh failed: '+(error?.message||String(error));}
@@ -1502,17 +1570,18 @@
   }
 
   async function ensurePricelistFresh(){
-    if(busy)return;
-    const at=Date.parse(state?.procurement?.pricelist?.lastSyncAt||'')||0;
+    if(busy||!customerPricelistProfile())return;
+    const at=Date.parse(activePricelist()?.lastSyncAt||'')||0;
     if(!at||Date.now()-at>=PRICELIST_STALE_MS)await refreshPricelist();
   }
 
   async function ensureRankedFresh(){
     if(busy){setTimeout(ensureRankedFresh,1200);return;}
     const now=Date.now();
-    const pricelistAt=Date.parse(state?.procurement?.pricelist?.lastSyncAt||'')||0;
+    const profile=customerPricelistProfile();
+    const pricelistAt=profile?(Date.parse(activePricelist()?.lastSyncAt||'')||0):0;
     const rankedAt=Date.parse(state?.procurement?.ranked?.lastLiveAt||'')||0;
-    if(!pricelistAt||now-pricelistAt>=PRICELIST_STALE_MS)await refreshPricelist();
+    if(profile&&(!pricelistAt||now-pricelistAt>=PRICELIST_STALE_MS))await refreshPricelist();
     if(!rankedAt||Date.now()-rankedAt>=RANKED_LIVE_STALE_MS)await refreshRankedLive();
   }
 
@@ -1640,7 +1709,7 @@
     rankedPage=Math.max(0,Math.min(rankedPage,pages-1));
     const visible=all.slice(rankedPage*RANKED_PAGE_SIZE,(rankedPage+1)*RANKED_PAGE_SIZE);
     const historyCount=Object.keys(ranked.history||{}).length;
-    const priceList=state?.procurement?.pricelist||{};
+    const profile=customerPricelistProfile();
     const liveMarketRows=Array.isArray(ranked.liveMarket)?ranked.liveMarket:[];
     const bazaarCount=liveMarketRows.filter(row=>String(row?.source||'').toLowerCase()==='bazaar').length;
     const itemMarketCount=liveMarketRows.filter(row=>['item market','market'].includes(String(row?.source||'').toLowerCase())).length;
@@ -1648,12 +1717,12 @@
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
         '<div><b style="font-size:15px;">Ranked Weapons</b><div style="font-size:10px;color:#aaa;margin-top:3px;">Look for weapons below BB/AH value with positive ROI and useful sales traffic. No bonus is excluded. Very early low auction bids are hidden from All Sources so a $1/$119 opening bid is not presented as a buy-price profit opportunity; choose Auction to inspect them.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
-          '<button id="mm-acq-rw-pricelist-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Update BB Rate</button>'+
+          '<button id="mm-acq-rw-pricelist-refresh" '+(busy||!profile?'disabled':'')+' style="'+button()+(busy||!profile?'opacity:.5;':'')+'">Refresh Customer Pricelist</button>'+
           '<button id="mm-acq-rw-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Weapons</button>'+
           '<button id="mm-acq-rw-analyze-visible" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Load Completed Sales</button>'+
         '</div>'+
       '</div>'+
-      '<div style="font-size:10px;color:#888;margin-top:5px;">BB rate '+money(cfg.bbRate)+'/buck · '+bazaarCount.toLocaleString()+' Bazaar · '+itemMarketCount.toLocaleString()+' Item Market · '+Number(ranked.liveAuction?.length||0).toLocaleString()+' Auction · completed-sale history '+historyCount+' weapon types · updated '+esc(age(ranked.lastLiveAt))+'</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:5px;">BB rate '+(profile?(money(cfg.bbRate)+'/buck'):'not configured')+' · '+bazaarCount.toLocaleString()+' Bazaar · '+itemMarketCount.toLocaleString()+' Item Market · '+Number(ranked.liveAuction?.length||0).toLocaleString()+' Auction · completed-sale history '+historyCount+' weapon types · updated '+esc(age(ranked.lastLiveAt))+'</div>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:5px;margin-top:8px;">'+
         '<select id="mm-acq-rw-type" style="'+inputCss()+'width:100%;"><option value="all">All weapon types</option><option value="primary"'+(rankedType==='primary'?' selected':'')+'>Primary</option><option value="secondary"'+(rankedType==='secondary'?' selected':'')+'>Secondary</option><option value="melee"'+(rankedType==='melee'?' selected':'')+'>Melee</option></select>'+
         '<select id="mm-acq-rw-source" style="'+inputCss()+'width:100%;"><option value="all">All sources</option><option value="bazaar"'+(rankedSource==='bazaar'?' selected':'')+'>Bazaar</option><option value="item-market"'+(rankedSource==='item-market'?' selected':'')+'>Item Market</option><option value="auction"'+(rankedSource==='auction'?' selected':'')+'>Auction</option></select>'+
@@ -1719,7 +1788,7 @@
 
   function catalogRows(){
     const catalog=state?.procurement?.catalog||{};
-    const pricelist=state?.procurement?.pricelist?.items||{};
+    const pricelist=activePricelist().items||{};
     const marketplace=state?.marketIntel?.marketplace||{};
     const snapshots=state?.procurement?.marketSnapshots||{};
     return Object.entries(catalog).map(([id,row])=>({
@@ -2067,9 +2136,9 @@
     )+
     card(
       '<b>Ranked Weapon Rules</b>'+
-      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">BB floor uses Torn exchange values and the Bunker Bucks price from the configured TornW3B pricelist. Completed auction history comes from Torn API. Live ranked market/auction listings use the existing TornW3B dependency.</div>'+
+      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">BB floor uses Torn exchange values and the Bunker Bucks price from the optional shared Customer Pricelist Profile. Configure that once in the Customer Pricelist view; Ranked Weapons consumes the same shared profile automatically. Completed auction history comes from Torn API.</div>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:5px;">'+
-        '<label style="font-size:10px;color:#aaa;">Pricelist Torn ID<input id="mm-acq-rw-pricelist" value="'+esc(rankedSettings().pricelistUserId)+'" style="'+inputCss()+'width:100%;"></label>'+
+
         '<label style="font-size:10px;color:#aaa;">AH history days<input id="mm-acq-rw-history" type="number" min="7" max="365" value="'+Number(rankedSettings().historyDays)+'" style="'+inputCss()+'width:100%;"></label>'+
         '<label style="font-size:10px;color:#aaa;">Bonus roll band %<input id="mm-acq-rw-band" type="number" min="1" max="25" value="'+Number(rankedSettings().bonusBand)+'" style="'+inputCss()+'width:100%;"></label>'+
         '<label style="font-size:10px;color:#aaa;">Min comparable sales<input id="mm-acq-rw-min-sales" type="number" min="1" max="20" value="'+Number(rankedSettings().minComparableSales)+'" style="'+inputCss()+'width:100%;"></label>'+
@@ -2126,7 +2195,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.33 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.34 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -2167,6 +2236,11 @@
       if(activeView==='travel'&&apiKey())refreshTravelContext({force:false,silent:true}).then(()=>render());
     }));
     root.querySelectorAll('[data-more-back]').forEach(b=>b.addEventListener('click',()=>{activeView='more';render();}));
+    root.querySelector('#mm-acq-pricelist-profile-save')?.addEventListener('click',()=>saveCustomerPricelistProfile(root));
+    root.querySelector('#mm-acq-pricelist-profile-clear')?.addEventListener('click',clearCustomerPricelistProfile);
+    root.querySelector('#mm-acq-pricelist-profile-url')?.addEventListener('keydown',event=>{
+      if(event.key==='Enter'){event.preventDefault();saveCustomerPricelistProfile(root);}
+    });
     root.querySelector('#mm-acq-pricelist-refresh-main')?.addEventListener('click',refreshPricelist);
     root.querySelector('#mm-acq-pricelist-market-refresh')?.addEventListener('click',refreshPricelistMarket);
     root.querySelector('#mm-acq-pl-filter')?.addEventListener('click',()=>{
@@ -2200,7 +2274,7 @@
     root.querySelectorAll('[data-pricelist-check]').forEach(b=>b.addEventListener('click',()=>{
       const id=String(b.dataset.pricelistCheck||'');
       const name=String(b.dataset.pricelistName||'');
-      const item=catalogRows().find(row=>row.id===id)||{id,name,type:'',subType:'',pricelistBuyPrice:Number(state?.procurement?.pricelist?.items?.[id]?.buyPrice||0)};
+      const item=catalogRows().find(row=>row.id===id)||{id,name,type:'',subType:'',pricelistBuyPrice:Number(activePricelist().items?.[id]?.buyPrice||0)};
       itemQuery=name;
       itemSelection=item;
       activeView='items';

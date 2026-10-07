@@ -1,13 +1,49 @@
 # MM_Acquisitions Acceptance
 
 Candidate:
-- Desktop: 8.0.0-alpha.33
-- TornPDA: 8.0.0-alpha.33-pda.20
-- Branch: crm-v8-acquisitions-armory-pulse-demand-alpha33
-- Base: crm-v8-acquisitions-integration
+- Desktop: 8.0.0-alpha.34
+- TornPDA: 8.0.0-alpha.34-pda.21
+- Branch: crm-v8-customer-pricelist-profile-alpha34
+- Base: crm-v8-acquisitions-armory-pulse-demand-alpha33
 - Stable/customer publication: not approved
 - Fresh-install bootstrap: required after alpha.26 customer defect
 
+
+## Alpha.34 optional suite-wide Customer Pricelist Profile
+
+### Root defect
+
+The previous Acquisitions candidate embedded a customer-specific TornW3B/Weav3r Pricelist user ID as a default. Customer-specific pricing must never silently become another operator's default or influence the suite before that customer explicitly configures their own profile.
+
+### Shared contract
+
+- Acquisitions is the sole owner/writer/provider adapter for the optional Customer Pricelist Profile.
+- Canonical state lives under `procurement.pricelist.profile` and uses schema 1.
+- Accepted input is `https://weav3r.dev/pricelist/<numeric-id>`; a numeric ID is accepted only as a convenience and is normalized to the canonical URL.
+- The supplied customer URL is never embedded as a runtime default.
+- A profile is active only when it is explicitly configured and the profile URL/user ID validates.
+- Legacy cached `procurement.pricelist.items` is preserved for state safety but remains inert until a valid profile is configured.
+- Successful Save & Refresh writes the canonical profile, current Pricelist rows, Bunker Buck rate, provider label, and local fetch time.
+- The current provider adapter does not expose a reliable Pricelist source timestamp, so `sourceUpdatedAt` remains `null`; `lastSyncAt` is local fetch time and is not presented as upstream source time.
+- Invalid input or a failed provider fetch does not replace the currently configured profile.
+- Clearing the profile deactivates customer-specific buy rates and BB floors without deleting cached historical rows or breaking unrelated suite workflows.
+- Ranked Weapons consumes the same shared profile automatically; there is no second Ranked customer-ID setting.
+- Market Pulse may include the active Pricelist item universe through the existing producer only; unconfigured/cleared/legacy cached rows do not enter its tracked universe.
+- No new collector, scheduler, credential, third-party provider, automated purchase, bid, transfer, or travel action is introduced.
+
+### Alpha.34 live acceptance
+
+- [ ] Install desktop alpha.34 and confirm the Customer Pricelist view exposes one optional shared Weav3r-link input.
+- [ ] With no configured profile, confirm the suite remains operational, customer-specific Pricelist rows/BB floors are inactive, and any legacy cached rows are labeled preserved but inactive.
+- [ ] Confirm no customer-specific URL or numeric ID is prefilled by the script.
+- [ ] Paste an authorized customer-owned Weav3r Pricelist link and use **Save & Refresh**.
+- [ ] Confirm the profile activates only after the fetch succeeds and the Pricelist rows/Bunker Buck rate correspond to that profile.
+- [ ] Open Ranked Weapons and confirm it consumes the same BB rate without another customer-ID field.
+- [ ] Confirm normal Market Pulse / Pricelist / Ranked / Travel workflows continue with the shared profile active.
+- [ ] Enter an invalid/foreign Pricelist URL and confirm the active profile is not replaced.
+- [ ] Clear the profile and confirm customer-specific rows/BB floors become inactive while unrelated suite workflows remain usable.
+- [ ] Repeat the profile flow on TornPDA alpha.34-pda.21.
+- [ ] Do not merge or publish until owner accepts live desktop/PDA results.
 
 ## Alpha.33 Armory-demand Market Pulse producer priority
 
