@@ -364,3 +364,5 @@ The candidate can be considered live-accepted only when:
 - no unresolved DEFECT remains.
 
 After Acquisitions Market Pulse is proven here, Inventory Manager and Faction Armory may be updated to consume it read-only. They must not add duplicate collectors.
+
+- [x] LIVE TRAVEL FRESH-DATA PASS — 2026-10-06: Acquisitions 8.0.0-alpha.33 More → Travel Deals was independently observed after Refresh Travel Stock with Data status READY, FRESH travel data, populated country ranking/restock matches, provenance/freshness disclosures, and manual GO TO TRAVEL AGENCY routing. Normal Pricelist / Ranked / Travel tracking remains live after Armory-demand priority.
