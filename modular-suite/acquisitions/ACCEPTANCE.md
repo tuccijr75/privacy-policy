@@ -25,6 +25,8 @@ Alpha.33 fixes that boundary without adding a second collector:
 
 ### Alpha.33 live acceptance
 
+- [x] **LIVE TRAVEL STALE-STATE PASS — 2026-10-06:** independently observed Acquisitions `8.0.0-alpha.33` More → Travel Deals while traveling. The view explicitly labels the dataset `STALE`, hides old travel stock until refresh, suppresses recommendations, exposes `Refresh Travel Stock`, preserves Torn Intel/TornW3B provenance language, explains liquidity-adjusted profit/hour ordering without a hidden score, refuses to fabricate resale profit without separate evidence, and states that travel/purchases remain manual. Fresh-data ranking still requires one live refresh.
+
 - [x] **LIVE RANKED WEAPONS PASS — 2026-10-06:** independently observed Acquisitions `8.0.0-alpha.33` with populated ranked feeds (111 Bazaar / 189 Item Market / 307 Auction), completed-sale history for 6 weapon types, Primary / Secondary / Melee filters, BB-value flags, current bid/price, estimated profit/ROI, break-even bid ceilings, valuation-detail disclosures, SALES 7 / 30 / 90 DAYS, early-bid quarantine language, and `OPEN AUCTION FINDER` routing rather than automated bidding.
 
 - [x] **LIVE PRICELIST PASS — 2026-10-06:** independently observed Acquisitions `8.0.0-alpha.33` open on Torn with `Data status: READY`, 125 priced items loaded, top navigation `Pricelist / Ranked Weapons / More`, `Check Prices`, explicit `GO TO BAZAAR` / `GO TO ITEM MARKET` actions, `GO TO TRAVEL AGENCY` where applicable, source-price comparisons, and the explicit statement that final purchase/travel remains manual.
