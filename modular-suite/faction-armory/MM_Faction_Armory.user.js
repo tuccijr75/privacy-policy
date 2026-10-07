@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Torn Faction Armory
 // @namespace    manic-mike.torn.faction-armory
-// @version      8.0.0-alpha.24.11
+// @version      8.0.0-alpha.25
 // @description  Modular faction inventory, member readiness, builds, minimums and leadership reporting.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.24.11';
+  const VERSION='8.0.0-alpha.25';
   const ROOT_ID='mm-faction-armory';
   const LAUNCHER_ID='mm-faction-armory-launcher';
   const STYLE_ID='mm-faction-armory-style';
@@ -2454,6 +2454,7 @@
     const snap=itemId?state?.procurement?.marketSnapshots?.[itemId]||{}:{};
     const detail=itemId?state?.marketIntel?.details?.[itemId]||{}:{};
     const now=Date.now();
+    const marketPulse=logic.marketPulseEvidence(state,itemId,now);
     const marketMaxAgeMs=Math.max(30,num(state?.businessRules?.maxListingAgeSec)||180)*1000;
     const travelMaxAgeMs=15*60*1000;
 
@@ -2542,6 +2543,7 @@
       bestPlanning,
       liveCandidates,
       staleSources,
+      marketPulse,
       priceEvidence:best?'LIVE CACHED SOURCE':tornMarketPrice?'TORN MARKET REFERENCE':num(row?.marketValue)?'ARMORY STATIC REFERENCE':'UNPRICED'
     };
   }
@@ -2952,7 +2954,9 @@
   function sourceStrip(){
     const fi=state?.factionInventory||{};
     const rival=fi.warPlanning?.currentWar?.opponentFactionName||'none';
-    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · market refs '+when(fi.equipmentMarketCatalog?.fetchedAt)+' · rival '+esc(rival)+' '+when(fi.warPlanning?.opponent?.fetchedAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
+    const pulseUpdated=num(state?.marketIntel?.marketPulse?.updatedAt);
+    const pulseAge=pulseUpdated?when(new Date(pulseUpdated).toISOString()):'unavailable';
+    return '<div class="mm-fa-muted" style="margin-bottom:3px;">Faction cache '+when(fi.lastSyncAt)+' · roster '+when(fi.memberReadiness?.lastRosterSyncAt)+' · market refs '+when(fi.equipmentMarketCatalog?.fetchedAt)+' · Market Pulse '+pulseAge+' · rival '+esc(rival)+' '+when(fi.warPlanning?.opponent?.fetchedAt)+' · '+Object.keys(fi.current||{}).length+' inventory rows</div>';
   }
 
   function createPanel(){
@@ -3583,7 +3587,7 @@
     try{
       channel=new BroadcastChannel(CHANNEL);
       channel.addEventListener('message',event=>{
-        if(event?.data?.type==='state-updated'&&['faction','core'].includes(String(event.data.domain||''))){
+        if(event?.data?.type==='state-updated'&&['faction','market','core'].includes(String(event.data.domain||''))){
           reloadState().catch(()=>{});
         }
       });
