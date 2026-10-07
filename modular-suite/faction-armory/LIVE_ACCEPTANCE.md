@@ -1,6 +1,34 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.10**
+Status: **NON-PRODUCTION / alpha.24.11**
+
+
+## Alpha.24.11 member refresh freshness hardening
+
+NedFlanders69 live acceptance exposed that a member who originally imported while unequipped could remain on that old private-data snapshot until a later explicit refresh. The stored empty equipment record was replaceable, but the refresh architecture allowed the snapshot to remain trusted too long.
+
+- Member current-state imports/refreshes now use Torn's documented unique `timestamp` query parameter to bypass the service cache.
+- The fresh-request path covers member Basic, Battle Stats, Equipment, Inventory and Ammo reads.
+- Every successful private-member refresh stores local `fetchedAt` / `lastPrivateRefreshAt`.
+- Equipment separately stores any API source/cache timestamp Torn supplies; local fetch time is not relabeled as upstream source freshness.
+- Automatic saved-member refresh now uses an independent **1-hour** target instead of inheriting the old 72-hour readiness-staleness setting.
+- Existing legacy profiles remain compatible through `lastPrivateRefreshAt -> fetchedAt -> verifiedAt` fallback.
+- Members exposes **Refresh All Saved Members**, which refreshes every saved member key through the same fresh-request pipeline.
+- Individual Refresh reports the returned equipped-combat-item count and explicitly identifies an API-confirmed empty equipment result.
+- No new collector, polling loop, third-party dependency or automated Torn action was added.
+
+### Alpha.24.11 live acceptance
+
+- [ ] Unlock the member-key vault.
+- [ ] Click **Refresh All Saved Members** once and confirm every saved member is attempted without needing per-member clicks.
+- [ ] Confirm the completion status reports refreshed / total and any failures.
+- [ ] Open NedFlanders69 and confirm his currently equipped combat items remain present.
+- [ ] Change one test member's equipment in Torn, wait only as long as needed for the game state itself to change, then use that member's **Refresh** and confirm the new equipment replaces the prior stored snapshot.
+- [ ] Confirm an actually unequipped member shows **API confirmed empty** after Refresh rather than silently retaining older gear.
+- [ ] Confirm the Members source tile distinguishes local **fetched** age from an API **source** age when Torn returns a source timestamp.
+- [ ] Leave Armory open with the vault unlocked and confirm profiles older than one hour become due for automatic refresh; do not wait 72 hours.
+- [ ] Re-run the existing alpha.24 live checks after the refresh-all pass.
+- [ ] Do not merge/publish until owner accepts live results.
 
 
 ## Alpha.24.10 acquisition wording clarity
