@@ -1,12 +1,48 @@
 # MM_Acquisitions Acceptance
 
 Candidate:
-- Desktop: 8.0.0-alpha.28
-- TornPDA: 8.0.0-alpha.28-pda.15
-- Branch: crm-v8-acquisitions-alpha22-clarity
-- Base: crm-v8-acquisitions-ranked-profit
+- Desktop: 8.0.0-alpha.33
+- TornPDA: 8.0.0-alpha.33-pda.20
+- Branch: crm-v8-acquisitions-armory-pulse-demand-alpha33
+- Base: crm-v8-acquisitions-integration
 - Stable/customer publication: not approved
 - Fresh-install bootstrap: required after alpha.26 customer defect
+
+
+## Alpha.33 Armory-demand Market Pulse producer priority
+
+Live Faction Armory alpha.25 acceptance found a fresh Market Pulse producer with no Pulse rows for the current Armory equipment requirements. The producer's tracked-item universe did not include Armory demand.
+
+Alpha.33 fixes that boundary without adding a second collector:
+
+- reads only `factionInventory.marketPulseDemand` schema 1 owned by `MM_Faction_Armory`;
+- requires valid `updatedAt` / `expiresAt`, rejects expired/future-invalid/overlong hints;
+- accepts at most 24 unique numeric item IDs;
+- prioritizes those IDs before existing Pulse/pricelist/marketplace/ranked/travel candidates;
+- uses the existing Market Pulse engine, one-engine lease, request budget, cache-delay scheduling, integrity rejection and storage policy;
+- does not trust Armory for market price, depth, movement, liquidity or confidence;
+- final purchase/bid/travel action remains manual.
+
+### Alpha.33 live acceptance
+
+- [x] **LIVE TRAVEL STALE-STATE PASS — 2026-10-06:** independently observed Acquisitions `8.0.0-alpha.33` More → Travel Deals while traveling. The view explicitly labels the dataset `STALE`, hides old travel stock until refresh, suppresses recommendations, exposes `Refresh Travel Stock`, preserves Torn Intel/TornW3B provenance language, explains liquidity-adjusted profit/hour ordering without a hidden score, refuses to fabricate resale profit without separate evidence, and states that travel/purchases remain manual. Fresh-data ranking still requires one live refresh.
+
+- [x] **LIVE RANKED WEAPONS PASS — 2026-10-06:** independently observed Acquisitions `8.0.0-alpha.33` with populated ranked feeds (111 Bazaar / 189 Item Market / 307 Auction), completed-sale history for 6 weapon types, Primary / Secondary / Melee filters, BB-value flags, current bid/price, estimated profit/ROI, break-even bid ceilings, valuation-detail disclosures, SALES 7 / 30 / 90 DAYS, early-bid quarantine language, and `OPEN AUCTION FINDER` routing rather than automated bidding.
+
+- [x] **LIVE PRICELIST PASS — 2026-10-06:** independently observed Acquisitions `8.0.0-alpha.33` open on Torn with `Data status: READY`, 125 priced items loaded, top navigation `Pricelist / Ranked Weapons / More`, `Check Prices`, explicit `GO TO BAZAAR` / `GO TO ITEM MARKET` actions, `GO TO TRAVEL AGENCY` where applicable, source-price comparisons, and the explicit statement that final purchase/travel remains manual.
+
+- [x] **CURRENT-HEAD FULL REGRESSION — 2026-10-06:** all Acquisitions test files pass on PR head `f35df7b51778e1e60503302378882236d104aa3d`; PDA rebuild parity also passes.
+
+- [x] Owner-confirmed paired install: Acquisitions `8.0.0-alpha.33` and Faction Armory `8.0.0-alpha.25.1` are current in Torn. **OWNER-CONFIRMED — 2026-10-06**
+
+- [ ] Install desktop alpha.33 with Faction Armory alpha.25.1.
+- [x] Open Armory → Acquire and confirm its current demanded IDs are picked up by the existing Acquisitions Market Pulse engine. **PASS — independently observed 2026-10-06:** all five current Equipment demand rows gained Pulse snapshots after alpha.33.
+- [x] Confirm at least one demanded Equipment row gains Pulse metrics after the producer collects it. **PASS — independently observed 2026-10-06:** all five Equipment rows show Pulse tier/status, depth, velocity and trend tiles.
+- [ ] Confirm an expired Armory demand hint no longer influences producer selection. **DETERMINISTIC REGRESSION PASS — 2026-10-06:** current alpha.33 tests reject expired, wrong-owner, wrong-schema, malformed and overlong hints; live expiry transition remains pending.
+- [ ] Confirm normal Pricelist / Ranked / Travel Market Pulse tracking remains available after Armory-demand priority. **SOURCE/REGRESSION PASS — 2026-10-06:** all Acquisitions catalog/ranking/travel/source/ranked-live tests pass at current head; live primary-workflow clickthrough remains pending.
+- [x] Confirm no second Market Pulse scheduler/lease/API collector exists. **PASS — source/regression verified:** alpha.33 only extends tracked-item priority inside the existing Market Pulse engine.
+- [x] Confirm final market actions remain manual. **PASS — source/regression verified:** alpha.33 changes tracked-item priority only; purchase/bid/travel actions remain manual.
+- [ ] Repeat on TornPDA alpha.33-pda.20 where applicable to Acquisitions runtime behavior. **BUILD/PARITY PASS — 2026-10-06:** self-contained PDA rebuild matches committed bundle byte-for-byte, SHA-256 `C9590A9862191E5F73C4F37BC53F9672FC5955111E56A1B964C9802A849427E9`; real PDA device acceptance remains pending.
 
 ## Focused customer workflow
 
@@ -328,3 +364,5 @@ The candidate can be considered live-accepted only when:
 - no unresolved DEFECT remains.
 
 After Acquisitions Market Pulse is proven here, Inventory Manager and Faction Armory may be updated to consume it read-only. They must not add duplicate collectors.
+
+- [x] LIVE TRAVEL FRESH-DATA PASS — 2026-10-06: Acquisitions 8.0.0-alpha.33 More → Travel Deals was independently observed after Refresh Travel Stock with Data status READY, FRESH travel data, populated country ranking/restock matches, provenance/freshness disclosures, and manual GO TO TRAVEL AGENCY routing. Normal Pricelist / Ranked / Travel tracking remains live after Armory-demand priority.
