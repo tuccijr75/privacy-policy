@@ -25,6 +25,8 @@ Alpha.33 fixes that boundary without adding a second collector:
 
 ### Alpha.33 live acceptance
 
+- [x] Owner-confirmed paired install: Acquisitions `8.0.0-alpha.33` and Faction Armory `8.0.0-alpha.25.1` are current in Torn. **OWNER-CONFIRMED — 2026-10-06**
+
 - [ ] Install desktop alpha.33 with Faction Armory alpha.25.1.
 - [ ] Open Armory → Acquire and confirm its current demanded IDs are picked up by the existing Acquisitions Market Pulse engine.
 - [ ] Confirm at least one demanded Equipment row gains Pulse metrics after the producer collects it.
