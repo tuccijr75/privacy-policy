@@ -28,6 +28,14 @@ assert.strictEqual(objectRows.length,1);
 assert.strictEqual(objectRows[0].id,'26');
 assert.strictEqual(objectRows[0].name,'AK-47');
 
+const weaponRows=live.normalizeTornCatalog({
+  items:[{id:99,name:'Ranked Base',type:'Weapon',sub_type:'Rifle',is_tradable:true,details:{category:'Primary',stats:{damage:70,accuracy:60}},value:{market_price:1000}}]
+});
+assert.strictEqual(weaponRows[0].weaponCategory,'Primary');
+assert.strictEqual(weaponRows[0].subType,'Rifle');
+assert.strictEqual(weaponRows[0].baseStats.damage,70);
+assert.strictEqual(weaponRows[0].isTradable,true);
+
 (async()=>{
   let db={procurement:{catalog:{'999':{name:'Stale legacy item'}}}};
   const core={

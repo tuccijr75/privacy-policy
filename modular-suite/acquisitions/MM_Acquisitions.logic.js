@@ -2,6 +2,7 @@
   'use strict';
 
   const ITEM_MARKET_FEE_RATE = 0.05;
+  const marketPulse = globalThis.MMTornMarketPulse;
 
   const asId = value => String(value ?? '').trim();
 
@@ -86,6 +87,32 @@
       .sort((a,b)=>Number(a.price||0)-Number(b.price||0));
   }
 
+  function pulseSignals(db,itemId,unitProfit=0,nowMs=Date.now()) {
+    const metrics=marketPulse?.pulseFor?.(db,asId(itemId),nowMs)||null;
+    const contribution=metrics?marketPulse?.contribution?.(metrics,unitProfit)||null:null;
+    return {metrics,contribution};
+  }
+
+  function pulseFields(db,itemId,unitProfit=0,nowMs=Date.now()) {
+    const {metrics,contribution}=pulseSignals(db,itemId,unitProfit,nowMs);
+    return {
+      pulseTier:String(metrics?.tier||'unknown'),
+      observedEventsPerHour:Number(metrics?.observedEventsPerHour||0),
+      observedUnitsPerHour:Number(metrics?.observedUnitsPerHour||0),
+      turnoverPerHour:Number(metrics?.turnoverPerHour||0),
+      pulseLiquidityScore:Number(metrics?.liquidityScore||0),
+      pulseConfidencePct:Number(metrics?.confidencePct||0),
+      pulseMarketDepth:Number(metrics?.marketDepth||0),
+      pulseTrendPct:Number(metrics?.trendPct||0),
+      pulseFreshness:metrics?.freshness||null,
+      pulseSourceTimestamp:Number(metrics?.sourceTimestamp||0),
+      pulseFetchedAt:Number(metrics?.fetchedAt||0),
+      pulseUpstreamCacheDelayMs:Number(metrics?.upstreamCacheDelayMs||0),
+      marketPulseScore:contribution?Number(contribution.score||0):null,
+      profitVelocityPerHour:contribution?Number(contribution.velocityProfitPerHour||0):0
+    };
+  }
+
   function rankCachedOpportunities(db, nowMs = Date.now()) {
     const intel = db?.marketIntel || {};
     const settings = intel.settings || {};
@@ -123,8 +150,9 @@
       const itemMarketBuy = itemMarketFresh ? Number(snap?.itemMarket?.lowest || 0) : 0;
       const aggregateBuy = Number(base.lowestPrice || 0);
       const discoveryBuy = itemMarketBuy || aggregateBuy;
+      const discoverySource = itemMarketBuy > 0 ? 'Item Market' : (aggregateBuy > 0 ? 'Bazaar aggregate' : 'Unknown');
       const bazaarAverage = Number(base.bazaarAverage || 0);
-      const marketPrice = Number(base.marketPrice || snap?.itemMarket?.median || snap?.itemMarket?.third || 0);
+      const marketReference = Number(base.marketPrice || 0);
 
       if (!(discoveryBuy > 1) || discoveryBuy < rules.minPrice || discoveryBuy > rules.maxPrice) continue;
       const sellerCount = Number(base.totalBazaars || 0);
@@ -137,8 +165,12 @@
       const freshListings = freshOrganicListings(db, detail?.organicListings || [], nowMs);
       const bazaarListing = freshListings[0] || null;
 
-      const bazaarExit = bazaarAverage ? Math.floor(bazaarAverage * (1 - Number(settings.bazaarExitHaircutPct || 0) / 100)) : 0;
-      const itemMarketNet = marketPrice ? Math.floor(marketPrice * (1 - ITEM_MARKET_FEE_RATE)) : 0;
+      const bazaarExit = !globalFresh.stale&&sellerCount>0&&aggregateBuy>0&&bazaarAverage
+        ?Math.floor(bazaarAverage * (1 - Number(settings.bazaarExitHaircutPct || 0) / 100))
+        :0;
+      const itemMarketNet = itemMarketFresh&&itemMarketBuy>0
+        ?Math.floor(itemMarketBuy * (1 - ITEM_MARKET_FEE_RATE))
+        :0;
       const traderExit = Number(organicTrader?.price || 0);
       const exits = [
         { route:'Bazaar', value:bazaarExit },
@@ -218,20 +250,26 @@
       const profitVelocityScore = Math.min(100,Math.log10(1+expectedProfitPerDay)*18);
       const absoluteProfitScore = Math.min(100,Math.log10(1+Math.max(0,profit))*14);
       const volatilityPenalty = Math.min(25,Number(history.volatilityPct||0)*0.75);
-      const score = Math.max(0,Math.min(100,
+      const economicScore = Math.max(0,Math.min(100,
         roiScore*0.32+conversionScore*0.32+profitVelocityScore*0.18+absoluteProfitScore*0.10+sourceFreshness*0.08-volatilityPenalty
       ));
+      const pulse=pulseFields(db,id,profit,nowMs);
+      const score=pulse.marketPulseScore===null
+        ?economicScore
+        :Math.max(0,Math.min(100,economicScore*0.65+pulse.marketPulseScore*0.35));
 
       rows.push({
         id,
         name:String(base.itemName || db?.procurement?.catalog?.[id]?.name || ('Item '+id)),
         itemType:String(db?.procurement?.catalog?.[id]?.type || ''),
-        buyPrice,maxBuyPrice,bazaarAverage,marketPrice,sellerCount,liveListingCount,traderExit,
-        bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,score,confidence,
+        buyPrice,maxBuyPrice,bazaarAverage,marketPrice:marketReference,marketReference,sellerCount,liveListingCount,traderExit,
+        bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,score,economicScore,confidence,
+        ...pulse,
         freshness:globalFresh,history,enriched:Boolean(detail),
         listingQty:Number(live?.quantity||0),sellerId:String(live?.sellerId||''),
         sellerName:String(live?.sellerName||''),listingVerified:Boolean(live?.source==='Bazaar'&&live?.sellerId),
         purchaseReady:Boolean(live&&priceQualified),purchaseSource:String(live?.source||'Research'),
+        discoverySource,
         purchaseAgeSeconds:Number(live?.ageSeconds??Infinity),recommendedQty,sellThrough3dPct,
         conversionSource:personalDemandQualified?'PERSONAL SALES':'MARKET PROXY',
         expectedProfit3d,expectedProfitPerDay,personalDemandDaily:personalDaily,personalDemandQualified
@@ -247,14 +285,168 @@
     );
   }
 
-  function rankCachedTravel(db) {
+  function rankPricelistUniverse(db, nowMs = Date.now()) {
+    const intel=db?.marketIntel||{};
+    const settings=intel.settings||{};
+    const rules=businessRules(db);
+    const freshness=freshnessInfo(intel.marketplaceGeneratedAt,Math.max(300,rules.maxListingAgeSec),nowMs);
+    const pricelist=db?.procurement?.pricelist?.items||{};
+    const personal=salesItemMetrics(db,nowMs);
+    const market=new Map();
+    for(const row of Object.values(intel.marketplace||{})){
+      const id=asId(row?.itemId);
+      if(id)market.set(id,row);
+    }
+    const rows=[];
+    for(const [rawId,targetRow] of Object.entries(pricelist)){
+      const id=asId(rawId);
+      const targetBuy=Math.max(0,Number(targetRow?.buyPrice||0));
+      if(!/^\d+$/.test(id)||!(targetBuy>0))continue;
+      const base=market.get(id)||{};
+      const catalog=db?.procurement?.catalog?.[id]||{};
+      const buyPrice=Math.max(0,Number(base?.lowestPrice||0));
+      const bazaarAverage=Math.max(0,Number(base?.bazaarAverage||0));
+      const marketReference=Math.max(0,Number(base?.marketPrice||catalog?.marketPrice||0));
+      const sellerCount=Math.max(0,Number(base?.totalBazaars||0));
+      const snap=db?.procurement?.marketSnapshots?.[id]||{};
+      const snapAge=ageSeconds(snap?.fetchedAt,nowMs);
+      const itemMarketFresh=Boolean(snap?.fetchedAt)&&snapAge<=rules.maxListingAgeSec;
+      const itemMarketAsk=itemMarketFresh?Math.max(0,Number(snap?.itemMarket?.lowest||0)):0;
+      const bazaarExit=!freshness.stale&&sellerCount>0&&Number(base?.lowestPrice||0)>0&&bazaarAverage>0
+        ?Math.floor(bazaarAverage*(1-Number(settings.bazaarExitHaircutPct||0)/100))
+        :0;
+      const itemMarketNet=itemMarketAsk>0?Math.floor(itemMarketAsk*(1-ITEM_MARKET_FEE_RATE)):0;
+      const exitOptions=[
+        {route:'Bazaar',value:bazaarExit},
+        {route:'Item Market Net',value:itemMarketNet}
+      ].filter(x=>x.value>0).sort((a,b)=>b.value-a.value);
+      const exit=exitOptions[0]||{route:'Unknown',value:0};
+      const profit=buyPrice>0&&exit.value>0?exit.value-buyPrice:0;
+      const roiPct=buyPrice>0?profit/buyPrice*100:0;
+      const targetDiscountPct=targetBuy>0&&buyPrice>0?(targetBuy-buyPrice)/targetBuy*100:0;
+      const history=intelHistoryStats(intel,id);
+      const p=personal[id]||{};
+      const sales30=Math.max(0,Number(p.sold30d||0));
+      const sales7=Math.max(0,Number(p.sold7d||0));
+      const personalVelocity=sales30>0?Math.min(100,(sales7/7)*35+(sales30/30)*25):0;
+      const marketDepth=Math.min(100,Math.log10(1+sellerCount)*45);
+      const stability=Math.max(0,100-Math.min(100,Number(history.volatilityPct||0)*3));
+      const confidence=Math.round(Math.max(0,Math.min(100,
+        freshness.score*.45+marketDepth*.25+Math.min(100,Number(history.samples||0)*8)*.15+stability*.15
+      )));
+      const liquidity=Math.round(Math.max(0,Math.min(100,
+        marketDepth*.55+personalVelocity*.30+Math.min(100,Number(history.samples||0)*7)*.15
+      )));
+      const profitScore=profit>0?Math.min(100,Math.log10(1+profit)*13):0;
+      const roiScore=roiPct>0?Math.min(100,roiPct*2.5):0;
+      const economicScore=Math.round(Math.max(0,Math.min(100,
+        roiScore*.35+profitScore*.25+liquidity*.25+confidence*.15
+      )));
+      const pulse=pulseFields(db,id,profit,nowMs);
+      const score=pulse.marketPulseScore===null
+        ?economicScore
+        :Math.round(Math.max(0,Math.min(100,economicScore*.70+pulse.marketPulseScore*.30)));
+      rows.push({
+        id,
+        name:String(targetRow?.name||base?.itemName||catalog?.name||('Item '+id)),
+        itemType:String(catalog?.type||''),
+        targetBuy,buyPrice,bazaarAverage,marketPrice:marketReference,sellerCount,
+        marketReference,
+        itemMarketLivePrice:itemMarketAsk,
+        buySource:buyPrice>0?'Bazaar observed':'Unknown',
+        bestExit:exit.value,bestExitRoute:exit.route,profit,roiPct,targetDiscountPct,
+        confidence,liquidity,score,economicScore,history,
+        ...pulse,
+        personalSold7d:sales7,personalSold30d:sales30,
+        freshness,
+        hasMarketEvidence:Boolean(buyPrice>0&&exit.value>0),
+        profitable:Boolean(profit>0),
+        qualifies:Boolean(
+          buyPrice>0&&exit.value>0&&profit>=rules.minAbsoluteProfit&&roiPct>=rules.minRoiPct&&
+          buyPrice>=rules.minPrice&&buyPrice<=rules.maxPrice
+        )
+      });
+    }
+    return rows.sort((a,b)=>
+      Number(b.qualifies)-Number(a.qualifies)||
+      Number(b.profitable)-Number(a.profitable)||
+      b.score-a.score||
+      b.profit-a.profit||
+      b.roiPct-a.roiPct
+    );
+  }
+
+  function rankCachedTravel(db,nowMs=Date.now()) {
     return (Array.isArray(db?.travelIntel?.rows) ? db.travelIntel.rows : [])
       .filter(r => Number(r?.stock||0) > 0 && (Number(r?.sourceProfitPerHour||0) > 0 || Number(r?.profit||0) > 0))
-      .map(r => ({...r}))
+      .map(r => {
+        const pulse=pulseFields(db,r?.itemId,Math.max(0,Number(r?.profit||0)),nowMs);
+        const basePerHour=Math.max(0,Number(r?.sourceProfitPerHour||0));
+        const pulseUsable=pulse.marketPulseScore!==null&&pulse.pulseFreshness&&!pulse.pulseFreshness.stale;
+        const liquidityFactor=pulseUsable?0.50+Math.max(0,Math.min(100,pulse.pulseLiquidityScore))/200:1;
+        return {...r,...pulse,liquidityAdjustedProfitPerHour:basePerHour*liquidityFactor};
+      })
       .sort((a,b)=>
+        Number(b.liquidityAdjustedProfitPerHour||0)-Number(a.liquidityAdjustedProfitPerHour||0) ||
         Number(b.sourceProfitPerHour||0)-Number(a.sourceProfitPerHour||0) ||
         Number(b.profit||0)-Number(a.profit||0) ||
         Number(b.stock||0)-Number(a.stock||0)
+      );
+  }
+
+  function rankTravelDestinations(db,nowMs=Date.now()) {
+    const demand=db?.operations?.inventoryRoi?.restockDemand||{};
+    const byCountry=new Map();
+    for(const row of rankCachedTravel(db,nowMs)){
+      const country=String(row?.country||row?.countryCode||'Unknown').trim()||'Unknown';
+      let group=byCountry.get(country);
+      if(!group){
+        group={
+          country,itemCount:0,profitableItemCount:0,totalObservedStock:0,
+          totalAvailableProfit:0,totalAcquisitionCost:0,
+          bestLiquidityAdjustedProfitPerHour:0,bestSourceProfitPerHour:0,
+          bestRoiPct:0,bestItem:null,pulseFreshItems:0,pulseConfidenceMax:0,
+          restockMatchCount:0,restockDemandUnits:0,items:[]
+        };
+        byCountry.set(country,group);
+      }
+      const stock=Math.max(0,Number(row?.stock||0));
+      const profit=Math.max(0,Number(row?.profit||0));
+      const shopCost=Math.max(0,Number(row?.shopCost||0));
+      const roiPct=shopCost>0&&profit>0?profit/shopCost*100:0;
+      const adjustedPerHour=Math.max(0,Number(row?.liquidityAdjustedProfitPerHour||0));
+      const sourcePerHour=Math.max(0,Number(row?.sourceProfitPerHour||0));
+      const itemId=asId(row?.itemId);
+      const restock=demand?.[itemId];
+      const restockUnits=restock&&String(restock?.status||'OPEN')==='OPEN'?Math.max(0,Number(restock?.deficit||0)):0;
+      group.itemCount++;
+      if(profit>0)group.profitableItemCount++;
+      group.totalObservedStock+=stock;
+      group.totalAvailableProfit+=profit*stock;
+      group.totalAcquisitionCost+=shopCost*stock;
+      group.bestLiquidityAdjustedProfitPerHour=Math.max(group.bestLiquidityAdjustedProfitPerHour,adjustedPerHour);
+      group.bestSourceProfitPerHour=Math.max(group.bestSourceProfitPerHour,sourcePerHour);
+      group.bestRoiPct=Math.max(group.bestRoiPct,roiPct);
+      if(row?.pulseFreshness&&!row.pulseFreshness.stale)group.pulseFreshItems++;
+      group.pulseConfidenceMax=Math.max(group.pulseConfidenceMax,Math.max(0,Number(row?.pulseConfidencePct||0)));
+      if(restockUnits>0){group.restockMatchCount++;group.restockDemandUnits+=restockUnits;}
+      group.items.push({...row,roiPct,restockDemandUnits:restockUnits});
+      if(!group.bestItem||
+        adjustedPerHour>Number(group.bestItem?.liquidityAdjustedProfitPerHour||0)||
+        (adjustedPerHour===Number(group.bestItem?.liquidityAdjustedProfitPerHour||0)&&profit>Number(group.bestItem?.profit||0))){
+        group.bestItem={...row,roiPct,restockDemandUnits:restockUnits};
+      }
+    }
+    return [...byCountry.values()]
+      .map(group=>({
+        ...group,
+        pulseCoveragePct:group.itemCount?group.pulseFreshItems/group.itemCount*100:0
+      }))
+      .sort((a,b)=>
+        Number(b.bestLiquidityAdjustedProfitPerHour||0)-Number(a.bestLiquidityAdjustedProfitPerHour||0)||
+        Number(b.totalAvailableProfit||0)-Number(a.totalAvailableProfit||0)||
+        Number(b.profitableItemCount||0)-Number(a.profitableItemCount||0)||
+        String(a.country).localeCompare(String(b.country))
       );
   }
 
@@ -262,8 +454,11 @@
     businessRules,
     freshnessInfo,
     salesItemMetrics,
+    pulseSignals,pulseFields,
     rankCachedOpportunities,
-    rankCachedTravel
+    rankPricelistUniverse,
+    rankCachedTravel,
+    rankTravelDestinations
   });
 
   Object.defineProperty(globalThis,'MMTornAcquisitionsLogic',{

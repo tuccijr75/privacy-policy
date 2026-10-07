@@ -36,6 +36,7 @@ function baseDb(){
   assert.strictEqual(rows.length,1,'valid rule-qualified deal should rank');
   assert.strictEqual(rows[0].purchaseReady,true);
   assert.strictEqual(rows[0].liveListingCount,3);
+  assert.strictEqual(rows[0].purchaseSource,'Item Market');
   assert(rows[0].confidence>0);
 }
 
@@ -89,6 +90,48 @@ function baseDb(){
 
 {
   const db=baseDb();
+  db.marketIntel.marketplace={};
+  db.procurement.catalog={};
+  db.procurement.pricelist={items:{}};
+  for(let i=1;i<=125;i++){
+    const id=String(i);
+    db.marketIntel.marketplace[id]=item(id,1000+i,2000+i,3+(i%5));
+    db.procurement.catalog[id]={name:'Item '+id,type:'Supply'};
+    db.procurement.pricelist.items[id]={itemId:id,name:'Item '+id,buyPrice:900+i};
+  }
+  const rows=logic.rankPricelistUniverse(db,now);
+  assert.strictEqual(rows.length,125,'every positively priced customer item must be evaluated');
+  assert(rows.every(row=>row.hasMarketEvidence),'fixture should have market evidence for all customer items');
+  assert(rows.filter(row=>row.profitable).length===125,'all fixture rows should show positive spread');
+  assert(rows[0].targetBuy>0,'customer buy-rate benchmark must be preserved');
+  assert.strictEqual(rows[0].buySource,'Bazaar observed','global customer-universe discovery must be labeled Bazaar');
+  assert(rows[0].bestExit>rows[0].buyPrice,'market exit must be distinct from customer buy rate');
+}
+
+{
+  const db=baseDb();
+  delete db.procurement.marketSnapshots['1'];
+  const rows=logic.rankCachedOpportunities(db,now);
+  assert.strictEqual(rows.length,1);
+  assert.strictEqual(rows[0].discoverySource,'Bazaar aggregate','fallback discovery source must expose Bazaar rather than generic Market');
+}
+
+{
+  const db=baseDb();
+  db.marketIntel.marketplace={};
+  db.marketIntel.marketplaceGeneratedAt='';
+  db.procurement.marketSnapshots={};
+  db.procurement.catalog['1']={name:'Item 1',type:'Supply',marketPrice:9999999};
+  db.procurement.pricelist={items:{'1':{itemId:'1',name:'Item 1',buyPrice:1000}}};
+  const rows=logic.rankPricelistUniverse(db,now);
+  assert.strictEqual(rows.length,1,'pricelist row should still exist with only a catalog MV');
+  assert.strictEqual(rows[0].marketReference,9999999,'catalog MV should remain available as reference metadata');
+  assert.strictEqual(rows[0].bestExit,0,'catalog MV must not become a live resale price');
+  assert.strictEqual(rows[0].hasMarketEvidence,false,'catalog MV alone is not live Bazaar or Item Market evidence');
+}
+
+{
+  const db=baseDb();
   db.travelIntel.rows=[
     {itemName:'A',country:'Japan',stock:10,profit:1000,sourceProfitPerHour:100},
     {itemName:'B',country:'Mexico',stock:10,profit:500,sourceProfitPerHour:200},
@@ -97,6 +140,22 @@ function baseDb(){
   const rows=logic.rankCachedTravel(db);
   assert.strictEqual(rows.length,2);
   assert.strictEqual(rows[0].itemName,'B','travel ranking should prioritize source profit/hour');
+  db.operations={inventoryRoi:{restockDemand:{'2':{itemId:'2',deficit:4,status:'OPEN'}}}};
+  db.travelIntel.rows=[
+    {itemId:'1',itemName:'Japan A',country:'Japan',stock:10,shopCost:100,profit:1000,sourceProfitPerHour:100},
+    {itemId:'2',itemName:'Mexico B',country:'Mexico',stock:5,shopCost:100,profit:500,sourceProfitPerHour:200},
+    {itemId:'3',itemName:'Mexico C',country:'Mexico',stock:2,shopCost:200,profit:800,sourceProfitPerHour:150}
+  ];
+  const destinations=logic.rankTravelDestinations(db);
+  assert.strictEqual(destinations.length,2);
+  assert.strictEqual(destinations[0].country,'Mexico','destination ranking should use the best liquidity-adjusted/source profit velocity');
+  assert.strictEqual(destinations[0].itemCount,2);
+  assert.strictEqual(destinations[0].totalObservedStock,7);
+  assert.strictEqual(destinations[0].totalAvailableProfit,4100);
+  assert.strictEqual(destinations[0].restockMatchCount,1);
+  assert.strictEqual(destinations[0].restockDemandUnits,4);
+  assert.strictEqual(destinations[0].bestItem.itemName,'Mexico B');
+  assert.strictEqual(destinations[1].country,'Japan');
 }
 
 console.log('MM_Acquisitions ranking + travel regression tests: PASS');
