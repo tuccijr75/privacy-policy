@@ -185,6 +185,7 @@ const pdaAdapterSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.adapter.j
 assert(!pdaAdapterSource.includes('globalThis.GM_getValue=function'));
 assert(!pdaAdapterSource.includes('__MM_PDA_API_KEY__'));
 assert(pdaAdapterSource.includes("typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.get==='function'"));
+assert(!/factionInventory|marketPulseDemand|MM_Faction_Armory|armory-acquisition-request/i.test(pdaAdapterSource),'PDA adapter must not define private-product state or protocols');
 
 const pdaBuilder=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
 assert(pdaBuilder.includes('def replace_once('));
