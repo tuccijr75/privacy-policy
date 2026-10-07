@@ -19,10 +19,10 @@ NedFlanders69 live acceptance exposed that a member who originally imported whil
 
 ### Alpha.24.11 live acceptance
 
-- [ ] Unlock the member-key vault.
-- [ ] Click **Refresh All Saved Members** once and confirm every saved member is attempted without needing per-member clicks.
-- [ ] Confirm the completion status reports refreshed / total and any failures.
-- [ ] Open NedFlanders69 and confirm his currently equipped combat items remain present.
+- [x] Unlock the member-key vault. **OWNER-CONFIRMED PASS — 2026-10-07**
+- [x] Click **Refresh All Saved Members** once and confirm every saved member is attempted without needing per-member clicks. **OWNER-CONFIRMED PASS — 2026-10-07**
+- [x] Confirm the completion status reports refreshed / total and any failures. **OWNER-CONFIRMED PASS — 2026-10-07**
+- [x] Open NedFlanders69 and confirm his currently equipped combat items remain present. **OWNER-CONFIRMED PASS — 2026-10-07**
 - [ ] Change one test member's equipment in Torn, wait only as long as needed for the game state itself to change, then use that member's **Refresh** and confirm the new equipment replaces the prior stored snapshot.
 - [ ] Confirm an actually unequipped member shows **API confirmed empty** after Refresh rather than silently retaining older gear.
 - [ ] Confirm the Members source tile distinguishes local **fetched** age from an API **source** age when Torn returns a source timestamp.
