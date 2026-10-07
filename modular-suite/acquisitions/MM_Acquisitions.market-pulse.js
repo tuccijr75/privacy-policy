@@ -14,10 +14,6 @@
   const DEFAULT_CANDIDATE_GROSS = 10_000_000;
   const DEFAULT_PROVEN_TURNOVER = 5_000_000;
   const RECENT_REUSE_MS = 2500;
-  const ARMORY_DEMAND_SCHEMA = 1;
-  const ARMORY_DEMAND_MAX_ITEMS = 24;
-  const ARMORY_DEMAND_MAX_LIFETIME_MS = 60 * 60 * 1000;
-  const ARMORY_DEMAND_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
   const asId = value => String(value ?? '').trim();
   const num = value => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -381,34 +377,14 @@
     return {score, velocityProfitPerHour:velocityProfit, velocityScore};
   }
 
-  function armoryDemandItemIds(state, nowMs = Date.now(), limit = ARMORY_DEMAND_MAX_ITEMS) {
-    const demand = state?.factionInventory?.marketPulseDemand;
-    if (!demand || Math.round(num(demand.schema)) !== ARMORY_DEMAND_SCHEMA) return [];
-    if (String(demand.owner || '') !== 'MM_Faction_Armory') return [];
-    const updatedAt = num(demand.updatedAt);
-    const expiresAt = num(demand.expiresAt);
-    if (!updatedAt || !expiresAt || expiresAt <= nowMs) return [];
-    if (updatedAt > nowMs + ARMORY_DEMAND_FUTURE_SKEW_MS) return [];
-    if (expiresAt <= updatedAt || expiresAt - updatedAt > ARMORY_DEMAND_MAX_LIFETIME_MS) return [];
-    const cap = Math.max(1, Math.min(ARMORY_DEMAND_MAX_ITEMS, Math.round(num(limit) || ARMORY_DEMAND_MAX_ITEMS)));
-    const ids = [];
-    for (const row of Array.isArray(demand.items) ? demand.items : []) {
-      const id = asId(row?.itemId);
-      if (/^\d+$/.test(id) && !ids.includes(id)) ids.push(id);
-      if (ids.length >= cap) break;
-    }
-    return ids;
-  }
-
-  function trackedItemIds(state, limit = 36, nowMs = Date.now()) {
+  function trackedItemIds(state, limit = 36) {
     const cap = Math.max(1, Math.min(CACHE_MAX, Math.round(num(limit) || 36)));
     const ids = [];
     const add = value => {
       const id = asId(value);
       if (/^\d+$/.test(id) && !ids.includes(id) && ids.length < cap) ids.push(id);
     };
-    for (const id of armoryDemandItemIds(state, nowMs)) add(id);
-    for (const row of rankPulseItems(state, nowMs)) add(row.itemId);
+    for (const row of rankPulseItems(state)) add(row.itemId);
     const pricelist = Object.values(state?.procurement?.pricelist?.items || {}).sort((a,b) => num(b?.buyPrice) - num(a?.buyPrice));
     for (const row of pricelist) add(row?.itemId ?? row?.id);
     const market = Object.values(state?.marketIntel?.marketplace || {}).sort((a,b) => {
@@ -438,7 +414,7 @@
   }
 
   function nextDueItem(state, nowMs = Date.now()) {
-    const ids = trackedItemIds(state, 36, nowMs);
+    const ids = trackedItemIds(state);
     const pulse = state?.marketIntel?.marketPulse || {};
     const rows = ids.map((id, index) => ({
       id,
@@ -570,7 +546,7 @@
     value:Object.freeze({
       SCHEMA,HISTORY_MAX,REJECTION_MAX,CACHE_MAX,RECENT_REUSE_MS,
       normalizeTornItemMarket,validateSnapshot,diffSnapshots,ensurePulse,applySnapshotToDraft,
-      deriveItemMetrics,pulseFor,rankPulseItems,contribution,armoryDemandItemIds,trackedItemIds,
+      deriveItemMetrics,pulseFor,rankPulseItems,contribution,trackedItemIds,
       effectiveRefreshMs,budgetStatus,canAcquireLease,nextDueItem,recentReusableSnapshot,
       scheduleFailureToDraft,sanitizedDiagnostics,createEngine
     }),
