@@ -173,6 +173,6 @@ Purchases, bids, travel, transfers and other irreversible Torn actions remain hu
 Before merge/publication:
 - full desktop source/domain/failure/state-preservation tests pass;
 - PDA build/parity tests pass;
-- path diff proves Faction/private-product files were not modified;
+- path diff proves unrelated private-product files were not modified;
 - live customer acceptance passes without any private-product installation requirement;
 - owner explicitly approves merge/publication.
