@@ -1,6 +1,8 @@
 const fs=require('fs');const vm=require('vm');const assert=require('assert');
 const sandbox={globalThis:{},URL};vm.createContext(sandbox);
+vm.runInContext(fs.readFileSync(__dirname+'/MM_Acquisitions.logic.js','utf8'),sandbox,{filename:'MM_Acquisitions.logic.js'});
 vm.runInContext(fs.readFileSync(__dirname+'/MM_Acquisitions.live.js','utf8'),sandbox,{filename:'MM_Acquisitions.live.js'});
+const logic=sandbox.globalThis.MMTornAcquisitionsLogic;assert(logic);
 const live=sandbox.globalThis.MMTornAcquisitionsLive;assert(live);
 
 const catalog=live.normalizeTornCatalog({items:[{
@@ -42,7 +44,7 @@ assert.strictEqual(marketRow.bazaarSource,'TornW3B Bazaar observations');
     async updateDomainState(domain,mutator){const draft=JSON.parse(JSON.stringify(db));db=mutator(draft)||draft;return db;}
   };
   const service=live.createService({
-    core,logic:{},hasTornKey:()=>true,bazaarRequest:async()=>({}),navigate:()=>{},
+    core,logic,hasTornKey:()=>true,bazaarRequest:async()=>({}),navigate:()=>{},
     weavRequest:async(path,params)=>{
       if(path.startsWith('/pricelist/'))return [
         {itemId:-3,name:'Bunker Bucks',buyPrice:6000000},
@@ -65,10 +67,19 @@ assert.strictEqual(marketRow.bazaarSource,'TornW3B Bazaar observations');
       }],_metadata:{links:{next:null}}};
     }
   });
-  const p=await service.refreshPricelist('4054377');
+  const p=await service.refreshPricelist('https://weav3r.dev/pricelist/1234567');
   assert.strictEqual(p.priced,1);
   assert.strictEqual(p.bbRate,6000000);
   assert.strictEqual(db.procurement.pricelist.items['35'].buyPrice,1000);
+  assert.strictEqual(db.procurement.pricelist.profile.configured,true);
+  assert.strictEqual(db.procurement.pricelist.profile.userId,'1234567');
+  assert.strictEqual(db.procurement.pricelist.profile.url,'https://weav3r.dev/pricelist/1234567');
+  assert.strictEqual(db.procurement.pricelist.sourceUpdatedAt,null,'Pricelist source timestamp is unavailable in the current provider contract and must not be fabricated');
+  assert(Date.parse(db.procurement.pricelist.lastSyncAt)>0,'local Pricelist fetch time must be recorded separately');
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(db.procurement.pricelist,'userId'),false,'legacy top-level pricelist userId must not remain a second source of truth');
+  const savedPricelist=JSON.stringify(db.procurement.pricelist);
+  await assert.rejects(()=>service.refreshPricelist('https://example.com/pricelist/1234567'),/valid Weav3r pricelist link/);
+  assert.strictEqual(JSON.stringify(db.procurement.pricelist),savedPricelist,'invalid customer profile input must not mutate shared pricelist state');
 
   const r=await service.refreshRankedLive({pagesPerType:1,auctionPages:1,limit:100});
   assert.strictEqual(r.market.length,1);

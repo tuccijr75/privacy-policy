@@ -400,9 +400,10 @@
     const hasTornKey=typeof deps.hasTornKey === 'function' ? deps.hasTornKey : ()=>true;
     const navigate=typeof deps.navigate === 'function' ? deps.navigate : url=>{ location.href=url; };
 
-    async function refreshPricelist(userId='4054377') {
-      const id=asId(userId);
-      if(!/^\d+$/.test(id))throw new Error('Invalid TornW3B pricelist user ID.');
+    async function refreshPricelist(profileReference) {
+      const profile=logic.parseCustomerPricelistReference?.(profileReference);
+      if(!profile)throw new Error('Enter a valid Weav3r pricelist link such as https://weav3r.dev/pricelist/1234567.');
+      const id=profile.userId;
       const data=await deps.weavRequest('/pricelist/'+encodeURIComponent(id));
       const rows=normalizePricelistRows(data);
       if(!rows.length)throw new Error('TornW3B pricelist returned no readable rows.');
@@ -417,10 +418,32 @@
       }
       await core.updateDomainState('market',draft=>{
         const proc=draft.procurement || (draft.procurement={});
-        proc.pricelist={userId:id,items,bunkerBuckRate:bbRate,pricedCount:priced,lastSyncAt:at,source:'TornW3B Pricelist API'};
+        const prior=proc.pricelist&&typeof proc.pricelist==='object'?proc.pricelist:{};
+        const previous=logic.customerPricelistProfile?.({procurement:{pricelist:prior}});
+        const configuredAt=previous?.userId===id&&previous.configuredAt?previous.configuredAt:at;
+        const preserved={...prior};
+        delete preserved.userId;
+        proc.pricelist={
+          ...preserved,
+          profile:{
+            schema:profile.schema,
+            configured:true,
+            provider:profile.provider,
+            userId:id,
+            url:profile.url,
+            configuredAt,
+            updatedAt:at
+          },
+          items,
+          bunkerBuckRate:bbRate,
+          pricedCount:priced,
+          sourceUpdatedAt:null,
+          lastSyncAt:at,
+          source:'TornW3B Pricelist API'
+        };
         return draft;
       });
-      return {state:await core.readLegacyState(),rows,priced,bbRate};
+      return {state:await core.readLegacyState(),rows,priced,bbRate,profile};
     }
 
     async function refreshRankedLive({pagesPerType=2,auctionPages=4,limit=100}={}) {

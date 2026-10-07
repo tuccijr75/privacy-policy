@@ -409,7 +409,10 @@
     };
     for (const id of armoryDemandItemIds(state, nowMs)) add(id);
     for (const row of rankPulseItems(state, nowMs)) add(row.itemId);
-    const pricelist = Object.values(state?.procurement?.pricelist?.items || {}).sort((a,b) => num(b?.buyPrice) - num(a?.buyPrice));
+    const configuredPricelist=globalThis.MMTornAcquisitionsLogic?.customerPricelistProfile?.(state);
+    const pricelist = configuredPricelist
+      ? Object.values(state?.procurement?.pricelist?.items || {}).sort((a,b) => num(b?.buyPrice) - num(a?.buyPrice))
+      : [];
     for (const row of pricelist) add(row?.itemId ?? row?.id);
     const market = Object.values(state?.marketIntel?.marketplace || {}).sort((a,b) => {
       const ap = Math.max(num(a?.bazaarAverage), num(a?.marketPrice)) - num(a?.lowestPrice);
