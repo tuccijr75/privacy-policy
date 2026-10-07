@@ -1,6 +1,32 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.24.11**
+Status: **NON-PRODUCTION / alpha.25**
+
+
+## Alpha.25 Market Pulse procurement intelligence consumer
+
+- Acquisitions remains the only Market Pulse producer.
+- Armory reads `state.marketIntel.marketPulse.items[itemId]` without adding a collector/scheduler/lease/API path.
+- Current schema 1 fields shown in Acquire: tier/status, floor, depth, total units, units/hour, turnover/hour, liquidity, confidence and trend.
+- Producer TTL is honored; stale Pulse is visibly stale and excluded from current procurement context.
+- Confidence below 30% remains diagnostic / low confidence.
+- Pulse never replaces Armory's stricter fresh Item Market/Bazaar/Travel price rule and never changes planned quantity or funded quantity.
+- Leader acquisition snapshot and Leadership Excel include the same read-only Pulse evidence.
+- Shared `market` state updates refresh the Armory view without a new polling interval.
+
+### Alpha.25 live acceptance
+
+- [ ] With Acquisitions Market Pulse populated, open Armory → Acquire and confirm matching items show Market Pulse tier/status, depth, velocity, liquidity/confidence and trend.
+- [ ] Confirm the Armory source strip shows Market Pulse producer age.
+- [ ] Compare one row's Pulse values against Acquisitions and confirm the values agree.
+- [ ] Age/fixture Pulse beyond its producer TTL and confirm Armory shows **STALE** rather than current evidence.
+- [ ] Confirm stale/low-confidence Pulse does not change planning price, BUY NOW quantity, budget allocation, or Armory recommendation.
+- [ ] Confirm a fresh Pulse floor older than the 180-second live-price window does not become Armory's planning price.
+- [ ] Prepare the leader snapshot and confirm Pulse is labeled Acquisitions-owned advisory context.
+- [ ] Export Leadership Excel and inspect the Pulse columns in **Acquire**.
+- [ ] Confirm no additional Market Pulse network requests or scheduler appear in Faction Armory.
+- [ ] Re-run dock/collision and Armory → Acquisitions manual handoff checks.
+- [ ] Do not merge/publish until owner accepts live results.
 
 
 ## Alpha.24.11 member refresh freshness hardening
