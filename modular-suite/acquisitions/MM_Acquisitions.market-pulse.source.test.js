@@ -15,7 +15,7 @@ for(const [name,source] of [
   ['desktop',desktop],['pda',pda],['pulse',pulse],['logic',logic],['live',live],['ranked',ranked]
 ])assert.doesNotThrow(()=>new vm.Script(source,{filename:name+'.js'}),name+' must parse');
 
-assert(desktop.includes('// @version      8.0.0-alpha.28'));
+assert(desktop.includes('// @version      8.0.0-alpha.34'));
 const requireLines=desktop.split(/\r?\n/).filter(line=>line.startsWith('// @require'));
 assert.strictEqual(requireLines.length,7,'desktop dependency count');
 assert(requireLines.some(line=>line.includes('/MM_Acquisitions.market-pulse.js')),'desktop must require Market Pulse');
@@ -28,7 +28,7 @@ for(const line of requireLines){
   assert(match,'MM-owned desktop dependencies must use immutable full-SHA jsDelivr URLs');
 }
 
-assert(pda.includes('// @version      8.0.0-alpha.28-pda.15'));
+assert(pda.includes('// @version      8.0.0-alpha.34-pda.21'));
 assert(desktop.includes('async function readSharedState()'),'desktop must bootstrap/read shared state through helper');
 assert(desktop.includes('core?.ensureSharedState'),'desktop must opt into fresh-install Core bootstrap');
 const pdaHeader=pda.slice(0,pda.indexOf('// ==/UserScript=='));
@@ -46,11 +46,21 @@ for(let i=1;i<sectionOrder.length;i++)assert(sectionOrder[i]>sectionOrder[i-1],'
 
 assert(builder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(builder.includes('"MMTornMarketPulse"'));
-assert(builder.includes('default=15'));
+assert(builder.includes('default=21'));
 assert(builder.includes('MM_Acquisitions.market-pulse.js'));
 assert(builder.includes('MM_Acquisitions.torn-intel.js'));
 assert(builder.includes('"MMTornRestockIntel"'));
 assert(pdaHeader.includes('// @connect      torn-intel.com'),'PDA metadata must allow Torn Intel requests');
+
+for(const token of ['factionInventory','marketPulseDemand','MM_Faction_Armory','armory-acquisition-request']){
+  assert(!pulse.includes(token),'Market Pulse must not depend on private-product state: '+token);
+  assert(!desktop.includes(token),'desktop Acquisitions must not depend on private-product state/events: '+token);
+}
+assert(!/armory/i.test(desktop),'desktop Acquisitions UI/request plumbing must be product-neutral');
+const pdaUi=pda.slice(pda.indexOf('===== Acquisitions UI ====='));
+const pdaPulse=pda.slice(pda.indexOf('===== Market Pulse engine (bundled) ====='),pda.indexOf('===== Acquisitions logic (bundled) ====='));
+assert(!/armory|factionInventory|marketPulseDemand|MM_Faction_Armory/i.test(pdaUi),'PDA Acquisitions UI must be product-neutral');
+assert(!/armory|factionInventory|marketPulseDemand|MM_Faction_Armory/i.test(pdaPulse),'PDA Market Pulse producer must be product-neutral');
 
 for(const re of [
   /\bsellerId\b/i,/\bsellerName\b/i,/\blast_action\b/i,/\battackability\b/i,
@@ -82,11 +92,12 @@ assert(desktop.includes('Torn Intel observed history'),'desktop must label ETA p
 assert(desktop.includes('EARLY BID · WATCH ONLY'),'desktop must quarantine immature auction bids');
 assert(desktop.includes("if(row.auctionBidProvisional&&rankedSource!=='auction')return false;"),'All Sources must suppress provisional auction bids');
 assert(pda.includes('Complete the purchase manually on Torn.')||pda.includes('final purchase manual'),'PDA manual purchase boundary must remain explicit');
-assert(acceptance.includes('8.0.0-alpha.28'),'acceptance sheet must match desktop candidate');
-assert(acceptance.includes('8.0.0-alpha.28-pda.15'),'acceptance sheet must match PDA candidate');
+assert(acceptance.includes('8.0.0-alpha.34'),'acceptance sheet must match desktop candidate');
+assert(acceptance.includes('8.0.0-alpha.34-pda.21'),'acceptance sheet must match PDA candidate');
 assert(acceptance.includes('Verified Sales'),'acceptance sheet must cover official completed-sale evidence');
 assert(acceptance.includes('Cross-tab ownership'),'acceptance sheet must cover one-engine lease behavior');
-assert(acceptance.includes('manual-action boundary'),'acceptance sheet must preserve manual final actions');
+assert(/manual-action boundary/i.test(acceptance),'acceptance sheet must preserve manual final actions');
 assert(acceptance.includes('After Acquisitions Market Pulse is proven'),'downstream consumers must remain gated on proof');
+assert(!/armory|faction/i.test(acceptance),'acceptance must not require or name a private companion product');
 
 console.log('MM_Acquisitions Market Pulse source/PDA contract tests: PASS');

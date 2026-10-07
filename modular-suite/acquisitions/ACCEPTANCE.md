@@ -1,330 +1,179 @@
-# MM_Acquisitions Acceptance
+# MM_Acquisitions Acceptance — Standalone Customer Product
 
-Candidate:
-- Desktop: 8.0.0-alpha.28
-- TornPDA: 8.0.0-alpha.28-pda.15
-- Branch: crm-v8-acquisitions-alpha22-clarity
-- Base: crm-v8-acquisitions-ranked-profit
-- Stable/customer publication: not approved
-- Fresh-install bootstrap: required after alpha.26 customer defect
+## Candidate
 
-## Focused customer workflow
+- Desktop: 8.0.0-alpha.34
+- TornPDA: 8.0.0-alpha.34-pda.21
+- Branch: crm-v8-acquisitions-standalone-alpha34
+- Status: non-production candidate
+- Final purchase, bid, travel and transfer actions remain manual.
 
-On first open, Acquisitions must land on **Pricelist**.
+## Product boundary
 
-The only primary navigation choices are:
+MM_Acquisitions is a customer-facing standalone procurement and market-intelligence product.
 
-1. **Pricelist** — every priced item from the configured customer pricelist, with buy rate, current known source prices, under/over-rate status, estimated resale/profit when available, and direct Bazaar / Item Market / Travel actions.
-2. **Ranked Weapons** — Primary / Secondary / Melee ranked weapon evaluation using BB value, official completed Auction House history, ROI and 7/30/90 sales traffic.
-3. **More** — supporting tools only: Find One Item, Best Deals, Travel Deals, Setup / Advanced.
-
-The customer should not need to use More for the normal pricelist or ranked-weapon workflow. Market Pulse, liquidity, confidence, cache timing and diagnostics remain supporting/advanced evidence rather than primary navigation.
-
-## Purpose
-
-Run this once after the source candidate is complete. Record each finding as PASS, DEFECT, UX FRICTION, EFFECTIVENESS GAP, or MISSING FEATURE.
-
-Do not complete a purchase, bid, travel purchase, transfer, or other irreversible action as part of this acceptance pass.
-
-### Fresh install / no legacy CRM database
-
-- Use a browser/profile where `mm_bazaar_crm_idb` does not already exist.
-- Install/open Acquisitions.
-- Confirm the app creates a valid empty shared schema-11 state through Core bootstrap.
-- Save a Torn API key and confirm the prior `Legacy IndexedDB does not exist` / `Cannot read shared CRM state` defect does not appear.
-- Refresh Pricelist and confirm normal state writes succeed.
-- Existing installations with populated schema-11 state must retain their data unchanged.
-
-PASS:
-- fresh install initializes once without destructive migration;
-- existing state is preserved;
-- read-only Core reads still do not create storage unless bootstrap is explicitly requested.
-
-
-## Desktop
-
-### Panel and section persistence
-
-- Open Acquisitions and expand Data status, a glossary/details section, or Advanced settings.
-- Wait through at least one automatic refresh and perform an action that updates status.
-- Confirm the expanded section remains expanded and the current scroll position is retained.
-- Click the Acquisitions dock icon while the panel is already open.
-- Confirm the panel stays open.
-- Navigate from Acquisitions to Bazaar or Item Market and confirm Acquisitions reopens on the Torn destination page.
-- Confirm only the explicit × button closes the panel and keeps it closed across subsequent Torn navigation.
-
-PASS:
-- normal refreshes do not collapse sections;
-- the dock launcher does not toggle the app closed;
-- Torn navigation does not unexpectedly lose the app.
-
-
-### 1. Boot and dock
-
-- Install the candidate desktop userscript.
-- Open Torn.
-- Confirm the existing MM Acquisitions launcher appears in the established MM dock position.
-- Confirm no duplicate launcher appears.
-- Move the dock/panel if previously customized and verify the existing position is preserved.
-- Open and close Acquisitions several times.
-
-PASS:
-- one launcher;
-- no collision with Torn native bottom controls;
-- panel opens/closes normally;
-- existing layout position is preserved.
-
-### 2. Pricelist primary workflow
-
-- Open Acquisitions and confirm **Pricelist** is the first screen.
-- Confirm the top navigation contains only **Pricelist**, **Ranked Weapons**, and **More**.
-- Confirm every priced item from the configured pricelist is reachable through paging/filtering.
-- Confirm each visible row shows:
-  - item name / ID;
-  - pricelist buy rate;
-  - known Bazaar price or dash;
-  - known Item Market price or dash;
-  - known Travel price or dash when applicable;
-  - cheapest currently known source;
-  - **AT / UNDER BUY RATE**, **ABOVE BUY RATE**, or **CHECK PRICE**;
-  - estimated resale / profit / ROI when evidence is available.
-- Confirm each row exposes **Check Prices**, **GO TO BAZAAR**, **GO TO ITEM MARKET**, and Travel when applicable.
-- Use Check Prices on one item and confirm the detailed comparison still asks **WHERE DO YOU WANT TO BUY?**.
-- Confirm direct Bazaar routing verifies a concrete seller before opening that Bazaar.
-- Confirm direct Item Market routing opens the exact selected item.
-- Confirm no action completes the purchase.
-
-PASS:
-- the normal non-ranked workflow can be completed entirely from Pricelist;
-- every customer pricelist item remains reachable;
-- buy-rate status is obvious without interpreting advanced metrics;
-- Bazaar / Item Market destination choice is unambiguous.
-
-### 2A. More tools are secondary
-
-- Open **More**.
-- Confirm Find One Item, Best Deals, Travel Deals and Setup / Advanced are available.
-- Confirm none of those tools appear as equal top-level tabs.
-- Open one More subtool and confirm a **← More tools** path is visible.
-- Confirm advanced settings and Market Activity remain optional/supporting.
-
-PASS:
-- supporting features remain available without competing with the two core customer jobs.
-
-### 3. Verified Sales evidence
-
-Use a ranked weapon or armor item with completed Auction House history.
-
-- Open Ranked or a selected eligible item.
-- Click Load Sales / Load Verified Sales.
-- Confirm official Torn completed-auction history loads.
-- Click Verified Sales (N).
-- Confirm the in-panel Verified Sales card is reached directly.
-- Confirm the card shows:
-  - item name;
-  - official Torn API finished Auction House provenance;
-  - completed-sale count;
-  - last sync age;
-  - newest completed-sale timestamp;
-  - realized sale price;
-  - bid count when present;
-  - rarity / bonuses when present;
-  - sale ID when present.
-- Confirm Hide removes the evidence card.
-- Confirm no third-party sales-history site is required.
-
-PASS:
-- evidence is readable and clearly distinguished from current asks/bids;
-- completed auctions are not described as current market prices.
-
-### 4. Ranked Weapons primary workflow
-
-- Open Ranked Weapons.
-- Confirm the page states that no bonus is excluded.
-- Refresh Weapons.
-- Verify Primary / Secondary / Melee filters.
-- Verify Bazaar / Item Market / Auction source filters.
-- Confirm each visible row leads with:
-  - current price / current bid;
-  - estimated value;
-  - estimated profit and ROI;
-  - completed-sale traffic for 7 / 30 / 90 days.
-- Confirm an item below its BB floor is visibly labeled **UNDER BB VALUE**.
-- Confirm other positive-value opportunities can be labeled **INVESTMENT CANDIDATE** or **WATCH / BID CANDIDATE** as appropriate.
-- Confirm BB value, AH median, confidence, liquidity, investment/watch score and Market Activity are behind **Valuation details**.
-- Load official completed Auction House history for at least one weapon.
-- Confirm **Completed Sales (N)** reaches the official Torn completed-sale evidence.
-- For auctions, confirm current bid, maximum/break-even bid ceiling, headroom, bid count and time remaining remain visible.
-- Confirm the action button clearly identifies Bazaar, Item Market, direct Torn auction when available, or the auction finder fallback.
-
-PASS:
-- the ranked workflow can be understood from price, value, ROI and sales traffic without reading advanced metrics;
-- no bonuses are silently excluded;
-- no $1/low bid is presented as a guaranteed purchase;
-- completed-sale history and current auction bids remain distinct.
-
-### Customer feedback regressions
-
-- In **Ranked Weapons → All sources**, confirm an Auction House listing with a tiny early bid (for example $119), fewer than 3 bids, below 20% of estimated fair value, and more than 2 hours remaining is **not** presented in the normal profit opportunity list.
-- Switch the source filter to **Auction** and confirm that same kind of listing may be inspected as **EARLY BID · WATCH ONLY** with **PROVISIONAL** bid status rather than estimated profit/ROI.
-- Confirm near-close or meaningfully bid auctions remain inspectable as auction-watch opportunities.
-- Find an item whose Torn catalog reports a Market Value but where no current Bazaar/Item Market evidence exists.
-- Confirm the catalog MV may remain reference metadata but is **not** presented as a live Bazaar/Item Market listing, resale route, or source availability.
-- Confirm Bazaar routing still requires actual Bazaar evidence and Item Market routing still uses a fresh exact Item Market snapshot.
-
-PASS:
-- opening/immature auction bids cannot create misleading profit opportunities;
-- catalog MV cannot masquerade as a current seller/listing price.
-
-### Torn Intel travel + Restock ETA
-
-- Open **More → Travel Deals** and run **Refresh Travel Stock**.
-- Confirm Torn Intel Travel Table is attempted first and provider provenance is shown.
-- Confirm provider source timestamp and local fetch time are displayed separately; local fetch time must not make stale upstream stock appear fresh.
-- Confirm TornW3B remains a fallback if Torn Intel live stock is unavailable.
-- Confirm no Torn Intel client key is required for the normal live-stock attempt.
-- Under **More → Setup / Advanced**, save an approved Torn Intel client key and confirm it remains in userscript GM storage only.
-- Load **Restock History / Estimate Restock** for a supported country/item.
-- Confirm the history request uses an explicit on-demand action, a 48-hour window, and the client-key rate guard.
-- Confirm ETA is not shown until at least 3 usable completed empty→restock cycles exist.
-- Confirm observations with transition gaps over 5 minutes are rejected from ETA evidence.
-- Confirm the display identifies the result as an MM estimate from Torn Intel observed history, not Torn Intel's private prediction.
-- Confirm stored shared state contains only bounded/sanitized derived model evidence, never the Torn Intel client key.
-- Confirm travel and all purchases remain manual.
-
-PASS:
-- Torn Intel is integrated as procurement-safe travel intelligence;
-- source/fetch freshness is truthful;
-- restock predictions are bounded, transparent and evidence-gated;
-- no private Torn Intel prediction endpoint or key leakage is used.
-
-### 5. Market Pulse
-
-Allow enough time for at least two valid Item Market snapshots for a tracked item.
-
-- Confirm source strip shows Pulse update age, proven/candidate counts and request budget.
-- Confirm proven movers remain above candidates.
-- Confirm quantity growth is not counted as a movement.
-- Confirm displayed metrics include movement rate, units/hour, turnover/hour, liquidity, depth, confidence, trend and freshness.
-- Confirm source/fetch ages are visible.
-- Confirm Export Diagnostics produces sanitized output with no API key, seller target, mug, attack, combat or private faction/customer data.
-
-PASS:
-- no fabricated freshness;
-- no seller-target reconstruction;
-- stale/ambiguous evidence is visibly downgraded or rejected.
-
-### 6. Cross-tab ownership
-
-Open two visible Torn tabs with Acquisitions installed.
-
-- Keep both tabs open for several refresh cycles.
-- Observe Market Pulse request-budget/source-strip behavior and browser network requests if practical.
-- Confirm only one tab owns active Pulse polling at a time.
-- Close the owner tab and confirm the remaining tab can acquire ownership after lease expiry.
-
-PASS:
-- no duplicate polling engine;
-- ownership transfers after expiry/close without permanent lockout.
-
-### 7. Supporting workflows
-
-From **More**, check:
-- Find One Item;
+It owns:
+- customer pricelist procurement;
+- one-item source comparison;
 - Best Deals;
-- Travel / Overseas;
-- Faction Armory procurement handoff;
-- Setup / Advanced;
-- purchase ledger sync.
+- ranked-weapon valuation and source comparison;
+- Bazaar / Item Market / Auction / Travel routing;
+- Torn Intel travel stock and restock intelligence;
+- Market Pulse collection, cache, movement, liquidity, confidence and sanitized diagnostics;
+- purchase-ledger evidence;
+- Inventory-owned restock-demand consumption.
 
-PASS:
-- supporting workflows remain available;
-- none replaces or obscures the primary Pricelist / Ranked Weapons paths;
-- no regression in Bazaar, Item Market, Auction, Travel, pricelist or ranked behavior.
+It must not require any private/personal companion product to exist.
 
-### 8. Manual final-action boundary
+### Isolation requirements
 
-Use a safe item and run Use Best Source.
+The Acquisitions desktop runtime, Acquisitions UI, Market Pulse producer, tests and customer acceptance must contain no:
+- private-product demand state dependency;
+- external private-product request event;
+- private-product wording or acquisition cards;
+- private-product prioritization in Market Pulse;
+- requirement that another product be installed before Acquisitions functions.
 
-PASS:
-- Acquisitions may open the appropriate Torn source page;
-- it does not press BUY;
-- it does not enter quantity;
-- it does not submit an auction bid;
-- it does not complete travel or any purchase automatically.
+The shared Core may preserve unrelated suite state opaquely so customer-owned state is not destroyed. Acquisitions must not read, rank, interpret or require unrelated product state.
 
-## Narrow / mobile browser
+## Generic procurement request contract
 
-At a narrow desktop viewport or supported mobile browser:
+Acquisitions may keep its own product-neutral procurement-request renderer for legitimate customer workflows.
 
-- verify the panel remains within the viewport;
-- internal content scrolls;
-- action buttons wrap instead of overflowing;
-- launcher does not collide with native controls;
-- drag/position behavior remains usable.
+Current producer:
+- Inventory Restock Demand inside Acquisitions.
 
-PASS:
-- all primary workflows remain reachable and readable.
+Required fields:
+- itemId;
+- itemName;
+- qty;
+- preferredSource;
+- requestKind;
+- reason.
 
-## TornPDA
+Current request kind:
+- `inventory-restock`.
 
-Install 8.0.0-alpha.28-pda.15.
+The request remains local to Acquisitions UI state. Cross-product acquisition-request events are not part of the customer contract.
 
-- Confirm TornPDA also opens on Pricelist and shows only Pricelist / Ranked Weapons / More as primary navigation.
+## Market Pulse ownership
 
-### Boot
+Market Pulse remains Acquisitions-owned.
 
-- Confirm one launcher appears above TornPDA bottom chrome.
-- Open the panel.
-- If the boot diagnostic appears, record its stopped-at stage.
+Its tracked-item universe must be derived only from Acquisitions/customer requirements:
+- already tracked Pulse items;
+- current pricelist items;
+- current marketplace items;
+- ranked-weapon items;
+- travel items;
+- other Acquisitions-owned customer workflows explicitly added later.
 
-PASS:
-- script reaches ui-ready and opens normally.
+Market Pulse must not consume unrelated product-demand state.
 
-### State and API key
+Required safeguards:
+- one-engine lease;
+- API-budget and cache-delay scheduling;
+- source timestamp and local fetch time;
+- stale/error behavior;
+- source-time regression rejection;
+- inventory-increase rejection as movement;
+- bounded caches/history/rejections;
+- credential-safe diagnostics;
+- no seller-target/mug/attack logic.
 
-- Confirm existing Acquisitions state is preserved.
-- Confirm the injected TornPDA key works without exposing it on window/globalThis.
-- Confirm no GM helper monkey-patch failure occurs.
+## Desktop acceptance
 
-### Item Market duplicate-request protection
+### Pricelist
+- [ ] Starts on Pricelist.
+- [ ] Customer Pricelist loads and filters.
+- [ ] Bazaar, Item Market and Travel evidence show independently.
+- [ ] Inventory Restock Demand appears when shared Inventory demand exists.
+- [ ] Compare Sources renders a product-neutral procurement card.
+- [ ] No private-product wording appears.
+- [ ] Final source routing remains manual.
 
-- Find/verify one Item Market item.
-- Confirm a single workflow does not fire the same Item Market GET twice inside the TornPDA suppression window.
-- Confirm the just-verified snapshot is reused for the immediate route.
+### Find One Item
+- [ ] Item search resolves human-readable names.
+- [ ] Torn Shop, Bazaar, Bazaar aggregate, Item Market and Overseas evidence are distinguished.
+- [ ] Separate resale evidence is required before profit is shown.
+- [ ] No unavailable source is fabricated.
 
-PASS:
-- no false Item Market verification failure caused by duplicate GET suppression.
+### Best Deals
+- [ ] Refresh is read-only.
+- [ ] stale/weak evidence is disclosed.
+- [ ] Market activity is not presented as a confirmed individual sale.
+- [ ] final purchase remains manual.
 
-### Travel alternatives
+### Ranked Weapons
+- [ ] Verified Sales uses official Torn API finished Auction House evidence.
+- [ ] Bazaar / Item Market / Auction source filters work.
+- [ ] finished Auction House evidence is labeled official Torn API evidence.
+- [ ] early low bids remain watch-only/provisional.
+- [ ] break-even bid ceiling and valuation details remain visible.
+- [ ] no automatic bid or purchase occurs.
 
-- Open Travel Deals and choose an item where Travel is the cheapest known source.
-- Confirm the row still shows **Check All Prices**, **GO TO BAZAAR**, **GO TO ITEM MARKET**, and **GO TO TRAVEL AGENCY**.
-- From an Item comparison where Travel is cheapest, confirm Acquisitions stays on the comparison and explains that Bazaar or Item Market can still be opened.
-- Confirm GO TO BAZAAR can resolve aggregate Bazaar evidence to a verified seller before opening that seller's Bazaar.
-- Confirm GO TO ITEM MARKET opens the exact item search.
-- No button may complete a purchase automatically.
-
-### Travel handoff
-
-- Exercise the Torn -> TornW3B Travel Stock -> Torn handoff without making a purchase.
-- Confirm travel capture persists through PDA_storage across origins and returns to Torn correctly.
+### Travel
+- [ ] Torn Intel is preferred when available; fallback provenance is visible.
+- [ ] stale travel stock is hidden from recommendations.
+- [ ] refresh restores current scoped destination ranking.
+- [ ] ranking components are visible; no hidden country score.
+- [ ] no restock time is fabricated without usable observed history.
+- [ ] travel remains manual.
 
 ### Market Pulse
+- [ ] tracked universe is Acquisitions/customer-owned only.
+- [ ] movement and turnover reject integrity failures.
+- [ ] stale/error state is visible.
+- [ ] one-engine lease prevents duplicate collection.
+- [ ] diagnostics contain no API key or private-product data.
 
-- Confirm Pulse is bundled and functions without @require.
-- Confirm source strip / Pulse evidence appears.
-- Confirm background cadence does not create duplicate identical requests.
+### State preservation
+- [ ] existing schema-11 shared state survives Acquisitions reads/writes.
+- [ ] unrelated product domains are preserved without being interpreted by Acquisitions.
+- [ ] fresh-install bootstrap remains explicit.
+- [ ] invalid state is not silently replaced by fabricated data.
 
-## Completion
+### UI
+- [ ] shared dock launcher works.
+- [ ] panel remains readable at desktop and narrow desktop widths.
+- [ ] no MM/MM panel collision after the shared Core collision fix is integrated.
+- [ ] item names are used instead of numeric-only placeholders where names exist.
 
-The candidate can be considered live-accepted only when:
-- desktop PASS;
-- verified-sales evidence PASS;
-- cross-tab ownership PASS;
-- narrow/mobile PASS;
-- TornPDA PASS;
-- manual-action boundary PASS;
-- no unresolved DEFECT remains.
+## TornPDA acceptance
 
-After Acquisitions Market Pulse is proven here, Inventory Manager and Faction Armory may be updated to consume it read-only. They must not add duplicate collectors.
+The PDA bundle must remain self-contained when `@require` is unreliable.
+
+- [ ] lexical injected PDA key only;
+- [ ] no immutable GM helper monkey-patching;
+- [ ] lexical `PDA_storage` durable/cross-origin handoff;
+- [ ] `PDA_httpGet` thin GET fallback only;
+- [ ] identical-request deduplication preserved;
+- [ ] Acquisitions UI and Market Pulse sections contain no private-product coupling;
+- [ ] generic procurement request behavior matches desktop;
+- [ ] final actions remain manual;
+- [ ] real device acceptance completed after desktop candidate is proven.
+
+## Cross-tab ownership
+
+Acquisitions may listen for the generic shared-state `state-updated` notification so its open panel can re-read current shared state.
+
+It must not accept product-specific acquisition-request events from unrelated products.
+
+## Downstream consumers
+
+After Acquisitions Market Pulse is proven, downstream products may consume its published market intelligence read-only. They must not add duplicate collectors or control the producer's tracked-item universe through private product state.
+
+## Manual-action boundary
+
+Safe automation may refresh, rank, compare, cache and reconcile evidence.
+
+Purchases, bids, travel, transfers and other irreversible Torn actions remain human-controlled.
+
+## Release gate
+
+Before merge/publication:
+- full desktop source/domain/failure/state-preservation tests pass;
+- PDA build/parity tests pass;
+- path diff proves unrelated private-product files were not modified;
+- live customer acceptance passes without any private-product installation requirement;
+- owner explicitly approves merge/publication.

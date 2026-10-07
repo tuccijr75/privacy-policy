@@ -65,52 +65,42 @@
   const clone=value=>original.deepClone?original.deepClone(value):JSON.parse(JSON.stringify(value));
 
   function defaultState(){
-    return {
-      schema:11,
-      customers:{},
-      sales:{},
-      coupons:{},
-      refunds:{},
-      subscribers:{},
-      removedCustomers:{},
-      notificationHistory:[],
-      businessRules:{
-        minRoiPct:0,
-        minDemandPerDay:0,
-        minPrice:0,
-        maxPrice:100000000000,
-        minAbsoluteProfit:0,
-        minSellerCount:0,
-        minConfidencePct:0,
-        maxListingAgeSec:180,
-        updatedAt:new Date().toISOString()
-      },
-      syncState:{},
-      procurement:{
-        acquisitions:[],
-        watchlist:{},
-        catalog:{},
-        marketSnapshots:{},
-        marketHistory:{},
-        ranked:{settings:{}},
-        pricelist:{items:{}}
-      },
-      operations:{},
-      marketIntel:{
-        settings:{bazaarExitHaircutPct:0},
-        marketplace:{},
-        details:{},
-        traders:{},
-        history:{}
-      },
-      travelIntel:{rows:[],history:{},settings:{}},
-      factionInventory:{
-        current:{},
-        snapshots:[],
-        memberReadiness:{roster:{},profiles:{}}
-      },
-      meta:{platform:'tornpda',createdAt:new Date().toISOString()}
+    if(typeof original.createEmptySharedState!=='function'){
+      throw new Error('MM Torn Core empty-state factory is unavailable.');
+    }
+    const createdAt=new Date().toISOString();
+    const base=original.createEmptySharedState(createdAt);
+    base.businessRules={
+      minRoiPct:0,
+      minDemandPerDay:0,
+      minPrice:0,
+      maxPrice:100000000000,
+      minAbsoluteProfit:0,
+      minSellerCount:0,
+      minConfidencePct:0,
+      maxListingAgeSec:180,
+      updatedAt:createdAt
     };
+    base.procurement={
+      acquisitions:[],
+      watchlist:{},
+      catalog:{},
+      marketSnapshots:{},
+      marketHistory:{},
+      ranked:{settings:{}},
+      pricelist:{items:{}}
+    };
+    base.operations={};
+    base.marketIntel={
+      settings:{bazaarExitHaircutPct:0},
+      marketplace:{},
+      details:{},
+      traders:{},
+      history:{}
+    };
+    base.travelIntel={rows:[],history:{},settings:{}};
+    base.meta={...(base.meta||{}),platform:'tornpda',createdAt};
+    return base;
   }
 
   async function nativeGet(){

@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.32
+// @version      8.0.0-alpha.34
 // @description  Pricelist procurement and ranked-weapon investment assistant with direct Bazaar, Item Market, auction and travel routing; final actions remain manual.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@6b1cc6bf26ad91823fc555a602377ce612931405/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@de425d72834f14f7a59b8bbbbe186a1f933e62a3/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@81cda9d1dce86eb6244f6fa7d88235b153d4634f/modular-suite/acquisitions/MM_Acquisitions.logic.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@3b033e03b26faf17466fed7122adcb9c34077a0b/modular-suite/acquisitions/MM_Acquisitions.live.js
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@7439f1289a0ac281515e2954b6c2a349d2aa6815/modular-suite/acquisitions/MM_Acquisitions.ranked.logic.js
@@ -62,8 +62,8 @@
   let autoRefreshRunning=false;
   let autoRefreshTimer=null;
   let channel=null;
-  let armoryRequest=null;
-  let armorySources=null;
+  let procurementRequest=null;
+  let procurementSources=null;
   let travelContext=null;
   let travelContextCheckedAt=0;
   let itemQuery='';
@@ -876,68 +876,68 @@
     '</details>';
   }
 
-  function armoryRequestHtml(){
-    if(!armoryRequest)return '';
-    const inventoryRestock=armoryRequest?.requestKind==='inventory-restock';
-    const requestLabel=inventoryRestock?'Inventory restock request':'Faction Armory request';
-    const requestReason=String(armoryRequest.armoryReason||(inventoryRestock?'Inventory replenishment':'Faction requirement'));
-    const sources=Array.isArray(armorySources?.sources)?armorySources.sources:[];
+  function procurementRequestHtml(){
+    if(!procurementRequest)return '';
+    const inventoryRestock=procurementRequest?.requestKind==='inventory-restock';
+    const requestLabel=inventoryRestock?'Inventory restock request':'Procurement request';
+    const requestReason=String(procurementRequest.reason||(inventoryRestock?'Inventory replenishment':'Customer procurement request'));
+    const sources=Array.isArray(procurementSources?.sources)?procurementSources.sources:[];
     const rows=sources.length?sources.map(source=>
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;border-top:1px solid #303030;padding:6px 0;font-size:11px;">'+
         '<div><b>'+esc(source.source)+'</b> · '+money(source.price)+(source.country?' · '+esc(source.country):'')+
         (source.quantity?' · qty/stock '+Number(source.quantity).toLocaleString():'')+'</div>'+
-        '<button data-armory-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(source.source===armoryRequest.preferredSource)+(busy?'opacity:.5;':'')+'">Use '+esc(source.source)+'</button>'+
+        '<button data-procurement-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(source.source===procurementRequest.preferredSource)+(busy?'opacity:.5;':'')+'">Use '+esc(source.source)+'</button>'+
       '</div>'
     ).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">No live source comparison loaded yet.</div>';
     return card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-        '<div><b>'+esc(requestLabel)+': '+esc(armoryRequest.itemName)+'</b>'+
-          '<div style="font-size:10px;color:#888;">Need '+Number(armoryRequest.qty||1).toLocaleString()+' · '+esc(requestReason)+'</div>'+
+        '<div><b>'+esc(requestLabel)+': '+esc(procurementRequest.itemName)+'</b>'+
+          '<div style="font-size:10px;color:#888;">Need '+Number(procurementRequest.qty||1).toLocaleString()+' · '+esc(requestReason)+'</div>'+
         '</div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
-          '<button id="mm-acq-armory-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Compare Sources</button>'+
-          '<button data-armory-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Find Best Source</button>'+
-          (armorySources?.reason==='overseas-recommended'?'<button id="mm-acq-armory-travel-agency" style="'+button(true)+'">Open Travel Agency</button>':'')+
-          '<button id="mm-acq-armory-clear" style="'+button()+'">Clear</button>'+
+          '<button id="mm-acq-procurement-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Compare Sources</button>'+
+          '<button data-procurement-route="Best" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Find Best Source</button>'+
+          (procurementSources?.reason==='overseas-recommended'?'<button id="mm-acq-procurement-travel-agency" style="'+button(true)+'">Open Travel Agency</button>':'')+
+          '<button id="mm-acq-procurement-clear" style="'+button()+'">Clear</button>'+
         '</div>'+
       '</div>'+rows
     );
   }
 
-  async function refreshArmorySources(){
-    if(!armoryRequest||busy)return;
-    busy=true;statusText='Comparing Bazaar, Item Market and overseas sources for '+armoryRequest.itemName+'…';render();
+  async function refreshProcurementSources(){
+    if(!procurementRequest||busy)return;
+    busy=true;statusText='Comparing Bazaar, Item Market and overseas sources for '+procurementRequest.itemName+'…';render();
     try{
-      armorySources=await service.procurementSourceOptions(armoryRequest.itemId,armoryRequest.itemName);
-      state=armorySources?.state||await readSharedState();
-      statusText=armorySources?.sources?.length
-        ?'Source comparison ready for '+armoryRequest.itemName+'. Final purchase remains manual.'
-        :'No live source is currently cached/available for '+armoryRequest.itemName+'.';
+      procurementSources=await service.procurementSourceOptions(procurementRequest.itemId,procurementRequest.itemName);
+      state=procurementSources?.state||await readSharedState();
+      statusText=procurementSources?.sources?.length
+        ?'Source comparison ready for '+procurementRequest.itemName+'. Final purchase remains manual.'
+        :'No live source is currently cached/available for '+procurementRequest.itemName+'.';
     }catch(error){statusText='Source comparison failed: '+(error?.message||String(error));}
     finally{busy=false;render();}
   }
 
-  async function routeArmoryRequest(preferredSource='Best'){
-    if(!armoryRequest||busy)return;
-    busy=true;statusText='Checking travel state and verifying '+preferredSource+' source for '+armoryRequest.itemName+'…';render();
+  async function routeProcurementRequest(preferredSource='Best'){
+    if(!procurementRequest||busy)return;
+    busy=true;statusText='Checking travel state and verifying '+preferredSource+' source for '+procurementRequest.itemName+'…';render();
     try{
       await refreshTravelContext({force:true,silent:true});
-      const result=await service.routeProcurementRequest({...armoryRequest,preferredSource});
-      armorySources=result;
+      const result=await service.routeProcurementRequest({...procurementRequest,preferredSource});
+      procurementSources=result;
       if(result?.routed){
-        statusText='Verified '+result.source+' source for '+armoryRequest.itemName+'. Complete the purchase manually on Torn.';
+        statusText='Verified '+result.source+' source for '+procurementRequest.itemName+'. Complete the purchase manually on Torn.';
         return;
       }
       if(result?.reason==='overseas-recommended'){
         activeView='travel';
-        const qty=Math.max(1,Number(armoryRequest?.qty||1));
+        const qty=Math.max(1,Number(procurementRequest?.qty||1));
         statusText='Overseas is the selected source: '+String(result.country||'destination')+' · '+money(result.price||0)+' each · '+money(Number(result.price||0)*qty)+' for '+qty.toLocaleString()+' · stock '+Number(result.stock||0).toLocaleString()+'. Use Open Travel Agency when ready; travel/purchase remains manual.';
       }else if(result?.reason==='preferred-source-unavailable'){
-        statusText=preferredSource+' is not currently available for '+armoryRequest.itemName+'. Compare Sources for alternatives.';
+        statusText=preferredSource+' is not currently available for '+procurementRequest.itemName+'. Compare Sources for alternatives.';
       }else if(result?.reason==='item-id-unresolved'){
-        statusText='Could not resolve a Torn item ID for '+armoryRequest.itemName+'.';
+        statusText='Could not resolve a Torn item ID for '+procurementRequest.itemName+'.';
       }else{
-        statusText='Could not route '+armoryRequest.itemName+': '+String(result?.reason||'no live source')+'.';
+        statusText='Could not route '+procurementRequest.itemName+': '+String(result?.reason||'no live source')+'.';
       }
     }catch(error){statusText='Procurement routing failed: '+(error?.message||String(error));}
     finally{busy=false;render();}
@@ -949,27 +949,17 @@
       channel=new BroadcastChannel(CHANNEL);
       channel.addEventListener('message',event=>{
         const type=String(event?.data?.type||'');
-        if(type==='state-updated'){
-          const root=document.getElementById(ROOT_ID);
-          if(!root||root.style.display==='none')return;
-          readSharedState().then(next=>{state=next;render();}).catch(()=>{});
-          return;
-        }
-        if(type!=='armory-acquisition-request')return;
-        armoryRequest={...(event.data.payload||{}),requestKind:'faction-armory'};
-        armorySources=null;
-        activeView=String(armoryRequest.preferredSource||'').toLowerCase()==='overseas'?'travel':'deals';
-        open();
-        statusText='Faction Armory requested '+String(armoryRequest.itemName||'item')+' x'+Number(armoryRequest.qty||1).toLocaleString()+'. Comparing sources…';
-        render();
-        setTimeout(refreshArmorySources,80);
+        if(type!=='state-updated')return;
+        const root=document.getElementById(ROOT_ID);
+        if(!root||root.style.display==='none')return;
+        readSharedState().then(next=>{state=next;render();}).catch(()=>{});
       });
     }catch(error){console.warn('[MM_Acquisitions] channel unavailable',error);}
   }
 
   function moreHtml(){
     const keyReady=Boolean(apiKey());
-    return armoryRequestHtml()+
+    return procurementRequestHtml()+
       card(
         '<div><b style="font-size:15px;">More tools</b><div style="font-size:11px;color:#aaa;margin-top:3px;">These support the two main workflows. Normal use should start in <b>Pricelist</b> or <b>Ranked Weapons</b>.</div></div>'+
         '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:7px;margin-top:9px;">'+
@@ -1002,7 +992,7 @@
     const research=rows.filter(r=>!r.purchaseReady).slice(0,8);
     const pulseMovers=pulse?.rankPulseItems?.(state)?.slice(0,12)||[];
 
-    return armoryRequestHtml()+card(
+    return procurementRequestHtml()+card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
         '<div><b>Best Deals</b><div style="font-size:10px;color:#888;">Start with the first few rows. Click Check & Open to re-check the price and open the best current source.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;"><button id="mm-acq-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Deals</button><button id="mm-acq-sync-purchases" '+(busy?'disabled':'')+' style="'+button()+'">Sync Purchases</button></div>'+
@@ -1092,7 +1082,7 @@
     const freshnessColor=freshness==='FRESH'?'#9fe3a8':freshness==='AGING'?'#ffd18a':'#ff9b9b';
     const provider=String(state?.travelIntel?.source||'Travel source');
     const sourceAge=age(state?.travelIntel?.sourceUpdatedAt||'');
-    return armoryRequestHtml()+card(
+    return procurementRequestHtml()+card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">'+
         '<div><b>Travel Deals</b><div style="font-size:10px;color:#888;">Current foreign stock uses Torn Intel when available; TornW3B remains the fallback. Travel and purchases remain manual.</div></div>'+
         '<button id="mm-acq-travel-update" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Travel Stock</button>'+
@@ -1363,7 +1353,7 @@
     const visible=rows.slice(pricelistPage*PRICELIST_PAGE_SIZE,(pricelistPage+1)*PRICELIST_PAGE_SIZE);
     const withinCount=rows.filter(row=>row.underRate).length;
     const sourceName=String(state?.procurement?.pricelist?.source||'TornW3B Pricelist');
-    const restockRequestHtml=armoryRequest?.requestKind==='inventory-restock'?armoryRequestHtml():'';
+    const restockRequestHtml=procurementRequest?.requestKind==='inventory-restock'?procurementRequestHtml():'';
     return inventoryRestockHtml()+restockRequestHtml+card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
         '<div><b style="font-size:15px;">Customer Pricelist</b><div style="font-size:10px;color:#aaa;margin-top:3px;">This is the main non-ranked workflow. Look for <b style="color:#9fe3a8;">AT / UNDER BUY RATE</b>, then choose where to buy.</div></div>'+
@@ -2126,7 +2116,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.32 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.34 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -2191,11 +2181,11 @@
       const id=String(b.dataset.inventoryRestockId||'');
       const itemName=String(b.dataset.inventoryRestockName||('Item '+id));
       const qty=Math.max(1,Number(b.dataset.inventoryRestockQty||1));
-      armoryRequest={itemId:id,itemName,qty,preferredSource:'Best',requestKind:'inventory-restock',armoryReason:'Inventory deficit · source replacement stock'};
-      armorySources=null;
+      procurementRequest={itemId:id,itemName,qty,preferredSource:'Best',requestKind:'inventory-restock',reason:'Inventory deficit · source replacement stock'};
+      procurementSources=null;
       statusText='Inventory restock requested '+itemName+' x'+qty.toLocaleString()+'. Comparing Bazaar, Item Market and travel sources…';
       render();
-      setTimeout(refreshArmorySources,80);
+      setTimeout(refreshProcurementSources,80);
     }));
     root.querySelectorAll('[data-pricelist-check]').forEach(b=>b.addEventListener('click',()=>{
       const id=String(b.dataset.pricelistCheck||'');
@@ -2227,10 +2217,10 @@
       activeView='items';
       findCatalogPriceByItem(item);
     }));
-    root.querySelector('#mm-acq-armory-refresh')?.addEventListener('click',refreshArmorySources);
-    root.querySelector('#mm-acq-armory-travel-agency')?.addEventListener('click',()=>{location.href='https://www.torn.com/travelagency.php';});
-    root.querySelector('#mm-acq-armory-clear')?.addEventListener('click',()=>{const kind=armoryRequest?.requestKind;armoryRequest=null;armorySources=null;statusText=kind==='inventory-restock'?'Inventory restock source comparison cleared.':'Faction Armory acquisition request cleared.';render();});
-    root.querySelectorAll('[data-armory-route]').forEach(b=>b.addEventListener('click',()=>routeArmoryRequest(b.dataset.armoryRoute||'Best')));
+    root.querySelector('#mm-acq-procurement-refresh')?.addEventListener('click',refreshProcurementSources);
+    root.querySelector('#mm-acq-procurement-travel-agency')?.addEventListener('click',()=>{location.href='https://www.torn.com/travelagency.php';});
+    root.querySelector('#mm-acq-procurement-clear')?.addEventListener('click',()=>{const kind=procurementRequest?.requestKind;procurementRequest=null;procurementSources=null;statusText=kind==='inventory-restock'?'Inventory restock source comparison cleared.':'Procurement source comparison cleared.';render();});
+    root.querySelectorAll('[data-procurement-route]').forEach(b=>b.addEventListener('click',()=>routeProcurementRequest(b.dataset.procurementRoute||'Best')));
     root.querySelector('#mm-acq-catalog-refresh')?.addEventListener('click',()=>refreshItemCatalog({silent:false}));
     root.querySelector('#mm-acq-pricelist-refresh')?.addEventListener('click',refreshPricelist);
     root.querySelector('#mm-acq-rw-pricelist-refresh')?.addEventListener('click',refreshPricelist);
