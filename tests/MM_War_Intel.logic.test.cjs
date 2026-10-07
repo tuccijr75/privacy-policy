@@ -402,8 +402,14 @@ test('runtime source enforces bounded collectors and does not echo keys into DOM
   assert.match(source, /minimumGroupConfidence: 45/);
   assert.match(source, /readyUnassignedAttackers/);
   assert.match(source, /unavailableAttackers/);
-  assert.match(source, /LEASE_MS=45000/);
+  assert.match(source, /LEASE_MS=90000/);
   assert.match(source, /REQUEST_TIMEOUT_MS=10000/);
+  assert.match(source, /FF_CLAIMS_BACKOFF_MS=120000/);
+  assert.match(source, /claimsBackoffUntil/);
+  assert.match(source, /cached claims retained/);
+  assert.match(source, /inactive HOLD hidden/);
+  assert.match(source, /const attackAction=row\.assigned\.length\?/);
+  assert.doesNotMatch(source, /throw new Error\('Refresh lease lost before enrichment\.'\)/);
   assert.match(source, /OUTCOME_POLL_MS=12000/);
   assert.match(source, /ATTACK_ENERGY_COST=25/);
   assert.match(source, /donator_status/);
