@@ -344,7 +344,7 @@ assert.strictEqual(snapState2.state.events[0].deltaOwned,-2);
 console.log('MM Faction Armory logic tests: PASS');
 const userSource=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes("const VERSION='8.0.0-alpha.24.10';"));
+assert(userSource.includes("const VERSION='8.0.0-alpha.24.11';"));
 assert(!userSource.includes('raw.githubusercontent.com'),'candidate must not retain the obsolete raw.githubusercontent.com delivery/runtime channel');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@9af1c84f189141be77ef0d2c86d86513db5978ed/modular-suite/core/MM_Torn_Core.js'),'Core @require must be immutable full-SHA jsDelivr');
 assert(userSource.includes('https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@1e24b83e6507e4e029da3fbbc8aae518f1de42ee/modular-suite/faction-armory/MM_Faction_Armory.logic.js'),'Faction logic @require must be immutable full-SHA jsDelivr');
@@ -356,7 +356,7 @@ assert(userSource.includes('nextUsefulRefreshAt'));
 console.log('MM Faction Armory automation regression: PASS');
 
 const userSource2=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource2.includes("const VERSION='8.0.0-alpha.24.10';"));
+assert(userSource2.includes("const VERSION='8.0.0-alpha.24.11';"));
 assert(userSource2.includes('function staleSavedMemberCount'));
 assert(userSource2.includes('save a faction API key to enable automatic refresh'));
 assert(userSource2.includes('unlock the member-key vault during an Armory session'));
@@ -364,10 +364,10 @@ assert(userSource2.includes('Not saved — cached faction data cannot refresh au
 console.log('MM Faction Armory automation-blocker UX regression: PASS');
 
 const userSource3=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
-assert(userSource3.includes("const VERSION='8.0.0-alpha.24.10';"));
+assert(userSource3.includes("const VERSION='8.0.0-alpha.24.11';"));
 assert(userSource3.includes('mm-fa-unlock-vault'));
 assert(userSource3.includes('Member-key vault: '));
-assert(userSource3.includes('automatic stale-profile refresh enabled for this session'));
+assert(userSource3.includes('automatic due-profile refresh enabled while Armory is open'));
 assert(userSource3.includes('setTimeout(()=>autoRefreshArmory({forceFaction:false}),50)'));
 console.log('MM Faction Armory explicit vault-unlock automation regression: PASS');
 
@@ -463,7 +463,7 @@ console.log('MM Faction Armory price-aware build regression: PASS');
 
 const userSourceValue=fs.readFileSync(__dirname+'/MM_Faction_Armory.user.js','utf8');
 new Function(userSourceValue);
-assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.10';"));
+assert(userSourceValue.includes("const VERSION='8.0.0-alpha.24.11';"));
 assert(userSourceValue.includes('MM_Faction_Armory.logic.js'));
 assert(userSourceValue.includes('saved member API key'));
 assert(userSourceValue.includes('This is the number of saved member API keys, not faction members.'));
