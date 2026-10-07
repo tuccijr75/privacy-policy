@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.31-pda.18
+// @version      8.0.0-alpha.32-pda.19
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -5150,9 +5150,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         '<button data-armory-route="'+esc(source.source)+'" '+(busy?'disabled':'')+' style="'+button(source.source===armoryRequest.preferredSource)+(busy?'opacity:.5;':'')+'">Use '+esc(source.source)+'</button>'+
       '</div>'
     ).join(''):'<div style="font-size:11px;color:#888;margin-top:5px;">No live source comparison loaded yet.</div>';
-    return (armoryRequest?.requestKind==='inventory-restock'?armoryRequestHtml():'')+
-    inventoryRestockHtml()+
-    card(
+    return card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
         '<div><b>'+esc(requestLabel)+': '+esc(armoryRequest.itemName)+'</b>'+
           '<div style="font-size:10px;color:#888;">Need '+Number(armoryRequest.qty||1).toLocaleString()+' · '+esc(requestReason)+'</div>'+
@@ -5626,7 +5624,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const visible=rows.slice(pricelistPage*PRICELIST_PAGE_SIZE,(pricelistPage+1)*PRICELIST_PAGE_SIZE);
     const withinCount=rows.filter(row=>row.underRate).length;
     const sourceName=String(state?.procurement?.pricelist?.source||'TornW3B Pricelist');
-    return inventoryRestockHtml()+card(
+    const restockRequestHtml=armoryRequest?.requestKind==='inventory-restock'?armoryRequestHtml():'';
+    return inventoryRestockHtml()+restockRequestHtml+card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
         '<div><b style="font-size:15px;">Customer Pricelist</b><div style="font-size:10px;color:#aaa;margin-top:3px;">This is the main non-ranked workflow. Look for <b style="color:#9fe3a8;">AT / UNDER BUY RATE</b>, then choose where to buy.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
@@ -6388,7 +6387,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.31-pda.18 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.32-pda.19 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
