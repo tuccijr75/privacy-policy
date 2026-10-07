@@ -1457,6 +1457,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
 
 /* ===== Market Pulse engine (bundled) ===== */
+
 (() => {
   'use strict';
 
@@ -2012,6 +2013,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     configurable:true,enumerable:false,writable:false
   });
 })();
+
 
 ;globalThis.__MM_ACQ_PDA_STAGE='pulse';
 
