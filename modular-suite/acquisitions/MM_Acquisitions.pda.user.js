@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.32-pda.19
+// @version      8.0.0-alpha.33-pda.20
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -35,11 +35,15 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 4 4M9 7.5v6M6.8 9.2h4.4M6.8 11.8h4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
       b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;';
       b.addEventListener('click',()=>{
-        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){globalThis.__MM_ACQ_OPEN__();return;}
+        if(typeof globalThis.__MM_ACQ_OPEN__==='function'){
+          globalThis.__MM_ACQ_OPEN__();
+          return;
+        }
         const stage=String(globalThis.__MM_ACQ_PDA_STAGE||'unknown');
         let d=document.getElementById('mm-acq-pda-boot-diagnostic');
         if(!d){
-          d=document.createElement('div');d.id='mm-acq-pda-boot-diagnostic';
+          d=document.createElement('div');
+          d.id='mm-acq-pda-boot-diagnostic';
           d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';
           document.body.appendChild(d);
         }
@@ -1470,6 +1474,10 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const DEFAULT_CANDIDATE_GROSS = 10_000_000;
   const DEFAULT_PROVEN_TURNOVER = 5_000_000;
   const RECENT_REUSE_MS = 2500;
+  const ARMORY_DEMAND_SCHEMA = 1;
+  const ARMORY_DEMAND_MAX_ITEMS = 24;
+  const ARMORY_DEMAND_MAX_LIFETIME_MS = 60 * 60 * 1000;
+  const ARMORY_DEMAND_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
   const asId = value => String(value ?? '').trim();
   const num = value => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -1833,14 +1841,34 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     return {score, velocityProfitPerHour:velocityProfit, velocityScore};
   }
 
-  function trackedItemIds(state, limit = 36) {
+  function armoryDemandItemIds(state, nowMs = Date.now(), limit = ARMORY_DEMAND_MAX_ITEMS) {
+    const demand = state?.factionInventory?.marketPulseDemand;
+    if (!demand || Math.round(num(demand.schema)) !== ARMORY_DEMAND_SCHEMA) return [];
+    if (String(demand.owner || '') !== 'MM_Faction_Armory') return [];
+    const updatedAt = num(demand.updatedAt);
+    const expiresAt = num(demand.expiresAt);
+    if (!updatedAt || !expiresAt || expiresAt <= nowMs) return [];
+    if (updatedAt > nowMs + ARMORY_DEMAND_FUTURE_SKEW_MS) return [];
+    if (expiresAt <= updatedAt || expiresAt - updatedAt > ARMORY_DEMAND_MAX_LIFETIME_MS) return [];
+    const cap = Math.max(1, Math.min(ARMORY_DEMAND_MAX_ITEMS, Math.round(num(limit) || ARMORY_DEMAND_MAX_ITEMS)));
+    const ids = [];
+    for (const row of Array.isArray(demand.items) ? demand.items : []) {
+      const id = asId(row?.itemId);
+      if (/^\d+$/.test(id) && !ids.includes(id)) ids.push(id);
+      if (ids.length >= cap) break;
+    }
+    return ids;
+  }
+
+  function trackedItemIds(state, limit = 36, nowMs = Date.now()) {
     const cap = Math.max(1, Math.min(CACHE_MAX, Math.round(num(limit) || 36)));
     const ids = [];
     const add = value => {
       const id = asId(value);
       if (/^\d+$/.test(id) && !ids.includes(id) && ids.length < cap) ids.push(id);
     };
-    for (const row of rankPulseItems(state)) add(row.itemId);
+    for (const id of armoryDemandItemIds(state, nowMs)) add(id);
+    for (const row of rankPulseItems(state, nowMs)) add(row.itemId);
     const pricelist = Object.values(state?.procurement?.pricelist?.items || {}).sort((a,b) => num(b?.buyPrice) - num(a?.buyPrice));
     for (const row of pricelist) add(row?.itemId ?? row?.id);
     const market = Object.values(state?.marketIntel?.marketplace || {}).sort((a,b) => {
@@ -1870,7 +1898,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   }
 
   function nextDueItem(state, nowMs = Date.now()) {
-    const ids = trackedItemIds(state);
+    const ids = trackedItemIds(state, 36, nowMs);
     const pulse = state?.marketIntel?.marketPulse || {};
     const rows = ids.map((id, index) => ({
       id,
@@ -2002,7 +2030,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     value:Object.freeze({
       SCHEMA,HISTORY_MAX,REJECTION_MAX,CACHE_MAX,RECENT_REUSE_MS,
       normalizeTornItemMarket,validateSnapshot,diffSnapshots,ensurePulse,applySnapshotToDraft,
-      deriveItemMetrics,pulseFor,rankPulseItems,contribution,trackedItemIds,
+      deriveItemMetrics,pulseFor,rankPulseItems,contribution,armoryDemandItemIds,trackedItemIds,
       effectiveRefreshMs,budgetStatus,canAcquireLease,nextDueItem,recentReusableSnapshot,
       scheduleFailureToDraft,sanitizedDiagnostics,createEngine
     }),
@@ -2015,6 +2043,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
 
 /* ===== Acquisitions logic (bundled) ===== */
+
 (() => {
   'use strict';
 
@@ -2482,6 +2511,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     value:api,configurable:true,enumerable:false,writable:false
   });
 })();
+
 
 ;globalThis.__MM_ACQ_PDA_STAGE='logic';
 
@@ -4249,6 +4279,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
 
 /* ===== Acquisitions UI ===== */
+
 (() => {
   'use strict';
 
@@ -6387,7 +6418,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.32-pda.19 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.33-pda.20 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+

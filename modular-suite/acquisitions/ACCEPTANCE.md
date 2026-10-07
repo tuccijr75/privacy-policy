@@ -1,12 +1,38 @@
 # MM_Acquisitions Acceptance
 
 Candidate:
-- Desktop: 8.0.0-alpha.28
-- TornPDA: 8.0.0-alpha.28-pda.15
-- Branch: crm-v8-acquisitions-alpha22-clarity
-- Base: crm-v8-acquisitions-ranked-profit
+- Desktop: 8.0.0-alpha.33
+- TornPDA: 8.0.0-alpha.33-pda.20
+- Branch: crm-v8-acquisitions-armory-pulse-demand-alpha33
+- Base: crm-v8-acquisitions-integration
 - Stable/customer publication: not approved
 - Fresh-install bootstrap: required after alpha.26 customer defect
+
+
+## Alpha.33 Armory-demand Market Pulse producer priority
+
+Live Faction Armory alpha.25 acceptance found a fresh Market Pulse producer with no Pulse rows for the current Armory equipment requirements. The producer's tracked-item universe did not include Armory demand.
+
+Alpha.33 fixes that boundary without adding a second collector:
+
+- reads only `factionInventory.marketPulseDemand` schema 1 owned by `MM_Faction_Armory`;
+- requires valid `updatedAt` / `expiresAt`, rejects expired/future-invalid/overlong hints;
+- accepts at most 24 unique numeric item IDs;
+- prioritizes those IDs before existing Pulse/pricelist/marketplace/ranked/travel candidates;
+- uses the existing Market Pulse engine, one-engine lease, request budget, cache-delay scheduling, integrity rejection and storage policy;
+- does not trust Armory for market price, depth, movement, liquidity or confidence;
+- final purchase/bid/travel action remains manual.
+
+### Alpha.33 live acceptance
+
+- [ ] Install desktop alpha.33 with Faction Armory alpha.25.1.
+- [ ] Open Armory → Acquire and confirm its current demanded IDs are picked up by the existing Acquisitions Market Pulse engine.
+- [ ] Confirm at least one demanded Equipment row gains Pulse metrics after the producer collects it.
+- [ ] Confirm an expired Armory demand hint no longer influences producer selection.
+- [ ] Confirm normal Pricelist / Ranked / Travel Market Pulse tracking remains available after Armory-demand priority.
+- [ ] Confirm no second Market Pulse scheduler/lease/API collector exists.
+- [ ] Confirm final market actions remain manual.
+- [ ] Repeat on TornPDA alpha.33-pda.20 where applicable to Acquisitions runtime behavior.
 
 ## Focused customer workflow
 
