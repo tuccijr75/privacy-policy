@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.1.0-pda.2
+// @version      2.2.0-pda.1
 // @description  TornPDA mobile edition: trade verification, sale-log tracking, shared payouts and 7 PM ET reports. Read-only Torn API; trades and cash remain manual.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -19,7 +19,7 @@
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.1.0-pda.2';
+ const VERSION='2.2.0-pda.1';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
  const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY'].map(x=>prefix+x);
@@ -38,7 +38,7 @@
  const uuid=()=>crypto.randomUUID?.()||('mb-'+Date.now()+'-'+Math.random().toString(36).slice(2));
  // New pipeline starts at install time so legacy manually logged sales are not double counted.
  if(!read('v2SaleStart')) await save('v2SaleStart',Date.now()-120000);
- let state=null,working=false,opened=false,status='Not connected',lastTrades=0,lastLogs=0,lastBazaar=0;
+ let state=null,working=false,opened=false,status='Not connected',lastTrades=0,lastLogs=0,lastBazaar=0,lastPurchaseScan=0;
  const scannedTradeIds=new Set();
  const itemNames=new Map();
  const minutes=n=>n*60000;
@@ -126,6 +126,60 @@
    if(checked>=25)status='Trade scan inspected 25 trades. Run again if older transfers remain.';
    lastTrades=Date.now();return count;
  }
+
+ function parsePurchaseLog(log){
+   const type=Number(log?.details?.id),d=log?.data||{};
+   if(![1112,1225,4200,4201].includes(type))return null;
+   // Market/Bazaar logs have items[]; shop/abroad purchases use item + quantity.
+   // Multi-item purchases remain pending unless a single matching item is explicit.
+   let item=null;
+   if(Array.isArray(d.items)&&d.items.length===1)item=d.items[0];
+   else if((type===4200||type===4201)&&d.item!=null)item={id:d.item,qty:d.quantity,uid:null};
+   if(!item)return null;
+   const itemId=numeric(item.id),qty=numeric(item.qty),
+     unitCost=numeric(d.cost_each),totalCost=numeric(d.cost_total),timestamp=numeric(log.timestamp);
+   if(!isPositive(itemId)||!isPositive(qty)||!isPositive(unitCost)||!isPositive(totalCost)||!isPositive(timestamp)||qty*unitCost!==totalCost)return null;
+   return {logId:String(log.id),logType:type,timestamp,itemId,uid:isPositive(numeric(item.uid))?numeric(item.uid):null,qty,unitCost,totalCost};
+ }
+ async function syncPurchaseLogs(){
+   if(state?.role!=='supplier'||!cfg().torn)return 0;
+   const supplierId=await verifyKey();
+   const lots=state.lots.filter(l=>l.tradeRef&&l.senderId===supplierId&&(l.status==='received_pending'||l.status==='awaiting_cost'));
+   if(!lots.length)return 0;
+   const targetIds=new Set(lots.map(l=>l.itemId)),dateFloor=Math.floor((Date.now()-120*86400000)/1000);
+   let imported=0;
+   for(const type of [1112,1225,4200,4201]){
+     let url='https://api.torn.com/v2/user/log?'+new URLSearchParams({log:String(type),limit:'100',from:String(dateFloor),key:cfg().torn});
+     const seenPages=new Set();
+     for(let page=0;page<15&&url;page++){
+       if(seenPages.has(url))break;seenPages.add(url);
+       const response=await request(url);if(!Array.isArray(response.log))throw Error('Unexpected purchase log response for '+type);
+       for(const raw of response.log){
+         const data=parsePurchaseLog(raw);
+         if(!data||!targetIds.has(data.itemId)||state.purchaseLogs.some(p=>p.logId===data.logId))continue;
+         await relay('purchase_log',data);imported++;
+       }
+       const next=response._metadata?.links?.next;
+       if(!next){if(response.log.length>=100)throw Error('Purchase logs incomplete: missing next page');url=null;}
+       else{
+         const location=new URL(next);
+         if(location.protocol!=='https:'||location.hostname!=='api.torn.com'||location.pathname!=='/v2/user/log')
+           throw Error('Untrusted purchase log pagination URL');
+         location.searchParams.set('key',cfg().torn);url=location.href;
+       }
+       if(page===14&&url)throw Error('Purchase log exceeds 15 pages; match remains pending');
+     }
+   }
+   let matched=0;
+   for(const l of state.lots.filter(x=>x.tradeRef&&x.mode==='supplier'&&x.status==='awaiting_cost'&&x.senderId===supplierId)){
+     const logs=state.purchaseLogs.filter(p=>p.itemId===l.itemId&&p.qty===l.qty&&(l.uid==null||p.uid==null||p.uid===l.uid)
+       &&p.timestamp*1000<=new Date(l.createdAt).getTime()+300000&&p.timestamp*1000>=new Date(l.createdAt).getTime()-120*86400000
+       &&!state.lots.some(x=>x.purchaseLogId===p.logId));
+     if(logs.length!==1)continue;
+     await relay('purchase_apply',{lotId:l.id,logId:logs[0].logId,supplierId});matched++;
+   }
+   return imported+matched;
+ }
  function parseBazaarLog(log){
    if(Number(log?.details?.id)!==1226)return null;
    const data=log.data||{},items=data.items;
@@ -182,6 +236,9 @@
        try{await syncTrades();}catch(e){warnings.push('Trades: '+e.message);}
        try{await syncSales();}catch(e){warnings.push('Sales: '+e.message);}
        if(Date.now()-lastBazaar>minutes(5))try{await snapshot();}catch(e){warnings.push('Listings: '+e.message);}
+     }else if(state.role==='supplier'&&cfg().torn&&Date.now()-lastPurchaseScan>minutes(10)){
+       lastPurchaseScan=Date.now();
+       try{await syncPurchaseLogs();}catch(e){warnings.push('Purchase log costs: '+e.message);}
      }
      status=warnings.length?'Sync partial — '+warnings.join(' | '):'Connected: trades/sales checked at '+new Date().toLocaleTimeString();
    }catch(e){status='Sync failed: '+e.message;if(!silent)alert(status);}finally{working=false;draw();}
@@ -248,18 +305,19 @@
  window.addEventListener('resize',()=>{if(!drag)restoreButton();});
  function rowsReport(obj){return Object.keys(obj||{}).sort().reverse().slice(0,8).map(k=>`<tr><td>${esc(k)}</td><td>${esc(obj[k].sales)}</td><td>${money(obj[k].profit)}</td><td>${money(obj[k].morpheusProfit)}</td><td>${money(obj[k].morpheusDue)}</td><td>${money(obj[k].ownerProfit)}</td></tr>`).join('');}
  function itemRow(l){const rem=l.qty-l.sold-l.returned,buttons=[];
+   if(state.role==='owner'&&l.status==='awaiting_split')buttons.push(`<button data-action="crimeSplit" data-id="${esc(l.id)}">Approve crime-drop split</button>`);
    if(state.role==='owner'&&l.status==='received_pending')buttons.push(`<button data-action="classify" data-id="${esc(l.id)}">Classify received item</button>`);
    if(state.role==='owner'&&l.status==='proposed'&&l.mode==='owner')buttons.push(`<button data-action="confirm" data-id="${esc(l.id)}">Confirm my purchase</button>`);
    if(state.role==='owner'&&l.status==='proposed')buttons.push(`<button data-action="reject" data-id="${esc(l.id)}">Reject</button>`);
-   if(state.role==='supplier'&&l.unitCost===null&&l.mode==='supplier'&&l.status!=='rejected')buttons.push(`<button data-action="price" data-id="${esc(l.id)}">Enter buy price</button>`);
+   if(state.role==='supplier'&&l.unitCost===null&&l.mode==='supplier'&&!l.tradeRef&&l.status!=='rejected')buttons.push(`<button data-action="price" data-id="${esc(l.id)}">Enter buy price</button>`);
    if(state.role==='owner'&&l.status==='confirmed'&&l.mode==='supplier'&&rem>0)buttons.push(`<button data-action="return" data-id="${esc(l.id)}">Log item return</button>`);
-   return `<div class="line"><b>${esc(l.name)}</b> <span class="pill">${esc(l.status)}</span><div class="muted">ID ${esc(l.itemId??'missing')} • Lot ${esc(l.id.slice(0,12))}${l.senderId?' • From Torn #'+esc(l.senderId):''} • ${rem}/${l.qty} remaining • ${l.unitCost==null?'cost pending':money(l.unitCost)+' cost each'} • ${l.mode==='supplier'?'Morpheus-funded 50/50':l.mode==='owner'?'Owner-funded '+l.feePct+'% sourcing':l.mode==='return'?'Returned property — no payout':'Received — funding unclassified'}${l.tradeId?' • Trade #'+esc(l.tradeId):''}</div><div class="row">${buttons.join('')}</div></div>`;
+   return `<div class="line"><b>${esc(l.name)}</b> <span class="pill">${esc(l.status)}</span><div class="muted">ID ${esc(l.itemId??'missing')} • Lot ${esc(l.id.slice(0,12))}${l.senderId?' • From Torn #'+esc(l.senderId):''} • ${rem}/${l.qty} remaining • ${l.unitCost==null?'cost pending':money(l.unitCost)+' cost each'} • ${l.mode==='supplier'?'Morpheus-funded 50/50':l.mode==='owner'?'Owner-funded '+l.feePct+'% sourcing':l.mode==='return'?'Returned property — no payout':l.mode==='crime'?'Crime reward — $0 acquisition; share pending':'Received — funding unclassified'}${l.tradeId?' • Trade #'+esc(l.tradeId):''}</div><div class="row">${buttons.join('')}</div></div>`;
  }
  function draw(){if(!opened)return;const c=cfg(),s=state?.summary,role=state?.role;
    let html=`<header><b>Morpheus Bazaar Ledger</b><span class="muted">v${VERSION}</span><button data-action="close">Close</button></header><section class="row"><b>${esc(status)}</b><button data-action="refresh" ${working?'disabled':''}>Refresh ledger</button><button data-action="scan" ${working?'disabled':''}>Scan Torn API</button></section>`;
    if(s){html+=`<section><div class="muted">Signed in: <b>${role==='owner'?'Bazaar Owner':'Morpheus'}</b> • Business day ${esc(s.openDay)} (19:00 ET cutoff)</div><div class="metrics"><div><span class="muted">${role==='owner'?'Expected to pay':'Expected pay'} — today</span><strong class="num">${money(s.current.morpheusDue)}</strong></div><div><span class="muted">${role==='owner'?'Daily expected to pay':'Daily expected'} — last close</span><strong class="num">${money(s.lastClosed.morpheusDue)}</strong></div><div><span class="muted">Lifetime unpaid balance</span><strong class="num">${money(s.remaining)}</strong></div></div><div class="metrics" style="margin-top:9px"><div><span class="muted">Today's gross sales</span><strong>${money(s.current.gross)}</strong></div><div><span class="muted">Today's net profit</span><strong>${money(s.current.profit)}</strong></div><div><span class="muted">Your earnings today</span><strong>${money(role==='owner'?s.current.ownerProfit:s.current.morpheusProfit)}</strong></div></div><p class="muted"><b>Today:</b> ${money(s.current.morpheusProfit)} Morpheus profit + ${money(s.current.capitalDue)} capital reimbursement = ${money(s.current.morpheusDue)} total payable. <b>Last close:</b> ${money(s.lastClosed.morpheusProfit)} profit + ${money(s.lastClosed.capitalDue)} capital = ${money(s.lastClosed.morpheusDue)} payable. Lifetime debt survives rollover. Cash transfers remain manual.</p></section>`;
      if(role==='supplier')html+=`<section><b>Optional: source a purchase lead</b><form id="newlot"><div class="grid"><div><label>Item name</label><input name="name" required></div><div><label>Torn Item ID (required to auto-verify trades)</label><input name="itemId" type="number" min="1" required></div><div><label>Quantity</label><input name="qty" type="number" min="1" required></div><div><label>My buy cost per unit ($)</label><input name="cost" placeholder="Can fill in later"></div><div><label>Funding</label><select name="mode"><option value="supplier">I purchased — 50/50 profit</option><option value="owner">Owner purchases my lead — sourcing fee</option></select></div><div><label>Sourcing fee (%) if owner-funded</label><input name="fee" type="number" value="20" min="0" max="100"></div><div><label>Item UID (optional, for unique equipment)</label><input name="uid" type="number" min="1"></div></div><label>Notes</label><textarea name="note"></textarea><button>Submit to shared ledger</button></form><p class="muted">For an ordinary item transfer, no submission is needed: trade directly and the owner scanner imports it. Only sourcing leads need this form.</p><button data-action="trade">Open partner's Torn profile to trade</button></section>`;
-     if(role==='owner')html+=`<section><b>Trade & sale reconciliation</b><p class="muted">Completed incoming item trades from all Torn players are imported automatically with no manual proposal. New receipts are marked pending until funding/cost is classified. Only your Bazaar sale logs are scanned (Torn log 1226). Only unambiguous sales book profit.</p><button data-action="trade">Open Morpheus's profile</button> <button data-action="scan">Check trades & sales now</button> <p class="muted">Last trade scan: ${lastTrades?new Date(lastTrades).toLocaleString():'not yet'} · Last sale scan: ${lastLogs?new Date(lastLogs).toLocaleString():'not yet'}</p></section>`;
+     if(role==='owner')html+=`<section><b>Trade & sale reconciliation</b><p class="muted">Completed incoming item trades from all Torn players are imported automatically with no manual proposal. New receipts are marked pending until funding/cost is classified. Only your Bazaar sale logs are scanned (Torn log 1226). Only unambiguous sales book profit.</p><button data-action="trade">Open Morpheus's profile</button> <button data-action="scan">Check trades & sales now</button> <button data-action="crimeBulk">Classify crime drops in trade</button> <button data-action="approveBulk">Approve crime-drop split</button> <p class="muted">Last trade scan: ${lastTrades?new Date(lastTrades).toLocaleString():'not yet'} · Last sale scan: ${lastLogs?new Date(lastLogs).toLocaleString():'not yet'}</p></section>`;
      html+=`<section><details open><summary>Inventory lots (${state.lots.length})</summary><div class="scroll">${state.lots.map(itemRow).join('')||'No inventory yet'}</div></details></section>`;
      if(state.exceptions?.length)html+=`<section><details open><summary>Unmatched Bazaar sales (${state.exceptions.length}) — action required</summary>${state.exceptions.map(x=>`<div class="line"><b>Sale ${esc(x.id)}</b> • Item #${x.itemId} • ${x.qty} × ${money(x.unitPrice)}<div class="critical">${esc(x.reason)}</div>${role==='owner'?`<button data-action="reconcile" data-id="${esc(x.id)}">Assign to inventory lot</button>`:''}</div>`).join('')}</details></section>`;
      if(role==='owner')html+=`<section><b>Payment after sending Torn cash</b><form id="payment"><div class="grid"><div><label>Amount sent</label><input name="amount" type="number" min="1" max="${s.remaining}" required></div><div><label>Torn reference</label><input name="reference"></div></div><button ${s.remaining<=0?'disabled':''}>Record payment sent</button></form></section>`;
@@ -280,10 +338,10 @@
    if(action==='export'){const rows=[['Type','Timestamp','Item','Quantity','Gross','Cost','Net Profit','Morpheus Due','Owner Profit','Source']];for(const s of state.sales)rows.push(['Sale',s.at,s.name,s.qty,s.gross,s.cost,s.profit,s.morpheusDue,s.ownerProfit,s.sourceId||'manual']);for(const p of state.payments)rows.push(['Payment',p.at,'',0,p.amount,'','','','',''+p.reference]);const csv=rows.map(row=>row.map(x=>'"'+String(x??'').replace(/"/g,'""')+'"').join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download='Morpheus.csv';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);return;}
    if(!state)return;const l=state.lots.find(x=>x.id===id);
    if(action==='classify'&&l&&l.status==='received_pending'){
-     const category=prompt('Incoming trade item #'+l.itemId+' (qty '+l.qty+'). Choose: supplier = Morpheus paid; owner = I funded it; return = my property returned.','return');
+     const category=prompt('Item #'+l.itemId+' (qty '+l.qty+'). Choose: supplier = Morpheus PURCHASED; crime = crime reward ($0 acquisition); owner = I purchased; return = my property returned.','crime');
      if(!category)return;
      const mode=category.trim().toLowerCase();
-     if(!['supplier','owner','return'].includes(mode))return alert('Enter supplier, owner, or return');
+     if(!['supplier','owner','return','crime'].includes(mode))return alert('Enter supplier, owner, return, or crime');
      const payload={lotId:l.id,mode,partnerId:cfg().partnerId};
      if(mode==='owner'){
        const cost=prompt('Your actual purchase cost per unit:');
@@ -294,6 +352,44 @@
      }
      if(!confirm('Classify item #'+l.itemId+' as '+mode+'? No payout is booked until a verified sale.'))return;
      await writeOp('trade_classify',payload,mode==='supplier'?'Funding assigned; Morpheus can now enter acquisition cost':'Received trade classified');
+     return;
+   }
+   if(action==='crimeBulk'){
+     const tradeText=prompt('Completed Torn trade ID containing crime drops:');
+     if(tradeText===null)return;
+     const tradeId=numeric(tradeText);
+     const list=state.lots.filter(l=>l.tradeId===tradeId&&l.status==='received_pending');
+     if(!list.length)return alert('No unclassified receipts in that trade');
+     const bought=prompt('Enter exact item names PURCHASED with money, separated by commas. These will NOT be classified as crime drops.\n\nTrade items:\n'+list.map(l=>l.name+' × '+l.qty).join('\n')+'\n\nType NONE only if everything was a crime drop.','');
+     if(bought===null)return;
+     const exclude=new Set(bought.trim().toLowerCase()==='none'?[]:bought.split(',').map(x=>x.trim().toLowerCase()).filter(Boolean));
+     if(!exclude.size&&bought.trim().toLowerCase()!=='none')return alert('Enter purchased item names or NONE');
+     if([...exclude].some(name=>!list.some(l=>l.name.toLowerCase()===name)))return alert('A purchased item name did not match exactly. No inventory changed.');
+     const targets=list.filter(l=>!exclude.has(l.name.toLowerCase()));
+     if(!targets.length)return alert('All items excluded; nothing to classify');
+     if(!confirm('Mark '+targets.length+' item types as CRIME DROPS with $0 acquisition cost?\n'+targets.map(l=>l.name+' × '+l.qty).join('\n')+'\n\nProfit shares remain pending approval.'))return;
+     await writeOp('trade_bulk_crime',{tradeId,lotIds:targets.map(l=>l.id)},'Crime drop sources recorded; split still requires approval');
+     return;
+   }
+   if(action==='approveBulk'){
+     const tradeText=prompt('Completed Torn trade ID to approve crime-drop shares for:');
+     if(tradeText===null)return;
+     const tradeId=numeric(tradeText),targets=state.lots.filter(l=>l.tradeId===tradeId&&l.mode==='crime'&&l.status==='awaiting_split');
+     if(!targets.length)return alert('No crime drops awaiting a profit split for that trade');
+     const entered=prompt('Agreed percentage of crime-drop SALE PROFIT owed to Morpheus (0–100):','50');
+     if(entered===null)return;
+     const pct=numeric(entered);if(!Number.isSafeInteger(pct)||pct<0||pct>100)return alert('Invalid percentage');
+     if(!confirm('Approve '+pct+'% of sale profit for Morpheus on '+targets.length+' crime-drop item types? Acquisition cost is $0.'))return;
+     await writeOp('crime_split_bulk',{tradeId,lotIds:targets.map(l=>l.id),feePct:pct},'Crime-drop split approved');
+     return;
+   }
+   if(action==='crimeSplit'&&l&&l.status==='awaiting_split'){
+     const value=prompt('Agreed percentage of crime-drop SALE PROFIT owed to Morpheus (0–100):');
+     if(value===null)return;
+     const pct=numeric(value);
+     if(!Number.isSafeInteger(pct)||pct<0||pct>100)return alert('Invalid percentage');
+     if(!confirm('Set Morpheus crime-drop share to '+pct+'% for '+l.name+'? Acquisition cost is $0.'))return;
+     await writeOp('crime_split',{lotId:l.id,feePct:pct},'Crime-drop proceeds split approved');
      return;
    }
    if(action==='price'&&l){const x=prompt('Morpheus buy price PER UNIT:',l.unitCost||'');if(x!==null)await writeOp('price',{lotId:l.id,unitCost:numeric(x)},'Purchase price recorded');}
