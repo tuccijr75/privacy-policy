@@ -1,6 +1,237 @@
 # MM Faction Armory — Live Acceptance
 
-Status: **NON-PRODUCTION / alpha.23**
+Status: **NON-PRODUCTION / alpha.26**
+
+
+
+## Alpha.26 private-build isolation cleanup
+
+Alpha.25.1 introduced an Armory-specific outward demand contract so an external Market Pulse producer could prioritize Armory items. That architecture is now **RETIRED**.
+
+Faction Armory is a private/personal build. Customer-facing suite products must not depend on Armory state, require Armory to be installed, expose Armory-specific workflow, or prioritize work because Armory published a private demand object.
+
+Alpha.26 therefore removes the alpha.25.1 outward dependency while preserving the proven Armory feature set:
+
+- removes all `MARKET_PULSE_DEMAND_*` constants;
+- removes the demand snapshot, publisher, renewal timer and Acquire-render scheduling hook;
+- removes all writes/reads of `factionInventory.marketPulseDemand`;
+- adds no replacement outbound state contract, collector, scheduler or network request;
+- retains the alpha.25 Market Pulse reader only as **optional read-only advisory input**;
+- missing Market Pulse state fails closed as `NO PULSE` and does not block Armory;
+- Armory planning price, quantities, budget, readiness, minimums, reports and exports remain based on Armory/shared factual inputs, not Pulse;
+- the existing **Find Best Source** handoff remains an optional integration path and is not required for Armory to calculate or display its acquisition plan. Any customer-suite Armory-specific receiver/wording must be corrected in that product's own build conversation.
+
+### Alpha.26 acceptance
+
+- [x] Static isolation: no `marketPulseDemand`, `MARKET_PULSE_DEMAND_*`, demand publisher or demand scheduling hook remains in the Armory runtime.
+- [x] Static ownership: Armory does not write the shared `market` domain and does not instantiate a Market Pulse engine.
+- [x] Domain isolation: missing Market Pulse state returns `NO PULSE` / unavailable / non-actionable rather than failing the Armory workflow.
+- [x] Proven alpha.25 read-only Market Pulse consumer remains available when generic Pulse data already exists.
+- [x] Install alpha.26 and reload Torn. **PASS — owner installed 2026-10-07; independent dedicated-window capture confirmed `v8.0.0-alpha.26` running on Torn.**
+- [x] Verify Members / Builds / Stock / Coverage / Minimums / Acquire / Settings remain operational on alpha.26. **PASS — independently exercised/captured 2026-10-07 in the isolated QA window. Members rendered the live readiness roster; Builds rendered Quick Build routes; Stock rendered 103 classified inventory rows; Coverage reported no equipped-item/floor routing mismatches or unmapped combat equipment; Minimums rendered War Stock Control; Acquire rendered the current acquisition plan; Settings rendered local Faction API/procurement controls. No Acquisitions action/handshake was required to open or calculate these views.**
+- [x] Confirm Acquire quantities and planning evidence remain available if no matching Pulse item exists. **PASS — independently observed 2026-10-07: BT MP9 rendered ARMORY REC 11, override 5, BUY NOW 5 and Torn Market Reference planning evidence without a matching Pulse tile.**
+- [x] If generic Market Pulse data is present, confirm it remains advisory and does not change ARMORY REC, override, BUY NOW, budget allocation or planning price. **PASS — independently observed 2026-10-07: Macana displayed `OBSERVED · STALE · L27 · C44%` plus depth/velocity/trend while ARMORY REC 11, override 5, BUY NOW 5 and Torn Market Reference planning price remained separate.**
+- [x] Confirm no Armory-specific demand object is created in shared state during Acquire use. **PASS — independently checked 2026-10-07 after live Acquire use: exact-key binary search of Torn's active IndexedDB found no `marketPulseDemand` key. Source regression also confirms no publisher/scheduler/write path remains.**
+- [x] Re-run dock/collision and one representative manual **Find Best Source** action. **PASS / PARTIAL — 2026-10-07:** current viewport shows the Armory panel and bottom MM/Torn controls coexisting without a blocking collision. Background QA click on BT MP9 **Find Best Source** produced `Sent BT MP9 x5 to MM_Acquisitions · preferred Best · reference $46,801. Final purchase remains manual.` Armory remained intact. **Receiver-absent failure behavior was not independently reproduced because Acquisitions is currently installed; source/regression coverage proves the broadcast is optional and Armory calculations do not depend on the receiver.**
+- [x] Do not merge/publish until owner accepts live alpha.26 results. **OWNER ACCEPTED — 2026-10-07. Merge/publication still require a separate explicit owner command.**
+
+## Alpha.25 Market Pulse procurement intelligence consumer
+
+- Acquisitions remains the only Market Pulse producer.
+- Armory reads `state.marketIntel.marketPulse.items[itemId]` without adding a collector/scheduler/lease/API path.
+- Current schema 1 fields shown in Acquire: tier/status, floor, depth, total units, units/hour, turnover/hour, liquidity, confidence and trend.
+- Producer TTL is honored; stale Pulse is visibly stale and excluded from current procurement context.
+- Confidence below 30% remains diagnostic / low confidence.
+- Pulse never replaces Armory's stricter fresh Item Market/Bazaar/Travel price rule and never changes planned quantity or funded quantity.
+- Leader acquisition snapshot and Leadership Excel include the same read-only Pulse evidence.
+- Shared `market` state updates refresh the Armory view without a new polling interval.
+
+### Alpha.25 live acceptance
+
+- [x] alpha.25 candidate installed/updated. **OWNER-CONFIRMED — 2026-10-06**
+- [x] MM Faction Armory launcher present on live Torn page after update. **INDEPENDENT BROWSER OBSERVATION — 2026-10-06**
+- [ ] With Acquisitions Market Pulse populated, open Armory → Acquire and confirm matching items show Market Pulse tier/status, depth, velocity, liquidity/confidence and trend.
+- [ ] Confirm the Armory source strip shows Market Pulse producer age.
+- [ ] Compare one row's Pulse values against Acquisitions and confirm the values agree.
+- [ ] Age/fixture Pulse beyond its producer TTL and confirm Armory shows **STALE** rather than current evidence.
+- [ ] Confirm stale/low-confidence Pulse does not change planning price, BUY NOW quantity, budget allocation, or Armory recommendation.
+- [ ] Confirm a fresh Pulse floor older than the 180-second live-price window does not become Armory's planning price.
+- [ ] Prepare the leader snapshot and confirm Pulse is labeled Acquisitions-owned advisory context.
+- [ ] Export Leadership Excel and inspect the Pulse columns in **Acquire**.
+- [ ] Confirm no additional Market Pulse network requests or scheduler appear in Faction Armory.
+- [ ] Re-run dock/collision and Armory → Acquisitions manual handoff checks.
+- [ ] Do not merge/publish until owner accepts live results.
+
+
+## Alpha.24.11 member refresh freshness hardening
+
+NedFlanders69 live acceptance exposed that a member who originally imported while unequipped could remain on that old private-data snapshot until a later explicit refresh. The stored empty equipment record was replaceable, but the refresh architecture allowed the snapshot to remain trusted too long.
+
+- Member current-state imports/refreshes now use Torn's documented unique `timestamp` query parameter to bypass the service cache.
+- The fresh-request path covers member Basic, Battle Stats, Equipment, Inventory and Ammo reads.
+- Every successful private-member refresh stores local `fetchedAt` / `lastPrivateRefreshAt`.
+- Equipment separately stores any API source/cache timestamp Torn supplies; local fetch time is not relabeled as upstream source freshness.
+- Automatic saved-member refresh now uses an independent **1-hour** target instead of inheriting the old 72-hour readiness-staleness setting.
+- Existing legacy profiles remain compatible through `lastPrivateRefreshAt -> fetchedAt -> verifiedAt` fallback.
+- Members exposes **Refresh All Saved Members**, which refreshes every saved member key through the same fresh-request pipeline.
+- Individual Refresh reports the returned equipped-combat-item count and explicitly identifies an API-confirmed empty equipment result.
+- No new collector, polling loop, third-party dependency or automated Torn action was added.
+
+### Alpha.24.11 live acceptance
+
+- [x] Unlock the member-key vault. **OWNER-CONFIRMED PASS — 2026-10-07**
+- [x] Click **Refresh All Saved Members** once and confirm every saved member is attempted without needing per-member clicks. **OWNER-CONFIRMED PASS — 2026-10-07**
+- [x] Confirm the completion status reports refreshed / total and any failures. **OWNER-CONFIRMED PASS — 2026-10-07**
+- [x] Open NedFlanders69 and confirm his currently equipped combat items remain present. **OWNER-CONFIRMED PASS — 2026-10-07**
+- [ ] Change one test member's equipment in Torn, wait only as long as needed for the game state itself to change, then use that member's **Refresh** and confirm the new equipment replaces the prior stored snapshot.
+- [ ] Confirm an actually unequipped member shows **API confirmed empty** after Refresh rather than silently retaining older gear.
+- [ ] Confirm the Members source tile distinguishes local **fetched** age from an API **source** age when Torn returns a source timestamp.
+- [ ] Leave Armory open with the vault unlocked and confirm profiles older than one hour become due for automatic refresh; do not wait 72 hours.
+- [ ] Re-run the existing alpha.24 live checks after the refresh-all pass.
+- [ ] Do not merge/publish until owner accepts live results.
+
+
+## Alpha.24.10 acquisition wording clarity
+
+- Replaced the ambiguous `manual; system` wording used for procurement quantity overrides.
+- Acquire now shows **ARMORY REC** for the automatic recommendation and **YOUR OVERRIDE** when the Inventory Manager has set a different planned quantity.
+- Reset control reads **Use Armory <qty>**.
+- Leader acquisition snapshot states **your override <qty> · Armory recommendation <qty>**.
+- The override still changes procurement output only; the automatic recommendation remains visible and readiness/inventory facts are not rewritten.
+
+## Alpha.24.9 stale-price accuracy gate
+
+- Armory only treats cached Item Market/Bazaar evidence as live when it satisfies Acquisitions' market-age policy (default 180 seconds).
+- Overseas price evidence is excluded once the travel cache is older than 15 minutes, matching the Acquisitions stale cutoff.
+- Stale cached sources are retained as diagnostics but cannot become the planning basis, lower the acquisition estimate, or consume budget.
+- Acquire displays **STALE IGNORED** evidence when stale values were rejected.
+- Leader snapshots disclose ignored stale source/value/timestamp evidence and explicitly distinguish fresh live evidence from reference fallback.
+- If every live source is stale, the plan falls back only to labeled Torn/Armory references; if no fallback exists the row remains PRICE UNKNOWN and receives buy-now quantity 0.
+
+### Alpha.24.9 acceptance additions
+
+1. Load an item with a cached Item Market/Bazaar price older than the configured market-age window and verify it is not shown as live planning evidence.
+2. Load an overseas price older than 15 minutes and verify it is ignored for planning.
+3. Verify stale values remain visible as rejected diagnostics rather than disappearing silently.
+4. Verify a stale cheaper source cannot undercut a fresher source or labeled reference fallback in Acquire, Leader snapshot, handoff, or export.
+5. Verify MM_Acquisitions still performs live source/availability/price verification before the manual purchase boundary.
+
+## Alpha.24.8 acquisition-output accuracy audit
+
+- Leader output is now an **acquisition snapshot**, not a quote or authorization.
+- Acquire, Leader snapshot, Armory -> Acquisitions handoff, and Leadership Excel consume the same reconciled acquisition plan.
+- Cached buyable-source evidence is prioritized in this order: Item Market / Bazaar / overseas current cache by lowest observed price. Torn Market Reference and Armory static values are fallback-only and explicitly labeled as reference evidence.
+- A cheaper reference value can no longer outrank an available cached buyable-source price.
+- Budget-funded quantity is recomputed from the same displayed planning unit price used in the snapshot and Acquire UI.
+- Full planned priced cost is separated from budget-funded buy-now cost.
+- Unpriced requirements are not silently treated as funded; they are shown as **PRICE UNKNOWN** and excluded from funded dollar totals until live verification.
+- The snapshot records roster/inventory/market freshness, distinguishes verified private stats from public estimates, and labels unresolved rival/Xanax evidence.
+- Final purchase remains manual; MM_Acquisitions still performs live source verification before routing.
+
+### Alpha.24.8 acceptance additions
+
+1. Compare the Acquire totals with the Leader snapshot and Leadership Excel; Buy Now, Full Plan, Deferred and unpriced quantities must match.
+2. For an item with both a cached live source and a lower Torn/reference value, verify the live buyable-source price remains the planning basis.
+3. For an unpriced requirement, verify Buy Now is zero and the Leader snapshot says it is excluded from funded dollar totals.
+4. Use Find Best Source on one funded item and verify the handoff quantity equals the displayed budget-funded quantity, not the full planned quantity.
+5. Do not treat any displayed estimate as a guaranteed quote; verify MM_Acquisitions still rechecks live source/availability before the manual purchase boundary.
+
+## Alpha.24.7 live war stock + opponent-weighted Xanax
+
+- **Minimums** is now **War Stock Control**: every supported war-stock line shows live **HAVE / SUGGESTED / EFFECTIVE MIN / SHORT / STATUS**.
+- Suggested War defaults remain pre-filled from the current roster:
+  - First Aid Kit / Small First Aid Kit / Morphine: 10 per current member;
+  - Ipecac Syrup: 1 per current member;
+  - Empty Blood Bag: 5 per current member;
+  - Flash / Smoke / Tear Gas / HEG / Grenade / Pepper Spray: 5 per current member.
+- Every minimum can be replaced by an explicit whole-number manager minimum, reset to the live suggestion, or placed on **HOLD / DO NOT ORDER**.
+- War **Acquire** consumes the exact same effective minimum state. Approved shortfall is `max(0, effective minimum - current available)`; held rows do not enter Acquire.
+- Xanax no longer uses a fixed 3-per-member buy target. The Leadership 4 / 3 / 2 tier policy is a ceiling.
+- Xanax defaults:
+  - High: 25,000+ total battle stats, ceiling 4;
+  - Medium: 5,000–24,999, ceiling 3;
+  - Low: below 5,000, ceiling 2;
+  - reasonable matchup threshold: own estimated/verified total >= 80% of rival estimate;
+  - current investment posture default: **CONSERVE**.
+- **CONSERVE** recommends up to one Xanax per credible rival target, capped by the member's tier ceiling. OFF / COMPETE / PUSH, tier thresholds, ceilings, ratio and each member's allocation are adjustable.
+- Rival context comes from Torn `/faction/wars`; rival roster comes from `/faction/{id}/members`. Public opponent profile estimates are cached for 6 hours and carry local fetch timestamps.
+- If no current rival / usable rival estimates exist, Xanax fails safe: no automatic Xanax acquisition is generated unless Leadership sets a manual minimum.
+- Internal edits are derived, not copied: member stats / readiness, rival estimates, Xanax policy, member Xanax overrides, stock minimums, order/hold decisions and faction inventory all recompute the downstream shortfall, Acquire list, leader report and workbook.
+- Purchase / transfer remains manual. Armory can hand an approved quantity to MM_Acquisitions but does not buy or request a transfer automatically.
+
+### Alpha.24.7 live acceptance gate
+
+1. Install alpha.24.7 and refresh faction data.
+2. In **War Stock Control**, verify current meds/temps show HAVE, suggested minimum, effective minimum, shortfall and order status.
+3. Change one medical minimum; confirm its shortfall and matching Acquire quantity change immediately.
+4. Put that line on HOLD; confirm it remains visibly short but disappears from Acquire. Re-enable Order Shortfall and confirm it returns.
+5. Refresh Rival. Verify current ranked-war opponent and opponent-estimate coverage are shown with cache age.
+6. In Xanax War Estimator, verify Leadership ceiling is separate from Matchup Target.
+7. Change CONSERVE/ratio/tier caps or one member Xanax allocation; confirm Matchup Target, effective Xanax minimum, shortfall and Acquire quantity recompute.
+8. With rival data unavailable, confirm automatic Xanax purchase target fails safe to DATA / zero unless a manual Xanax minimum is entered.
+9. Verify leader report and Leadership Excel match the same minimums/Xanax values.
+10. Do not execute a purchase or transfer during acceptance; final acquisition remains manual.
+
+## Alpha.24.6 advisory member-message tone
+
+- Build messages are framed as optional war-prep suggestions rather than instructions.
+- The message explicitly says members do not need to change anything if they prefer their current setup.
+- TARGET BUILD is replaced by OPTIONAL WAR-PREP SUGGESTIONS.
+- Vault, acquisition, owned-item, and review language is phrased as options to consider.
+- Requests for better data are optional and intended only to improve recommendation accuracy.
+- Closing language states that the goal is to make useful preparation options available to members who want help.
+
+## Alpha.24.5 plain-language equipment override menu
+
+- **Edit Data Override** no longer asks the operator to paste JSON.
+- It opens a member-specific equipment menu with one row per standard slot.
+- Every row shows:
+  - the item Torn/source data says is equipped now;
+  - the current Armory recommendation;
+  - the active manual choice, if any.
+- Plain-language actions:
+  - **Accept Equipped Item** — leadership explicitly accepts that exact current piece for readiness even when the automatic floor would not;
+  - **Use Selected Replacement** — choose from Armory qualifying suggestions;
+  - **Use Other Replacement** — type a different item name;
+  - **Use Automatic** — clear only that slot decision and return it to normal Armory logic.
+- Equipment decisions are stored separately from API/source equipment. The script does not falsely rewrite a replacement as currently equipped.
+- A selected replacement is honored exactly by War acquisition: if that exact item is available in faction stock it routes to the vault; otherwise that exact item is added to acquisition.
+- Members with slot decisions display **EQUIPMENT OVERRIDE** and Leadership export records the decisions in plain language.
+- Legacy alpha.24.3 JSON data overrides remain readable/clearable for migration safety but are no longer the normal editing workflow.
+
+## Alpha.24.4 faction-message wording + contact tracking
+
+- Member-facing build messages translate internal `ISSUE` routes to **BORROW FROM VAULT**. Internal route semantics remain unchanged.
+- Removed the two explanatory paragraphs requested by the owner from build messages:
+  - the stronger/unknown personal-gear paragraph;
+  - the faction-stock ISSUE-vs-ACQUIRE paragraph.
+- Member build messages, readiness reminders, and leader acquisition reports sign:
+  - **Manic Mike**
+  - **Inventory Manager**
+- Member contact tracking records only trusted Torn-confirmed sends. Opening Compose or clicking Send without confirmation does not mark a message sent.
+- Members show overall contact state plus separate **BUILD MSG** and **DATA REQUEST** status.
+- Quick Build member selection shows **MSG SENT / MSG NOT SENT** and the selected member shows last confirmed build-message time/count.
+- Leadership export includes overall member-message status, last confirmed message time, build-message sent/time/count, and data-request sent/time.
+- Existing pre-alpha.24.4 readiness-reminder sent timestamps remain recognized through the legacy reminder record.
+
+## Alpha.24.3 leadership override + manual data control
+
+- Fresh confirmed-empty combat equipment is labeled **NO COMBAT GEAR EQUIPPED**, not **MISSING DATA**.
+- Every faction member can be marked **WAR READY** individually by Leadership, regardless of automatic build/data status. The automatic baseline remains visible and is not falsified.
+- An individual WAR READY decision persists across API refreshes and procurement-mode changes until Leadership explicitly reopens that member.
+- Every member exposes **Edit Data Override**. Overrides are partial JSON overlays over the stored source/API profile, so omitted fields continue using source data and the source profile remains preserved underneath.
+- Manual overrides can replace nested readiness inputs including battle stats, equipment, owned equipment, supplies, medical state, public intel, member name/level, notes, or other profile fields.
+- Manual overrides are individually clearable and disclosed in the Leadership export with timestamp, reason, and override JSON.
+- War acquisition excludes Leadership-marked WAR READY members, while the underlying automatic build assessment remains available for audit.
+
+## Alpha.24.2 confirmed-empty equipment correction
+
+Live alpha.24.1 testing reproduced a saved-member refresh failure for NedFlanders69: Torn returned a valid equipment response with no combat equipment rows, but Armory rejected it as a parse failure and retained the older clothing-only cache. Alpha.24.2 treats a valid empty `equipment: []` response as fresh evidence, clears stale combat-equipment rows, and displays **No combat equipment equipped (API confirmed)**. A non-empty equipment array that normalizes to zero still fails closed.
+
+
+### Objective readiness correction
+
+Live Morpheus2126 data exposed a second false-positive upgrade path: his Metal Nunchaku (DMG 62.13 / ACC 60.18) exceeded the neutral budget melee floor, but the member-style accuracy adjustment was being applied to the readiness threshold itself. Alpha.24.2 now uses neutral performance for readiness pass/fail and uses member style only to rank already-qualifying alternatives. Exact Morpheus live-stat regression is covered and must resolve Melee as **KEEP**.
 
 ## Historical acceptance notes
 
@@ -618,3 +849,74 @@ New **Coverage** view and export worksheets provide:
 - [ ] Open/export Coverage and verify member HAS/NEED vs faction stock matches visible live data.
 - [ ] Verify shared dock placement/collision remains unchanged.
 - [ ] Do not merge/publish until owner accepts live results.
+
+
+## Alpha.24 weapons / Quick Build / minimums proposal — 2026-10-06
+
+### Source behavior
+
+- Stock still refreshes the official Torn `weapons` faction-inventory category.
+- Weapon rows are grouped as Primary / Secondary / Melee when classification is available.
+- Any weapon row that cannot be mapped to those slots is retained under **UNCLASSIFIED** instead of disappearing.
+- Stock shows Torn weapon-source row counts plus raw API type/subtype/slot/weaponType fields for diagnosis.
+
+### Quick Build
+
+- Builds now opens with a compact **Quick Build** card.
+- Select one faction member and immediately see:
+  - Level;
+  - STR / DEF / SPD / DEX / total;
+  - build style;
+  - offense need;
+  - defense style;
+  - one row per target equipment slot with Current / Target / Route.
+- The Quick Build reuses the existing `compareMemberBuild()` result; it does not create a second recommendation engine.
+- Estimated public battle stats are visibly marked and are planning-only.
+- **Message Build** prepares a Torn message for the selected member; Send remains manual.
+- The prior full detailed build analysis remains available under **Advanced / Full Roster Builds**.
+
+### Manager Minimums Proposal
+
+- Minimums is explicitly labeled **Manager Minimums Proposal**.
+- Existing `minimumProposal()` remains the single quantity engine.
+- The screen summarizes proposal count, rows below minimum, data-required rows, history/confidence, and methodology.
+- A new **WHAT WE STILL NEED TO FIGURE OUT** section exposes:
+  - filled blood-bag compatibility/mix;
+  - usage-history maturity;
+  - weapon classification completeness;
+  - verified member battle-stat coverage;
+  - named preferred external suppliers;
+  - high-value gear boundary.
+- Leadership Excel now includes an **Open Inputs** worksheet in addition to Minimums.
+
+### Static validation
+
+- [x] Userscript parse PASS.
+- [x] Existing Faction Armory logic fixtures PASS.
+- [x] Existing alpha.23 audit/consistency fixtures PASS.
+- [x] Alpha.24 weapon visibility / Quick Build / Minimums regressions PASS.
+- [x] No new MutationObserver or background polling loop introduced.
+- [x] Message Send remains manual.
+
+### Live acceptance required
+
+- [ ] Install alpha.24 candidate and reload Torn.
+- [ ] Open Stock → Refresh Faction.
+- [ ] Expand WEAPONS and confirm Torn weapon source row count.
+- [ ] Confirm every returned weapon appears in Primary / Secondary / Melee / UNCLASSIFIED; no row is silently absent.
+- [ ] Open Builds → Quick Build; select at least two members and verify level/stats/target routes match Advanced build evidence.
+- [ ] For an estimated-stat member, confirm the planning-only warning is visible.
+- [ ] Prepare one Message Build and confirm Torn compose is correctly prefilled; do not auto-send.
+- [ ] Open Minimums in Peace and War mode; inspect proposed MIN/MAX/SHORT values and open-input statuses.
+- [ ] Export Leadership Excel and inspect Minimums + Open Inputs.
+- [ ] Verify dock/collision behavior is unchanged.
+- [ ] Do not merge/publish until owner accepts live results.
+
+
+### Alpha.24.1 Quick Build evidence correction
+
+- Quick Build no longer labels an adequate member-owned-but-not-equipped item as **KEEP**; it is **OWNED / EQUIP**.
+- **KEEP** displays the actual equipped item.
+- **LOANED / VERIFY**, **ISSUE**, and **ACQUIRE** display the specific route item instead of the generic baseline target.
+- Member build messages use the same route-specific action item, preventing a message from telling a member to replace adequate current gear with the baseline example.
+- Static regression covers these route semantics before live acceptance.

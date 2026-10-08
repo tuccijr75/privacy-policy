@@ -1,5 +1,5 @@
 {
-  "suiteVersion": "8.0.0-alpha.50",
+  "suiteVersion": "8.0.0-alpha.54",
   "status": "non-production",
   "baseVersion": "7.5.3",
   "branch": "crm-v8-modular-suite",
@@ -43,7 +43,7 @@
       "id": "faction-armory",
       "name": "MM Faction Armory",
       "role": "faction-inventory-builds-readiness",
-      "version": "8.0.0-alpha.23",
+      "version": "8.0.0-alpha.26",
       "status": "implemented-non-production"
     },
     {

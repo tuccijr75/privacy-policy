@@ -1,7 +1,7 @@
 # MM Faction Armory — Build Readiness Method
 
 Status: non-production / alpha research model  
-Date: 2026-10-02
+Date: 2026-10-06
 
 ## Purpose
 
@@ -14,6 +14,21 @@ This model answers three separate questions and keeps them separate:
 Faction inventory does **not** define the readiness standard. It only changes the route from `ACQUIRE` to `ISSUE` when adequate stock already exists.
 
 The module deliberately does not query Item Market or player Bazaars for live listings. Acquisition uses a curated reference catalog of normal Torn equipment that is broadly obtainable through city/abroad shops or commonly traded player-market supply.
+
+## Member private-data freshness
+
+Saved member keys are an input to current readiness, not a one-time import.
+
+- **Refresh All Saved Members** runs the same canonical member-import path for every saved encrypted member key.
+- Manual member refresh and refresh-all use Torn's unique `timestamp` request parameter so current-state reads do not unintentionally reuse the service cache.
+- Automatic refresh uses a separate **1-hour private-member target** while Armory is open and the vault is unlocked. This cadence is intentionally independent of the longer readiness-staleness classification.
+- A successful refresh replaces the stored equipment snapshot, including replacing a previously confirmed-empty equipment list when Torn now returns equipped items.
+- Local `fetchedAt` / `lastPrivateRefreshAt` records when Armory obtained the response.
+- Upstream/API source or cache time is stored separately when Torn provides it. A local fetch timestamp is never represented as Torn source freshness.
+- Malformed equipment or non-empty equipment that cannot be normalized fails closed and does not replace the prior profile.
+- A valid empty `equipment: []` response remains explicit evidence: **NO COMBAT GEAR EQUIPPED**.
+
+The automatic scheduler reuses this same member refresh path; there is no second collector or competing member-profile source of truth.
 
 ## Combat-stat interpretation
 
@@ -79,7 +94,9 @@ The routine catalog currently contains examples such as:
 - Combat Pants
 - Combat Boots
 
-Weapon comparisons use a simple expected-output proxy based primarily on Damage × Accuracy. The build's offensive need gives only a modest adjustment.
+Weapon comparisons use a simple expected-output proxy based primarily on Damage × Accuracy.
+
+**Readiness pass/fail is neutral.** The member's Strength/Speed-derived offensive preference does not move the readiness floor and does not downgrade otherwise adequate current gear. Offensive preference is used only to rank already-qualifying alternatives when several choices meet the same objective floor.
 
 A recommended item's **minimum normal stat roll**, rather than its midpoint roll, is used as the readiness floor. A normal copy of a recommended item therefore does not fail readiness merely because it rolled below the item's midpoint.
 
@@ -111,6 +128,155 @@ Each standard slot resolves to one of these routes:
 - **ISSUE** — adequate unloaned faction stock exists.
 - **ACQUIRE** — faction stock does not cover the requirement; add the generally available target to the acquisition plan.
 - **REVIEW** — current gear exists but cannot be safely scored yet.
+
+## Leadership decisions and manual overrides
+
+Automatic readiness is advisory evidence, not an irreversible gate.
+
+Leadership may mark any individual faction member **WAR READY**. That manual decision:
+- applies only to that member;
+- persists until Leadership explicitly reopens readiness;
+- excludes the member from War acquisition planning;
+- does not rewrite or hide the automatic build baseline.
+
+Member source/API data also supports a separate manual-override layer. The override is a partial object merged over the stored profile at read time. The original source profile remains stored underneath. This permits explicit correction of any readiness input without fabricating API provenance. Active overrides are shown in the UI and Leadership export and can be cleared per member.
+
+A confirmed empty Torn combat-equipment response is valid evidence and is labeled **NO COMBAT GEAR EQUIPPED**. It is not treated as missing data.
+
+## Per-slot leadership equipment decisions
+
+Leadership can override the automatic recommendation for an individual equipment slot without changing the underlying Torn/API record.
+
+Each slot may have one explicit decision:
+
+- **Accept Equipped Item** — the exact currently equipped item is accepted for readiness. This makes that slot pass by leadership decision while preserving the automatic floor and source item for audit.
+- **Replacement** — leadership chooses an exact item to use instead. Armory does not claim the item is already equipped. If the exact selected item is available in faction stock, the route becomes vault borrowing; otherwise the same exact item becomes the acquisition requirement.
+- **Automatic** — no slot override; normal readiness and routing logic applies.
+
+Slot decisions are independent. Clearing one decision does not clear other member overrides or source data.
+
+## War stock control
+
+War-stock quantities are a separate readiness concern from member equipment. They use one authoritative planning state under Faction Armory and are then consumed by Acquire.
+
+The default War suggestions are roster-scaled starting points, not immutable requirements:
+
+- First Aid Kit: 10 per current member.
+- Small First Aid Kit: 10 per current member.
+- Morphine: 10 per current member.
+- Ipecac Syrup: 1 per current member.
+- Empty Blood Bag: 5 per current member.
+- Flash Grenade, Smoke Grenade, Tear Gas, HEG, Grenade and Pepper Spray: 5 each per current member.
+
+Filled blood-bag mix is not guessed when member blood-type distribution is incomplete.
+
+For each line Armory retains:
+
+- current available faction quantity;
+- calculated suggested minimum;
+- optional manager minimum;
+- **effective minimum** (manager minimum when set, otherwise suggested minimum);
+- explicit order/hold decision;
+- derived shortfall.
+
+The acquisition quantity is not stored separately from this decision:
+
+`shortfall = max(0, effective minimum - current available)`
+
+Only shortfalls whose order decision is enabled flow into Acquire. An internal edit to the minimum, inventory, or order state therefore changes the acquisition result on the next derivation.
+
+## Xanax war estimator
+
+Leadership's agreed 4 / 3 / 2 policy is treated as a **per-member ceiling**, not a requirement to pre-purchase the full ceiling for every faction member.
+
+Default tiers are:
+
+- High: 25,000+ total battle stats → ceiling 4.
+- Medium: 5,000–24,999 → ceiling 3.
+- Low: below 5,000 → ceiling 2.
+
+The current-war target is weighted against the actual ranked-war rival. Armory identifies the rival from Torn `/faction/wars`, reads the rival roster from `/faction/{id}/members`, and uses verified own battle stats when available plus the existing public rank-trigger estimate where private data is absent. Rival battle totals are public-profile estimates and are explicitly treated as estimates.
+
+The default reasonable-match threshold is:
+
+`own total / rival estimated total >= 0.80`
+
+It is adjustable.
+
+The default investment posture is **CONSERVE**, matching Leadership's decision not to make a large consumable investment in a probable-loss matchup. Under CONSERVE, each member receives one recommended Xanax per credible rival target, capped by that member's 4 / 3 / 2 ceiling. Leadership may switch OFF / COMPETE / PUSH and may override an individual member's allocation.
+
+Xanax keeps three different concepts visible:
+
+1. **Leadership ceiling** — the maximum tier-authorized total.
+2. **Matchup target** — the derived recommendation for this opponent and posture.
+3. **Effective stock minimum** — the matchup target unless the Inventory Manager sets a manual minimum.
+
+If current rival evidence is unavailable, the automatic Xanax target fails safe to zero / data-required rather than extrapolating a full-roster purchase.
+
+Opponent profile estimates are locally fetched and cached for six hours. The war record carries its Torn event timing where returned; Armory also records the local fetch time. A refresh failure does not fabricate freshness or erase the prior cached opponent block.
+
+## Derived-state propagation
+
+These values are intentionally recomputed instead of copied between modules:
+
+`member/rival evidence -> matchup evaluation -> Xanax target -> effective minimum -> stock shortfall -> Acquire -> leader report/export`
+
+For ordinary war supplies:
+
+`roster/default suggestion + manager override + order/hold + live faction inventory -> effective minimum -> shortfall -> Acquire`
+
+This means internal edits remain consistent across Minimums, Acquire, leader messaging and Leadership export. The only outbound procurement step is the existing Armory-to-MM_Acquisitions handoff; final purchase and transfer actions remain manual.
+
+## Downstream market freshness rule
+
+Armory is a consumer of Acquisitions-owned market evidence, not an independent market collector. It therefore applies the producer's freshness semantics before a cached price can participate in procurement planning.
+
+- Item Market / Bazaar: use `state.businessRules.maxListingAgeSec` when available; default to 180 seconds.
+- Overseas / Travel: treat source evidence older than 15 minutes as stale.
+- Missing or unparsable timestamps do not qualify as fresh live evidence.
+- Stale values remain diagnostic only. They cannot become `bestPlanning`, reduce the planning unit cost, consume budget, or determine the handoff quantity.
+- Torn Market Reference and Armory static reference values remain labeled fallback references, not verified listings.
+- If no fresh live evidence and no usable fallback reference exist, the requirement stays visible as `PRICE UNKNOWN` with funded quantity zero.
+
+The same freshness-filtered acquisition snapshot feeds Acquire, the Leader snapshot, Leadership Excel and the Armory -> MM_Acquisitions handoff.
+
+## Acquisition output accuracy contract
+
+All Armory procurement outputs must derive from one reconciled acquisition snapshot.
+
+The underlying requirement quantity remains the readiness/minimums result. A manual planned quantity may override that procurement quantity without rewriting readiness or inventory facts.
+
+Price evidence is classified:
+
+1. **LIVE CACHED SOURCE** — cached Item Market, Bazaar, or overseas buyable/source evidence.
+2. **TORN MARKET REFERENCE** — Torn catalog/reference value only.
+3. **ARMORY STATIC REFERENCE** — built-in planning reference only.
+4. **UNPRICED** — no usable planning value.
+
+When any cached live buyable/source price exists, reference values cannot undercut it as the planning basis. References are fallback-only.
+
+Budget reconciliation uses the same planning unit prices displayed in Acquire and the Leader snapshot:
+
+`fundedQty = floor(remaining budget / planning unit price)`, capped by planned quantity.
+
+Unpriced rows receive funded quantity zero. They remain visible as unresolved procurement requirements and are excluded from funded dollar totals.
+
+The four outputs below must consume this same reconciled snapshot:
+
+- Acquire UI;
+- Leader acquisition snapshot;
+- Armory -> MM_Acquisitions handoff;
+- Leadership Excel export.
+
+The Leader snapshot must separately report:
+
+- budget-funded buy-now estimate;
+- full planned priced estimate;
+- known priced amount deferred by budget;
+- unpriced requirements;
+- reference-only priced rows.
+
+All dollar values remain planning estimates. MM_Acquisitions must reverify live source, availability and price before routing, and final purchase remains manual.
 
 ## Acquisition plan
 
@@ -526,3 +692,82 @@ Coverage includes an invariant scan over the full cached roster.
 - If a non-temporary equipped API item cannot be mapped to a standard combat slot, it is surfaced as `UNMAPPED_EQUIPMENT`.
 
 These are diagnostic defects/review flags, not acquisition requirements. They must be resolved before trusting a affected member's automated requirement.
+
+
+## Alpha.24 operator workflow
+
+The normal Builds workflow is intentionally compact:
+
+`select member -> inspect level/stats -> inspect target/route -> optionally prepare member message`
+
+The compact view is only a presentation layer over `compareMemberBuild()`; Advanced / Full Roster Builds remains the evidence view. This prevents the simple and advanced workflows from becoming competing recommendation engines.
+
+Weapon inventory visibility is lossless at the UI layer. A Torn weapon row that lacks enough metadata for Primary / Secondary / Melee classification is shown under **UNCLASSIFIED** with raw classification fields. Classification uncertainty must not hide inventory.
+
+Minimum quantities remain generated by `minimumProposal()`. The Inventory Manager proposes the numeric values and explicitly identifies unresolved inputs; Leadership approves/adjusts the proposal. Leadership is not expected to invent the starting quantities.
+
+
+### Quick Build presentation invariant
+
+Quick Build is not allowed to reinterpret the canonical route:
+
+- `KEEP` means keep the actual currently equipped item.
+- `OWNED` is presented as `OWNED / EQUIP`, because the qualifying item is in the member's inventory but is not yet proven equipped.
+- `LOANED` is presented as `LOANED / VERIFY`.
+- `ISSUE` names the qualifying faction-stock item.
+- `ACQUIRE` names the suggested/baseline acquisition item.
+- `REVIEW` names the current item when known and never implies replacement.
+
+Member-facing build messages must use the same route-specific action item; the generic baseline target is evidence context, not always the member action.
+
+
+## Alpha.25 Market Pulse consumer
+
+Faction Armory consumes Acquisitions-owned Market Pulse as **read-only procurement context**.
+
+Authoritative shared state:
+
+`state.marketIntel.marketPulse.items[itemId]`
+
+Armory accepts only schema 1 and fails closed on missing/unsupported producer state. It reads the producer's current TTL from `marketPulse.settings.ttlMs` (default 45 minutes) and recomputes freshness at read time.
+
+Consumed fields:
+
+- floor price;
+- market depth / total units;
+- observed events per hour;
+- observed units per hour;
+- turnover per hour;
+- liquidity score;
+- confidence percentage;
+- trend percentage;
+- tier;
+- source timestamp;
+- local fetch timestamp;
+- upstream cache delay.
+
+The consumer does **not** create or run a Market Pulse engine, scheduler, lease, API request, or duplicate cache. Acquisitions remains the single producer.
+
+Market Pulse is advisory procurement intelligence only. Its 45-minute producer TTL is intentionally looser than Armory's current live-price planning rules. Therefore Pulse floor price cannot replace fresh Item Market/Bazaar/Travel evidence, cannot determine the planning unit price, cannot consume budget, and cannot change planned quantity.
+
+Acquire, the leader acquisition snapshot, and Leadership Excel expose Pulse context. Stale or low-confidence Pulse remains diagnostic and is not represented as current actionable evidence.
+
+Armory listens for shared `market` domain state updates so Pulse changes can appear while the panel is open without adding a second polling loop.
+
+
+## Alpha.26 private-build isolation
+
+Faction Armory must remain independently usable as Michael's private/personal product. It may consume already-available generic shared evidence, but it must not create an Armory-specific requirement that a customer-facing product needs to understand.
+
+The alpha.25.1 `factionInventory.marketPulseDemand` contract is retired in alpha.26. Armory no longer publishes, renews or schedules any Market Pulse demand hint.
+
+The alpha.25 Market Pulse reader remains allowed only as an optional read-only consumer:
+
+- no Pulse producer/engine/lease/API collector in Armory;
+- no Armory write to the shared `market` domain;
+- no outward Armory-specific demand contract;
+- missing Pulse state is `NO PULSE`, not an error or workflow blocker;
+- stale/low-confidence Pulse remains diagnostic;
+- Pulse never controls readiness, minimums, planning price, planned quantity, budget funding, reports or final actions.
+
+The existing **Find Best Source** broadcast is an optional manual integration path rather than an Armory prerequisite. Any external product-side receiver must remain product-neutral and must be changed only in that product's own build conversation.
