@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.1.0-pda.1
+// @version      2.1.0-pda.2
 // @description  TornPDA mobile edition: trade verification, sale-log tracking, shared payouts and 7 PM ET reports. Read-only Torn API; trades and cash remain manual.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -19,10 +19,10 @@
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.1.0-pda.1';
+ const VERSION='2.1.0-pda.2';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
- const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName'].map(x=>prefix+x);
+ const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY'].map(x=>prefix+x);
  const cache=await PDA_storage.getMany(keys);
  const read=k=>String(cache[prefix+k] ?? '');
  const save=async(k,v)=>{const value=String(v??'').trim();await PDA_storage.set(prefix+k,value);cache[prefix+k]=value;};
@@ -187,8 +187,65 @@
    }catch(e){status='Sync failed: '+e.message;if(!silent)alert(status);}finally{working=false;draw();}
  }
  const host=document.createElement('div');host.id='morpheus-pda';document.documentElement.appendChild(host);const root=host.attachShadow({mode:'closed'});
- const style=document.createElement('style');style.textContent=`*,*:before,*:after{box-sizing:border-box}.open{position:fixed;bottom:max(14px,env(safe-area-inset-bottom));right:12px;background:#2854ab;border:0;color:white;padding:13px 17px;min-height:46px;border-radius:30px;font:bold 14px system-ui;z-index:2147483640;cursor:pointer}.panel{position:fixed;bottom:calc(72px + env(safe-area-inset-bottom));right:8px;width:calc(100vw - 16px);max-height:calc(100dvh - 104px - env(safe-area-inset-bottom));overflow:auto;background:#111d2b;color:#eaf1fb;border:1px solid #405979;border-radius:12px;box-shadow:0 14px 45px #000a;font:14px/1.42 system-ui;z-index:2147483641}header,section{padding:12px 16px;border-bottom:1px solid #32455c}header{display:flex;align-items:center;gap:9px;justify-content:space-between;position:sticky;top:0;background:#1c2e46;z-index:1}header b{font-size:16px}button{font:600 12px system-ui;cursor:pointer;color:#fff;background:#2b55a1;border:1px solid #6984a4;padding:10px 12px;min-height:42px;border-radius:6px}button:disabled{opacity:.55;cursor:default}input,select,textarea{background:#0a1827;border:1px solid #59728f;padding:7px;color:#fff;border-radius:5px;width:100%;min-height:42px;font:16px system-ui}label{display:block;color:#bacce0;margin:8px 0 3px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metrics div{background:#20344c;padding:8px;border-radius:6px}.metrics strong{font-size:16px;display:block}.muted{font-size:12px;color:#b2c6db}.row{display:flex;flex-wrap:wrap;gap:7px;align-items:center}.line{border-bottom:1px solid #344b62;padding:8px 0}.line:last-child{border:0}details summary{cursor:pointer;font-weight:700;margin-bottom:7px}.hide{display:none!important}.warning{padding:8px;border-radius:5px;background:#433b26;color:#ffe4a3}.critical{color:#ffbbaa}.pill{background:#29435e;padding:2px 7px;border-radius:20px;font-size:11px}.num{font-variant-numeric:tabular-nums}.scroll{max-height:280px;overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:right;border-bottom:1px solid #344b62;padding:5px}th:first-child,td:first-child{text-align:left}@media(max-width:500px){.metrics,.grid{grid-template-columns:1fr}}`;
- root.appendChild(style);const opener=document.createElement('button');opener.className='open';opener.textContent='Bazaar Ledger';root.appendChild(opener);const panel=document.createElement('div');panel.className='panel hide';root.appendChild(panel);opener.onclick=()=>{opened=!opened;panel.classList.toggle('hide',!opened);if(opened)draw();};
+ const style=document.createElement('style');style.textContent=`*,*:before,*:after{box-sizing:border-box}.open{position:fixed;bottom:max(14px,env(safe-area-inset-bottom));right:12px;background:#2854ab;border:0;color:white;padding:13px 17px;min-height:46px;border-radius:30px;font:bold 14px system-ui;z-index:2147483640;cursor:pointer;touch-action:none;-webkit-user-select:none;user-select:none}.panel{position:fixed;bottom:calc(72px + env(safe-area-inset-bottom));right:8px;width:calc(100vw - 16px);max-height:calc(100dvh - 104px - env(safe-area-inset-bottom));overflow:auto;background:#111d2b;color:#eaf1fb;border:1px solid #405979;border-radius:12px;box-shadow:0 14px 45px #000a;font:14px/1.42 system-ui;z-index:2147483641}header,section{padding:12px 16px;border-bottom:1px solid #32455c}header{display:flex;align-items:center;gap:9px;justify-content:space-between;position:sticky;top:0;background:#1c2e46;z-index:1}header b{font-size:16px}button{font:600 12px system-ui;cursor:pointer;color:#fff;background:#2b55a1;border:1px solid #6984a4;padding:10px 12px;min-height:42px;border-radius:6px}button:disabled{opacity:.55;cursor:default}input,select,textarea{background:#0a1827;border:1px solid #59728f;padding:7px;color:#fff;border-radius:5px;width:100%;min-height:42px;font:16px system-ui}label{display:block;color:#bacce0;margin:8px 0 3px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metrics div{background:#20344c;padding:8px;border-radius:6px}.metrics strong{font-size:16px;display:block}.muted{font-size:12px;color:#b2c6db}.row{display:flex;flex-wrap:wrap;gap:7px;align-items:center}.line{border-bottom:1px solid #344b62;padding:8px 0}.line:last-child{border:0}details summary{cursor:pointer;font-weight:700;margin-bottom:7px}.hide{display:none!important}.warning{padding:8px;border-radius:5px;background:#433b26;color:#ffe4a3}.critical{color:#ffbbaa}.pill{background:#29435e;padding:2px 7px;border-radius:20px;font-size:11px}.num{font-variant-numeric:tabular-nums}.scroll{max-height:280px;overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:right;border-bottom:1px solid #344b62;padding:5px}th:first-child,td:first-child{text-align:left}@media(max-width:500px){.metrics,.grid{grid-template-columns:1fr}}`;
+ root.appendChild(style);const opener=document.createElement('button');opener.className='open';opener.textContent='Bazaar Ledger';root.appendChild(opener);const panel=document.createElement('div');panel.className='panel hide';root.appendChild(panel);// The floating launcher can be dragged anywhere within the safe viewport.
+ // Save relative coordinates so its placement survives reload and screen rotation.
+ const BUTTON_MARGIN=10;
+ const bound=(v,min,max)=>Math.max(min,Math.min(max,v));
+ const buttonLimits=()=>({right:Math.max(BUTTON_MARGIN,window.innerWidth-opener.offsetWidth-BUTTON_MARGIN),bottom:Math.max(BUTTON_MARGIN,window.innerHeight-opener.offsetHeight-60)});
+ function positionButton(nx,ny){
+   const lim=buttonLimits();
+   const x=BUTTON_MARGIN+bound(nx,0,1)*(lim.right-BUTTON_MARGIN);
+   const y=BUTTON_MARGIN+bound(ny,0,1)*(lim.bottom-BUTTON_MARGIN);
+   opener.style.left=Math.round(x)+'px';opener.style.top=Math.round(y)+'px';
+   opener.style.right='auto';opener.style.bottom='auto';
+ }
+ function restoreButton(){
+   if(read('buttonX')===''||read('buttonY')==='')return;
+   const x=Number(read('buttonX')),y=Number(read('buttonY'));
+   if(Number.isFinite(x)&&Number.isFinite(y))positionButton(x,y);
+ }
+ restoreButton();
+ let drag=null,suppressTap=false;
+ opener.addEventListener('pointerdown',e=>{
+   if(e.pointerType==='mouse'&&e.button!==0)return;
+   const rect=opener.getBoundingClientRect();
+   drag={id:e.pointerId,startX:e.clientX,startY:e.clientY,left:rect.left,top:rect.top,moved:false};
+   if(opener.setPointerCapture)opener.setPointerCapture(e.pointerId);
+ });
+ opener.addEventListener('pointermove',e=>{
+   if(!drag||e.pointerId!==drag.id)return;
+   const dx=e.clientX-drag.startX,dy=e.clientY-drag.startY;
+   if(!drag.moved&&Math.hypot(dx,dy)<8)return;
+   drag.moved=true;
+   const lim=buttonLimits();
+   opener.style.left=Math.round(bound(drag.left+dx,BUTTON_MARGIN,lim.right))+'px';
+   opener.style.top=Math.round(bound(drag.top+dy,BUTTON_MARGIN,lim.bottom))+'px';
+   opener.style.right='auto';opener.style.bottom='auto';
+   e.preventDefault();
+ });
+ async function finishDrag(e){
+   if(!drag||e.pointerId!==drag.id)return;
+   const moved=drag.moved;drag=null;
+   if(opener.hasPointerCapture?.(e.pointerId))opener.releasePointerCapture(e.pointerId);
+   if(!moved)return;
+   // Suppress the synthetic click that otherwise opens the dashboard after a drag.
+   suppressTap=true;
+   setTimeout(()=>{suppressTap=false;},400);
+   const lim=buttonLimits(),rect=opener.getBoundingClientRect();
+   const nx=(lim.right-BUTTON_MARGIN)>0?(rect.left-BUTTON_MARGIN)/(lim.right-BUTTON_MARGIN):0;
+   const ny=(lim.bottom-BUTTON_MARGIN)>0?(rect.top-BUTTON_MARGIN)/(lim.bottom-BUTTON_MARGIN):0;
+   const values={[prefix+'buttonX']:String(bound(nx,0,1)),[prefix+'buttonY']:String(bound(ny,0,1))};
+   try{await PDA_storage.setMany(values);Object.assign(cache,values);}
+   catch(err){console.error('[Morpheus PDA] Failed to save button placement:',err);}
+ }
+ opener.addEventListener('pointerup',e=>{void finishDrag(e);});
+ opener.addEventListener('pointercancel',e=>{void finishDrag(e);});
+ opener.addEventListener('click',e=>{
+   if(suppressTap){e.preventDefault();e.stopPropagation();suppressTap=false;return;}
+   opened=!opened;panel.classList.toggle('hide',!opened);if(opened)draw();
+ });
+ window.addEventListener('resize',()=>{if(!drag)restoreButton();});
  function rowsReport(obj){return Object.keys(obj||{}).sort().reverse().slice(0,8).map(k=>`<tr><td>${esc(k)}</td><td>${esc(obj[k].sales)}</td><td>${money(obj[k].profit)}</td><td>${money(obj[k].morpheusProfit)}</td><td>${money(obj[k].morpheusDue)}</td><td>${money(obj[k].ownerProfit)}</td></tr>`).join('');}
  function itemRow(l){const rem=l.qty-l.sold-l.returned,buttons=[];
    if(state.role==='owner'&&l.status==='received_pending')buttons.push(`<button data-action="classify" data-id="${esc(l.id)}">Classify received item</button>`);
