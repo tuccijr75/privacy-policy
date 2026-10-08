@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM War Intel
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-alpha.7
+// @version      0.1.0-alpha.8
 // @description  Ranked-war target assignments, rival intelligence, attack evidence, energy pressure, and defensive coordination.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -36,7 +36,10 @@
     highRisk: 70,
     watchRisk: 45,
     maxSuggestedGroup: 6,
-    minimumGroupConfidence: 45
+    minimumGroupConfidence: 45,
+    criticalStatRatio: 0.25,
+    soloRatioWithComponents: 1.2,
+    soloRatioTotalOnly: 2.0
   });
 
   function finite(value) {
@@ -112,6 +115,11 @@
     const hits = Math.max(0, Number(input.hits) || 0);
     const misses = Math.max(0, Number(input.misses) || 0);
     const groupModifier = Math.max(1, Number(input.groupModifier) || 1);
+    const fairFightModifier = positive(Number(input.fairFightModifier)) ?? 1;
+    const warModifier = positive(Number(input.warModifier)) ?? 1;
+    const retaliationModifier = positive(Number(input.retaliationModifier)) ?? 1;
+    const overseasModifier = positive(Number(input.overseasModifier)) ?? 1;
+    const chainModifier = positive(Number(input.chainModifier)) ?? 1;
     const started = Math.max(0, Number(input.started) || 0);
     const ended = Math.max(0, Number(input.ended) || 0);
     return {
@@ -126,6 +134,11 @@
       hits,
       misses,
       groupModifier,
+      fairFightModifier,
+      warModifier,
+      retaliationModifier,
+      overseasModifier,
+      chainModifier,
       group: input.group === true || groupModifier > 1,
       rankedWar: input.rankedWar === true,
       started,
@@ -155,6 +168,23 @@
   function resultIsLoss(result) {
     const value = String(result || '').toLowerCase();
     return ['lost', 'stalemate', 'escape'].some(x => value.includes(x));
+  }
+
+  function latestObservedBattleContext(attacks, playerId) {
+    const row = (Array.isArray(attacks) ? attacks : [])
+      .filter(item => String(item.attackerId) === String(playerId))
+      .sort((a, b) => (Number(b.ended) || 0) - (Number(a.ended) || 0))[0];
+    if (!row) return null;
+    return {
+      ended: Number(row.ended) || 0,
+      result: String(row.result || ''),
+      fairFight: positive(Number(row.fairFightModifier)),
+      war: positive(Number(row.warModifier)),
+      group: positive(Number(row.groupModifier)),
+      retaliation: positive(Number(row.retaliationModifier)),
+      overseas: positive(Number(row.overseasModifier)),
+      chain: positive(Number(row.chainModifier))
+    };
   }
 
   function matchupSummary(attacks, attackerId, defenderId) {
@@ -236,28 +266,108 @@
     return finite(value) && value > 0 ? value : null;
   }
 
-  function distributionMatchupEdge(attackerIntel, targetIntel) {
-    const attackerTotal = estimateOf(attackerIntel);
-    const targetTotal = estimateOf(targetIntel);
-    if (attackerTotal === null || targetTotal === null) return 0;
-    const pairs = [
-      ['speed', 'dexterity'],
-      ['strength', 'defense'],
-      ['defense', 'strength'],
-      ['dexterity', 'speed']
-    ];
-    let score = 0;
-    let compared = 0;
-    for (const [attackerStat, targetStat] of pairs) {
-      const attackerPct = distributionPercent(attackerIntel, attackerStat);
-      const targetPct = distributionPercent(targetIntel, targetStat);
-      if (attackerPct === null || targetPct === null) continue;
-      const attackerValue = attackerTotal * attackerPct / 100;
-      const targetValue = targetTotal * targetPct / 100;
-      score += clamp(Math.log2((attackerValue + 1) / (targetValue + 1)) * 4, -8, 8);
-      compared += 1;
+  function newestCompleteSpy(intel) {
+    const rows = Array.isArray(intel && intel.spies) ? intel.spies : [];
+    return rows
+      .filter(row => ['strength', 'speed', 'defense', 'dexterity'].every(stat => positive(Number(row && row[stat])) !== null))
+      .sort((a, b) => (Number(b && b.last_updated) || 0) - (Number(a && a.last_updated) || 0))[0] || null;
+  }
+
+  function combatStatProfile(intel) {
+    const mergedTotal = estimateOf(intel);
+    const spy = newestCompleteSpy(intel);
+    const stats = { strength: null, speed: null, defense: null, dexterity: null };
+    const percentages = { strength: null, speed: null, defense: null, dexterity: null };
+    let precision = 'none';
+    let statTotal = mergedTotal;
+    let source = String(intel && intel.source || '');
+    let observedAt = Number(intel && (intel.last_updated ?? intel.lastUpdated)) || null;
+    const spyAt = Number(spy && spy.last_updated) || 0;
+    const distributionAt = Number(intel && intel.distribution && intel.distribution.last_updated) || 0;
+    const distributionKnown = Object.keys(stats).filter(stat => distributionPercent(intel, stat) !== null).length;
+    const useExactSpy = Boolean(spy && (!distributionKnown || spyAt >= distributionAt));
+
+    if (useExactSpy) {
+      for (const stat of Object.keys(stats)) stats[stat] = positive(Number(spy[stat]));
+      statTotal = positive(Number(spy.total)) ?? Object.values(stats).reduce((sum, value) => sum + (value || 0), 0);
+      source = String(spy.source || 'spy');
+      observedAt = spyAt || observedAt;
+      precision = 'exact-spy';
+    } else if (mergedTotal !== null) {
+      let known = 0;
+      for (const stat of Object.keys(stats)) {
+        const pct = distributionPercent(intel, stat);
+        percentages[stat] = pct;
+        if (pct !== null) {
+          stats[stat] = mergedTotal * pct / 100;
+          known += 1;
+        }
+      }
+      if (known) observedAt = distributionAt || observedAt;
+      precision = known ? 'premium-distribution' : 'total-only';
     }
-    return compared ? clamp(Math.round(score), -20, 20) : 0;
+
+    const available = intel && intel.available_estimates && typeof intel.available_estimates === 'object'
+      ? intel.available_estimates
+      : {};
+    return {
+      mergedTotal,
+      statTotal,
+      stats,
+      percentages,
+      precision,
+      source,
+      observedAt,
+      fairFight: positive(Number(intel && intel.fair_fight)),
+      premiumInsights: intel?.premium_insights_available === true || intel?.premiumInsightsAvailable === true,
+      availableEstimates: {
+        bss: positive(Number(available?.bss?.bs_estimate)),
+        premium: positive(Number(available?.premium?.bs_estimate)),
+        spies: positive(Number(available?.spies?.bs_estimate))
+      }
+    };
+  }
+
+  function combatMatchup(attackerIntel, targetIntel) {
+    const attacker = combatStatProfile(attackerIntel);
+    const target = combatStatProfile(targetIntel);
+    const defs = [
+      ['hit', 'speed', 'dexterity'],
+      ['damage', 'strength', 'defense'],
+      ['dodge', 'dexterity', 'speed'],
+      ['mitigation', 'defense', 'strength']
+    ];
+    const edges = {};
+    const ratios = [];
+    for (const [name, attackerStat, targetStat] of defs) {
+      const numerator = attacker.stats[attackerStat];
+      const denominator = target.stats[targetStat];
+      if (numerator === null || denominator === null) {
+        edges[name] = null;
+        continue;
+      }
+      const ratio = numerator / denominator;
+      const edge = clamp(Math.log2(Math.max(0.000001, ratio)) * 10, -25, 25);
+      edges[name] = { ratio, edge, attackerStat, targetStat };
+      ratios.push(ratio);
+    }
+    const coverage = ratios.length;
+    const score = coverage
+      ? clamp(Math.round(Object.values(edges).filter(Boolean).reduce((sum, row) => sum + row.edge, 0) / coverage), -25, 25)
+      : 0;
+    return {
+      attacker,
+      target,
+      edges,
+      coverage,
+      score,
+      worstRatio: coverage ? Math.min(...ratios) : null,
+      criticalMismatch: coverage >= 2 && Math.min(...ratios) < LIMITS.criticalStatRatio
+    };
+  }
+
+  function distributionMatchupEdge(attackerIntel, targetIntel) {
+    return combatMatchup(attackerIntel, targetIntel).score;
   }
 
   function energyRegenProfile(profile) {
@@ -451,7 +561,8 @@
         const confidence = estimateConfidence(intel, nowSeconds);
         const history = matchupSummary(attacks, member.id, target.id);
         const expectedDamage = history.averageGroupDamage ?? history.averageSoloDamage ?? history.averageDamage;
-        const distributionEdge = distributionMatchupEdge(intel, targetIntel);
+        const matchup = combatMatchup(intel, targetIntel);
+        const distributionEdge = matchup.score;
         const energyLoad = recentAttackLoad(attacks, member.id, nowSeconds, 3600);
         const activity = activityBand(member, nowSeconds);
         let score = 0;
@@ -466,20 +577,30 @@
           const levelRatio = (Math.max(1, Number(member.level) || 1) + 20) / (Math.max(1, Number(target.level) || 1) + 20);
           score += clamp(levelRatio * 8, 0, 12);
         }
-        score += distributionEdge;
+        score += distributionEdge * 1.5;
+        if (matchup.coverage >= 3 && matchup.worstRatio !== null && matchup.worstRatio >= 0.75) score += 8;
+        if (matchup.criticalMismatch) score -= 30;
         if (activity === 'active') score += 8;
         else if (activity === 'warm') score += 3;
         if (energyLoad.lastAttackAt && nowSeconds - energyLoad.lastAttackAt < 60) score -= 8;
         if (expectedDamage !== null && targetLife !== null) score += clamp((expectedDamage / targetLife) * 20, 0, 20);
         score += confidence * 0.1;
-        return { member, bs, confidence, history, expectedDamage, distributionEdge, energyLoad, activity, score };
+        return { member, bs, confidence, history, expectedDamage, distributionEdge, matchup, energyLoad, activity, score };
       })
       .sort((a, b) => b.score - a.score);
 
-    const soloEligible = candidates.filter(row =>
-      (row.history.soloAttempts >= 2 && row.history.soloWinRate !== null && row.history.soloWinRate >= 0.75) ||
-      (row.bs !== null && targetBs !== null && row.confidence >= 45 && targetConfidence >= 45 && row.bs >= targetBs * 1.35)
-    );
+    const soloEligible = candidates.filter(row => {
+      const proven = row.history.soloAttempts >= 2 && row.history.soloWinRate !== null && row.history.soloWinRate >= 0.75;
+      const requiredRatio = row.matchup.coverage >= 2
+        ? LIMITS.soloRatioWithComponents
+        : LIMITS.soloRatioTotalOnly;
+      const estimated = row.bs !== null && targetBs !== null &&
+        row.confidence >= 45 && targetConfidence >= 45 &&
+        row.bs >= targetBs * requiredRatio &&
+        !row.matchup.criticalMismatch &&
+        (row.matchup.coverage < 2 || row.matchup.score >= -5);
+      return proven || estimated;
+    });
     soloEligible.sort((a, b) => {
       const aProven = a.history.soloAttempts >= 2 && a.history.soloWinRate !== null && a.history.soloWinRate >= 0.75;
       const bProven = b.history.soloAttempts >= 2 && b.history.soloWinRate !== null && b.history.soloWinRate >= 0.75;
@@ -490,11 +611,21 @@
         const attempts = b.history.soloAttempts - a.history.soloAttempts;
         if (attempts) return attempts;
       }
+      const tier = row => {
+        if (row.matchup.coverage < 2) return 0;
+        if (row.matchup.score >= 0 && row.matchup.worstRatio !== null && row.matchup.worstRatio >= 0.5) return 2;
+        return 1;
+      };
+      const aTier = tier(a);
+      const bTier = tier(b);
+      if (aTier !== bTier) return bTier - aTier;
       if (a.bs !== null && b.bs !== null && targetBs !== null) {
         const aSurplus = a.bs / targetBs;
         const bSurplus = b.bs / targetBs;
         if (aSurplus !== bSurplus) return aSurplus - bSurplus;
       }
+      if (a.matchup.coverage !== b.matchup.coverage) return b.matchup.coverage - a.matchup.coverage;
+      if (a.matchup.score !== b.matchup.score) return b.matchup.score - a.matchup.score;
       return b.score - a.score;
     });
     const solo = soloEligible[0];
@@ -502,8 +633,17 @@
     if (solo) {
       return {
         mode: 'solo',
-        confidence: clamp(Math.round(Math.max(solo.confidence, solo.history.soloAttempts * 20)), 0, 100),
-        reason: solo.history.soloAttempts >= 2 ? 'observed-solo-matchup-advantage' : 'estimated-strength-advantage',
+        confidence: clamp(Math.round(Math.max(
+          solo.confidence,
+          targetConfidence,
+          solo.history.soloAttempts * 20,
+          solo.matchup.coverage ? 50 + solo.matchup.coverage * 10 + Math.max(-10, solo.matchup.score) : 0
+        )), 0, 100),
+        reason: solo.history.soloAttempts >= 2
+          ? 'observed-solo-matchup-advantage'
+          : solo.matchup.coverage >= 2
+            ? 'component-matchup-advantage'
+            : 'estimated-strength-advantage',
         candidates: [solo],
         suggestedCount: 1,
         projectedDamage: solo.expectedDamage,
@@ -545,8 +685,13 @@
     const selected = maxGroup.slice(0, suggestedCount);
     const selectedKnownDamage = selected.filter(row => row.expectedDamage !== null).length;
     const damageConfidence = selected.length ? Math.round((selectedKnownDamage / selected.length) * 100) : 0;
-
-    const groupConfidence = clamp(Math.round(targetConfidence * 0.5 + damageConfidence * 0.5), 0, 100);
+    const componentCoverage = selected.length
+      ? selected.reduce((sum, row) => sum + row.matchup.coverage, 0) / (selected.length * 4)
+      : 0;
+    const componentConfidence = Math.round(componentCoverage * 100);
+    const groupConfidence = componentCoverage > 0
+      ? clamp(Math.round(targetConfidence * 0.4 + damageConfidence * 0.35 + componentConfidence * 0.25), 0, 100)
+      : clamp(Math.round(targetConfidence * 0.5 + damageConfidence * 0.5), 0, 100);
     if (groupConfidence < LIMITS.minimumGroupConfidence) {
       return {
         mode: 'hold',
@@ -590,7 +735,7 @@
     const nowSeconds = Number(input && input.nowSeconds);
     const used = new Set();
     const ownById = new Map(attackers.map(member => [String(member.id), member]));
-    const lockedIds = new Set();
+    const rowsByTarget = new Map();
 
     const ordered = targets
       .map(target => {
@@ -628,75 +773,170 @@
       })
       .sort((a, b) => b.priority - a.priority || lastActionOrder(a.target, b.target));
 
-    for (const item of ordered) {
-      if (item.priority < 0 || item.availability.state !== 'candidate') continue;
-      const ids = lockedAssignments[String(item.target.id)];
-      if (!Array.isArray(ids)) continue;
-      for (const id of ids) if (ownById.has(String(id))) lockedIds.add(String(id));
-    }
+    const actionable = ordered.filter(item => item.priority >= 0 && item.availability.state === 'candidate');
 
-    const rows = [];
-    for (const item of ordered) {
-      if (item.priority < 0 || item.availability.state !== 'candidate') continue;
+    const setRow = (item, recommendation, assigned, source) => {
       const targetId = String(item.target.id);
       const rawClaims = Array.isArray(claimsByTarget[targetId]) ? claimsByTarget[targetId] : [];
+      rowsByTarget.set(targetId, {
+        target: item.target,
+        availability: item.availability,
+        activity: item.activity,
+        enemyEnergy: item.load,
+        recommendation,
+        assigned,
+        source,
+        claims: rawClaims
+      });
+    };
+
+    // Explicit coordinator locks have first priority.
+    for (const item of actionable) {
+      const targetId = String(item.target.id);
       const lockIds = Array.isArray(lockedAssignments[targetId]) ? lockedAssignments[targetId].map(String) : [];
       const lockedMembers = lockIds
         .map(id => ownById.get(id))
         .filter(Boolean)
         .filter(member => !used.has(String(member.id)) && isOkay(member) && activityBand(member, nowSeconds) !== 'cold');
-      if (lockedMembers.length) {
-        for (const member of lockedMembers) used.add(String(member.id));
-        const lockedRecommendation = targetRecommendation({
-          target: item.observed,
-          attackers: lockedMembers,
-          intelById,
-          attacks,
-          nowSeconds
-        });
-        const evidenceById = new Map(lockedRecommendation.candidates.map(row => [String(row.member.id), row]));
-        rows.push({
-          target: item.target,
-          availability: item.availability,
-          activity: item.activity,
-          enemyEnergy: item.load,
-          recommendation: { ...lockedRecommendation, mode: 'locked', suggestedCount: lockedMembers.length },
-          assigned: lockedMembers.map(member => evidenceById.get(String(member.id)) || { member }),
-          source: 'locked',
-          claims: rawClaims
-        });
-        continue;
-      }
+      if (!lockedMembers.length) continue;
+      for (const member of lockedMembers) used.add(String(member.id));
+      const lockedRecommendation = targetRecommendation({
+        target: item.observed,
+        attackers: lockedMembers,
+        intelById,
+        attacks,
+        nowSeconds
+      });
+      const evidenceById = new Map(lockedRecommendation.candidates.map(row => [String(row.member.id), row]));
+      setRow(
+        item,
+        { ...lockedRecommendation, mode: 'locked', suggestedCount: lockedMembers.length },
+        lockedMembers.map(member => evidenceById.get(String(member.id)) || { member }),
+        'locked'
+      );
+    }
 
-      const claimedMembers = rawClaims
+    // Valid FFScouter claims are explicit coordination and outrank automatic matching.
+    for (const item of actionable) {
+      const targetId = String(item.target.id);
+      if (rowsByTarget.has(targetId)) continue;
+      const rawClaims = Array.isArray(claimsByTarget[targetId]) ? claimsByTarget[targetId] : [];
+      const claimedMember = rawClaims
         .map(claim => ownById.get(String(claim && claim.claimer && claim.claimer.player_id)))
         .filter(Boolean)
-        .filter(member => !used.has(String(member.id)) && isOkay(member) && activityBand(member, nowSeconds) !== 'cold');
+        .find(member => !used.has(String(member.id)) && isOkay(member) && activityBand(member, nowSeconds) !== 'cold');
+      if (!claimedMember) continue;
+      used.add(String(claimedMember.id));
+      const single = targetRecommendation({
+        target: item.observed,
+        attackers: [claimedMember],
+        intelById,
+        attacks,
+        nowSeconds
+      });
+      setRow(
+        item,
+        { ...single, mode: single.mode === 'hold' ? 'claimed' : single.mode },
+        single.candidates.length ? single.candidates : [{ member: claimedMember }],
+        'ff-claim'
+      );
+    }
 
-      if (claimedMembers.length) {
-        const member = claimedMembers[0];
-        used.add(String(member.id));
-        const single = targetRecommendation({
+    // Build every viable SOLO edge, then solve a maximum-cardinality unique matching.
+    const optionMap = new Map();
+    for (const item of actionable) {
+      const targetId = String(item.target.id);
+      if (rowsByTarget.has(targetId)) continue;
+      const targetBs = estimateOf(intelById[targetId]);
+      const options = [];
+      for (const member of attackers) {
+        const memberId = String(member.id);
+        if (used.has(memberId) || !isOkay(member) || activityBand(member, nowSeconds) === 'cold') continue;
+        const recommendation = targetRecommendation({
           target: item.observed,
           attackers: [member],
           intelById,
           attacks,
           nowSeconds
         });
-        rows.push({
-          target: item.target,
-          availability: item.availability,
-          activity: item.activity,
-          enemyEnergy: item.load,
-          recommendation: { ...single, mode: single.mode === 'hold' ? 'claimed' : single.mode },
-          assigned: single.candidates.length ? single.candidates : [{ member }],
-          source: 'ff-claim',
-          claims: rawClaims
-        });
-        continue;
+        if (recommendation.mode !== 'solo' || !recommendation.candidates.length) continue;
+        const candidate = recommendation.candidates[0];
+        const proven = candidate.history.soloAttempts >= 2 &&
+          candidate.history.soloWinRate !== null &&
+          candidate.history.soloWinRate >= 0.75;
+        const componentTier = candidate.matchup.coverage < 2
+          ? 0
+          : candidate.matchup.score >= 0 && candidate.matchup.worstRatio !== null && candidate.matchup.worstRatio >= 0.5
+            ? 2
+            : 1;
+        const surplus = candidate.bs !== null && targetBs !== null ? candidate.bs / targetBs : Number.POSITIVE_INFINITY;
+        options.push({ item, member, memberId, recommendation, candidate, proven, componentTier, surplus });
       }
+      options.sort((a, b) => {
+        if (a.proven !== b.proven) return b.proven ? 1 : -1;
+        if (a.componentTier !== b.componentTier) return b.componentTier - a.componentTier;
+        if (a.surplus !== b.surplus) return a.surplus - b.surplus;
+        if (a.candidate.matchup.coverage !== b.candidate.matchup.coverage) {
+          return b.candidate.matchup.coverage - a.candidate.matchup.coverage;
+        }
+        if (a.candidate.matchup.score !== b.candidate.matchup.score) {
+          return b.candidate.matchup.score - a.candidate.matchup.score;
+        }
+        return b.recommendation.confidence - a.recommendation.confidence;
+      });
+      optionMap.set(targetId, options);
+    }
 
-      const remaining = attackers.filter(member => !used.has(String(member.id)) && !lockedIds.has(String(member.id)));
+    const targetOrder = actionable
+      .filter(item => !rowsByTarget.has(String(item.target.id)))
+      .filter(item => (optionMap.get(String(item.target.id)) || []).length > 0)
+      .sort((a, b) => {
+        const aCount = (optionMap.get(String(a.target.id)) || []).length;
+        const bCount = (optionMap.get(String(b.target.id)) || []).length;
+        return aCount - bCount || b.priority - a.priority || lastActionOrder(a.target, b.target);
+      });
+    const attackerToTarget = new Map();
+    const targetToOption = new Map();
+
+    const trySoloMatch = (targetId, seenTargets, seenAttackers) => {
+      if (seenTargets.has(targetId)) return false;
+      seenTargets.add(targetId);
+      const options = optionMap.get(targetId) || [];
+      for (const option of options) {
+        if (seenAttackers.has(option.memberId)) continue;
+        seenAttackers.add(option.memberId);
+        const occupiedTarget = attackerToTarget.get(option.memberId);
+        if (!occupiedTarget || trySoloMatch(occupiedTarget, seenTargets, seenAttackers)) {
+          attackerToTarget.set(option.memberId, targetId);
+          targetToOption.set(targetId, option);
+          return true;
+        }
+      }
+      return false;
+    };
+
+    for (const item of targetOrder) {
+      trySoloMatch(String(item.target.id), new Set(), new Set());
+    }
+
+    for (const item of actionable) {
+      const targetId = String(item.target.id);
+      if (rowsByTarget.has(targetId)) continue;
+      const option = targetToOption.get(targetId);
+      if (!option) continue;
+      used.add(option.memberId);
+      setRow(item, option.recommendation, [option.candidate], 'auto');
+    }
+
+    // GROUP/HOLD decisions consume only members left after every viable SOLO match.
+    for (const item of actionable) {
+      const targetId = String(item.target.id);
+      if (rowsByTarget.has(targetId)) continue;
+      const remaining = attackers.filter(member =>
+        !used.has(String(member.id)) &&
+        isOkay(member) &&
+        activityBand(member, nowSeconds) !== 'cold'
+      );
       const recommendation = targetRecommendation({
         target: item.observed,
         attackers: remaining,
@@ -704,35 +944,23 @@
         attacks,
         nowSeconds
       });
-      if (recommendation.mode === 'hold' || !recommendation.candidates.length) {
-        rows.push({
-          target: item.target,
-          availability: item.availability,
-          activity: item.activity,
-          enemyEnergy: item.load,
-          recommendation,
-          assigned: [],
-          source: 'hold',
-          claims: rawClaims
-        });
-        continue;
+      if (recommendation.mode === 'group' && recommendation.candidates.length) {
+        const assigned = recommendation.candidates.filter(row => !used.has(String(row.member.id)));
+        if (assigned.length) {
+          for (const row of assigned) used.add(String(row.member.id));
+          setRow(
+            item,
+            { ...recommendation, candidates: assigned, suggestedCount: assigned.length },
+            assigned,
+            'auto'
+          );
+          continue;
+        }
       }
-
-      const assigned = recommendation.candidates.filter(row => !used.has(String(row.member.id)));
-      if (!assigned.length) continue;
-      for (const row of assigned) used.add(String(row.member.id));
-      rows.push({
-        target: item.target,
-        availability: item.availability,
-        activity: item.activity,
-        enemyEnergy: item.load,
-        recommendation: { ...recommendation, candidates: assigned, suggestedCount: assigned.length },
-        assigned,
-        source: 'auto',
-        claims: rawClaims
-      });
+      setRow(item, recommendation, [], 'hold');
     }
 
+    const rows = actionable.map(item => rowsByTarget.get(String(item.target.id))).filter(Boolean);
     const readyUnassignedAttackers = attackers.filter(member =>
       !used.has(String(member.id)) &&
       isOkay(member) &&
@@ -806,10 +1034,13 @@
     activityBand,
     assignmentPlan,
     attackAvailability,
+    combatMatchup,
+    combatStatProfile,
     defensiveBoard,
     distributionMatchupEdge,
     energyRegenProfile,
     estimateConfidence,
+    latestObservedBattleContext,
     lossRecoveryAdvice,
     matchupSummary,
     mergeAttackHistory,
@@ -824,7 +1055,7 @@
 
 (() => {
 'use strict';
-const APP='MM War Intel', VERSION='0.1.0-alpha.7', MODULE_ID='war-intel';
+const APP='MM War Intel', VERSION='0.1.0-alpha.8', MODULE_ID='war-intel';
 const STATE_KEY='mm-war-intel:state:v1', LEASE_KEY='mm-war-intel:lease:v1', RUNTIME_KEY='__MMWarIntelRuntimeV1';
 const REFRESH_MS=30000, OUTCOME_POLL_MS=12000, LEASE_MS=90000, STATS_MS=300000, LIFE_STALE_MS=120000, REQUEST_TIMEOUT_MS=10000, FF_CLAIMS_BACKOFF_MS=120000;
 const MAX_LOGS=8, MAX_PROFILES=8, MAX_ATTACK_PAGES=3, ATTACK_ENERGY_COST=25;
@@ -896,7 +1127,13 @@ async function refreshAttacks(options={}){
         attackerName:String(r?.attacker?.name||''),
         defenderName:String(r?.defender?.name||''),
         result:String(r?.result||''),damage:0,hits:0,misses:0,
-        groupModifier,group:groupModifier>1,rankedWar:true,started,ended
+        groupModifier,
+        fairFightModifier:Number(modifiers.fair_fight)||1,
+        warModifier:Number(modifiers.war)||1,
+        retaliationModifier:Number(modifiers.retaliation)||1,
+        overseasModifier:Number(modifiers.overseas)||1,
+        chainModifier:Number(modifiers.chain)||1,
+        group:groupModifier>1,rankedWar:true,started,ended
       });
     }
 
@@ -1045,10 +1282,52 @@ function defense(){return logic.defensiveBoard({ownMembers:state.ownMembers,enem
 function targets(){const now=nowSec();return state.enemyMembers.map(t=>{const life=state.life[String(t.id)];const observed={...t,lifeCurrent:life?Number(life.current):null,lifeMaximum:life?Number(life.maximum):null,lifeFetchedAt:life?Math.floor(Number(life.fetchedAt)/1000):null};return{t,recommendation:logic.targetRecommendation({target:observed,attackers:state.ownMembers,intelById:state.intel,attacks:state.attacks,nowSeconds:now}),availability:logic.attackAvailability(t,now),claims:claims(t.id),energy:logic.recentAttackLoad(state.attacks,t.id,now,3600,life)};}).sort((a,b)=>(a.availability.state==='candidate'?0:1)-(b.availability.state==='candidate'?0:1)||lastAge(a.t)-lastAge(b.t));}
 function lifeText(id){const r=state.life[String(id)];return r?fmt(r.current)+' / '+fmt(r.maximum)+' · '+age(Date.now()-r.fetchedAt):'—';}
 function intelText(id){const x=state.intel[String(id)];if(!x)return'—';return fmt(x.bs_estimate)+' · '+String(x.source||'estimate')+(x.distribution?.distribution_human?' · '+x.distribution.distribution_human:'');}
-function reasonLabel(reason){return({'both-attack-capable':'Both attack-capable','enemy-active':'Rival Online','enemy-recently-active':'Rival recently active','enemy-estimate-much-stronger':'Rival estimate much stronger','enemy-estimate-stronger':'Rival estimate stronger','similar-estimated-strength':'Similar estimated strength','own-estimate-stronger':'Our estimate stronger','recent-observed-enemy-solo-win':'Recent enemy solo win','recent-observed-enemy-group-win':'Recent enemy group win','enemy-heavy-recent-attack-load':'Heavy enemy attack activity','enemy-recent-attack-load':'Recent enemy attack activity','one-side-not-okay':'One side unavailable','insufficient-data':'Insufficient data','group-confidence-too-low':'Low group confidence','insufficient-available-attackers':'Not enough ready attackers','observed-solo-matchup-advantage':'Proven solo matchup','estimated-strength-advantage':'Estimated solo advantage','observed-damage-group-sizing':'Damage-backed group size','no-proven-safe-solo-matchup':'No safe solo proof'})[reason]||String(reason||'');}
+function reasonLabel(reason){return({'both-attack-capable':'Both attack-capable','enemy-active':'Rival Online','enemy-recently-active':'Rival recently active','enemy-estimate-much-stronger':'Rival estimate much stronger','enemy-estimate-stronger':'Rival estimate stronger','similar-estimated-strength':'Similar estimated strength','own-estimate-stronger':'Our estimate stronger','recent-observed-enemy-solo-win':'Recent enemy solo win','recent-observed-enemy-group-win':'Recent enemy group win','enemy-heavy-recent-attack-load':'Heavy enemy attack activity','enemy-recent-attack-load':'Recent enemy attack activity','one-side-not-okay':'One side unavailable','insufficient-data':'Insufficient data','group-confidence-too-low':'Low group confidence','insufficient-available-attackers':'Not enough ready attackers','observed-solo-matchup-advantage':'Proven solo matchup','component-matchup-advantage':'Component-stat advantage','estimated-strength-advantage':'Estimated solo advantage','observed-damage-group-sizing':'Damage-backed group size','no-proven-safe-solo-matchup':'No safe solo proof'})[reason]||String(reason||'');}
 function selfEnergyText(){const fresh=Date.now()-Number(state.self.fetchedAt||0)<=60000;return fresh&&Number.isFinite(Number(state.self.energyCurrent))?Math.round(Number(state.self.energyCurrent))+'/'+Math.round(Number(state.self.energyMaximum||0))+'E':'E ?';}
 function energyPressureText(load){if(!load)return'E ?';const regen=load.regen||{},tag=regen.status==='Subscriber'?'Sub':regen.status==='Donator'?'Don':regen.status==='Standard'?'Std':'?';if(!load.attacks)return'E ? · 0atk · '+tag+(regen.tickSeconds?' 5/'+Math.round(regen.tickSeconds/60)+'m':'');const modeled=load.assumedNaturalEnergy==null?'?':Math.round(load.assumedNaturalEnergy)+(regen.naturalCap?'/'+regen.naturalCap:''),pressure=load.netObservedPressure==null?'?':Math.round(load.netObservedPressure);return'E~'+modeled+' · '+load.attacks+'atk · net-'+pressure+'E · '+tag+(regen.tickSeconds?' 5/'+Math.round(regen.tickSeconds/60)+'m':'');}
 function compactIntel(id){const x=state.intel[String(id)];if(!x)return'BS ?';return'BS '+fmt(x.bs_estimate)+' '+String(x.source||'estimate');}
+function combatStatsText(id){
+  const profile=logic.combatStatProfile(state.intel[String(id)]);
+  const exact=profile.precision==='exact-spy';
+  const labels={strength:'STR',speed:'SPD',defense:'DEF',dexterity:'DEX'};
+  return Object.keys(labels).map(stat=>{
+    const value=profile.stats[stat],pct=profile.percentages[stat];
+    return labels[stat]+' '+(value==null?'?':(exact?'':'~')+fmt(value)+(pct!=null?' '+Math.round(pct)+'%':''));
+  }).join(' · ');
+}
+function combatIntelMeta(id){
+  const x=state.intel[String(id)],p=logic.combatStatProfile(x);
+  if(!x)return'No FFScouter combat intel';
+  const precision=p.precision==='exact-spy'?'exact spy':p.precision==='premium-distribution'?'Premium distribution':'total only';
+  const observed=p.observedAt?age(Date.now()-p.observedAt*1000)+' old':'age ?';
+  const ff=p.fairFight!=null?' · FF(owner) '+p.fairFight.toFixed(2)+'×':'';
+  const premium=p.premiumInsights?' · Premium':'';
+  const models=[];
+  if(p.availableEstimates.bss!=null)models.push('BSS '+fmt(p.availableEstimates.bss));
+  if(p.availableEstimates.premium!=null)models.push('Prem '+fmt(p.availableEstimates.premium));
+  if(p.availableEstimates.spies!=null)models.push('Spy '+fmt(p.availableEstimates.spies));
+  return precision+' · '+String(p.source||x.source||'estimate')+' · '+observed+ff+premium+(models.length?' · '+models.join(' / '):'');
+}
+function matchupText(row){
+  const m=row?.matchup;
+  if(!m||!m.coverage)return'Match components ?';
+  const names={hit:'Hit',damage:'Damage',dodge:'Dodge',mitigation:'Tank'};
+  const parts=Object.entries(names).map(([key,label])=>label+' '+(m.edges[key]?m.edges[key].ratio.toFixed(2)+'×':'?'));
+  return parts.join(' · ')+' · '+m.coverage+'/4 known'+(m.criticalMismatch?' · COUNTER RISK':'');
+}
+function battleContextText(id){
+  const c=logic.latestObservedBattleContext(state.attacks,id);
+  if(!c)return'Observed attack mods: none';
+  const mods=[];
+  if(c.fairFight&&c.fairFight>1)mods.push('FF '+c.fairFight.toFixed(2)+'×');
+  if(c.war&&c.war>1)mods.push('War '+c.war.toFixed(2)+'×');
+  if(c.group&&c.group>1)mods.push('Group '+c.group.toFixed(2)+'×');
+  if(c.retaliation&&c.retaliation>1)mods.push('Retal '+c.retaliation.toFixed(2)+'×');
+  if(c.overseas&&c.overseas>1)mods.push('Overseas '+c.overseas.toFixed(2)+'×');
+  if(c.chain&&c.chain>1)mods.push('Chain '+c.chain.toFixed(2)+'×');
+  return'Observed attack mods: '+(mods.join(' · ')||'none');
+}
+function combatPrivacyNote(){return'<div class="mmi-note mmi-combat-note"><strong>Combat data boundary:</strong> exact spy components and Premium distributions are shown when FFScouter supplies them. Active drugs, merits, equipped weapon/armor bonuses, enemy company passives, and enemy faction upgrades are private/unexposed and are never guessed.</div>';}
 function memberName(id){return state.ownMembers.find(m=>String(m.id)===String(id))?.name||String(id);}
 function targetName(id){return state.enemyMembers.find(m=>String(m.id)===String(id))?.name||String(id);}
 function attackUrl(id){return'https://www.torn.com/loader.php?sid=attack&user2ID='+encodeURIComponent(id);}
@@ -1067,19 +1346,20 @@ function renderAssignments(){
   const visibleRows=board.rows.filter(row=>row.assigned.length||row.activity==='active'||row.activity==='warm'||row.source==='locked'||row.source==='ff-claim');
   const hiddenInactive=Math.max(0,board.rows.length-visibleRows.length);
   const statusText=board.rows.filter(r=>r.assigned.length).length+' targets · '+board.usedAttackerIds.length+' members assigned · '+board.readyUnassignedAttackers.length+' ready free · '+board.unavailableAttackers.length+' unavailable'+(hiddenInactive?' · '+hiddenInactive+' inactive HOLD hidden':'')+' · enemy E modeled';
-  return summary()+renderOutcomeFeed()+'<div class="mmi-toolbar"><button id="mmi-copy-plan" class="mmi-btn">Copy assignments</button><button id="mmi-sync" class="mmi-btn">Refresh</button><span>'+statusText+'</span></div><div class="mmi-grid">'+visibleRows.map(row=>{
-    const t=row.target,rec=row.recommendation,lead=row.assigned[0],hist=lead?.history,assigned=row.assigned.map(x=>x.member?.name||x.member?.id||'?').join(' + ')||'HOLD',claimNames=row.claims.map(c=>c.claimer?.name||c.claimer?.player_id||'?').join(', '),locked=row.source==='locked',facts=['L'+t.level,lifeText(t.id),compactIntel(t.id),row.activity,energyPressureText(row.enemyEnergy)];
+  return summary()+renderOutcomeFeed()+'<div class="mmi-toolbar"><button id="mmi-copy-plan" class="mmi-btn">Copy assignments</button><button id="mmi-sync" class="mmi-btn">Refresh</button><span>'+statusText+'</span></div>'+combatPrivacyNote()+'<div class="mmi-grid">'+visibleRows.map(row=>{
+    const t=row.target,rec=row.recommendation,lead=row.assigned[0],hist=lead?.history,assigned=row.assigned.map(x=>x.member?.name||x.member?.id||'?').join(' + ')||'HOLD',claimNames=row.claims.map(c=>c.claimer?.name||c.claimer?.player_id||'?').join(', '),locked=row.source==='locked';
+    const basics=['L'+t.level,lifeText(t.id),compactIntel(t.id),row.activity,energyPressureText(row.enemyEnergy)];
     const evidence=[];
     if(hist?.soloAttempts)evidence.push(hist.soloWins+'/'+hist.soloAttempts+' solo');
     if(hist?.hitRate!=null)evidence.push(Math.round(hist.hitRate*100)+'% hit');
-    if(lead?.distributionEdge)evidence.push('dist '+(lead.distributionEdge>0?'+':'')+lead.distributionEdge);
     if(claimNames)evidence.push('claim '+claimNames);
     if(rec.reason)evidence.push(reasonLabel(rec.reason));
     const attackAction=row.assigned.length?'<a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+attackUrl(t.id)+'">Attack</a>':'';
-    return'<article class="mmi-card mmi-compact '+(row.assigned.length?'mmi-good':'mmi-watch')+'"><h3>'+esc(t.name)+' ['+esc(t.id)+'] <span class="mmi-badge">'+esc(status(t))+' · '+esc(row.activity)+'</span></h3><div class="mmi-decision">→ '+esc(assigned)+' <span class="mmi-badge">'+esc(String(rec.mode||'hold').toUpperCase())+' '+Math.round(Number(rec.confidence)||0)+'%</span></div><div class="mmi-facts">'+facts.map(esc).join(' · ')+'</div>'+(evidence.length?'<div class="mmi-evidence">'+esc(evidence.join(' · '))+'</div>':'')+'<div class="mmi-actions">'+attackAction+'<a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+profileUrl(t.id)+'">Profile</a>'+(row.assigned.length?(locked?'<button class="mmi-btn mmi-mini" data-unlock="'+esc(t.id)+'">Unlock</button>':'<button class="mmi-btn mmi-mini" data-lock="'+esc(t.id)+'">Lock</button>'):'')+(validKey(state.settings.ffscouterKey)?'<button class="mmi-btn mmi-mini" data-claim="'+esc(t.id)+'">Claim</button><button class="mmi-btn mmi-mini" data-unclaim="'+esc(t.id)+'">Release</button>':'')+'</div></article>';
+    const matchLine=lead?'<div class="mmi-evidence"><strong>Match:</strong> '+esc(matchupText(lead))+'</div>':'';
+    return'<article class="mmi-card mmi-compact '+(row.assigned.length?'mmi-good':'mmi-watch')+'"><h3>'+esc(t.name)+' ['+esc(t.id)+'] <span class="mmi-badge">'+esc(status(t))+' · '+esc(row.activity)+'</span></h3><div class="mmi-decision">→ '+esc(assigned)+' <span class="mmi-badge">'+esc(String(rec.mode||'hold').toUpperCase())+' '+Math.round(Number(rec.confidence)||0)+'%</span></div><div class="mmi-facts">'+basics.map(esc).join(' · ')+'</div><div class="mmi-evidence"><strong>Stats:</strong> '+esc(combatStatsText(t.id))+'</div><div class="mmi-evidence"><strong>Intel:</strong> '+esc(combatIntelMeta(t.id))+'</div>'+matchLine+'<div class="mmi-evidence">'+esc(battleContextText(t.id))+'</div>'+(evidence.length?'<div class="mmi-evidence">'+esc(evidence.join(' · '))+'</div>':'')+'<div class="mmi-actions">'+attackAction+'<a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+profileUrl(t.id)+'">Profile</a>'+(row.assigned.length?(locked?'<button class="mmi-btn mmi-mini" data-unlock="'+esc(t.id)+'">Unlock</button>':'<button class="mmi-btn mmi-mini" data-lock="'+esc(t.id)+'">Lock</button>'):'')+(validKey(state.settings.ffscouterKey)?'<button class="mmi-btn mmi-mini" data-claim="'+esc(t.id)+'">Claim</button><button class="mmi-btn mmi-mini" data-unclaim="'+esc(t.id)+'">Release</button>':'')+'</div></article>';
   }).join('')+'</div>';
 }
-function renderTargets(){return summary()+'<div class="mmi-grid">'+targets().map(r=>{const t=r.t,activity=logic.activityBand(t,nowSec()),load=r.energy,cs=r.claims;return'<article class="mmi-card mmi-compact '+(r.availability.state==='candidate'?'mmi-good':'')+'"><h3>'+esc(t.name)+' ['+esc(t.id)+'] <span class="mmi-badge">'+esc(status(t))+' · '+esc(activity)+'</span></h3><div class="mmi-facts">L'+esc(t.level)+' · '+esc(lifeText(t.id))+' · '+esc(compactIntel(t.id))+'</div><div class="mmi-evidence">'+esc(energyPressureText(load))+(cs.length?' · claimed '+esc(cs.map(c=>c.claimer?.name||c.claimer?.player_id||'?').join(', ')):'')+'</div><div class="mmi-actions"><a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+attackUrl(t.id)+'">Attack</a><a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+profileUrl(t.id)+'">Profile</a></div></article>';}).join('')+'</div>';}
+function renderTargets(){return summary()+combatPrivacyNote()+'<div class="mmi-grid">'+targets().map(r=>{const t=r.t,activity=logic.activityBand(t,nowSec()),load=r.energy,cs=r.claims;return'<article class="mmi-card mmi-compact '+(r.availability.state==='candidate'?'mmi-good':'')+'"><h3>'+esc(t.name)+' ['+esc(t.id)+'] <span class="mmi-badge">'+esc(status(t))+' · '+esc(activity)+'</span></h3><div class="mmi-facts">L'+esc(t.level)+' · '+esc(lifeText(t.id))+' · '+esc(compactIntel(t.id))+'</div><div class="mmi-evidence"><strong>Stats:</strong> '+esc(combatStatsText(t.id))+'</div><div class="mmi-evidence"><strong>Intel:</strong> '+esc(combatIntelMeta(t.id))+'</div><div class="mmi-evidence">'+esc(energyPressureText(load))+'</div><div class="mmi-evidence">'+esc(battleContextText(t.id))+(cs.length?' · claimed '+esc(cs.map(c=>c.claimer?.name||c.claimer?.player_id||'?').join(', ')):'')+'</div><div class="mmi-actions"><a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+attackUrl(t.id)+'">Attack</a><a class="mmi-btn mmi-mini" target="_blank" rel="noopener" href="'+profileUrl(t.id)+'">Profile</a></div></article>';}).join('')+'</div>';}
 function renderDefense(){return summary()+'<div class="mmi-note"><strong>Advisory only.</strong> No hospitalization action is automated.</div><div class="mmi-grid" style="margin-top:8px">'+defense().map(r=>{const threatLoad=r.topThreat?logic.recentAttackLoad(state.attacks,r.topThreat.id,nowSec(),3600,state.life[String(r.topThreat.id)]):null;return'<article class="mmi-card mmi-compact '+(r.riskBand==='high'?'mmi-high':r.riskBand==='watch'?'mmi-watch':'')+'"><h3>'+esc(r.member.name)+' <span class="mmi-badge">'+esc(r.riskBand.toUpperCase())+' '+r.riskScore+'</span></h3><div class="mmi-decision">'+(r.topThreat?'Threat: '+esc(r.topThreat.name)+' ['+esc(r.topThreat.id)+']':'No current threat')+'</div><div class="mmi-facts">'+esc(r.reasons.map(reasonLabel).slice(0,3).join(' · ')||'No supporting evidence')+'</div>'+(threatLoad?'<div class="mmi-evidence">'+esc(energyPressureText(threatLoad))+'</div>':'')+(r.recommendHospitalization?'<div class="mmi-error"><strong>Hospitalization suggested</strong></div>':'')+'</article>';}).join('')+'</div>';}
 function renderRoster(){const table=(title,rows)=>'<h3>'+title+' ('+rows.length+')</h3><table class="mmi-table"><thead><tr><th>Player</th><th>Lvl</th><th>Status</th><th>Last action</th><th>FFScouter</th></tr></thead><tbody>'+rows.map(m=>'<tr><td><a target="_blank" rel="noopener" href="'+profileUrl(m.id)+'">'+esc(m.name)+' ['+esc(m.id)+']</a></td><td>'+esc(m.level)+'</td><td>'+esc(status(m))+'</td><td>'+esc(m.last_action.relative||'—')+'</td><td>'+esc(intelText(m.id))+'</td></tr>').join('')+'</tbody></table>';return summary()+table('Our faction',state.ownMembers)+table('Rivals',state.enemyMembers);}
 function renderSetup(){

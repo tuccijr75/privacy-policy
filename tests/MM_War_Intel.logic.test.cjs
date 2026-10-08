@@ -49,6 +49,37 @@ function intel(bsEstimate, source = 'premium', lastUpdated = 990) {
   };
 }
 
+function spyIntel(stats, options = {}) {
+  const total = stats.strength + stats.speed + stats.defense + stats.dexterity;
+  return {
+    bs_estimate: options.mergedTotal ?? total,
+    source: options.source || 'spies',
+    last_updated: options.lastUpdated ?? 990,
+    premium_insights_available: true,
+    distribution: null,
+    spies: [{
+      ...stats,
+      total,
+      last_updated: options.spyUpdated ?? 995,
+      source: options.spySource || 'tornstats',
+    }],
+  };
+}
+
+function distributionIntel(total, percentages, options = {}) {
+  return {
+    bs_estimate: total,
+    source: options.source || 'bss',
+    last_updated: options.lastUpdated ?? 990,
+    premium_insights_available: true,
+    distribution: {
+      last_updated: options.distributionUpdated ?? 992,
+      distribution_human: Object.entries(percentages).map(([k, v]) => k.toUpperCase() + ' (' + v + '%)').join(' '),
+      stats_percentage: percentages,
+    },
+  };
+}
+
 function attack(input) {
   return {
     attackId: input.attackId,
@@ -62,6 +93,11 @@ function attack(input) {
     hits: input.hits || 0,
     misses: input.misses || 0,
     groupModifier: input.groupModifier || 1,
+    fairFightModifier: input.fairFightModifier || 1,
+    warModifier: input.warModifier || 1,
+    retaliationModifier: input.retaliationModifier || 1,
+    overseasModifier: input.overseasModifier || 1,
+    chainModifier: input.chainModifier || 1,
     group: input.group === true,
     rankedWar: true,
     started: input.started || 0,
@@ -84,6 +120,28 @@ test('attack history deduplicates participant evidence and stays bounded', () =>
   assert.equal(rows.length, 2);
   assert.equal(rows[0].attackId, '11');
   assert.equal(rows[1].damage, 125);
+});
+
+test('observed Torn attack modifiers are preserved as battle context', () => {
+  const row = logic.normalizeAttackEvidence(attack({
+    attackId: 'mods',
+    attackerId: 9,
+    defenderId: 1,
+    ended: 1000,
+    fairFightModifier: 2.5,
+    warModifier: 2,
+    groupModifier: 1.25,
+    retaliationModifier: 1.5,
+    overseasModifier: 1.25,
+    chainModifier: 1.1,
+  }));
+  const context = logic.latestObservedBattleContext([row], '9');
+  assert.equal(context.fairFight, 2.5);
+  assert.equal(context.war, 2);
+  assert.equal(context.group, 1.25);
+  assert.equal(context.retaliation, 1.5);
+  assert.equal(context.overseas, 1.25);
+  assert.equal(context.chain, 1.1);
 });
 
 test('group assists do not become solo proof or losses', () => {
@@ -213,7 +271,99 @@ test('unknown donator status never fabricates enemy regeneration', () => {
   assert.equal(load.netObservedPressure, null);
 });
 
-test('solo recommendation conserves stronger attackers when a weaker safe fit exists', () => {
+test('exact FFScouter spy exposes all four combat stats', () => {
+  const profile = logic.combatStatProfile(spyIntel({
+    strength: 400000,
+    speed: 300000,
+    defense: 200000,
+    dexterity: 100000,
+  }));
+  assert.equal(profile.precision, 'exact-spy');
+  assert.equal(profile.stats.strength, 400000);
+  assert.equal(profile.stats.speed, 300000);
+  assert.equal(profile.stats.defense, 200000);
+  assert.equal(profile.stats.dexterity, 100000);
+  assert.equal(profile.source, 'tornstats');
+});
+
+test('Premium distribution estimates only supplied components and leaves the rest unknown', () => {
+  const profile = logic.combatStatProfile(distributionIntel(1000000, {
+    strength: 60,
+    speed: 30,
+  }));
+  assert.equal(profile.precision, 'premium-distribution');
+  assert.equal(profile.stats.strength, 600000);
+  assert.equal(profile.stats.speed, 300000);
+  assert.equal(profile.stats.defense, null);
+  assert.equal(profile.stats.dexterity, null);
+});
+
+test('component source selection prefers fresher Premium distribution over an older exact spy', () => {
+  const mixed = spyIntel({
+    strength: 400000,
+    speed: 300000,
+    defense: 200000,
+    dexterity: 100000,
+  }, {
+    mergedTotal: 1000000,
+    spyUpdated: 900,
+    lastUpdated: 1000,
+  });
+  mixed.distribution = {
+    last_updated: 990,
+    stats_percentage: {
+      strength: 55,
+      speed: 35,
+    },
+  };
+  const profile = logic.combatStatProfile(mixed);
+  assert.equal(profile.precision, 'premium-distribution');
+  assert.equal(profile.observedAt, 990);
+  assert.equal(profile.stats.strength, 550000);
+  assert.equal(profile.stats.speed, 350000);
+  assert.equal(profile.stats.defense, null);
+  assert.equal(profile.stats.dexterity, null);
+
+  mixed.spies[0].last_updated = 995;
+  const newerSpy = logic.combatStatProfile(mixed);
+  assert.equal(newerSpy.precision, 'exact-spy');
+  assert.equal(newerSpy.observedAt, 995);
+});
+
+test('component matchup detects severe counter risk even when total BS is higher', () => {
+  const attacker = spyIntel({
+    strength: 800000,
+    speed: 50000,
+    defense: 800000,
+    dexterity: 350000,
+  });
+  const target = spyIntel({
+    strength: 250000,
+    speed: 250000,
+    defense: 250000,
+    dexterity: 1000000,
+  });
+  const match = logic.combatMatchup(attacker, target);
+  assert.equal(match.coverage, 4);
+  assert.equal(match.criticalMismatch, true);
+  assert.ok(match.edges.hit.ratio < 0.25);
+});
+
+test('total-only estimates require a larger unproven solo margin', () => {
+  const rec = logic.targetRecommendation({
+    target: member(9, { lastActionStatus: 'Online' }),
+    attackers: [member(1, { lastActionStatus: 'Online' })],
+    intelById: {
+      '1': intel(1500000, 'bss'),
+      '9': intel(1000000, 'bss'),
+    },
+    attacks: [],
+    nowSeconds: 1000,
+  });
+  assert.equal(rec.mode, 'hold');
+});
+
+test('solo recommendation conserves stronger attackers when a weaker component-safe fit exists', () => {
   const rec = logic.targetRecommendation({
     target: member(9, { lastActionStatus: 'Online' }),
     attackers: [
@@ -221,9 +371,9 @@ test('solo recommendation conserves stronger attackers when a weaker safe fit ex
       member(2, { name: 'Safe Fit', lastActionStatus: 'Online' }),
     ],
     intelById: {
-      '1': intel(5000000),
-      '2': intel(1500000),
-      '9': intel(1000000),
+      '1': spyIntel({ strength: 1500000, speed: 1500000, defense: 1000000, dexterity: 1000000 }),
+      '2': spyIntel({ strength: 450000, speed: 450000, defense: 350000, dexterity: 350000 }),
+      '9': spyIntel({ strength: 300000, speed: 300000, defense: 200000, dexterity: 200000 }),
     },
     attacks: [],
     nowSeconds: 1000,
@@ -266,6 +416,37 @@ test('assignment plan reports ready-unassigned separately from unavailable membe
   });
   assert.deepEqual(Array.from(plan.readyUnassignedAttackers, x => x.id), ['1']);
   assert.deepEqual(Array.from(plan.unavailableAttackers, x => x.id).sort(), ['2', '3']);
+});
+
+test('global solo matching preserves a scarce attacker for the only target they can safely cover', () => {
+  const flexibleTarget = member(9, { name: 'Flexible Target', lastActionStatus: 'Online', level: 80 });
+  const scarceTarget = member(10, { name: 'Scarce Target', lastActionStatus: 'Online', level: 70 });
+  const scarceAttacker = member(1, { name: 'Scarce Attacker', lastActionStatus: 'Online' });
+  const flexibleAttacker = member(2, { name: 'Flexible Attacker', lastActionStatus: 'Online' });
+
+  const plan = logic.assignmentPlan({
+    targets: [flexibleTarget, scarceTarget],
+    attackers: [scarceAttacker, flexibleAttacker],
+    intelById: {
+      '1': spyIntel({ strength: 700000, speed: 700000, defense: 400000, dexterity: 300000 }),
+      '2': spyIntel({ strength: 900000, speed: 150000, defense: 700000, dexterity: 350000 }),
+      '9': spyIntel({ strength: 250000, speed: 250000, defense: 250000, dexterity: 250000 }),
+      '10': spyIntel({ strength: 250000, speed: 250000, defense: 250000, dexterity: 900000 }),
+    },
+    lifeById: {},
+    attacks: [],
+    claimsByTarget: {},
+    completedTargets: {},
+    nowSeconds: 1000,
+  });
+
+  const flexible = plan.rows.find(row => row.target.id === '9');
+  const scarce = plan.rows.find(row => row.target.id === '10');
+  assert.ok(flexible);
+  assert.ok(scarce);
+  assert.deepEqual(Array.from(flexible.assigned, x => x.member.id), ['2']);
+  assert.deepEqual(Array.from(scarce.assigned, x => x.member.id), ['1']);
+  assert.equal(new Set(plan.usedAttackerIds).size, 2);
 });
 
 test('assignment plan never assigns one faction member to multiple targets', () => {
@@ -400,6 +581,15 @@ test('sanitized export removes both stored API keys', () => {
 test('runtime source enforces bounded collectors and does not echo keys into DOM', () => {
   assert.match(source, /MAX_ATTACK_PAGES=3/);
   assert.match(source, /minimumGroupConfidence: 45/);
+  assert.match(source, /soloRatioWithComponents: 1\.2/);
+  assert.match(source, /soloRatioTotalOnly: 2\.0/);
+  assert.match(source, /criticalStatRatio: 0\.25/);
+  assert.match(source, /combatStatProfile/);
+  assert.match(source, /combatMatchup/);
+  assert.match(source, /combatStatsText/);
+  assert.match(source, /combatPrivacyNote/);
+  assert.match(source, /Observed attack mods/);
+  assert.match(source, /fairFightModifier/);
   assert.match(source, /readyUnassignedAttackers/);
   assert.match(source, /unavailableAttackers/);
   assert.match(source, /LEASE_MS=90000/);
