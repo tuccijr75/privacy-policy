@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger 2 Candidate
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-beta.4
+// @version      2.2.0-beta.5
 // @description  Shared Torn trade verification, Bazaar sale-log ingestion, 7 PM ET closeout and reports. No automated Torn trades.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/MorpheusBeta.user.js
 // @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/MorpheusBeta.user.js
 // @noframes
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@5f2bb2030758a73e9bd567a7a1361eab41d510aa/modular-suite/core/MM_Torn_Core.js
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_xmlhttpRequest
@@ -19,7 +20,7 @@
  'use strict';
  if (window.__morpheusLedgerLoaded) return;
  window.__morpheusLedgerLoaded=true;
- const VERSION='2.2.0-beta.4';
+ const VERSION='2.2.0-beta.5';
  const prefix='mledger_';
  const read=k=>GM_getValue(prefix+k,'');
  const save=(k,v)=>GM_setValue(prefix+k,String(v??'').trim());
@@ -261,8 +262,28 @@
    }catch(e){status='Sync failed: '+e.message;if(!silent)alert(status);}finally{working=false;draw();}
  }
  const host=document.createElement('div');host.id='morpheus-v2';document.documentElement.appendChild(host);const root=host.attachShadow({mode:'closed'});
- const style=document.createElement('style');style.textContent=`*,*:before,*:after{box-sizing:border-box}.open{position:fixed;bottom:16px;right:16px;background:#2854ab;border:0;color:white;padding:12px 16px;border-radius:30px;font:bold 13px system-ui;z-index:2147483640;cursor:pointer}.panel{position:fixed;bottom:63px;right:12px;width:min(650px,calc(100vw - 24px));max-height:84vh;overflow:auto;background:#111d2b;color:#eaf1fb;border:1px solid #405979;border-radius:12px;box-shadow:0 14px 45px #000a;font:13px/1.4 system-ui;z-index:2147483641}header,section{padding:12px 16px;border-bottom:1px solid #32455c}header{display:flex;align-items:center;gap:9px;justify-content:space-between;position:sticky;top:0;background:#1c2e46;z-index:1}header b{font-size:16px}button{font:600 12px system-ui;cursor:pointer;color:#fff;background:#2b55a1;border:1px solid #6984a4;padding:7px 10px;border-radius:6px}button:disabled{opacity:.55;cursor:default}input,select,textarea{background:#0a1827;border:1px solid #59728f;padding:7px;color:#fff;border-radius:5px;width:100%;font:13px system-ui}label{display:block;color:#bacce0;margin:8px 0 3px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metrics div{background:#20344c;padding:8px;border-radius:6px}.metrics strong{font-size:16px;display:block}.muted{font-size:12px;color:#b2c6db}.row{display:flex;flex-wrap:wrap;gap:7px;align-items:center}.line{border-bottom:1px solid #344b62;padding:8px 0}.line:last-child{border:0}details summary{cursor:pointer;font-weight:700;margin-bottom:7px}.hide{display:none!important}.warning{padding:8px;border-radius:5px;background:#433b26;color:#ffe4a3}.critical{color:#ffbbaa}.pill{background:#29435e;padding:2px 7px;border-radius:20px;font-size:11px}.num{font-variant-numeric:tabular-nums}.scroll{max-height:280px;overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:right;border-bottom:1px solid #344b62;padding:5px}th:first-child,td:first-child{text-align:left}@media(max-width:500px){.metrics,.grid{grid-template-columns:1fr}}`;
- root.appendChild(style);const opener=document.createElement('button');opener.className='open';opener.textContent='Bazaar Ledger';root.appendChild(opener);const panel=document.createElement('div');panel.className='panel hide';root.appendChild(panel);opener.onclick=()=>{opened=!opened;panel.classList.toggle('hide',!opened);if(opened)draw();};
+ const style=document.createElement('style');style.textContent=`*,*:before,*:after{box-sizing:border-box}.panel{position:fixed;bottom:63px;right:12px;width:min(650px,calc(100vw - 24px));max-height:84vh;overflow:auto;background:#111d2b;color:#eaf1fb;border:1px solid #405979;border-radius:12px;box-shadow:0 14px 45px #000a;font:13px/1.4 system-ui;z-index:2147483641}header,section{padding:12px 16px;border-bottom:1px solid #32455c}header{display:flex;align-items:center;gap:9px;justify-content:space-between;position:sticky;top:0;background:#1c2e46;z-index:1}header b{font-size:16px}button{font:600 12px system-ui;cursor:pointer;color:#fff;background:#2b55a1;border:1px solid #6984a4;padding:7px 10px;border-radius:6px}button:disabled{opacity:.55;cursor:default}input,select,textarea{background:#0a1827;border:1px solid #59728f;padding:7px;color:#fff;border-radius:5px;width:100%;font:13px system-ui}label{display:block;color:#bacce0;margin:8px 0 3px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.metrics div{background:#20344c;padding:8px;border-radius:6px}.metrics strong{font-size:16px;display:block}.muted{font-size:12px;color:#b2c6db}.row{display:flex;flex-wrap:wrap;gap:7px;align-items:center}.line{border-bottom:1px solid #344b62;padding:8px 0}.line:last-child{border:0}details summary{cursor:pointer;font-weight:700;margin-bottom:7px}.hide{display:none!important}.warning{padding:8px;border-radius:5px;background:#433b26;color:#ffe4a3}.critical{color:#ffbbaa}.pill{background:#29435e;padding:2px 7px;border-radius:20px;font-size:11px}.num{font-variant-numeric:tabular-nums}.scroll{max-height:280px;overflow:auto}table{width:100%;border-collapse:collapse}th,td{text-align:right;border-bottom:1px solid #344b62;padding:5px}th:first-child,td:first-child{text-align:left}@media(max-width:500px){.metrics,.grid{grid-template-columns:1fr}}`;
+ root.appendChild(style);
+ const panel=document.createElement('div');panel.className='panel hide';root.appendChild(panel);
+ const core=globalThis.MMTornCore;
+ const DOCK_ID='morpheus-bazaar';
+ if(!core?.registerDockLauncher||!core?.setDockLauncherActive)
+   throw Error('Morpheus desktop requires the shared MM Torn Core dock');
+ const setPanelOpen=next=>{
+   opened=Boolean(next);panel.classList.toggle('hide',!opened);
+   core.setDockLauncherActive(DOCK_ID,opened);
+   if(opened)draw();
+ };
+ // The dock owns dimensions, anchor, order, floating positions and dragging.
+ // A ledger-register motif is unique to this script; the panel remains product-owned.
+ const opener=core.registerDockLauncher({
+   id:DOCK_ID,
+   label:'Morpheus Bazaar Ledger',
+   accent:'#367783',
+   icon:'<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M9 3.5v17M12.5 9h3.5M12.5 13h3.5M12.5 17h2"/></svg>',
+   onClick:()=>setPanelOpen(!opened)
+ });
+ if(!opener)throw Error('Shared MM dock launcher registration failed');
  function rowsReport(obj){return Object.keys(obj||{}).sort().reverse().slice(0,8).map(k=>`<tr><td>${esc(k)}</td><td>${esc(obj[k].sales)}</td><td>${money(obj[k].profit)}</td><td>${money(obj[k].morpheusProfit)}</td><td>${money(obj[k].morpheusDue)}</td><td>${money(obj[k].ownerProfit)}</td></tr>`).join('');}
  function itemRow(l){const rem=l.qty-l.sold-l.returned,buttons=[];
    if(state.role==='owner'&&l.status==='awaiting_cost'&&l.mode==='supplier'&&l.tradeRef&&l.unitCost==null&&l.sold===0&&l.returned===0&&!l.purchaseLogId)buttons.push(`<button data-action="correctSource" data-id="${esc(l.id)}">Correct item source</button>`);
@@ -292,7 +313,7 @@
    panel.querySelector('#newlot')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);const cost=String(f.get('cost')||'').trim(),uid=String(f.get('uid')||'').trim();await writeOp('propose',{lotId:uuid(),name:String(f.get('name')),itemId:numeric(f.get('itemId')),uid:uid?numeric(uid):null,qty:numeric(f.get('qty')),unitCost:cost?numeric(cost):null,mode:String(f.get('mode')),feePct:numeric(f.get('fee')),note:String(f.get('note'))},'Inventory proposed; now complete Torn trade');});
    panel.querySelector('#payment')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget),amount=numeric(f.get('amount'));if(!isPositive(amount)||amount>state.summary.remaining)return alert('Invalid amount');if(!confirm('Have you actually SENT '+money(amount)+' to Morpheus in Torn?'))return;await writeOp('payment',{amount,reference:String(f.get('reference'))},'Payment recorded');});
  }
- async function act(action,id){if(action==='close'){opened=false;panel.classList.add('hide');return;}if(action==='refresh')return refresh();if(action==='scan')return syncAll();if(action==='verify'){try{await verifyKey();}catch(e){alert(e.message)}return;}if(action==='trade'){
+ async function act(action,id){if(action==='close'){setPanelOpen(false);return;}if(action==='refresh')return refresh();if(action==='scan')return syncAll();if(action==='verify'){try{await verifyKey();}catch(e){alert(e.message)}return;}if(action==='trade'){
      if(!isPositive(cfg().partnerId))return alert('Set the partner Torn player ID in Settings first');
      window.open('https://www.torn.com/profiles.php?XID='+cfg().partnerId,'_blank','noopener');return;
    }
