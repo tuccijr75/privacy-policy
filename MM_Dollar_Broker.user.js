@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.19
+// @version      0.1.0-rc.20
 // @description  Prefilters Torn Bazaar-directory sellers with official Bazaar data, live-verifies exact-$1 item cards, and leaves every purchase manual.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
@@ -28,7 +28,7 @@
 (() => {
 'use strict';
 // ---- core ----
-const VERSION = '0.1.0-rc.19';
+const VERSION = '0.1.0-rc.20';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
@@ -68,7 +68,7 @@ function exactPrice(text) {
   return Number.isSafeInteger(n) ? n : null;
 }
 const fingerprint = (target, item) => JSON.stringify([target, item.listingId || item.itemId || item.name, 1]);
-function emptyState() { return {schema:SCHEMA, version:VERSION, bazaarVerification:2, revision:0, targets:[], worker:null, sellerScan:null, events:[], seen:[], sellerLeads:[], marketLeads:[], discoveryCursor:0, lastSellerDiscovery:0, lastDiscovery:0, lastDetection:0}; }
+function emptyState() { return {schema:SCHEMA, version:VERSION, bazaarVerification:3, revision:0, targets:[], worker:null, sellerScan:null, events:[], seen:[], sellerLeads:[], marketLeads:[], discoveryCursor:0, lastSellerDiscovery:0, lastDiscovery:0, lastDetection:0}; }
 function clearDiscoveryResults(state) {
   state.worker=null;
   state.sellerScan=null;
@@ -192,7 +192,7 @@ function appendObservedEvents(state,snapshot,workerId,documentId,now,apiCandidat
       seller:snapshot.seller,item:{name:item.name,itemId:item.itemId||'',listingId:item.listingId||apiItem?.listingId||'',quantity:item.quantity},price:1,
       url:bazaarUrl(snapshot.targetId),detectedAt:snapshot.at,expiresAt:snapshot.at+LIMIT.fresh,workerId,documentId,
       sourceTimestamp:apiCandidate?.sourceTimestamp||0,fetchedAt:apiCandidate?.fetchedAt||snapshot.at,
-      validity:'live-verified',verification:apiCandidate?'official-user-bazaar+visible-item-control':'visible-item-control',acknowledged:false};
+      validity:'live-verified',verification:apiCandidate?'official-user-bazaar+unlocked-card':'unlocked-card',acknowledged:false};
     if(!validEvent(event)) throw new Error('Listing contract failed validation.');
     state.seen.push(fp);state.events.unshift(event);newEvents.push(event);state.lastDetection=snapshot.at;
   }
@@ -303,14 +303,14 @@ function validEvent(e) {
     textField(e.seller) && textField(e.item?.name) && e.item.name.length > 0 && textField(e.item.itemId,80) && textField(e.item.listingId,80) && Number.isSafeInteger(e.item.quantity) && e.item.quantity>0 &&
     e.price === 1 && e.url === bazaarUrl(e.targetId) && validEventTtl(e) && finite(e.sourceTimestamp) && finite(e.fetchedAt) &&
     textField(e.workerId,80) && textField(e.documentId,80) && e.validity === 'live-verified' &&
-    (e.verification === 'official-user-bazaar+visible-item-control' || e.verification === 'visible-item-control') && typeof e.acknowledged === 'boolean';
+    (e.verification === 'official-user-bazaar+unlocked-card' || e.verification === 'unlocked-card') && typeof e.acknowledged === 'boolean';
 }
 function readState(raw) {
   if (raw == null) return emptyState();
   if (raw.schema !== SCHEMA) throw new Error('Storage schema is unsupported. Update all Broker tabs; existing data was preserved.');
   const copy=structuredClone(raw);
-  if(copy.bazaarVerification!==2) {
-    copy.bazaarVerification=2;
+  if(copy.bazaarVerification!==3) {
+    copy.bazaarVerification=3;
     copy.events=[];
     copy.seen=[];
     copy.sellerScan=null;
@@ -324,7 +324,7 @@ function readState(raw) {
   if(copy.lastSellerDiscovery===undefined) copy.lastSellerDiscovery=0;
   if(copy.lastDiscovery===undefined) copy.lastDiscovery=0;
   const w = copy.worker;
-  if (copy.bazaarVerification!==2 || !Number.isSafeInteger(copy.revision) || copy.revision < 0 || !Array.isArray(copy.targets) || copy.targets.length > LIMIT.targets || copy.targets.some(x=>!validId(x)) ||
+  if (copy.bazaarVerification!==3 || !Number.isSafeInteger(copy.revision) || copy.revision < 0 || !Array.isArray(copy.targets) || copy.targets.length > LIMIT.targets || copy.targets.some(x=>!validId(x)) ||
       !Array.isArray(copy.events) || copy.events.length > LIMIT.events || copy.events.some(e=>!validEvent(e)) ||
       !Array.isArray(copy.seen) || copy.seen.length > LIMIT.seen || copy.seen.some(x=>!textField(x,400)) ||
       !Array.isArray(copy.sellerLeads) || copy.sellerLeads.length>LIMIT.sellers || copy.sellerLeads.some(x=>!validSellerLead(x)) ||
@@ -380,7 +380,7 @@ function recordSnapshot(s, identity, snapshot, now) {
     const event={schema:SCHEMA, id:`${identity.workerId}:${now}:${s.seen.length}`, fingerprint:fp, targetId:snapshot.targetId,
       seller:snapshot.seller, item:{name:item.name,itemId:item.itemId||'',listingId:item.listingId||'',quantity:item.quantity||1}, price:1,
       url:bazaarUrl(snapshot.targetId), detectedAt:snapshot.at, expiresAt:snapshot.at+LIMIT.fresh, workerId:identity.workerId,
-      documentId:identity.documentId, sourceTimestamp:0, fetchedAt:snapshot.at, validity:'live-verified', verification:'visible-item-control', acknowledged:false};
+      documentId:identity.documentId, sourceTimestamp:0, fetchedAt:snapshot.at, validity:'live-verified', verification:'unlocked-card', acknowledged:false};
     if (!validEvent(event)) { w.phase='error'; w.error='Listing contract failed validation.'; continue; }
     s.seen.push(fp); s.events.unshift(event); newEvents.push(event); s.lastDetection=snapshot.at;
   }
@@ -461,6 +461,26 @@ function controlItemId(control) {
   const match=value.match(/(?:^|-)wai-itemInfo-(?:[^-]+-)?(\d+)(?:-|$)/i) || value.match(/(\d+)(?!.*\d)/);
   return match?match[1]:'';
 }
+function anonymousGraphic(graphic) {
+  const name=cleanText(
+    graphic?.getAttribute?.('aria-label') ||
+    graphic?.getAttribute?.('alt') ||
+    graphic?.getAttribute?.('title') ||
+    graphic?.querySelector?.('title')?.textContent
+  );
+  return !name;
+}
+
+function hasDollarLockOverlay(control,win,itemImage) {
+  if(!control) return false;
+  const graphics=[...control.querySelectorAll('img,svg,[role="img"]')];
+  return graphics.some(graphic=>{
+    if(graphic===itemImage || !displayed(graphic,win)) return false;
+    if(graphic.matches?.('img[src*="/images/items/"]')) return false;
+    return anonymousGraphic(graphic);
+  });
+}
+
 function scanListingState(card,win,item) {
   const image=[...card.querySelectorAll('img[src*="/images/items/"]')].find(img=>{
     const match=String(img.currentSrc||img.src||'').match(/\/images\/items\/(\d+)\//);
@@ -480,8 +500,11 @@ function scanListingState(card,win,item) {
     return (controlledId&&controlledId===String(item.itemId)) || sameItemName(label,item.name) || (!!image&&control.contains(image));
   });
   if(!matches.length) return {liveState:'unverified',liveReason:'Native item control did not match this listing.'};
-  if(matches.some(control=>enabledControl(control))) return {liveState:'available',liveReason:'Enabled native Torn item control verified.'};
-  return {liveState:'unavailable',liveReason:'Matching native Torn item control is disabled.'};
+  const enabled=matches.filter(control=>enabledControl(control));
+  if(!enabled.length) return {liveState:'unavailable',liveReason:'Matching native Torn item control is disabled.'};
+  const unlocked=enabled.find(control=>!hasDollarLockOverlay(control,win,image&&control.contains(image)?image:null));
+  if(unlocked) return {liveState:'available',liveReason:'Native Torn dollar-sale card is unlocked for this player.'};
+  return {liveState:'unavailable',liveReason:'Native Torn dollar-sale lock overlay is present for this player.'};
 }
 
 function displayed(element, win) {
@@ -721,6 +744,12 @@ function parseScanLegacyCard(card, win) {
   return {...item,...live,available:live.liveState==='available'};
 }
 
+function explicitBazaarClosed(doc,win) {
+  return [...doc.querySelectorAll('[role="alert"]')]
+    .filter(notice=>displayed(notice,win))
+    .some(notice=>/\bbazaar\b.{0,240}\bis currently closed\b/i.test(cleanText(notice.textContent)));
+}
+
 function parseScanSemanticCard(card, win) {
   const identity=scanItemIdentity(card,win);
   const prices=scanCurrencyNodes(card,win);
@@ -759,6 +788,7 @@ function inspectBazaarForScan(doc, win, context) {
   }
   if(!owners.length || owners.some(o=>o.id!==context.targetId)) return fail('Cannot prove the displayed Bazaar owner.');
   result.seller=(owners[0].name||context.targetId).replace(/['’]s$/,'').slice(0,180);
+  if(explicitBazaarClosed(doc,win)) return {...result,ok:true,inspected:0,closed:true};
 
   const semantic=scanSemanticCards(root,win);
   const legacy=semantic.length?[]:[...root.querySelectorAll(SELECTOR.legacyCard)].filter(card=>displayed(card,win));
@@ -814,6 +844,7 @@ function inspectBazaar(doc, win, context) {
 
   if (!owners.length || owners.some(o=>o.id!==context.targetId)) return fail('Cannot prove the displayed Bazaar owner. No alert issued.');
   result.seller=(owners[0].name || context.targetId).replace(/['’]s$/,'').slice(0,180);
+  if(explicitBazaarClosed(doc,win)) return {...result,ok:true,inspected:0,closed:true};
 
   const semantic=semanticCards(root,win,viewportOnly);
   const legacy=semantic.length
