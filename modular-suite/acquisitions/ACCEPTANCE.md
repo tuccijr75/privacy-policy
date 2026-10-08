@@ -234,3 +234,30 @@ Pending:
 - TornPDA `8.0.0-alpha.35-pda.22` real-device acceptance.
 
 No merge, stable publication or customer publication is authorized by this verification.
+
+## Live alpha.35 desktop continuation — 2026-10-08
+
+Additional live verification against `8.0.0-alpha.35`:
+
+PASS:
+- Travel Deals opens in the live Acquisitions panel;
+- stale travel stock is hidden until refresh rather than being ranked as current;
+- Refresh Travel Stock returned 229 current item/country rows from Torn Intel;
+- destination ranking exposes its ranking components and explicitly states there is no hidden country score;
+- Restock Watch identifies its estimates as MM calculations from observed Torn Intel history, with history calls on-demand and rate-limited;
+- out-of-stock rows without usable observed history show `No restock history loaded` instead of fabricating an ETA;
+- Travel Deals states that Torn Intel is preferred when available, TornW3B is fallback, and travel/purchases remain manual;
+- Setup / Advanced Market Activity live UI reports source `Torn API v2 Item Market`, 36 cached items, 0 proven, 36 candidates, request budget `0/45` in the last minute, and recent update age;
+- Market Activity live UI explicitly describes seller-free intelligence, one cross-tab engine lease, bounded cache/history, cache-delay-aware cadence, and a local request-budget governor, with no seller-target/mug/attack model retained;
+- Export Diagnostics action completed in the UI with `Sanitized Market Pulse diagnostics exported.`;
+- Market Pulse regression tests PASS and source/PDA contract tests PASS after the live check;
+- serializer regression explicitly rejects API-key exposure and seller/attack/mug fields; private-product coupling remains absent from the Market Pulse source contract.
+
+Verification limitation:
+- Opera acknowledged the diagnostics export, but the DevTools-triggered download did not materialize a JSON file in the configured download directory or the searched user drives. Exported artifact bytes were therefore not independently inspected; sanitization is source/regression-verified rather than download-file-verified.
+
+Remaining live gates:
+- actual abroad/travel-state route-guard acceptance requires the Torn account to be in a real travel/abroad state;
+- TornPDA `8.0.0-alpha.35-pda.22` real-device acceptance remains separate.
+
+No merge, stable publication or customer publication is authorized by this verification.
