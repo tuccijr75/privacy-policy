@@ -127,7 +127,7 @@
  async function syncPurchaseLogs(){
    if(state?.role!=='supplier'||!cfg().torn)return 0;
    const supplierId=await verifyKey();
-   const lots=state.lots.filter(l=>l.tradeRef&&l.senderId===supplierId&&(l.status==='received_pending'||l.status==='awaiting_cost'));
+   const lots=state.lots.filter(l=>l.tradeRef&&l.senderId===supplierId&&l.mode==='supplier'&&l.status==='awaiting_cost');
    if(!lots.length)return 0;
    const targetIds=new Set(lots.map(l=>l.itemId)),dateFloor=Math.floor((Date.now()-120*86400000)/1000);
    let imported=0;
@@ -219,7 +219,7 @@
        try{await syncTrades();}catch(e){warnings.push('Trades: '+e.message);}
        try{await syncSales();}catch(e){warnings.push('Sales: '+e.message);}
        if(Date.now()-lastBazaar>minutes(5))try{await snapshot();}catch(e){warnings.push('Listings: '+e.message);}
-     }else if(state.role==='supplier'&&cfg().torn&&Date.now()-lastPurchaseScan>minutes(10)){
+     }else if(state.role==='supplier'&&cfg().torn&&(!silent||Date.now()-lastPurchaseScan>minutes(10))){
        lastPurchaseScan=Date.now();
        try{await syncPurchaseLogs();}catch(e){warnings.push('Purchase log costs: '+e.message);}
      }
