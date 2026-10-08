@@ -1,54 +1,12 @@
 (() => {
   'use strict';
 
-  const PDA_GM_PREFIX='mm_acquisitions_pda_gm_v1:';
   globalThis.__MM_TORN_PDA__=true;
 
-  if(typeof globalThis.GM_getValue!=='function'){
-    globalThis.GM_getValue=(key,def)=>{
-      try{
-        const raw=localStorage.getItem(PDA_GM_PREFIX+String(key));
-        return raw==null?def:JSON.parse(raw);
-      }catch{return def;}
-    };
-  }
-  if(typeof globalThis.GM_setValue!=='function'){
-    globalThis.GM_setValue=(key,value)=>{
-      try{localStorage.setItem(PDA_GM_PREFIX+String(key),JSON.stringify(value));}catch{}
-    };
-  }
-  if(typeof globalThis.GM_deleteValue!=='function'){
-    globalThis.GM_deleteValue=key=>{
-      try{localStorage.removeItem(PDA_GM_PREFIX+String(key));}catch{}
-    };
-  }
-
-  // TornPDA/GMforPDA exposes GM_* helpers as non-writable, non-configurable
-  // window properties. Never monkey-patch them. The PDA bundle keeps its
-  // injected API key in the outer TornPDA userscript closure instead of window.
-
-  if(typeof globalThis.GM_xmlhttpRequest!=='function'&&typeof globalThis.PDA_httpGet==='function'){
-    globalThis.GM_xmlhttpRequest=options=>{
-      const opts=options&&typeof options==='object'?options:{};
-      let aborted=false;
-      let settled=false;
-      let timer=null;
-      const finish=(fn,arg)=>{
-        if(settled||aborted)return;
-        settled=true;
-        if(timer)clearTimeout(timer);
-        try{fn?.(arg);}catch{}
-      };
-      if(Number(opts.timeout||0)>0){
-        timer=setTimeout(()=>finish(opts.ontimeout,{status:0,statusText:'timeout',responseText:''}),Number(opts.timeout));
-      }
-      Promise.resolve()
-        .then(()=>globalThis.PDA_httpGet(String(opts.url||''),opts.headers||{}))
-        .then(response=>finish(opts.onload,response))
-        .catch(error=>finish(opts.onerror,{status:0,statusText:String(error?.message||error||'request failed'),responseText:'',error}));
-      return {abort(){aborted=true;if(timer)clearTimeout(timer);}};
-    };
-  }
+  // TornPDA/GMforPDA may expose GM_* helpers as non-writable,
+  // non-configurable properties. Never assign or replace them here.
+  // Acquisitions owns its request fallback locally in the UI/runtime source;
+  // durable cross-origin handoff state uses lexical PDA_storage below.
 })();
 
 (() => {

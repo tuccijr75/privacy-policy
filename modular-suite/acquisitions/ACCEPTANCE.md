@@ -2,15 +2,18 @@
 
 ## Candidate
 
-- Desktop: 8.0.0-alpha.35
-- TornPDA: 8.0.0-alpha.35-pda.22
+- Desktop: 8.0.0-alpha.36
+- TornPDA: 8.0.0-alpha.36-pda.23
 - Branch: crm-v8-acquisitions-standalone-pricelist-alpha35
 - Base: crm-v8-acquisitions-standalone-alpha34
 - Stable/customer publication: not approved
 - Status: non-production candidate
 - Final purchase, bid, travel and transfer actions remain manual.
 
-## Alpha.35 optional Customer Pricelist Profile
+## Alpha.36 standalone customer profile + PDA contract correction
+
+Alpha.36 preserves the alpha.35 customer-profile behavior and corrects the TornPDA platform boundary. The PDA adapter no longer assigns or replaces GM_getValue, GM_setValue, GM_deleteValue, or GM_xmlhttpRequest. Acquisitions now owns a local GET bridge that uses native GM_xmlhttpRequest when available and falls back to PDA_httpGet without mutating global GM helpers. Cross-origin Travel handoff remains on lexical PDA_storage.
+
 
 ### Contract
 
@@ -35,7 +38,7 @@
 - [ ] Invalid/foreign input does not replace the active profile.
 - [ ] Clear the profile; cached rows remain preserved but inactive while unrelated workflows continue.
 - [ ] Recheck Pricelist, Find One Item, Best Deals, Ranked Weapons, Travel, Inventory Restock, Market Pulse freshness, route guards and manual-action boundaries.
-- [ ] Repeat the profile flow on TornPDA alpha.35-pda.22.
+- [ ] Repeat the profile flow on TornPDA alpha.36-pda.23.
 - [ ] Do not merge or publish until owner accepts desktop and PDA live results.
 ## Product boundary
 
@@ -261,3 +264,16 @@ Remaining live gates:
 - TornPDA `8.0.0-alpha.35-pda.22` real-device acceptance remains separate.
 
 No merge, stable publication or customer publication is authorized by this verification.
+
+## Alpha.36 PDA contract verification
+
+Pending live gate:
+- TornPDA 8.0.0-alpha.36-pda.23 real-device acceptance.
+
+Deterministic requirements:
+- generated PDA contains no GM helper assignment/monkey-patch;
+- native GM helpers are used as provided;
+- GET-only fallback uses PDA_httpGet locally;
+- cross-origin Travel handoff continues through lexical PDA_storage;
+- traveling and abroad states preserve the Torn market route guard;
+- final Buy/Bid/Travel actions remain manual.

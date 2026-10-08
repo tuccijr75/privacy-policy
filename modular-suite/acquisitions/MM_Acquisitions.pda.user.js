@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.35-pda.22
+// @version      8.0.0-alpha.36-pda.23
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -1254,54 +1254,12 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 (() => {
   'use strict';
 
-  const PDA_GM_PREFIX='mm_acquisitions_pda_gm_v1:';
   globalThis.__MM_TORN_PDA__=true;
 
-  if(typeof globalThis.GM_getValue!=='function'){
-    globalThis.GM_getValue=(key,def)=>{
-      try{
-        const raw=localStorage.getItem(PDA_GM_PREFIX+String(key));
-        return raw==null?def:JSON.parse(raw);
-      }catch{return def;}
-    };
-  }
-  if(typeof globalThis.GM_setValue!=='function'){
-    globalThis.GM_setValue=(key,value)=>{
-      try{localStorage.setItem(PDA_GM_PREFIX+String(key),JSON.stringify(value));}catch{}
-    };
-  }
-  if(typeof globalThis.GM_deleteValue!=='function'){
-    globalThis.GM_deleteValue=key=>{
-      try{localStorage.removeItem(PDA_GM_PREFIX+String(key));}catch{}
-    };
-  }
-
-  // TornPDA/GMforPDA exposes GM_* helpers as non-writable, non-configurable
-  // window properties. Never monkey-patch them. The PDA bundle keeps its
-  // injected API key in the outer TornPDA userscript closure instead of window.
-
-  if(typeof globalThis.GM_xmlhttpRequest!=='function'&&typeof globalThis.PDA_httpGet==='function'){
-    globalThis.GM_xmlhttpRequest=options=>{
-      const opts=options&&typeof options==='object'?options:{};
-      let aborted=false;
-      let settled=false;
-      let timer=null;
-      const finish=(fn,arg)=>{
-        if(settled||aborted)return;
-        settled=true;
-        if(timer)clearTimeout(timer);
-        try{fn?.(arg);}catch{}
-      };
-      if(Number(opts.timeout||0)>0){
-        timer=setTimeout(()=>finish(opts.ontimeout,{status:0,statusText:'timeout',responseText:''}),Number(opts.timeout));
-      }
-      Promise.resolve()
-        .then(()=>globalThis.PDA_httpGet(String(opts.url||''),opts.headers||{}))
-        .then(response=>finish(opts.onload,response))
-        .catch(error=>finish(opts.onerror,{status:0,statusText:String(error?.message||error||'request failed'),responseText:'',error}));
-      return {abort(){aborted=true;if(timer)clearTimeout(timer);}};
-    };
-  }
+  // TornPDA/GMforPDA may expose GM_* helpers as non-writable,
+  // non-configurable properties. Never assign or replace them here.
+  // Acquisitions owns its request fallback locally in the UI/runtime source;
+  // durable cross-origin handoff state uses lexical PDA_storage below.
 })();
 
 (() => {
@@ -4563,9 +4521,47 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     }
   }
 
+  function platformGetRequest(options){
+    const opts=options&&typeof options==='object'?options:{};
+    if(typeof GM_xmlhttpRequest==='function')return GM_xmlhttpRequest(opts);
+    const pdaGet=(typeof PDA_httpGet==='function')
+      ?PDA_httpGet
+      :(typeof globalThis.PDA_httpGet==='function'?globalThis.PDA_httpGet:null);
+    if(!pdaGet){
+      const error={status:0,statusText:'No supported GET bridge is available.',responseText:''};
+      queueMicrotask(()=>{try{opts.onerror?.(error);}catch{}});
+      return {abort(){}};
+    }
+    if(String(opts.method||'GET').toUpperCase()!=='GET'){
+      const error={status:0,statusText:'PDA_httpGet supports GET requests only.',responseText:''};
+      queueMicrotask(()=>{try{opts.onerror?.(error);}catch{}});
+      return {abort(){}};
+    }
+    let aborted=false,settled=false,timer=null;
+    const finish=(fn,arg)=>{
+      if(settled||aborted)return;
+      settled=true;
+      if(timer)clearTimeout(timer);
+      try{fn?.(arg);}catch{}
+    };
+    if(Number(opts.timeout||0)>0){
+      timer=setTimeout(()=>finish(opts.ontimeout,{status:0,statusText:'timeout',responseText:''}),Number(opts.timeout));
+    }
+    Promise.resolve()
+      .then(()=>pdaGet(String(opts.url||''),opts.headers||{}))
+      .then(response=>finish(opts.onload,response))
+      .catch(error=>finish(opts.onerror,{
+        status:0,
+        statusText:String(error?.message||error||'request failed'),
+        responseText:'',
+        error
+      }));
+    return {abort(){aborted=true;if(timer)clearTimeout(timer);}};
+  }
+
   function gmText(url){
     return new Promise((resolve,reject)=>{
-      GM_xmlhttpRequest({
+      platformGetRequest({
         method:'GET',url,timeout:20000,headers:{Accept:'text/html,application/xhtml+xml'},
         onload:r=>{
           if(r.status<200||r.status>=300)return reject(new Error('HTTP '+r.status));
@@ -4697,7 +4693,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   function gmJsonResponse(url,{headers={}}={}){
     return new Promise((resolve,reject)=>{
       const started=Date.now();
-      GM_xmlhttpRequest({
+      platformGetRequest({
         method:'GET',url,timeout:20000,headers:{Accept:'application/json',...headers},
         onload:r=>{
           let data;
@@ -6508,7 +6504,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.35-pda.22 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.36-pda.23 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+

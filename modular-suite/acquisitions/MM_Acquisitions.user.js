@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions
 // @namespace    manic-mike.torn.acquisitions
-// @version      8.0.0-alpha.35
+// @version      8.0.0-alpha.36
 // @description  Pricelist procurement and ranked-weapon investment assistant with direct Bazaar, Item Market, auction and travel routing; final actions remain manual.
 // @match        https://www.torn.com/*
 // @match        https://weav3r.dev/travel-stock*
@@ -275,9 +275,47 @@
     }
   }
 
+  function platformGetRequest(options){
+    const opts=options&&typeof options==='object'?options:{};
+    if(typeof GM_xmlhttpRequest==='function')return GM_xmlhttpRequest(opts);
+    const pdaGet=(typeof PDA_httpGet==='function')
+      ?PDA_httpGet
+      :(typeof globalThis.PDA_httpGet==='function'?globalThis.PDA_httpGet:null);
+    if(!pdaGet){
+      const error={status:0,statusText:'No supported GET bridge is available.',responseText:''};
+      queueMicrotask(()=>{try{opts.onerror?.(error);}catch{}});
+      return {abort(){}};
+    }
+    if(String(opts.method||'GET').toUpperCase()!=='GET'){
+      const error={status:0,statusText:'PDA_httpGet supports GET requests only.',responseText:''};
+      queueMicrotask(()=>{try{opts.onerror?.(error);}catch{}});
+      return {abort(){}};
+    }
+    let aborted=false,settled=false,timer=null;
+    const finish=(fn,arg)=>{
+      if(settled||aborted)return;
+      settled=true;
+      if(timer)clearTimeout(timer);
+      try{fn?.(arg);}catch{}
+    };
+    if(Number(opts.timeout||0)>0){
+      timer=setTimeout(()=>finish(opts.ontimeout,{status:0,statusText:'timeout',responseText:''}),Number(opts.timeout));
+    }
+    Promise.resolve()
+      .then(()=>pdaGet(String(opts.url||''),opts.headers||{}))
+      .then(response=>finish(opts.onload,response))
+      .catch(error=>finish(opts.onerror,{
+        status:0,
+        statusText:String(error?.message||error||'request failed'),
+        responseText:'',
+        error
+      }));
+    return {abort(){aborted=true;if(timer)clearTimeout(timer);}};
+  }
+
   function gmText(url){
     return new Promise((resolve,reject)=>{
-      GM_xmlhttpRequest({
+      platformGetRequest({
         method:'GET',url,timeout:20000,headers:{Accept:'text/html,application/xhtml+xml'},
         onload:r=>{
           if(r.status<200||r.status>=300)return reject(new Error('HTTP '+r.status));
@@ -374,7 +412,7 @@
   function gmJsonResponse(url,{headers={}}={}){
     return new Promise((resolve,reject)=>{
       const started=Date.now();
-      GM_xmlhttpRequest({
+      platformGetRequest({
         method:'GET',url,timeout:20000,headers:{Accept:'application/json',...headers},
         onload:r=>{
           let data;
@@ -2185,7 +2223,7 @@
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.35 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.36 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+

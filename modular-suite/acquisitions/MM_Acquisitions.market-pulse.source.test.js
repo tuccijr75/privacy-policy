@@ -15,7 +15,7 @@ for(const [name,source] of [
   ['desktop',desktop],['pda',pda],['pulse',pulse],['logic',logic],['live',live],['ranked',ranked]
 ])assert.doesNotThrow(()=>new vm.Script(source,{filename:name+'.js'}),name+' must parse');
 
-assert(desktop.includes('// @version      8.0.0-alpha.35'));
+assert(desktop.includes('// @version      8.0.0-alpha.36'));
 const requireLines=desktop.split(/\r?\n/).filter(line=>line.startsWith('// @require'));
 assert.strictEqual(requireLines.length,7,'desktop dependency count');
 assert(requireLines.some(line=>line.includes('/MM_Acquisitions.market-pulse.js')),'desktop must require Market Pulse');
@@ -28,11 +28,14 @@ for(const line of requireLines){
   assert(match,'MM-owned desktop dependencies must use immutable full-SHA jsDelivr URLs');
 }
 
-assert(pda.includes('// @version      8.0.0-alpha.35-pda.22'));
+assert(pda.includes('// @version      8.0.0-alpha.36-pda.23'));
 assert(desktop.includes('async function readSharedState()'),'desktop must bootstrap/read shared state through helper');
 assert(desktop.includes('core?.ensureSharedState'),'desktop must opt into fresh-install Core bootstrap');
 const pdaHeader=pda.slice(0,pda.indexOf('// ==/UserScript=='));
 assert(!pdaHeader.includes('@require'),'PDA metadata must contain no @require');
+assert(!/globalThis\.GM_(?:getValue|setValue|deleteValue|xmlhttpRequest)\s*=/.test(pda),'PDA bundle must not monkey-patch GM helpers');
+assert(pda.includes('function platformGetRequest(options)'),'PDA bundle must use the source-owned GET bridge');
+assert(pda.includes("typeof PDA_httpGet==='function'"),'PDA GET bridge must fall back to PDA_httpGet without replacing GM helpers');
 for(const token of [
   '/* ===== Market Pulse engine (bundled) ===== */','MMTornMarketPulse','MMTornAcquisitionsLogic',
   'MMTornAcquisitionsLive','MMTornRankedProfitLogic','MMTornRestockIntel','MMTornAcquisitionLedger','PDA_storage','PDA_httpGet'
@@ -46,7 +49,7 @@ for(let i=1;i<sectionOrder.length;i++)assert(sectionOrder[i]>sectionOrder[i-1],'
 
 assert(builder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(builder.includes('"MMTornMarketPulse"'));
-assert(builder.includes('default=22'));
+assert(builder.includes('default=23'));
 assert(builder.includes('MM_Acquisitions.market-pulse.js'));
 assert(builder.includes('MM_Acquisitions.torn-intel.js'));
 assert(builder.includes('"MMTornRestockIntel"'));
@@ -107,8 +110,8 @@ assert(pda.includes('customerPricelistProfile'),'PDA must bundle the shared prof
 assert(!pda.includes('DEFAULT_PRICELIST_USER_ID'),'PDA must not restore an implicit customer Pricelist default');
 assert(!pda.includes('4054377'),'PDA must not embed a customer-specific Pricelist ID');
 assert(!pda.includes('Pricelist Torn ID'),'PDA Ranked settings must not recreate a second customer profile input');
-assert(acceptance.includes('8.0.0-alpha.35'),'acceptance sheet must match desktop candidate');
-assert(acceptance.includes('8.0.0-alpha.35-pda.22'),'acceptance sheet must match PDA candidate');
+assert(acceptance.includes('8.0.0-alpha.36'),'acceptance sheet must match desktop candidate');
+assert(acceptance.includes('8.0.0-alpha.36-pda.23'),'acceptance sheet must match PDA candidate');
 assert(acceptance.includes('Verified Sales'),'acceptance sheet must cover official completed-sale evidence');
 assert(acceptance.includes('Cross-tab ownership'),'acceptance sheet must cover one-engine lease behavior');
 assert(/manual-action boundary/i.test(acceptance),'acceptance sheet must preserve manual final actions');

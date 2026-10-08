@@ -12,7 +12,7 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.35'));
+assert(userSource.includes('// @version      8.0.0-alpha.36'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e7dc3ee67948a527a83cda9c52c69c863680b264/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e7dc3ee67948a527a83cda9c52c69c863680b264/modular-suite/acquisitions/MM_Acquisitions.logic.js'));
@@ -159,7 +159,10 @@ console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS
 const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      8.0.0-alpha.35-pda.22'));
+assert(pdaSource.includes('// @version      8.0.0-alpha.36-pda.23'));
+assert(!/globalThis\.GM_(?:getValue|setValue|deleteValue|xmlhttpRequest)\s*=/.test(pdaSource),'generated PDA must not monkey-patch GM helpers');
+assert(pdaSource.includes('function platformGetRequest(options)'),'generated PDA must contain the source-owned GET bridge');
+assert(pdaSource.includes("ctx?.mode==='traveling'||ctx?.mode==='abroad'"),'generated PDA must preserve the travel route guard');
 const pdaUiSource=pdaSource.slice(pdaSource.indexOf('===== Acquisitions UI ====='));
 const pdaPulseSource=pdaSource.slice(pdaSource.indexOf('===== Market Pulse engine (bundled) ====='),pdaSource.indexOf('===== Acquisitions logic (bundled) ====='));
 assert(!/armory|factionInventory|marketPulseDemand|MM_Faction_Armory/i.test(pdaUiSource),'PDA Acquisitions UI must be standalone');
@@ -189,6 +192,12 @@ assert(pdaSource.includes('await beginTravelCapture();'));
 const pdaAdapterSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.adapter.js','utf8');
 assert(!pdaAdapterSource.includes('globalThis.GM_getValue=function'));
 assert(!pdaAdapterSource.includes('__MM_PDA_API_KEY__'));
+assert(!/globalThis\.GM_(?:getValue|setValue|deleteValue|xmlhttpRequest)\s*=/.test(pdaAdapterSource),'PDA adapter must never monkey-patch GM helpers');
+assert(userSource.includes('function platformGetRequest(options)'),'desktop source must own the GET bridge locally');
+assert(userSource.includes("typeof PDA_httpGet==='function'"),'local GET bridge must support lexical PDA_httpGet fallback');
+assert(userSource.includes("ctx?.mode==='traveling'||ctx?.mode==='abroad'"),'travel route guard must block both traveling and abroad states');
+assert(userSource.includes('Torn market purchase pages are unavailable while traveling or abroad.'),'direct Torn market navigation must fail closed while away');
+assert(userSource.includes('Market purchase deferred: '),'procurement routing must defer while away');
 assert(pdaAdapterSource.includes("typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.get==='function'"));
 assert(!/factionInventory|marketPulseDemand|MM_Faction_Armory|armory-acquisition-request/i.test(pdaAdapterSource),'PDA adapter must not define private-product state or protocols');
 
@@ -196,7 +205,7 @@ const pdaBuilder=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
 assert(pdaBuilder.includes('def replace_once('));
 assert(pdaBuilder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(pdaBuilder.includes('"MMTornMarketPulse"'));
-assert(pdaBuilder.includes('default=22'));
+assert(pdaBuilder.includes('default=23'));
 assert(pdaBuilder.includes('f"v{base_version}"'));
 assert(pdaBuilder.includes('f"v{pda_version}"'));
 assert(!pdaBuilder.includes('PROFIT / RANKED / TRAVEL'));
@@ -247,7 +256,7 @@ assert(liveSource.includes('Torn API finished Auction House'));
 
 const userSourceStandalone=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceStandalone);
-assert(userSourceStandalone.includes('// @version      8.0.0-alpha.35'));
+assert(userSourceStandalone.includes('// @version      8.0.0-alpha.36'));
 assert(!/armory/i.test(userSourceStandalone),'desktop Acquisitions must contain no Armory-specific UI/protocol plumbing');
 assert(!userSourceStandalone.includes('factionInventory'));
 assert(!userSourceStandalone.includes('marketPulseDemand'));
@@ -264,3 +273,65 @@ assert(userSourceStandalone.includes('Final purchase remains manual.'));
 assert(userSourceStandalone.includes('GO TO TRAVEL AGENCY'));
 assert(userSourceStandalone.includes('https://www.torn.com/travelagency.php'));
 console.log('MM_Acquisitions standalone procurement routing regression: PASS');
+
+const normalizedUserSource=userSource.replace(/\r\n/g,'\n');
+const bridgeStart=normalizedUserSource.indexOf('  function platformGetRequest(options){');
+const bridgeEnd=normalizedUserSource.indexOf('\n\n  function gmText(url){',bridgeStart);
+assert(bridgeStart>=0&&bridgeEnd>bridgeStart,'platformGetRequest source block must be extractable');
+const bridgeSource=normalizedUserSource.slice(bridgeStart,bridgeEnd);
+const bridgeContext=extra=>{
+  const ctx={setTimeout,clearTimeout,queueMicrotask,Promise,String,Number,...extra};
+  vm.createContext(ctx);
+  vm.runInContext(bridgeSource+'\nthis.platformGetRequest=platformGetRequest;',ctx);
+  return ctx;
+};
+
+(async()=>{
+  let nativeCalls=0,pdaCalls=0;
+  const native=bridgeContext({
+    GM_xmlhttpRequest:opts=>{nativeCalls++;return {kind:'native',opts};},
+    PDA_httpGet:async()=>{pdaCalls++;return {status:200,responseText:'wrong'};}
+  });
+  const handle=native.platformGetRequest({method:'GET',url:'https://example.invalid/native'});
+  assert.strictEqual(nativeCalls,1,'native GM_xmlhttpRequest must be preferred');
+  assert.strictEqual(pdaCalls,0,'PDA fallback must not run when native GM exists');
+  assert.strictEqual(handle.kind,'native');
+
+  let fallbackCalls=0;
+  const fallback=bridgeContext({
+    PDA_httpGet:async(url,headers)=>{
+      fallbackCalls++;
+      assert.strictEqual(url,'https://example.invalid/pda');
+      assert.strictEqual(headers.Accept,'application/json');
+      return {status:200,responseText:'{"ok":true}',responseHeaders:'content-type: application/json'};
+    }
+  });
+  await new Promise((resolve,reject)=>{
+    fallback.platformGetRequest({
+      method:'GET',
+      url:'https://example.invalid/pda',
+      headers:{Accept:'application/json'},
+      timeout:1000,
+      onload:r=>{try{assert.strictEqual(r.status,200);resolve();}catch(error){reject(error);}},
+      onerror:reject,
+      ontimeout:()=>reject(new Error('unexpected PDA fallback timeout'))
+    });
+  });
+  assert.strictEqual(fallbackCalls,1,'PDA_httpGet fallback must fire exactly once');
+
+  let postCalls=0;
+  const getOnly=bridgeContext({PDA_httpGet:async()=>{postCalls++;return {status:200};}});
+  await new Promise((resolve,reject)=>{
+    getOnly.platformGetRequest({
+      method:'POST',
+      url:'https://example.invalid/post',
+      onload:()=>reject(new Error('PDA_httpGet must not service POST')),
+      onerror:r=>{try{assert.match(String(r.statusText),/GET requests only/);resolve();}catch(error){reject(error);}}
+    });
+  });
+  assert.strictEqual(postCalls,0,'PDA_httpGet must remain GET-only');
+  console.log('MM_Acquisitions PDA GET bridge behavior: PASS');
+})().catch(error=>{
+  console.error(error);
+  process.exitCode=1;
+});
