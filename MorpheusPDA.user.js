@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-pda.4
+// @version      2.2.0-pda.5
 // @description  TornPDA mobile edition: trade verification, sale-log tracking, shared payouts and 7 PM ET reports. Read-only Torn API; trades and cash remain manual.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -19,7 +19,7 @@
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.2.0-pda.4';
+ const VERSION='2.2.0-pda.5';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
  const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY'].map(x=>prefix+x);
@@ -127,62 +127,91 @@
    lastTrades=Date.now();return count;
  }
 
- function parsePurchaseLog(log){
-   const type=Number(log?.details?.id),d=log?.data||{};
-   if(![1112,1225,4200,4201].includes(type))return null;
-   // Market/Bazaar logs have items[]; shop/abroad purchases use item + quantity.
-   // Multi-item purchases remain pending unless a single matching item is explicit.
+ function parsePurchaseLog(log,requestedType){
+   const id=Number(log?.details?.id ?? log?.log ?? requestedType),d=log?.data||{};
+   if(![1112,1225,4200,4201].includes(id)||id!==requestedType)return null;
    let item=null;
    if(Array.isArray(d.items)&&d.items.length===1)item=d.items[0];
-   else if((type===4200||type===4201)&&d.item!=null)item={id:d.item,qty:d.quantity,uid:null};
-   if(!item)return null;
-   const itemId=numeric(item.id),qty=numeric(item.qty),
-     unitCost=numeric(d.cost_each),totalCost=numeric(d.cost_total),timestamp=numeric(log.timestamp);
-   if(!isPositive(itemId)||!isPositive(qty)||!isPositive(unitCost)||!isPositive(totalCost)||!isPositive(timestamp)||qty*unitCost!==totalCost)return null;
-   return {logId:String(log.id),logType:type,timestamp,itemId,uid:isPositive(numeric(item.uid))?numeric(item.uid):null,qty,unitCost,totalCost};
+   else if((id===4200||id===4201)&&d.item!=null)
+     item=typeof d.item==='object'?{id:d.item.id,qty:d.item.qty??d.quantity,uid:d.item.uid}:{id:d.item,qty:d.quantity,uid:null};
+   if(!item||typeof log.id!=='string'||!log.id.trim())return null;
+   const itemId=numeric(item.id),qty=numeric(item.qty??item.quantity),timestamp=numeric(log.timestamp),
+     totalCost=numeric(d.cost_total??d.total),listedPrice=d.cost_each==null?null:numeric(d.cost_each);
+   const unitCost=listedPrice==null&&isPositive(qty)&&Number.isSafeInteger(totalCost/qty)?totalCost/qty:listedPrice;
+   if(!isPositive(itemId)||!isPositive(qty)||!isPositive(unitCost)||!isPositive(totalCost)||
+     !isPositive(timestamp)||!Number.isSafeInteger(qty*unitCost)||qty*unitCost!==totalCost)return null;
+   return {logId:log.id,logType:id,timestamp,itemId,uid:isPositive(numeric(item.uid))?numeric(item.uid):null,
+     qty,unitCost,totalCost};
+ }
+ function chooseLoggedPurchases(l,allLots,purchases){
+   if(l.mode!=='supplier'||l.status!=='awaiting_cost'||!l.tradeRef)return null;
+   const recvTime=new Date(l.createdAt).getTime(),allUsed={};
+   for(const other of allLots){
+     if(other.id===l.id)continue;
+     for(const part of other.purchaseParts||[])allUsed[part.logId]=(allUsed[part.logId]||0)+part.qty;
+     if(other.purchaseLogId){const proof=purchases.find(p=>p.logId===other.purchaseLogId);
+       if(proof)allUsed[proof.logId]=(allUsed[proof.logId]||0)+proof.qty;}
+   }
+   const available=purchases.filter(p=>p.itemId===l.itemId
+      &&(l.uid==null||p.uid==null||p.uid===l.uid)
+      &&p.timestamp*1000<=recvTime+300000&&p.timestamp*1000>=recvTime-120*86400000
+      &&p.qty-(allUsed[p.logId]||0)>0)
+      .sort((a,b)=>b.timestamp-a.timestamp||(a.logId<b.logId?-1:a.logId>b.logId?1:0));
+   let remaining=l.qty;const parts=[];
+   for(const p of available){
+     const take=Math.min(remaining,p.qty-(allUsed[p.logId]||0));
+     if(take>0){parts.push({logId:p.logId,qty:take});remaining-=take;}
+     if(remaining===0)break;
+   }
+   return remaining===0&&parts.length<=40?parts:null;
  }
  async function syncPurchaseLogs(){
    if(state?.role!=='supplier')throw Error('Sign in as Morpheus to scan his purchase logs');
-   if(!cfg().torn)throw Error('Morpheus Torn API key is missing in TornPDA Settings');
+   if(!cfg().torn)throw Error('No Torn API key: enter a Custom key or enable TornPDA app key with purchase-log permissions');
    const supplierId=await verifyKey();
    const lots=state.lots.filter(l=>l.tradeRef&&l.senderId===supplierId&&l.mode==='supplier'&&l.status==='awaiting_cost');
-   if(!lots.length)return {logsSeen:0,valid:0,relevant:0,imported:0,matched:0,skipped:0,pages:0,pending:0,noPending:true};
-   const stats={logsSeen:0,valid:0,relevant:0,imported:0,matched:0,skipped:0,pages:0,pending:lots.length};
-   const targetIds=new Set(lots.map(l=>l.itemId)),dateFloor=Math.floor((Date.now()-120*86400000)/1000);
-   let imported=0;
+   if(!lots.length)return {noPending:true,read:0,relevant:0,imported:0,matched:0,skipped:0,errors:[]};
+   const wanted=new Set(lots.map(l=>l.itemId)),floor=Math.floor((Math.min(...lots.map(l=>new Date(l.createdAt).getTime()))-120*86400000)/1000);
+   const stats={read:0,relevant:0,imported:0,matched:0,skipped:0,pages:0,errors:[],truncated:[]};
    for(const type of [1112,1225,4200,4201]){
-     let url='https://api.torn.com/v2/user/log?'+new URLSearchParams({log:String(type),limit:'100',from:String(dateFloor),key:cfg().torn});
-     const seenPages=new Set();
-     for(let page=0;page<15&&url;page++){
-       if(seenPages.has(url))break;seenPages.add(url);
-       const response=await request(url);if(!Array.isArray(response.log))throw Error('Unexpected purchase log response for '+type);stats.pages++;
-       for(const raw of response.log){
-         stats.logsSeen++;const data=parsePurchaseLog(raw);
-         if(!data){stats.skipped++;continue;}stats.valid++;
-         if(!targetIds.has(data.itemId))continue;stats.relevant++;
-         if(state.purchaseLogs.some(p=>p.logId===data.logId))continue;
-         await relay('purchase_log',data);imported++;
+     let url='https://api.torn.com/v2/user/log?'+new URLSearchParams({log:String(type),limit:'100',from:String(floor),key:cfg().torn});
+     const seen=new Set();
+     try{
+       for(let page=0;page<8&&url;page++){
+         if(seen.has(url))throw Error('Repeated pagination link');seen.add(url);
+         const response=await request(url);
+         if(!Array.isArray(response.log))throw Error('Invalid log response');
+         stats.pages++;
+         for(const raw of response.log){
+           stats.read++;const p=parsePurchaseLog(raw,type);
+           if(!p){stats.skipped++;continue;}
+           if(!wanted.has(p.itemId))continue;
+           stats.relevant++;
+           if(state.purchaseLogs.some(x=>x.logId===p.logId))continue;
+           await relay('purchase_log',p);stats.imported++;
+         }
+         const next=response._metadata?.links?.next;
+         if(!next){url=null;break;}
+         const nextUrl=new URL(next);
+         if(nextUrl.protocol!=='https:'||nextUrl.hostname!=='api.torn.com'||nextUrl.pathname!=='/v2/user/log')
+           throw Error('Untrusted pagination address');
+         nextUrl.searchParams.set('key',cfg().torn);url=nextUrl.href;
+         if(page===7)stats.truncated.push(type);
        }
-       const next=response._metadata?.links?.next;
-       if(!next){if(response.log.length>=100)throw Error('Purchase logs incomplete: missing next page');url=null;}
-       else{
-         const location=new URL(next);
-         if(location.protocol!=='https:'||location.hostname!=='api.torn.com'||location.pathname!=='/v2/user/log')
-           throw Error('Untrusted purchase log pagination URL');
-         location.searchParams.set('key',cfg().torn);url=location.href;
-       }
-       if(page===14&&url)throw Error('Purchase log exceeds 15 pages; match remains pending');
-     }
+     }catch(e){stats.errors.push(String(type)+': '+e.message);}
    }
-   let matched=0;
-   for(const l of state.lots.filter(x=>x.tradeRef&&x.mode==='supplier'&&x.status==='awaiting_cost'&&x.senderId===supplierId)){
-     const logs=state.purchaseLogs.filter(p=>p.itemId===l.itemId&&p.qty===l.qty&&(l.uid==null||p.uid==null||p.uid===l.uid)
-       &&p.timestamp*1000<=new Date(l.createdAt).getTime()+300000&&p.timestamp*1000>=new Date(l.createdAt).getTime()-120*86400000
-       &&!state.lots.some(x=>x.purchaseLogId===p.logId));
-     if(logs.length!==1)continue;
-     await relay('purchase_apply',{lotId:l.id,logId:logs[0].logId,supplierId});matched++;
+   // Attribute only quantity supported by real Torn log entries, newest prior purchases first.
+   // The server independently validates each log, date, item ID, quantity, and non-reuse.
+   const pending=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&l.mode==='supplier'
+     &&l.status==='awaiting_cost').sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+   for(const l of pending){
+     const parts=chooseLoggedPurchases(l,state.lots,state.purchaseLogs);
+     if(!parts)continue;
+     try{await relay('purchase_apply_bundle',{lotId:l.id,supplierId,parts});stats.matched++;}
+     catch(e){stats.errors.push(l.name+': '+e.message);}
    }
-   stats.imported=imported;stats.matched=matched;return stats;
+   stats.pending=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&l.mode==='supplier'&&l.status==='awaiting_cost').length;
+   return stats;
  }
  function parseBazaarLog(log){
    if(Number(log?.details?.id)!==1226)return null;
@@ -241,19 +270,23 @@
        try{await syncSales();}catch(e){warnings.push('Sales: '+e.message);}
        if(Date.now()-lastBazaar>minutes(5))try{await snapshot();}catch(e){warnings.push('Listings: '+e.message);}
       }else if(state.role==='supplier'){
-       if(!cfg().torn){lastPurchaseResult='NOT SCANNED: Add Morpheus own Torn Custom API key (user/basic plus user/log types 1112, 1225, 4200, 4201).';warnings.push('Purchase scan skipped: Morpheus Torn API key missing');}
-       else if(!silent||Date.now()-lastPurchaseScan>minutes(10)){
-         lastPurchaseScan=Date.now();
-         try{
-           const stats=await syncPurchaseLogs();
-           lastPurchaseResult=stats.noPending?'No Morpheus-funded items awaiting cost':
-              'Purchase search: '+stats.logsSeen+' log entries read, '+stats.relevant+' matching item-ID entries, '+
-              stats.imported+' evidence records saved, '+stats.matched+' inventory lots priced; '+stats.skipped+' log layouts skipped. '+
-              'If lots remain awaiting_cost, purchases may have unmatched quantities, unsupported log layouts, or dates outside the scan window.';
-         }catch(e){lastPurchaseResult='Purchase scan FAILED: '+e.message;warnings.push('Purchase log costs: '+e.message);}
-       }
-     }
-     status=warnings.length?'Sync partial — '+warnings.join(' | '):
+        if(!cfg().torn){
+          lastPurchaseResult='NOT SCANNED: No Torn API key with purchase-log access.';
+          warnings.push('Purchase scan skipped: Torn API key unavailable');
+        }else if(!silent||Date.now()-lastPurchaseScan>minutes(10)){
+          lastPurchaseScan=Date.now();
+          try{
+            const stats=await syncPurchaseLogs();
+            lastPurchaseResult=stats.noPending?'No supplier lots awaiting purchase costs':
+              'Purchase evidence: '+stats.read+' logs read; '+stats.relevant+' relevant; '+stats.imported+' saved; '+
+              stats.matched+' lots priced; '+stats.pending+' pending; '+stats.skipped+' log formats skipped.'+
+              (stats.truncated.length?' More pages may exist for '+stats.truncated.join(', ')+'.':'')+
+              (stats.errors.length?' Errors: '+stats.errors.join(' | '):'');
+            if(stats.errors.length)warnings.push('Purchase costs: '+stats.errors.join(' | '));
+          }catch(e){lastPurchaseResult='Purchase scan FAILED: '+e.message;warnings.push('Purchase costs: '+e.message);}
+        }
+      }
+      status=warnings.length?'Sync partial — '+warnings.join(' | '):
        state.role==='supplier'?lastPurchaseResult:'Connected: trades/sales checked at '+new Date().toLocaleTimeString();
    }catch(e){status='Sync failed: '+e.message;if(!silent)alert(status);}finally{working=false;draw();}
  }
