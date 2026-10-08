@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.0.0-pda.1
+// @version      2.0.0-pda.2
 // @description  TornPDA mobile edition: trade verification, sale-log tracking, shared payouts and 7 PM ET reports. Read-only Torn API; trades and cash remain manual.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -19,7 +19,7 @@
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.0.0-pda.1';
+ const VERSION='2.0.0-pda.2';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
  const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName'].map(x=>prefix+x);
@@ -41,10 +41,24 @@
  let state=null,working=false,opened=false,status='Not connected',lastTrades=0,lastLogs=0,lastBazaar=0;
  const minutes=n=>n*60000;
  async function request(url,payload){
-   // Native TornPDA cross-origin transport; never send Torn API keys to the Google relay.
-   const result=payload===undefined
+   // Torn API credentials stay local; requests to the relay carry tokens, not API keys.
+   let result=payload===undefined
      ? await PDA_httpGet(url,{})
      : await PDA_httpPost(url,{'Content-Type':'text/plain;charset=utf-8'},JSON.stringify(payload));
+   // Apps Script ContentService returns a 302/303 to a one-time GET-only URL.
+   // On iOS TornPDA follow ONLY the trusted Google URL; never retry the POST.
+   const code=Number(result?.status);
+   if(payload!==undefined && (code===302||code===303) && new URL(url).hostname==='script.google.com'){
+     const h=result.responseHeaders;
+     const location=typeof h==='string'
+       ? (h.match(/(?:^|\r?\n)location:\s*([^\r\n]+)/i)||[])[1]
+       : (h && typeof h==='object' ? (h.location||h.Location||'') : '');
+     let redirect=null;
+     try{if(location)redirect=new URL(String(location).trim(),url);}catch(_){}
+     if(!redirect || redirect.protocol!=='https:' || redirect.hostname!=='script.googleusercontent.com' || redirect.pathname!=='/macros/echo')
+       throw Error('HTTP '+code+': Google response redirect missing or unexpected (check web app access)');
+     result=await PDA_httpGet(redirect.href,{});
+   }
    const status=Number(result && result.status);
    if(!Number.isFinite(status)||status<200||status>=300)throw Error('HTTP '+String(result?.status??'unknown'));
    let data;
