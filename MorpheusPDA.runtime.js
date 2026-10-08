@@ -13,7 +13,7 @@ return (async () => {
  const VERSION='2.2.0-pda.7';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
- const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY'].map(x=>prefix+x);
+ const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY','lastPurchaseScanAt'].map(x=>prefix+x);
  const cache=await PDA_storage.getMany(keys);
  const read=k=>String(cache[prefix+k] ?? '');
  const save=async(k,v)=>{const value=String(v??'').trim();await PDA_storage.set(prefix+k,value);cache[prefix+k]=value;};
@@ -30,7 +30,7 @@ return (async () => {
  const uuid=()=>crypto.randomUUID?.()||('mb-'+Date.now()+'-'+Math.random().toString(36).slice(2));
  // New pipeline starts at install time so legacy manually logged sales are not double counted.
  if(!read('v2SaleStart')) await save('v2SaleStart',Date.now()-120000);
- let state=null,working=false,opened=false,status='Not connected',lastTrades=0,lastLogs=0,lastBazaar=0,lastPurchaseScan=0,lastPurchaseResult='Not scanned on this device';
+ let state=null,working=false,opened=false,status='Not connected',lastTrades=0,lastLogs=0,lastBazaar=0,lastPurchaseScan=Number(read('lastPurchaseScanAt')||0),lastPurchaseResult='Not scanned on this device';
  const scannedTradeIds=new Set();
  const itemNames=new Map();
  const minutes=n=>n*60000;
@@ -300,6 +300,7 @@ return (async () => {
           warnings.push('Purchase scan skipped: API key unavailable');
         }else if(!silent||Date.now()-lastPurchaseScan>minutes(10)){
           lastPurchaseScan=Date.now();
+          try{await save('lastPurchaseScanAt',lastPurchaseScan);}catch(error){console.warn('[Morpheus Ledger] Scan throttle persistence failed',error);}
           try{
             const stats=await syncPurchaseLogs();
             lastPurchaseResult=stats.noPending?'No supplier lots awaiting purchase costs':
@@ -389,7 +390,7 @@ return (async () => {
  function draw(){if(!opened)return;const c=cfg(),s=state?.summary,role=state?.role;
    let html=`<header><b>Morpheus Bazaar Ledger</b><span class="muted">v${VERSION}</span><button data-action="close">Close</button></header><section class="row"><b>${esc(status)}</b><button data-action="refresh" ${working?'disabled':''}>Refresh ledger</button><button data-action="scan" ${working?'disabled':''}>Scan Torn API</button></section>`;
    if(s){html+=`<section><div class="muted">Signed in: <b>${role==='owner'?'Bazaar Owner':'Morpheus'}</b> • Business day ${esc(s.openDay)} (19:00 ET cutoff)</div><div class="metrics"><div><span class="muted">${role==='owner'?'Expected to pay':'Expected pay'} — today</span><strong class="num">${money(s.current.morpheusDue)}</strong></div><div><span class="muted">${role==='owner'?'Daily expected to pay':'Daily expected'} — last close</span><strong class="num">${money(s.lastClosed.morpheusDue)}</strong></div><div><span class="muted">Lifetime unpaid balance</span><strong class="num">${money(s.remaining)}</strong></div></div><div class="metrics" style="margin-top:9px"><div><span class="muted">Today's gross sales</span><strong>${money(s.current.gross)}</strong></div><div><span class="muted">Today's net profit</span><strong>${money(s.current.profit)}</strong></div><div><span class="muted">Your earnings today</span><strong>${money(role==='owner'?s.current.ownerProfit:s.current.morpheusProfit)}</strong></div></div><p class="muted"><b>Today:</b> ${money(s.current.morpheusProfit)} Morpheus profit + ${money(s.current.capitalDue)} capital reimbursement = ${money(s.current.morpheusDue)} total payable. <b>Last close:</b> ${money(s.lastClosed.morpheusProfit)} profit + ${money(s.lastClosed.capitalDue)} capital = ${money(s.lastClosed.morpheusDue)} payable. Lifetime debt survives rollover. Cash transfers remain manual.</p></section>`;
-     if(role==='supplier')html+=`<section><b>Purchase cost sync</b><p class="muted">${esc(lastPurchaseResult)}. To fetch Morpheus purchase costs, add HIS Custom Torn API key below and tap Scan Torn API. The Shared Ledger does not read his key from your device.</p></section>`;
+     if(role==='supplier')html+=`<section><b>Purchase cost sync</b><p class="muted">${esc(lastPurchaseResult)}. The script automatically checks TornPDA's API key, scans permitted purchase logs, and selects an existing override only if necessary. No separate key entry is needed when TornPDA's key has sufficient access.</p></section>`;
      if(role==='supplier')html+=`<section><b>Optional: source a purchase lead</b><form id="newlot"><div class="grid"><div><label>Item name</label><input name="name" required></div><div><label>Torn Item ID (required to auto-verify trades)</label><input name="itemId" type="number" min="1" required></div><div><label>Quantity</label><input name="qty" type="number" min="1" required></div><div><label>My buy cost per unit ($)</label><input name="cost" placeholder="Can fill in later"></div><div><label>Funding</label><select name="mode"><option value="supplier">I purchased — 50/50 profit</option><option value="owner">Owner purchases my lead — sourcing fee</option></select></div><div><label>Sourcing fee (%) if owner-funded</label><input name="fee" type="number" value="20" min="0" max="100"></div><div><label>Item UID (optional, for unique equipment)</label><input name="uid" type="number" min="1"></div></div><label>Notes</label><textarea name="note"></textarea><button>Submit to shared ledger</button></form><p class="muted">For an ordinary item transfer, no submission is needed: trade directly and the owner scanner imports it. Only sourcing leads need this form.</p><button data-action="trade">Open partner's Torn profile to trade</button></section>`;
      if(role==='owner')html+=`<section><b>Trade & sale reconciliation</b><p class="muted">Completed incoming item trades from all Torn players are imported automatically with no manual proposal. New receipts are marked pending until funding/cost is classified. Only your Bazaar sale logs are scanned (Torn log 1226). Only unambiguous sales book profit.</p><button data-action="trade">Open Morpheus's profile</button> <button data-action="scan">Check trades & sales now</button> <button data-action="crimeBulk">Classify crime drops in trade</button> <button data-action="approveMorpheus100">Approve all Morpheus crime drops - 100%</button> <p class="muted">Last trade scan: ${lastTrades?new Date(lastTrades).toLocaleString():'not yet'} · Last sale scan: ${lastLogs?new Date(lastLogs).toLocaleString():'not yet'}</p></section>`;
      html+=`<section><details open><summary>Inventory lots (${state.lots.length})</summary><div class="scroll">${state.lots.map(itemRow).join('')||'No inventory yet'}</div></details></section>`;
@@ -500,6 +501,6 @@ return (async () => {
      await writeOp('sale_reconcile',{sourceId:ex.id,lotId:choice,itemId:ex.itemId,uid:ex.uid,qty:ex.qty,unitPrice:ex.unitPrice,timestamp},'Sale matched');
    }
  }
- if(cfg().relay&&cfg().token)refresh(true);
+ if(cfg().relay&&cfg().token)syncAll(true);
  setInterval(()=>{if(document.visibilityState==='visible'&&cfg().relay&&cfg().token&&!working)syncAll(true);},minutes(3));
 })();
