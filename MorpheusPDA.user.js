@@ -1,16 +1,47 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-pda.5
-// @description  TornPDA mobile edition: trade verification, sale-log tracking, shared payouts and 7 PM ET reports. Read-only Torn API; trades and cash remain manual.
+// @version      2.2.0-pda.6
+// @description  Stable one-time installer. On each Torn reload, securely fetches the latest Bazaar Ledger runtime, with offline bundled fallback.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
 // @run-at       document-end
-// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/MorpheusPDA.user.js
-// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/MorpheusPDA.user.js
+// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/main/MorpheusPDA.user.js
+// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/main/MorpheusPDA.user.js
 // @noframes
 // ==/UserScript==
 (async () => {
+ 'use strict';
+ if(window.top!==window.self)return;
+ if(window.__morpheusPdaBootstrapLoaded)return;
+ window.__morpheusPdaBootstrapLoaded=true;
+ // TornPDA substitutes this marker with the user's existing PDA API key.
+ const PDA_KEY='###PDA-APIKEY###';
+ const RUNTIME_URL='https://raw.githubusercontent.com/tuccijr75/privacy-policy/main/MorpheusPDA.runtime.js';
+ let launched=false;
+ try {
+   if(typeof PDA_httpGet!=='function'||typeof PDA_storage==='undefined')
+     throw Error('TornPDA script APIs unavailable');
+   const response=await PDA_httpGet(RUNTIME_URL+'?refresh='+Date.now(),{});
+   const code=Number(response?.status);
+   const source=response?.responseText;
+   if(code<200||code>=300||typeof source!=='string'||source.length<25000||source.length>200000)
+     throw Error('Latest runtime unavailable');
+   if(!source.startsWith('// Morpheus Bazaar Ledger dynamic runtime, v2.2.0-')||
+      !source.includes('const PDA_API_KEY=PDA_RUNTIME_KEY;')||
+      !source.includes('return (async () => {'))
+     throw Error('Remote runtime format did not pass validation');
+   // Only the controlled official GitHub main branch is used. No key is sent to GitHub.
+   const execute=new Function('PDA_RUNTIME_KEY',source+'\n//# sourceURL=MorpheusPDA.runtime.js');
+   launched=true;
+   await execute(PDA_KEY);
+   return;
+ }catch(error) {
+   console.warn('[Morpheus Ledger] Online code unavailable; starting bundled fallback:',String(error?.message||error));
+   if(launched&&window.__morpheusPdaLedgerLoaded)return;
+ }
+ // Bundled known-good version works when GitHub is temporarily unreachable or eval is blocked.
+ await (async () => {
  'use strict';
  if (window.top !== window.self) return;
  if (typeof PDA_storage === 'undefined' || typeof PDA_httpGet !== 'function' || typeof PDA_httpPost !== 'function') {
@@ -19,7 +50,7 @@
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.2.0-pda.5';
+ const VERSION='2.2.0-pda.6';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
  const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY'].map(x=>prefix+x);
@@ -28,7 +59,7 @@
  const save=async(k,v)=>{const value=String(v??'').trim();await PDA_storage.set(prefix+k,value);cache[prefix+k]=value;};
  // TornPDA replaces this marker with the API key configured in the app. Owner may override it
  // with a separate least-privilege Custom key that includes private Bazaar-sale logs.
- const PDA_API_KEY="###PDA-APIKEY###";
+ const PDA_API_KEY=PDA_KEY;
  // A single placeholder occurrence is required: TornPDA substitutes EVERY occurrence.
  const appKey=/^[A-Za-z0-9_-]{12,100}$/.test(PDA_API_KEY)?PDA_API_KEY:'';
  const cfg=()=>({relay:read('relay'),token:read('token'),torn:read('torn')||appKey,partnerId:Number(read('partnerId')||0)});
@@ -477,4 +508,5 @@
  }
  if(cfg().relay&&cfg().token)refresh(true);
  setInterval(()=>{if(document.visibilityState==='visible'&&cfg().relay&&cfg().token&&!working)syncAll(true);},minutes(3));
+})();
 })();
