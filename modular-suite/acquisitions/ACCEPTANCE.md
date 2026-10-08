@@ -277,3 +277,24 @@ Deterministic requirements:
 - cross-origin Travel handoff continues through lexical PDA_storage;
 - traveling and abroad states preserve the Torn market route guard;
 - final Buy/Bid/Travel actions remain manual.
+
+## Live alpha.36 desktop smoke — 2026-10-08
+
+Verified after the TornPDA GM-helper contract correction:
+
+PASS:
+- Tampermonkey storage contains Acquisitions `8.0.0-alpha.36` and no remaining alpha.35 script value;
+- live Torn panel reports `v8.0.0-alpha.36 · PRICELIST + RANKED`;
+- authorized shared customer profile `https://weav3r.dev/pricelist/4054377` persisted through the update;
+- `Data status: READY` after reload;
+- live Refresh Pricelist succeeded through the desktop native GM request path: 125 priced items, source TornW3B Pricelist API, `$6,120,000/BB`, fresh update timestamp;
+- live Market Pulse refresh succeeded through Torn API v2 and reported `Market Pulse refreshed item 985.`;
+- no purchase, bid, transfer, travel, or other irreversible Torn action was executed during the smoke test;
+- the temporary test tab was restored to its original Bazaar URL after verification.
+- executable travel-state guard tests PASS for Torn/home, Traveling, Abroad, and unknown parsing; Traveling and Abroad both block Torn market routing.
+
+Remaining live gates:
+- actual traveling/abroad route-guard behavior requires the account to be genuinely traveling or abroad; do not initiate travel for testing;
+- TornPDA `8.0.0-alpha.36-pda.23` real-device acceptance.
+
+No merge, stable publication or customer publication is authorized by this verification.

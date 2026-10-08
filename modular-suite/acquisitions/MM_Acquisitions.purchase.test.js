@@ -335,3 +335,38 @@ const bridgeContext=extra=>{
   console.error(error);
   process.exitCode=1;
 });
+
+
+{
+  const normalized=userSource.replace(/\r\n/g,'\n');
+  const travelStart=normalized.indexOf('  function parseTravelContext(data){');
+  const travelEnd=normalized.indexOf('\n\n  async function refreshTravelContext',travelStart);
+  assert(travelStart>=0&&travelEnd>travelStart,'travel context functions must be extractable');
+  const travelSource=normalized.slice(travelStart,travelEnd);
+  const ctx={Date,String};
+  vm.createContext(ctx);
+  vm.runInContext('let travelContext=null;\n'+travelSource+'\nthis.parseTravelContext=parseTravelContext;this.marketNavigationBlocked=marketNavigationBlocked;this.travelContextLabel=travelContextLabel;',ctx);
+
+  const home=ctx.parseTravelContext({profile:{status:{state:'Okay',description:'In Torn'}}});
+  assert.strictEqual(home.mode,'torn');
+  assert.strictEqual(ctx.marketNavigationBlocked(home),false);
+  assert.strictEqual(ctx.travelContextLabel(home),'Okay');
+
+  const traveling=ctx.parseTravelContext({profile:{status:{state:'Traveling',description:'Traveling from Torn to Mexico'}}});
+  assert.strictEqual(traveling.mode,'traveling');
+  assert.strictEqual(traveling.origin,'Torn');
+  assert.strictEqual(traveling.destination,'Mexico');
+  assert.strictEqual(ctx.marketNavigationBlocked(traveling),true);
+  assert.strictEqual(ctx.travelContextLabel(traveling),'Traveling from Torn to Mexico');
+
+  const abroad=ctx.parseTravelContext({profile:{status:{state:'Abroad',description:'In Mexico'}}});
+  assert.strictEqual(abroad.mode,'abroad');
+  assert.strictEqual(abroad.country,'Mexico');
+  assert.strictEqual(ctx.marketNavigationBlocked(abroad),true);
+  assert.match(ctx.travelContextLabel(abroad),/Mexico/);
+
+  const unknown=ctx.parseTravelContext({});
+  assert.strictEqual(unknown.mode,'unknown');
+  assert.strictEqual(ctx.marketNavigationBlocked(unknown),false);
+  console.log('MM_Acquisitions travel-state guard behavior: PASS');
+}
