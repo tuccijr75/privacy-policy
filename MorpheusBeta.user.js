@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger 2 Candidate
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.0.0-beta.2
+// @version      2.0.0-beta.3
 // @description  Shared Torn trade verification, Bazaar sale-log ingestion, 7 PM ET closeout and reports. No automated Torn trades.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -19,7 +19,7 @@
  'use strict';
  if (window.__morpheusLedgerLoaded) return;
  window.__morpheusLedgerLoaded=true;
- const VERSION='2.0.0-beta.2';
+ const VERSION='2.0.0-beta.3';
  const prefix='mledger_';
  const read=k=>GM_getValue(prefix+k,'');
  const save=(k,v)=>GM_setValue(prefix+k,String(v??'').trim());
@@ -32,10 +32,23 @@
  if(!GM_getValue(prefix+'v2SaleStart',''))GM_setValue(prefix+'v2SaleStart',String(Date.now()-120000));
  let state=null,working=false,opened=false,status='Not connected',lastTrades=0,lastLogs=0,lastBazaar=0;
  const minutes=n=>n*60000;
- function request(url,payload){return new Promise((resolve,reject)=>GM_xmlhttpRequest({method:payload?'POST':'GET',url,
-   headers:payload?{'Content-Type':'text/plain;charset=utf-8'}:{},data:payload?JSON.stringify(payload):undefined,timeout:25000,
-   onload:r=>{try{if(r.status<200||r.status>=300)throw Error('HTTP '+r.status);const v=JSON.parse(r.responseText);if(v.error)throw Error(typeof v.error==='object'?v.error.error||JSON.stringify(v.error):v.error);resolve(v);}catch(e){reject(e)}},
-   onerror:()=>reject(Error('Network error')),ontimeout:()=>reject(Error('Request timed out'))}));}
+ function request(url,payload){return new Promise((resolve,reject)=>{
+   const finish=r=>{try{if(r.status<200||r.status>=300)throw Error('HTTP '+r.status);const v=JSON.parse(r.responseText);if(v.error)throw Error(typeof v.error==='object'?v.error.error||JSON.stringify(v.error):v.error);resolve(v);}catch(e){reject(e)}};
+   GM_xmlhttpRequest({method:payload?'POST':'GET',url,
+     headers:payload?{'Content-Type':'text/plain;charset=utf-8'}:{},data:payload?JSON.stringify(payload):undefined,timeout:25000,
+     onload:r=>{
+       // Apps Script ContentService redirects POST responses to a GET-only googleusercontent URL.
+       // If the browser repeats POST and gets 405, fetch that one-time response via GET.
+       // Never repeat the original POST, which could duplicate ledger operations.
+       if(payload&&r.status===405&&/^https:\/\/script\.googleusercontent\.com\/macros\/echo\?/.test(r.finalUrl||'')){
+         GM_xmlhttpRequest({method:'GET',url:r.finalUrl,timeout:25000,onload:finish,
+           onerror:()=>reject(Error('Google response redirect failed')),ontimeout:()=>reject(Error('Google response redirect timed out'))});
+         return;
+       }
+       finish(r);
+     },
+     onerror:()=>reject(Error('Network error')),ontimeout:()=>reject(Error('Request timed out'))});
+ });}
  async function api(path,params={}){
    const key=cfg().torn;if(!key)throw Error('Add your own Torn Custom API key to Settings');
    const q=new URLSearchParams({...params,key});return request('https://api.torn.com/v2/'+path+'?'+q);
