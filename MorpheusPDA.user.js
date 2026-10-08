@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-pda.1
+// @version      2.2.0-pda.2
 // @description  TornPDA mobile edition: trade verification, sale-log tracking, shared payouts and 7 PM ET reports. Read-only Torn API; trades and cash remain manual.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -19,7 +19,7 @@
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.2.0-pda.1';
+ const VERSION='2.2.0-pda.2';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
  const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY'].map(x=>prefix+x);
@@ -305,6 +305,7 @@
  window.addEventListener('resize',()=>{if(!drag)restoreButton();});
  function rowsReport(obj){return Object.keys(obj||{}).sort().reverse().slice(0,8).map(k=>`<tr><td>${esc(k)}</td><td>${esc(obj[k].sales)}</td><td>${money(obj[k].profit)}</td><td>${money(obj[k].morpheusProfit)}</td><td>${money(obj[k].morpheusDue)}</td><td>${money(obj[k].ownerProfit)}</td></tr>`).join('');}
  function itemRow(l){const rem=l.qty-l.sold-l.returned,buttons=[];
+   if(state.role==='owner'&&l.status==='awaiting_cost'&&l.mode==='supplier'&&l.tradeRef&&l.unitCost==null&&l.sold===0&&l.returned===0&&!l.purchaseLogId)buttons.push(`<button data-action="correctSource" data-id="${esc(l.id)}">Correct item source</button>`);
    if(state.role==='owner'&&l.status==='awaiting_split')buttons.push(`<button data-action="crimeSplit" data-id="${esc(l.id)}">Approve crime-drop split</button>`);
    if(state.role==='owner'&&l.status==='received_pending')buttons.push(`<button data-action="classify" data-id="${esc(l.id)}">Classify received item</button>`);
    if(state.role==='owner'&&l.status==='proposed'&&l.mode==='owner')buttons.push(`<button data-action="confirm" data-id="${esc(l.id)}">Confirm my purchase</button>`);
@@ -354,12 +355,21 @@
      await writeOp('trade_classify',payload,mode==='supplier'?'Funding assigned; Morpheus can now enter acquisition cost':'Received trade classified');
      return;
    }
+   if(action==='correctSource'&&l&&l.mode==='supplier'&&l.status==='awaiting_cost'){
+     const chosen=prompt('Correct item source for '+l.name+'. Type crime for a $0 crime drop or return for your property returned. Purchased items must remain supplier.','return');
+     if(chosen===null)return;
+     const mode=chosen.trim().toLowerCase();
+     if(mode!=='crime'&&mode!=='return')return alert('Enter crime or return');
+     if(!confirm('Correct '+l.name+' × '+l.qty+' from SUPPLIER to '+mode.toUpperCase()+'? This writes an audited correction; no sale or payment is changed.'))return;
+     await writeOp('trade_correct_source',{lotId:l.id,mode},'Trade funding source corrected');
+     return;
+   }
    if(action==='crimeBulk'){
      const tradeText=prompt('Completed Torn trade ID containing crime drops:');
      if(tradeText===null)return;
      const tradeId=numeric(tradeText);
-     const list=state.lots.filter(l=>l.tradeId===tradeId&&l.status==='received_pending');
-     if(!list.length)return alert('No unclassified receipts in that trade');
+     const list=state.lots.filter(l=>l.tradeId===tradeId&&(l.status==='received_pending'||(l.status==='awaiting_cost'&&l.mode==='supplier'&&l.unitCost==null&&l.sold===0&&l.returned===0&&!l.purchaseLogId)));
+     if(!list.length)return alert('No unpriced, unclassified or incorrectly supplier-classified receipts in that trade');
      const bought=prompt('Enter exact item names PURCHASED with money, separated by commas. These will NOT be classified as crime drops.\n\nTrade items:\n'+list.map(l=>l.name+' × '+l.qty).join('\n')+'\n\nType NONE only if everything was a crime drop.','');
      if(bought===null)return;
      const exclude=new Set(bought.trim().toLowerCase()==='none'?[]:bought.split(',').map(x=>x.trim().toLowerCase()).filter(Boolean));
@@ -367,7 +377,7 @@
      if([...exclude].some(name=>!list.some(l=>l.name.toLowerCase()===name)))return alert('A purchased item name did not match exactly. No inventory changed.');
      const targets=list.filter(l=>!exclude.has(l.name.toLowerCase()));
      if(!targets.length)return alert('All items excluded; nothing to classify');
-     if(!confirm('Mark '+targets.length+' item types as CRIME DROPS with $0 acquisition cost?\n'+targets.map(l=>l.name+' × '+l.qty).join('\n')+'\n\nProfit shares remain pending approval.'))return;
+     if(!confirm('Correct '+targets.length+' item types to CRIME DROPS with $0 acquisition cost?\n'+targets.map(l=>l.name+' × '+l.qty).join('\n')+'\n\nProfit shares remain pending approval.'))return;
      await writeOp('trade_bulk_crime',{tradeId,lotIds:targets.map(l=>l.id)},'Crime drop sources recorded; split still requires approval');
      return;
    }
