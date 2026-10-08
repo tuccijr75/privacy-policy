@@ -1,4 +1,4 @@
-// Morpheus Bazaar Ledger dynamic runtime, v2.2.0-pda.7
+// Morpheus Bazaar Ledger dynamic runtime, v2.2.0-pda.8
 // Served by official bootstrap; do not install separately.
 // Never includes API key or relay tokens.
 return (async () => {
@@ -10,7 +10,7 @@ return (async () => {
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.2.0-pda.7';
+ const VERSION='2.2.0-pda.8';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
  const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY','lastPurchaseScanAt'].map(x=>prefix+x);
@@ -18,7 +18,7 @@ return (async () => {
  const read=k=>String(cache[prefix+k] ?? '');
  const save=async(k,v)=>{const value=String(v??'').trim();await PDA_storage.set(prefix+k,value);cache[prefix+k]=value;};
  // TornPDA replaces this marker with the API key configured in the app. Owner may override it
- // with a separate least-privilege Custom key that includes private Bazaar-sale logs.
+ // with a saved Full Access key, if the TornPDA-supplied key lacks purchase-log permissions.
  const PDA_API_KEY=PDA_RUNTIME_KEY;
  // A single placeholder occurrence is required: TornPDA substitutes EVERY occurrence.
  const appKey=/^[A-Za-z0-9_-]{12,100}$/.test(PDA_API_KEY)?PDA_API_KEY:'';
@@ -106,7 +106,7 @@ return (async () => {
            let displayName='Item #'+di.id;
            try{const catalog=await api('torn/'+di.id+'/items');const entry=Array.isArray(catalog.items)?catalog.items.find(x=>x.id===di.id):null;
              if(entry&&typeof entry.name==='string'&&entry.name.length<=100)displayName=entry.name;
-           }catch(_){/* A Custom user-only key may omit torn/items; item ID stays valid. */}
+           }catch(_){/* Some valid keys may omit torn/items; item ID stays valid. */}
            itemNames.set(di.id,displayName);
          }
          await relay('trade_intake',{tradeId:t.id,line,completedAt:detail.completed_at,name:itemNames.get(di.id),itemId:di.id,uid:di.uid??null,qty:di.amount,senderId:otherId,receiverId:ownerId});
@@ -184,7 +184,7 @@ return (async () => {
      }catch(_){}
    }
    if(!best)throw Error('No installed Torn API key belongs to the Morpheus sender of pending trades');
-   if(best.access===0)throw Error('TornPDA API key lacks purchase-log access. The app cannot grant permissions that its key does not have.');
+   if(best.access===0)throw Error('TornPDA key does not allow purchase logs. Public, Minimal and Limited are insufficient; choose Full Access for the key provided to TornPDA. Authorization is one-time, not per item.');
    purchaseKeyInUse=best.key;
    return best;
  }
@@ -398,8 +398,8 @@ return (async () => {
      if(role==='owner')html+=`<section><b>Payment after sending Torn cash</b><form id="payment"><div class="grid"><div><label>Amount sent</label><input name="amount" type="number" min="1" max="${s.remaining}" required></div><div><label>Torn reference</label><input name="reference"></div></div><button ${s.remaining<=0?'disabled':''}>Record payment sent</button></form></section>`;
      html+=`<section><details><summary>Payments (${state.payments.length})</summary>${state.payments.map(p=>`<div class="line">${money(p.amount)} • ${esc(p.at)} • ${p.acknowledged?'Acknowledged':'Awaiting acknowledgment'} ${role==='supplier'&&!p.acknowledged?`<button data-action="ack" data-id="${esc(p.id)}">Confirm receipt</button>`:''}</div>`).join('')||'No payments'}</details><details><summary>Sales history (${state.sales.length})</summary><div class="scroll">${state.sales.slice(0,100).map(x=>`<div class="line">${esc(x.name)} × ${x.qty} • ${money(x.gross)} revenue • ${money(x.cost)} cost • Morpheus profit ${money(x.morpheusProfit)} + capital ${money(x.capitalDue)} = ${money(x.morpheusDue)} due • Owner ${money(x.ownerProfit)} <span class="muted">${esc(x.at)} / ${esc(x.sourceId||'legacy/manual')}</span></div>`).join('')}</div></details></section>`;
      html+=`<section><details><summary>Daily, weekly & monthly reports</summary>${[['Daily',state.daily],['Weekly',state.weekly],['Monthly',state.monthly]].map(([label,x])=>`<b>${label}</b><table><thead><tr><th>Period</th><th>Sales</th><th>Net profit</th><th>Profit to Morpheus</th><th>Total owed</th><th>Owner</th></tr></thead><tbody>${rowsReport(x)}</tbody></table>`).join('')}<button data-action="export">Export CSV</button></details></section>`;
-   }else html+=`<section class="warning">Configure the shared relay and personal token below to connect. Owner auto-sales require a Custom Torn API key with user/log 1226.</section>`;
-   html+=`<section><details ${s?'':'open'}><summary>Settings</summary><form id="settings"><label>Same Google Apps Script /exec URL for both users</label><input name="relay" required value="${esc(c.relay)}"><label>Personal relay token (different for each player)</label><input name="token" type="password" required value="${esc(c.token)}"><label>Optional key override (the script automatically selects TornPDA's key first)</label><input name="torn" type="password" value="${esc(c.torn)}"><label>Partner's Torn player ID</label><input name="partnerId" type="number" min="1" value="${c.partnerId||''}"><button>Save & connect</button> <button type="button" data-action="verify">Verify Torn API key</button><p class="muted">Owner: Custom key granting v2 user/log log type 1226, plus user/trades, user/{tradeId}/trade and user/basic; v1 user/bazaar for listing snapshots. Morpheus: Torn key optional for ledger; if using it, Public is enough for user/basic. Data policy: your override key and relay token are stored privately in TornPDA's per-script storage; trade and sale identifiers, quantities, costs, and proceeds stored in your private Google Sheet, visible to both partners.</p></form></details></section>`;
+   }else html+=`<section class="warning">Configure the shared relay and personal token below to connect. Owner auto-sales require a Full Access key with user/log 1226.</section>`;
+   html+=`<section><details ${s?'':'open'}><summary>Settings</summary><form id="settings"><label>Same Google Apps Script /exec URL for both users</label><input name="relay" required value="${esc(c.relay)}"><label>Personal relay token (different for each player)</label><input name="token" type="password" required value="${esc(c.token)}"><label>Optional key override (the script automatically selects TornPDA's key first)</label><input name="torn" type="password" value="${esc(c.torn)}"><label>Partner's Torn player ID</label><input name="partnerId" type="number" min="1" value="${c.partnerId||''}"><button>Save & connect</button> <button type="button" data-action="verify">Verify Torn API key</button><p class="muted">Owner: Full Access needed to import Bazaar sales from user/log 1226. Morpheus: Full Access is needed to read private purchase logs for automatic costs. The script uses the API key already provided by TornPDA when it has those permissions. Public, Minimal and Limited do not authorize private purchase logs. Data policy: your override key and relay token are stored privately in TornPDA's per-script storage; trade and sale identifiers, quantities, costs, and proceeds stored in your private Google Sheet, visible to both partners.</p></form></details></section>`;
    panel.innerHTML=html;
    panel.querySelectorAll('button[data-action]').forEach(x=>x.addEventListener('click',()=>act(x.dataset.action,x.dataset.id)));
    panel.querySelector('#settings')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);const updates={};for(const k of ['relay','token','torn','partnerId'])updates[prefix+k]=String(f.get(k)??'').trim();try{await PDA_storage.setMany(updates);Object.assign(cache,updates);state=null;await refresh();}catch(e){alert('Could not save settings in TornPDA: '+e.message);}});
