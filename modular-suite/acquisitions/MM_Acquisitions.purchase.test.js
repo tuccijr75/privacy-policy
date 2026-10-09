@@ -161,7 +161,7 @@ console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS
 const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      8.0.0-alpha.37-pda.24'));
+assert(pdaSource.includes('// @version      8.0.0-alpha.37-pda.25'));
 assert(pdaHeader.includes('// @match        https://www.torn.com/*'));
 assert(pdaHeader.includes('// @match        https://torn.com/*'));
 assert(!/globalThis\.GM_(?:getValue|setValue|deleteValue|xmlhttpRequest)\s*=/.test(pdaSource),'generated PDA must not monkey-patch GM helpers');
@@ -172,16 +172,24 @@ const pdaPulseSource=pdaSource.slice(pdaSource.indexOf('===== Market Pulse engin
 assert(!/armory|factionInventory|marketPulseDemand|MM_Faction_Armory/i.test(pdaUiSource),'PDA Acquisitions UI must be standalone');
 assert(!/armory|factionInventory|marketPulseDemand|MM_Faction_Armory/i.test(pdaPulseSource),'PDA Market Pulse producer must be standalone');
 assert(!pdaHeader.includes('@require'));
+assert(!pdaHeader.includes('@grant'),'PDA metadata must not depend on GM permissions');
+assert(!pdaHeader.includes('@connect'),'PDA metadata must not depend on desktop connect permissions');
+assert(pdaHeader.includes('// @noframes'));
 assert(!pdaSource.includes('globalThis.GM_getValue=function'));
+assert(!/\bGM_(?:getValue|setValue|deleteValue|xmlhttpRequest)\s*\(/.test(pdaSource),'generated PDA must contain zero runtime GM helper calls');
 assert(pdaSource.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
 assert(!pdaSource.includes('__MM_PDA_API_KEY__'));
-assert(pdaSource.includes("const apiKey=()=>{const saved=String(GM_getValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(__MM_PDA_API_KEY||'').trim();"));
+assert(pdaSource.includes("const apiKey=()=>{const saved=String(__mmPdaGetValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(__MM_PDA_API_KEY||'').trim();"));
+assert(pdaSource.includes('const __MM_PDA_PREF_READY=(async()=>{'));
+assert(pdaSource.includes('await __MM_PDA_PREF_READY;'));
+assert(pdaSource.includes('function __mmPdaGetValue'));
+assert(pdaSource.includes('function __mmPdaSetValue'));
+assert(pdaSource.includes('function __mmPdaDeleteValue'));
 assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='boot'"));
 assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='adapter'"));
 assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='pulse'"));
 assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='torn-intel'"));
 assert(pdaSource.includes('MMTornRestockIntel'));
-assert(pdaHeader.includes('// @connect      torn-intel.com'));
 assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='ui-ready'"));
 assert(pdaSource.includes("if(core?.registerDockLauncher&&!globalThis.__MM_TORN_PDA__)"));
 assert(pdaSource.includes('position:fixed;right:10px;bottom:86px;'));
@@ -192,6 +200,27 @@ assert(pdaSource.includes('const maybeReturn=async count=>'));
 assert(pdaSource.includes('const feed=await loadTravelFeed();'));
 assert(pdaSource.includes('const feed=await writeTravelFeed(rows,Date.now());'));
 assert(pdaSource.includes('await beginTravelCapture();'));
+
+{
+  const normalizedPda=pdaSource.replace(/\r\n/g,'\n');
+  const bootStart=normalizedPda.indexOf("(() => {\n  'use strict';\n  globalThis.__MM_ACQ_PDA_STAGE='boot';");
+  const bootEnd=normalizedPda.indexOf('\n\nconst __MM_PDA_PREF_KEYS=',bootStart);
+  assert(bootStart>=0&&bootEnd>bootStart,'PDA boot launcher block must be extractable');
+  const elements=new Map();
+  const body={appendChild(el){if(el?.id)elements.set(el.id,el);return el;}};
+  const document={
+    body,
+    getElementById:id=>elements.get(id)||null,
+    createElement:tag=>({tagName:String(tag).toUpperCase(),style:{},setAttribute(){},addEventListener(type,fn){this.listeners??={};this.listeners[type]=fn;}})
+  };
+  const ctx={document,window:{addEventListener(){}},console};
+  ctx.globalThis=ctx;
+  vm.createContext(ctx);
+  vm.runInContext(normalizedPda.slice(bootStart,bootEnd),ctx);
+  assert(elements.has('mm-acquisitions-launcher'),'PDA boot must create launcher without any GM/PDA helper');
+  assert.strictEqual(ctx.__MM_ACQ_PDA_STAGE,'boot');
+  console.log('MM_Acquisitions PDA helper-independent boot launcher: PASS');
+}
 
 const pdaAdapterSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.adapter.js','utf8');
 assert(!pdaAdapterSource.includes('globalThis.GM_getValue=function'));
@@ -209,12 +238,17 @@ const pdaBuilder=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
 assert(pdaBuilder.includes('def replace_once('));
 assert(pdaBuilder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(pdaBuilder.includes('"MMTornMarketPulse"'));
-assert(pdaBuilder.includes('default=24'));
+assert(pdaBuilder.includes('default=25'));
 assert(pdaBuilder.includes('f"v{base_version}"'));
 assert(pdaBuilder.includes('f"v{pda_version}"'));
 assert(!pdaBuilder.includes('PROFIT / RANKED / TRAVEL'));
 assert(pdaBuilder.includes('PDA cross-origin Travel storage'));
 assert(pdaBuilder.includes("const __MM_PDA_API_KEY='###PDA-APIKEY###';"));
+assert(pdaBuilder.includes("// @noframes"));
+assert(!pdaBuilder.includes("// @grant        GM_"));
+assert(!pdaBuilder.includes("// @connect      api.torn.com"));
+assert(pdaBuilder.includes('__MM_PDA_PREF_READY'));
+assert(pdaBuilder.includes('body.replace("GM_getValue(", "__mmPdaGetValue(")'));
 
 
 const liveSource=fs.readFileSync(__dirname+'/MM_Acquisitions.live.js','utf8');

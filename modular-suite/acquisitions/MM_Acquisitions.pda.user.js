@@ -1,20 +1,14 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.37-pda.24
+// @version      8.0.0-alpha.37-pda.25
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-end
-// @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_deleteValue
-// @connect      api.torn.com
-// @connect      weav3r.dev
-// @connect      torn-intel.com
+// @noframes
 // ==/UserScript==
 
 
@@ -56,6 +50,65 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   if(document.body)ensureBootLauncher();
   else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
 })();
+
+
+const __MM_PDA_PREF_KEYS=[
+  'mm_acquisitions_api_v1',
+  'mm_acquisitions_torn_intel_client_key_v1',
+  'mm_acquisitions_torn_intel_last_keyed_at_v1',
+  'mm_acquisitions_weav_watch_lease_v1',
+  'mm_acquisitions_market_pulse_lease_v1',
+  'mm_acquisitions_panel_open_v1'
+];
+const __MM_PDA_PREF_CACHE=Object.create(null);
+let __MM_PDA_PREF_QUEUE=Promise.resolve();
+const __MM_PDA_PREF_READY=(async()=>{
+  if(typeof PDA_storage!=='undefined'&&PDA_storage){
+    try{
+      if(typeof PDA_storage.getMany==='function'){
+        const values=await PDA_storage.getMany(__MM_PDA_PREF_KEYS);
+        for(const key of __MM_PDA_PREF_KEYS){if(values&&Object.prototype.hasOwnProperty.call(values,key))__MM_PDA_PREF_CACHE[key]=values[key];}
+        return;
+      }
+      if(typeof PDA_storage.get==='function'){
+        for(const key of __MM_PDA_PREF_KEYS){
+          const value=await PDA_storage.get(key,undefined);
+          if(value!==undefined)__MM_PDA_PREF_CACHE[key]=value;
+        }
+        return;
+      }
+    }catch(error){console.warn('[MM_Acquisitions PDA] preference preload failed',String(error?.message||error));}
+  }
+  try{
+    for(const key of __MM_PDA_PREF_KEYS){
+      const raw=localStorage.getItem('mm_acq_pda_pref:'+key);
+      if(raw!==null)__MM_PDA_PREF_CACHE[key]=JSON.parse(raw);
+    }
+  }catch{}
+})();
+function __mmPdaGetValue(key,def=null){
+  return Object.prototype.hasOwnProperty.call(__MM_PDA_PREF_CACHE,String(key))?__MM_PDA_PREF_CACHE[String(key)]:def;
+}
+function __mmPdaPersist(op,key,value){
+  const k=String(key);
+  __MM_PDA_PREF_QUEUE=__MM_PDA_PREF_QUEUE.then(async()=>{
+    if(typeof PDA_storage!=='undefined'&&PDA_storage){
+      if(op==='set'&&typeof PDA_storage.set==='function'){await PDA_storage.set(k,value);return;}
+      if(op==='delete'&&typeof PDA_storage.delete==='function'){await PDA_storage.delete(k);return;}
+    }
+    try{
+      const storageKey='mm_acq_pda_pref:'+k;
+      if(op==='set')localStorage.setItem(storageKey,JSON.stringify(value));
+      else localStorage.removeItem(storageKey);
+    }catch{}
+  }).catch(error=>console.warn('[MM_Acquisitions PDA] preference persistence failed',String(error?.message||error)));
+}
+function __mmPdaSetValue(key,value){
+  const k=String(key);__MM_PDA_PREF_CACHE[k]=value;__mmPdaPersist('set',k,value);return value;
+}
+function __mmPdaDeleteValue(key){
+  const k=String(key);delete __MM_PDA_PREF_CACHE[k];__mmPdaPersist('delete',k);return undefined;
+}
 
 
 /* ===== MM Torn Core (bundled) ===== */
@@ -4270,8 +4323,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
 /* ===== Acquisitions UI ===== */
 
-(() => {
+(async () => {
   'use strict';
+  await __MM_PDA_PREF_READY;
 
   const ROOT_ID='mm-acquisitions';
   const LAUNCHER_ID='mm-acquisitions-launcher';
@@ -4354,8 +4408,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
     .replaceAll('"','&quot;').replaceAll("'",'&#039;');
   const money=value=>'$'+Math.max(0,Number(value)||0).toLocaleString('en-US',{maximumFractionDigits:0});
-  const apiKey=()=>{const saved=String(GM_getValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(__MM_PDA_API_KEY||'').trim();const unresolved='###PDA-'+'APIKEY###';return pda&&pda!==unresolved?pda:'';};
-  const tornIntelKey=()=>String(GM_getValue(TORN_INTEL_KEY,'')||'').trim();
+  const apiKey=()=>{const saved=String(__mmPdaGetValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(__MM_PDA_API_KEY||'').trim();const unresolved='###PDA-'+'APIKEY###';return pda&&pda!==unresolved?pda:'';};
+  const tornIntelKey=()=>String(__mmPdaGetValue(TORN_INTEL_KEY,'')||'').trim();
 
   function button(primary=false){
     return 'border:1px solid '+(primary?'#9a7b35':'#555')+';background:'+(primary?'#4b3b18':'#232323')+';color:#eee;border-radius:6px;padding:7px 10px;cursor:pointer;font:12px Arial,sans-serif;';
@@ -4531,7 +4585,6 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function platformGetRequest(options){
     const opts=options&&typeof options==='object'?options:{};
-    if(typeof GM_xmlhttpRequest==='function')return GM_xmlhttpRequest(opts);
     const pdaGet=(typeof PDA_httpGet==='function')
       ?PDA_httpGet
       :(typeof globalThis.PDA_httpGet==='function'?globalThis.PDA_httpGet:null);
@@ -4592,7 +4645,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.get==='function'){
       return await PDA_storage.get(String(key),def);
     }
-    return GM_getValue(key,def);
+    return __mmPdaGetValue(key,def);
   }
 
   async function pdaSharedSet(key,value){
@@ -4600,7 +4653,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       await PDA_storage.set(String(key),value);
       return;
     }
-    GM_setValue(key,value);
+    __mmPdaSetValue(key,value);
   }
 
   async function pdaSharedDelete(key){
@@ -4608,7 +4661,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       await PDA_storage.delete(String(key));
       return;
     }
-    GM_deleteValue(key);
+    __mmPdaDeleteValue(key);
   }
 
   function normalizeTravelFeed(raw){
@@ -4771,7 +4824,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(isTornMarket&&marketNavigationBlocked()){
       throw new Error('Torn market purchase pages are unavailable while traveling or abroad. Return to Torn before routing this market purchase.');
     }
-    GM_setValue(PANEL_OPEN_KEY,true);
+    __mmPdaSetValue(PANEL_OPEN_KEY,true);
     setTimeout(()=>{location.href=target;},20);
   }
 
@@ -4785,8 +4838,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     core,
     refreshItemMarket:itemId=>service.refreshItemMarket(itemId),
     hasKey:()=>Boolean(apiKey()),
-    readLease:()=>GM_getValue(PULSE_LEASE_KEY,null),
-    writeLease:value=>GM_setValue(PULSE_LEASE_KEY,value),
+    readLease:()=>__mmPdaGetValue(PULSE_LEASE_KEY,null),
+    writeLease:value=>__mmPdaSetValue(PULSE_LEASE_KEY,value),
     ownerId:INSTANCE_ID,
     onState:next=>{state=next;}
   }):null;
@@ -4850,7 +4903,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const id=String(itemId||'').trim();
     if(!code||!/^\d+$/.test(id))throw new Error('Restock history needs a supported country and Torn item ID.');
 
-    const previousCall=Math.max(0,Number(GM_getValue(TORN_INTEL_LAST_KEYED_AT,0))||0);
+    const previousCall=Math.max(0,Number(__mmPdaGetValue(TORN_INTEL_LAST_KEYED_AT,0))||0);
     const wait=restockIntel.KEYED_COOLDOWN_MS-(Date.now()-previousCall);
     if(previousCall&&wait>0)throw new Error('Torn Intel history rate-limit guard: retry in '+durationMs(wait)+'.');
 
@@ -4858,7 +4911,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     url.searchParams.set('itemId',id);
     url.searchParams.set('country',code);
     url.searchParams.set('hours','48');
-    GM_setValue(TORN_INTEL_LAST_KEYED_AT,Date.now());
+    __mmPdaSetValue(TORN_INTEL_LAST_KEYED_AT,Date.now());
 
     const response=await gmJsonResponse(url.toString(),{headers:{'X-Torn-Intel-Key':key}});
     const model=restockIntel.deriveRestockModel(response.data,Date.now());
@@ -5029,9 +5082,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function claimWatchLease(){
     const now=Date.now();
-    const current=GM_getValue(WEAV_WATCH_LEASE_KEY,null);
+    const current=__mmPdaGetValue(WEAV_WATCH_LEASE_KEY,null);
     if(current?.owner&&current.owner!==INSTANCE_ID&&Number(current.expiresAt||0)>now)return false;
-    GM_setValue(WEAV_WATCH_LEASE_KEY,{owner:INSTANCE_ID,expiresAt:now+75000});
+    __mmPdaSetValue(WEAV_WATCH_LEASE_KEY,{owner:INSTANCE_ID,expiresAt:now+75000});
     return true;
   }
 
@@ -5064,8 +5117,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function stopWatcher(){
     if(watchTimer){clearInterval(watchTimer);watchTimer=null;}
-    const current=GM_getValue(WEAV_WATCH_LEASE_KEY,null);
-    if(current?.owner===INSTANCE_ID)GM_setValue(WEAV_WATCH_LEASE_KEY,{owner:INSTANCE_ID,expiresAt:0});
+    const current=__mmPdaGetValue(WEAV_WATCH_LEASE_KEY,null);
+    if(current?.owner===INSTANCE_ID)__mmPdaSetValue(WEAV_WATCH_LEASE_KEY,{owner:INSTANCE_ID,expiresAt:0});
   }
 
   function nextUrlFromMetadata(data){
@@ -5169,7 +5222,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function exportMarketPulseDiagnostics(){
     if(!pulse||!state)return;
-    const diagnostics=pulse.sanitizedDiagnostics(state,GM_getValue(PULSE_LEASE_KEY,null));
+    const diagnostics=pulse.sanitizedDiagnostics(state,__mmPdaGetValue(PULSE_LEASE_KEY,null));
     const blob=new Blob([JSON.stringify(diagnostics,null,2)],{type:'application/json'});
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');a.href=url;a.download='MM_Acquisitions-Market-Pulse-'+Date.now()+'.json';
@@ -5653,7 +5706,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const id=String(itemId||'');
     const name=String(itemName||'').trim();
     if(source==='Travel'){
-      GM_setValue(PANEL_OPEN_KEY,true);
+      __mmPdaSetValue(PANEL_OPEN_KEY,true);
       location.href='https://www.torn.com/travelagency.php';
       return;
     }
@@ -5997,7 +6050,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(source==='auction'){
       const direct=String(row.url||'');
       if(/^https:\/\/www\.torn\.com\//i.test(direct)){
-        GM_setValue(PANEL_OPEN_KEY,true);
+        __mmPdaSetValue(PANEL_OPEN_KEY,true);
         location.href=direct;
         return;
       }
@@ -6006,7 +6059,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       if(row.itemName)url.searchParams.set('weaponName',String(row.itemName));
       if(row.rarity)url.searchParams.set('rarity',String(row.rarity).toLowerCase());
       if(row.bonuses?.[0]?.title)url.searchParams.set('bonus1',String(row.bonuses[0].title));
-      GM_setValue(PANEL_OPEN_KEY,true);
+      __mmPdaSetValue(PANEL_OPEN_KEY,true);
       location.href=url.toString();
       return;
     }
@@ -6512,7 +6565,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.37-pda.24 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.37-pda.25 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -6675,13 +6728,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     root.querySelectorAll('[data-item-travel]').forEach(b=>b.addEventListener('click',()=>{location.href='https://www.torn.com/travelagency.php';}));
     root.querySelector('#mm-acq-ti-save')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-acq-ti-key')?.value||'').trim();
-      if(value)GM_setValue(TORN_INTEL_KEY,value);
+      if(value)__mmPdaSetValue(TORN_INTEL_KEY,value);
       statusText=value?'Torn Intel client key saved for on-demand Restock ETA history.':'Enter a Torn Intel client key to save.';
       render();
     });
     root.querySelector('#mm-acq-ti-clear')?.addEventListener('click',()=>{
-      GM_deleteValue(TORN_INTEL_KEY);
-      GM_deleteValue(TORN_INTEL_LAST_KEYED_AT);
+      __mmPdaDeleteValue(TORN_INTEL_KEY);
+      __mmPdaDeleteValue(TORN_INTEL_LAST_KEYED_AT);
       statusText='Torn Intel client key cleared. Live stock refresh can still use the anonymous browser lane.';
       render();
     });
@@ -6697,13 +6750,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     });
     root.querySelector('#mm-acq-save-key')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-acq-api')?.value||'').trim();
-      if(value)GM_setValue(API_KEY,value);
+      if(value)__mmPdaSetValue(API_KEY,value);
       statusText=value?'MM Acquisitions API key saved. Refreshing automatically…':'Enter a key to save.';
       render();
       if(value)setTimeout(()=>autoRefreshAcquisitions({force:true}),50);
     });
     root.querySelector('#mm-acq-clear-key')?.addEventListener('click',()=>{
-      GM_deleteValue(API_KEY);
+      __mmPdaDeleteValue(API_KEY);
       statusText='MM Acquisitions API key cleared.';
       render();
     });
@@ -6721,7 +6774,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     createPanel();
     const root=document.getElementById(ROOT_ID);
     root.style.display='block';
-    GM_setValue(PANEL_OPEN_KEY,true);
+    __mmPdaSetValue(PANEL_OPEN_KEY,true);
     core?.setDockLauncherActive?.('acquisitions',true);
     render();
     reloadCachedState().then(()=>{
@@ -6736,7 +6789,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   function close(){
     const root=document.getElementById(ROOT_ID);
     if(root)root.style.display='none';
-    GM_setValue(PANEL_OPEN_KEY,false);
+    __mmPdaSetValue(PANEL_OPEN_KEY,false);
     core?.setDockLauncherActive?.('acquisitions',false);
     stopWatcher();
   }
@@ -6777,7 +6830,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     createLauncher();
     installChannel();
     startAutoRefresh();
-    if(Boolean(GM_getValue(PANEL_OPEN_KEY,false)))setTimeout(open,0);
+    if(Boolean(__mmPdaGetValue(PANEL_OPEN_KEY,false)))setTimeout(open,0);
   }
   window.addEventListener('pagehide',()=>{stopAutoRefresh();pulseEngine?.release?.();},{once:true});
   if(document.body)initializeAcquisitions();
