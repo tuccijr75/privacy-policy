@@ -1,34 +1,24 @@
 // ==UserScript==
-// @name         MM_Dollar_Broker
+// @name         MM_Dollar_Broker PDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.20
-// @description  Prefilters Torn Bazaar-directory sellers with official Bazaar data, live-verifies exact-$1 item cards, and leaves every purchase manual.
+// @version      0.1.0-rc.20-pda.1
+// @description  TornPDA build of MM Dollar Broker. API-prefilters $1 listings, passively rejects locked cards, and leaves every purchase manual.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @noframes
-// @sandbox      JavaScript
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@5cf7e5c114b8e1a2c4d60d70456c2f0c3f5bdbf9/modular-suite/core/MM_Torn_Core.js
-// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Dollar_Broker.user.js
-// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Dollar_Broker.user.js
+// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Dollar_Broker.pda.user.js
+// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Dollar_Broker.pda.user.js
 // @connect      api.torn.com
-// @grant        GM.getValue
-// @grant        GM.setValue
-// @grant        GM.addValueChangeListener
-// @grant        GM.removeValueChangeListener
-// @grant        GM.getTab
-// @grant        GM.saveTab
-// @grant        GM.openInTab
-// @grant        window.close
-// @grant        GM.registerMenuCommand
-// @grant        GM.unregisterMenuCommand
 // @grant        GM.xmlHttpRequest
 // ==/UserScript==
 
 (() => {
 'use strict';
+
+const __MM_PDA_API_KEY='###PDA-APIKEY###';
 // ---- core ----
-const VERSION = '0.1.0-rc.20';
+const VERSION = '0.1.0-rc.20-pda.1';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
@@ -409,6 +399,7 @@ class Store {
     });
   }
 }
+
 
 // ---- adapter ----
 
@@ -871,6 +862,7 @@ function inspectBazaar(doc, win, context) {
   return {...result,ok:true,inspected};
 }
 
+
 // ---- market ----
 
 const API_KEY_KEY='mm-dollar-broker:api-key:v1';
@@ -1095,6 +1087,7 @@ async function discoverDollarLeads({gm,key,minValue,cursor=0,count=DISCOVERY.bat
   return {leads,nextCursor:batch.nextCursor,totalEligible:batch.total,scanned:batch.items.length};
 }
 
+
 // ---- market_adapter ----
 
 const clean=value=>String(value??'').replace(/\s+/g,' ').trim();
@@ -1135,6 +1128,7 @@ function inspectItemMarket(doc,win,{trusted,itemId,at}) {
   result.name=(dollar[0]||parsed[0]).name;
   return {...result,ok:true};
 }
+
 
 // ---- ui ----
 
@@ -1186,7 +1180,7 @@ function makeUI(doc) {
         <label for="min-value">Minimum normal market value</label><input id="min-value" type="number" min="1" step="1000">
         <div class="row"><button id="save-api-key" type="button">Save key locally</button><button id="clear-api-key" type="button">Clear key</button></div>
         <div class="row"><button id="deep-scan" type="button">Deep Item Market scan</button></div>
-        <div class="muted">Find & Scan sweeps Torn's Bazaar directory, checks open sellers through Torn's cached user-Bazaar API, then reuses one background tab only across exact-$1 candidate Bazaars for live verification. API timestamps and local fetch time stay distinct. Torn's Directory is a showcase, not a complete registry of every Bazaar in the game. Deep Item Market scan remains a slower secondary check.</div>
+        <div class="muted">Find & Scan sweeps Torn's Bazaar directory, checks open sellers through Torn's cached user-Bazaar API, then reuses the current TornPDA tab across exact-$1 candidate Bazaars for live verification and returns here when finished. API timestamps and local fetch time stay distinct. Torn's Directory is a showcase, not a complete registry of every Bazaar in the game. Deep Item Market scan remains a slower secondary check.</div>
       </details>
 
       <details><summary>Known Bazaar scanner (secondary)</summary>
@@ -1236,7 +1230,7 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
   ui.el('reset-scan').disabled=!scanStale;
   ui.el('deep-scan').disabled=!!localError||session.discoveryBusy||scanActive||!session.apiConfigured;
   ui.el('verify-market').disabled=!!localError||session.discoveryBusy||!session.currentMarketLead;
-  ui.el('api-status').textContent=session.apiConfigured?'API key saved locally in Tampermonkey.':'No API key saved.';
+  ui.el('api-status').textContent=session.apiConfigured?'TornPDA API key available.':'TornPDA API key unavailable.';
   if(ui.shadow.activeElement!==ui.el('min-value'))ui.el('min-value').value=String(session.minValue||1);
 
   ui.el('progress').textContent=w?`${mine?'This tab is the Bazaar worker':'Bazaar worker is in another tab/document'} · ${w.index<0?'No seller opened':`${w.index+1}/${state.targets.length} · Player ${w.targetId||'—'}`}`:`${state.targets.length} known seller${state.targets.length===1?'':'s'} configured`;
@@ -1309,6 +1303,7 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
   ui.el('diagnostics').textContent=JSON.stringify({script:VERSION,schema:state.schema,revision:state.revision,sellerLeads:state.sellerLeads.length,openDollarSellers:state.sellerLeads.filter(x=>x.isOpen).length,lastSellerDiscovery:state.lastSellerDiscovery||null,sellerScan:scan?{phase:scan.phase,scanned:scan.scanned,total:scan.sellerIds.length,observedDollar:scan.observed,liveVerified:scan.found,unverified:scan.unverified,unavailable:scan.unavailable,errors:scan.errors.length,target:scan.targetId}:null,marketLeads:state.marketLeads.length,actionableMarket:actionable.length,discoveryCursor:state.discoveryCursor,lastDiscovery:state.lastDiscovery||null,workerId:w?.id||null,phase:w?.phase||'stopped',target:w?.targetId||null,targetCount:state.targets.length,lastDetection:state.lastDetection||null,events:state.events.length,duplicateLedger:`${state.seen.length}/${LIMIT.seen}`,apiConfigured:!!session.apiConfigured,discoveryBusy:!!session.discoveryBusy,window:ui.panel.hidden?'minimized':'open',error:localError||scan?.error||w?.error||null},null,2);
 }
 
+
 // ---- runtime ----
 
 const MODULE_ID='dollar-broker';
@@ -1357,7 +1352,7 @@ async function collectBazaarSnapshot(doc,win,targetId,documentId,initialUrl) {
 async function runSellerScannerTab(gm,win,doc,store,identity,scanId,initialUrl) {
   try {
     const claimed=await store.change(state=>claimSellerScan(state,identity.tabId,scanId,initialUrl,Date.now()));
-    if(!claimed.result) {try{win.close();}catch{} return {destroy(){}};}
+    if(!claimed.result) {await __MM_PDA_ENV__.finishScanner(); return {destroy(){}};}
     const targetId=claimed.state.sellerScan.targetId;
     let transition;
     try {
@@ -1371,21 +1366,21 @@ async function runSellerScannerTab(gm,win,doc,store,identity,scanId,initialUrl) 
       return {destroy(){}};
     }
     await scanSleep(150);
-    win.close();
+    await __MM_PDA_ENV__.finishScanner();
     return {destroy(){}};
   } catch(error) {
     try {await store.change(state=>failSellerScan(state,scanId,error?.message||error,Date.now()));} catch {}
-    try { win.close(); } catch {}
+    try { await __MM_PDA_ENV__.finishScanner(); } catch {}
     return {destroy(){}};
   }
 }
 
 async function boot(gm, win, doc) {
-  const sharedCore=globalThis.MMTornCore;
+  const sharedCore=__MM_PDA_ENV__.uiCore;
   if(!sharedCore?.registerDockLauncher || !sharedCore?.makePanelDraggable) throw new Error('MM Torn Core dependency is unavailable.');
 
   const identity={tabId:'',documentId:win.crypto.randomUUID(),workerId:''};
-  const store=new Store(gm,win.navigator.locks);
+  const store=new Store(gm,__MM_PDA_ENV__.locks);
   let state=emptyState(), error='', closed=false, busy=false, baseline=false, ticker=null, listener=null, sound=null, scannerTab=null;
   let apiKey='', discoveryBusy=false, discoveryProgress='';
   let preferences={sound:false,minValue:DISCOVERY.minValue};
@@ -1404,6 +1399,7 @@ async function boot(gm, win, doc) {
   const scanId=scanTokenAt(initialUrl);
   if(scanId) return runSellerScannerTab(gm,win,doc,store,identity,scanId,initialUrl);
   const ui=makeUI(doc);
+  __MM_PDA_ENV__.configureUI(ui);
 
   const launcher=sharedCore.registerDockLauncher({
     id:MODULE_ID,
@@ -1419,6 +1415,7 @@ async function boot(gm, win, doc) {
   if(!(launcher instanceof HTMLElement)) throw new Error('Shared MM dock launcher could not be registered.');
   ui.setLauncher(launcher,active=>sharedCore.setDockLauncherActive?.(MODULE_ID,active));
   sharedCore.makePanelDraggable(ui.panel,ui.el('header'),MODULE_ID,{right:'12px',top:'82px'});
+  if(await __MM_PDA_ENV__.consumeScannerReturn()){ui.setOpen(true);}
 
   const played=new Set(),playedMarket=new Set();
   function active() {return !closed && doc.visibilityState==='visible' && doc.hasFocus();}
@@ -1494,14 +1491,11 @@ async function boot(gm, win, doc) {
 
   async function runSellerDiscovery(resetFirst=false) {
     if(!apiKey) throw new Error('Save a Torn public API key first.');
-    if(typeof gm.openInTab!=='function') throw new Error('Tampermonkey background-tab permission is unavailable.');
+    // TornPDA uses same-tab verification; no background-tab API is required.
     if(sellerScanIsActive(state.sellerScan)) {
       if(!sellerScanIsStale(state.sellerScan,Date.now())) throw new Error('A dollar Bazaar scan is already running.');
-      if(!scannerTab) throw new Error('A stale scanner may still be open. Close that extra Torn tab before starting another scan.');
-      try {scannerTab.close?.();} catch {}
       const staleId=state.sellerScan.id;
-      scannerTab=null;
-      await change(s=>failSellerScan(s,staleId,'Stale scanner ownership was closed before restart.',Date.now()));
+      await change(s=>failSellerScan(s,staleId,'Stale TornPDA same-tab scanner was reset before restart.',Date.now()));
     }
     if(resetFirst) {
       if(scannerTab){try{scannerTab.close?.();}catch{} scannerTab=null;}
@@ -1537,9 +1531,10 @@ async function boot(gm, win, doc) {
       const newScanId=win.crypto.randomUUID(),prepared=await change(s=>beginSellerScan(s,identity.tabId,newScanId,Date.now(),apiScan.candidates));
       discoveryProgress=`API found ${apiScan.observed} exact-$1 item${apiScan.observed===1?'':'s'} across ${apiScan.candidates.length} candidate Bazaar${apiScan.candidates.length===1?'':'s'} · live-verifying only those candidates in one temporary tab.`;
       try {
-        scannerTab=await gm.openInTab(prepared.result,{active:false,setParent:true});
+        await __MM_PDA_ENV__.startScanner(prepared.result,initialUrl);
+        return;
       } catch(openError) {
-        await change(s=>failSellerScan(s,newScanId,'Could not open the background scanner tab.',Date.now()));
+        await change(s=>failSellerScan(s,newScanId,'Could not start the TornPDA same-tab scanner.',Date.now()));
         throw openError;
       }
     } finally {
@@ -1685,7 +1680,7 @@ async function boot(gm, win, doc) {
       } else update(current,false);
     }
   } catch(e) {error=e.message||'Cross-tab connection failed.';}
-  if(!win.navigator.locks?.request) error='Web Locks unavailable. Bazaar worker controls are disabled.';
+  if(!__MM_PDA_ENV__.locks?.request) error='TornPDA state lock is unavailable. Bazaar worker controls are disabled.';
 
   ticker=win.setInterval(async()=>{
     if(closed || busy || error) return;
@@ -1726,8 +1721,329 @@ function makeChime() {
   return 'data:audio/wav;base64,'+btoa(bytes);
 }
 
-if(window.top===window.self) void boot(GM,window,document).catch(()=>{
-  const note=document.createElement('div');note.textContent='MM Dollar Broker could not start. Check Tampermonkey grants and shared MM Torn Core, then reload.';
-  note.style.cssText='position:fixed;top:4px;left:4px;z-index:2147483647;background:#302b22;color:#ffd68b;padding:8px;font:12px sans-serif';document.body.append(note);
+
+// ---- pda ----
+function createPdaEnvironment(injectedApiKey,win,doc) {
+  const PREFIX='mm-dollar-broker:pda:';
+  const RETURN_KEY=PREFIX+'scanner-return:v1';
+  const LAUNCHER_POS_KEY=PREFIX+'launcher-pos:v1';
+  const PANEL_POS_KEY=PREFIX+'panel-pos:v1';
+  const TAB_KEY=PREFIX+'tab:v1';
+  const SAFE_BOTTOM=92;
+  const SAFE_EDGE=8;
+  const unresolved='###PDA-'+'APIKEY###';
+  const injected=String(injectedApiKey||'').trim();
+  const appKey=injected && injected!==unresolved ? injected : '';
+  let memoryTab={};
+  let storageQueue=Promise.resolve();
+
+  const clone=value=>{
+    if(value===undefined)return undefined;
+    try{return structuredClone(value);}catch{return JSON.parse(JSON.stringify(value));}
+  };
+
+  async function storageGet(key,def=null) {
+    const k=String(key);
+    if(typeof PDA_storage!=='undefined' && PDA_storage && typeof PDA_storage.get==='function') {
+      try {
+        const value=await PDA_storage.get(k,def);
+        return value===undefined?def:clone(value);
+      } catch {}
+    }
+    try {
+      const raw=win.localStorage.getItem(PREFIX+'fallback:'+k);
+      return raw===null?def:JSON.parse(raw);
+    } catch { return def; }
+  }
+
+  async function storageSet(key,value) {
+    const k=String(key);
+    const run=async()=>{
+      if(typeof PDA_storage!=='undefined' && PDA_storage && typeof PDA_storage.set==='function') {
+        await PDA_storage.set(k,clone(value));
+        return;
+      }
+      win.localStorage.setItem(PREFIX+'fallback:'+k,JSON.stringify(value));
+    };
+    const current=storageQueue.then(run,run);
+    storageQueue=current.catch(()=>{});
+    return current;
+  }
+
+  async function storageDelete(key) {
+    const k=String(key);
+    const run=async()=>{
+      if(typeof PDA_storage!=='undefined' && PDA_storage) {
+        if(typeof PDA_storage.delete==='function') {await PDA_storage.delete(k);return;}
+        if(typeof PDA_storage.remove==='function') {await PDA_storage.remove(k);return;}
+        if(typeof PDA_storage.set==='function') {await PDA_storage.set(k,null);return;}
+      }
+      try{win.localStorage.removeItem(PREFIX+'fallback:'+k);}catch{}
+    };
+    const current=storageQueue.then(run,run);
+    storageQueue=current.catch(()=>{});
+    return current;
+  }
+
+  function sessionRead() {
+    try {
+      const raw=win.sessionStorage.getItem(TAB_KEY);
+      return raw?JSON.parse(raw):memoryTab;
+    } catch { return memoryTab; }
+  }
+  function sessionWrite(value) {
+    memoryTab=clone(value)||{};
+    try{win.sessionStorage.setItem(TAB_KEY,JSON.stringify(memoryTab));}catch{}
+  }
+
+  function nativeRequest(details) {
+    const native=globalThis.GM;
+    if(native && typeof native.xmlHttpRequest==='function') return native.xmlHttpRequest(details);
+    if(typeof PDA_httpGet!=='function') throw new Error('TornPDA HTTP bridge is unavailable.');
+    const opts=details&&typeof details==='object'?details:{};
+    const method=String(opts.method||'GET').toUpperCase();
+    if(method!=='GET') throw new Error('Dollar Broker PDA HTTP fallback supports GET only.');
+    let aborted=false,settled=false,timer=null;
+    const finish=(fn,arg)=>{
+      if(aborted||settled)return;
+      settled=true;
+      if(timer)win.clearTimeout(timer);
+      try{fn?.(arg);}catch{}
+    };
+    if(Number(opts.timeout||0)>0) timer=win.setTimeout(()=>finish(opts.ontimeout,{status:0,statusText:'timeout',responseText:''}),Number(opts.timeout));
+    Promise.resolve(PDA_httpGet(String(opts.url||''),opts.headers||{}))
+      .then(response=>finish(opts.onload,response))
+      .catch(error=>finish(opts.onerror,{status:0,statusText:String(error?.message||error||'request failed'),responseText:'',error}));
+    return {abort(){aborted=true;if(timer)win.clearTimeout(timer);}};
+  }
+
+  const gm=Object.freeze({
+    async getValue(key,def=null) {
+      const value=await storageGet(key,undefined);
+      if(value!==undefined && value!==null && value!=='') return value;
+      if(String(key)===String(API_KEY_KEY) && appKey) return appKey;
+      return def;
+    },
+    async setValue(key,value) {await storageSet(key,value);},
+    async getTab() {return clone(sessionRead())||{};},
+    async saveTab(value) {sessionWrite(value||{});},
+    async addValueChangeListener(){return null;},
+    async removeValueChangeListener(){},
+    xmlHttpRequest(details){return nativeRequest(details);}
+  });
+
+  function viewport() {
+    const vv=win.visualViewport;
+    return {
+      width:Math.max(240,Math.floor(vv?.width||win.innerWidth||doc.documentElement.clientWidth||390)),
+      height:Math.max(320,Math.floor(vv?.height||win.innerHeight||doc.documentElement.clientHeight||700))
+    };
+  }
+
+  function clampElement(element,{reserveBottom=SAFE_BOTTOM,minTop=SAFE_EDGE}={}) {
+    const v=viewport(),rect=element.getBoundingClientRect();
+    const width=Math.min(rect.width||44,v.width-SAFE_EDGE*2);
+    const height=Math.min(rect.height||44,v.height-minTop-reserveBottom);
+    const left=Math.min(Math.max(SAFE_EDGE,rect.left),Math.max(SAFE_EDGE,v.width-width-SAFE_EDGE));
+    const top=Math.min(Math.max(minTop,rect.top),Math.max(minTop,v.height-height-reserveBottom));
+    element.style.left=Math.round(left)+'px';
+    element.style.top=Math.round(top)+'px';
+    element.style.right='auto';
+    element.style.bottom='auto';
+    return {left:Math.round(left),top:Math.round(top)};
+  }
+
+  function bindMovable(element,handle,key,{reserveBottom=SAFE_BOTTOM,minTop=SAFE_EDGE}={}) {
+    let pointer=null,startX=0,startY=0,startLeft=0,startTop=0,moved=false;
+    const onDown=e=>{
+      if(e.button!==undefined && e.button!==0)return;
+      const rect=element.getBoundingClientRect();
+      pointer=e.pointerId;startX=e.clientX;startY=e.clientY;startLeft=rect.left;startTop=rect.top;moved=false;
+      try{handle.setPointerCapture?.(pointer);}catch{}
+      e.preventDefault();
+    };
+    const onMove=e=>{
+      if(pointer===null||e.pointerId!==pointer)return;
+      const dx=e.clientX-startX,dy=e.clientY-startY;
+      if(Math.abs(dx)+Math.abs(dy)>6)moved=true;
+      const v=viewport(),rect=element.getBoundingClientRect();
+      const maxLeft=Math.max(SAFE_EDGE,v.width-rect.width-SAFE_EDGE);
+      const maxTop=Math.max(minTop,v.height-rect.height-reserveBottom);
+      element.style.left=Math.round(Math.min(Math.max(SAFE_EDGE,startLeft+dx),maxLeft))+'px';
+      element.style.top=Math.round(Math.min(Math.max(minTop,startTop+dy),maxTop))+'px';
+      element.style.right='auto';element.style.bottom='auto';
+      e.preventDefault();
+    };
+    const onUp=e=>{
+      if(pointer===null||e.pointerId!==pointer)return;
+      try{handle.releasePointerCapture?.(pointer);}catch{}
+      pointer=null;
+      const pos=clampElement(element,{reserveBottom,minTop});
+      if(moved){
+        element.dataset.mmPdaDraggedAt=String(Date.now());
+        void storageSet(key,pos);
+      }
+      e.preventDefault();
+    };
+    handle.style.touchAction='none';
+    handle.addEventListener('pointerdown',onDown);
+    handle.addEventListener('pointermove',onMove);
+    handle.addEventListener('pointerup',onUp);
+    handle.addEventListener('pointercancel',onUp);
+    const onResize=()=>clampElement(element,{reserveBottom,minTop});
+    win.addEventListener('resize',onResize,{passive:true});
+    win.visualViewport?.addEventListener?.('resize',onResize,{passive:true});
+    void storageGet(key,null).then(pos=>{
+      if(pos && Number.isFinite(pos.left) && Number.isFinite(pos.top)){
+        element.style.left=Math.round(pos.left)+'px';
+        element.style.top=Math.round(pos.top)+'px';
+        element.style.right='auto';element.style.bottom='auto';
+        clampElement(element,{reserveBottom,minTop});
+      }
+    });
+    return ()=>{
+      handle.removeEventListener('pointerdown',onDown);
+      handle.removeEventListener('pointermove',onMove);
+      handle.removeEventListener('pointerup',onUp);
+      handle.removeEventListener('pointercancel',onUp);
+      win.removeEventListener('resize',onResize);
+      win.visualViewport?.removeEventListener?.('resize',onResize);
+    };
+  }
+
+  const uiCore=Object.freeze({
+    registerDockLauncher({id,label,accent,icon,onClick}) {
+      let button=doc.getElementById('mm-dollar-broker-pda-launcher');
+      if(button)return button;
+      button=doc.createElement('button');
+      button.id='mm-dollar-broker-pda-launcher';
+      button.type='button';
+      button.dataset.mmDockId=String(id||'dollar-broker');
+      button.title=String(label||'MM Dollar Broker');
+      button.setAttribute('aria-label',button.title);
+      button.innerHTML=String(icon||'');
+      button.style.cssText=`position:fixed;right:10px;bottom:calc(env(safe-area-inset-bottom,0px) + 104px);z-index:2147483646;width:44px;height:44px;min-width:44px;min-height:44px;padding:8px;margin:0;border:1px solid #53634f;border-radius:9px;background:#253129;color:${String(accent||'#9bbf70')};box-shadow:0 4px 14px #000a;display:grid;place-items:center;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;`;
+      const cleanup=bindMovable(button,button,LAUNCHER_POS_KEY,{reserveBottom:SAFE_BOTTOM,minTop:SAFE_EDGE});
+      button.__mmPdaMoveCleanup=cleanup;
+      button.addEventListener('click',event=>{
+        const draggedAt=Number(button.dataset.mmPdaDraggedAt||0);
+        if(Date.now()-draggedAt<350)return;
+        onClick?.(event);
+      });
+      doc.body.appendChild(button);
+      return button;
+    },
+    setDockLauncherActive(_id,active) {
+      const button=doc.getElementById('mm-dollar-broker-pda-launcher');
+      if(button)button.dataset.mmPdaActive=active?'1':'0';
+    },
+    makePanelDraggable(panel,handle) {
+      const applyBounds=()=>{
+        const v=viewport();
+        panel.style.width=Math.min(390,Math.max(280,v.width-SAFE_EDGE*2))+'px';
+        panel.style.maxHeight=Math.max(260,Math.floor(v.height*0.70))+'px';
+        panel.style.overflow='auto';
+        clampElement(panel,{reserveBottom:SAFE_BOTTOM,minTop:52});
+      };
+      panel.style.right='8px';
+      panel.style.top='64px';
+      const savedPosition=storageGet(PANEL_POS_KEY,null);
+      const restoreVisiblePosition=async()=>{
+        const pos=await savedPosition;
+        if(pos && Number.isFinite(pos.left) && Number.isFinite(pos.top)){
+          panel.style.left=Math.round(pos.left)+'px';
+          panel.style.top=Math.round(pos.top)+'px';
+          panel.style.right='auto';
+          panel.style.bottom='auto';
+        }
+        applyBounds();
+      };
+      const cleanupMove=bindMovable(panel,handle,PANEL_POS_KEY,{reserveBottom:SAFE_BOTTOM,minTop:52});
+      const onResize=()=>{if(!panel.hidden)applyBounds();};
+      const visibilityObserver=new MutationObserver(()=>{
+        if(!panel.hidden)win.requestAnimationFrame(()=>{void restoreVisiblePosition();});
+      });
+      visibilityObserver.observe(panel,{attributes:true,attributeFilter:['hidden']});
+      win.addEventListener('resize',onResize,{passive:true});
+      win.visualViewport?.addEventListener?.('resize',onResize,{passive:true});
+      panel.__mmPanelDragCleanup=()=>{
+        cleanupMove();
+        visibilityObserver.disconnect();
+        win.removeEventListener('resize',onResize);
+        win.visualViewport?.removeEventListener?.('resize',onResize);
+      };
+      return true;
+    }
+  });
+
+  function configureUI(ui) {
+    const label=ui.shadow.querySelector('label[for="api-key"]');
+    if(label)label.hidden=true;
+    ui.el('api-key').hidden=true;
+    ui.el('save-api-key').hidden=true;
+    ui.el('clear-api-key').hidden=true;
+    ui.el('reset-scan').textContent='Reset stale scan';
+    ui.el('mode').textContent='TornPDA · API prefilter · passive unlocked-card verification · manual purchase only';
+    const settings=ui.shadow.querySelector('details summary');
+    if(settings)settings.textContent='Discovery settings · TornPDA key supplied automatically';
+  }
+
+  async function startScanner(url,returnUrl) {
+    const target=new URL(String(url),win.location.href);
+    const back=new URL(String(returnUrl||win.location.href),win.location.href);
+    if(target.origin!=='https://www.torn.com' || target.pathname!=='/bazaar.php') throw new Error('PDA scanner target is invalid.');
+    if(back.origin!=='https://www.torn.com') throw new Error('PDA scanner return URL is invalid.');
+    await storageSet(RETURN_KEY,{returnUrl:back.href,phase:'scanning',startedAt:Date.now()});
+    win.location.assign(target.href);
+  }
+
+  async function finishScanner() {
+    const state=await storageGet(RETURN_KEY,null);
+    const returnUrl=String(state?.returnUrl||'https://www.torn.com/');
+    let target;
+    try{target=new URL(returnUrl);}catch{target=new URL('https://www.torn.com/');}
+    if(target.origin!=='https://www.torn.com')target=new URL('https://www.torn.com/');
+    await storageSet(RETURN_KEY,{returnUrl:target.href,phase:'returning',startedAt:Number(state?.startedAt||Date.now()),finishedAt:Date.now()});
+    win.location.replace(target.href);
+  }
+
+  async function consumeScannerReturn() {
+    const state=await storageGet(RETURN_KEY,null);
+    if(!state || state.phase!=='returning')return false;
+    await storageDelete(RETURN_KEY);
+    return Date.now()-Number(state.finishedAt||0)<10*60*1000;
+  }
+
+  const serialLocks=(()=>{
+    let queue=Promise.resolve();
+    return Object.freeze({
+      request(_name,_options,fn){
+        const run=()=>Promise.resolve().then(fn);
+        const current=queue.then(run,run);
+        queue=current.catch(()=>{});
+        return current;
+      }
+    });
+  })();
+
+  return Object.freeze({
+    gm,
+    uiCore,
+    configureUI,
+    startScanner,
+    finishScanner,
+    consumeScannerReturn,
+    locks:win.navigator?.locks?.request?win.navigator.locks:serialLocks,
+    platform:'tornpda'
+  });
+}
+
+const __MM_PDA_ENV__=createPdaEnvironment(__MM_PDA_API_KEY,window,document);
+if(window.top===window.self) void boot(__MM_PDA_ENV__.gm,window,document).catch(error=>{
+  const note=document.createElement('div');
+  note.textContent='MM Dollar Broker PDA could not start: '+String(error?.message||error||'unknown error');
+  note.style.cssText='position:fixed;left:8px;right:8px;top:64px;z-index:2147483647;background:#302b22;color:#ffd68b;padding:10px;border:1px solid #8f7440;border-radius:7px;font:12px/1.4 system-ui,sans-serif';
+  document.body?.append(note);
 });
+
 })();
