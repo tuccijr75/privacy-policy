@@ -3,7 +3,7 @@
 ## Candidate
 
 - Desktop: 8.0.0-alpha.37
-- TornPDA: 8.0.0-alpha.37-pda.25
+- TornPDA: 8.0.0-alpha.37-pda.26
 - Branch: crm-v8-acquisitions-standalone-pricelist-alpha35
 - Base: crm-v8-acquisitions-standalone-alpha34
 - Stable/customer publication: not approved
@@ -12,7 +12,7 @@
 
 ## Alpha.37 standalone customer profile + native TornPDA bootstrap correction
 
-Alpha.37 preserves the alpha.36 customer-profile corrections and now removes all PDA runtime dependence on GM permissions/helpers. Real-device acceptance still produced no launcher after the dual-origin pda.24 correction, proving origin matching was not the only boot constraint. pda.25 therefore uses minimal TornPDA metadata (`@match`, `@run-at`, `@noframes` only), native lexical `PDA_storage` for product preferences/state, and `PDA_httpGet` for cross-origin GETs. The generated PDA contains zero runtime `GM_getValue`, `GM_setValue`, `GM_deleteValue`, or `GM_xmlhttpRequest` calls. The boot launcher remains the first executable block and is independent of PDA/GM storage or network APIs.
+Alpha.37 preserves the alpha.36 customer-profile corrections and now removes all PDA runtime dependence on GM permissions/helpers. Real-device acceptance still produced no launcher after the dual-origin pda.24 correction, proving origin matching was not the only boot constraint. pda.26 keeps the native TornPDA runtime from pda.25 and adds fixed branch-based `@updateURL` / `@downloadURL` metadata so it becomes a one-time install that TornPDA can update in place. Runtime permissions remain minimal: no `@require`, `@grant`, or `@connect`; product preferences/state use lexical `PDA_storage`, and cross-origin GETs use `PDA_httpGet`. The generated PDA contains zero runtime `GM_getValue`, `GM_setValue`, `GM_deleteValue`, or `GM_xmlhttpRequest` calls. The boot launcher remains the first executable block and is independent of PDA/GM storage or network APIs.
 
 Alpha.36 preserved the alpha.35 customer-profile behavior and corrected the TornPDA platform boundary. The PDA adapter no longer assigns or replaces GM_getValue, GM_setValue, GM_deleteValue, or GM_xmlhttpRequest. Acquisitions now owns a local GET bridge that uses native GM_xmlhttpRequest when available and falls back to PDA_httpGet without mutating global GM helpers. Cross-origin Travel handoff remains on lexical PDA_storage.
 
@@ -40,7 +40,7 @@ Alpha.36 preserved the alpha.35 customer-profile behavior and corrected the Torn
 - [ ] Invalid/foreign input does not replace the active profile.
 - [ ] Clear the profile; cached rows remain preserved but inactive while unrelated workflows continue.
 - [ ] Recheck Pricelist, Find One Item, Best Deals, Ranked Weapons, Travel, Inventory Restock, Market Pulse freshness, route guards and manual-action boundaries.
-- [ ] Install TornPDA alpha.37-pda.25 and verify the launcher appears on both `https://www.torn.com/*` and `https://torn.com/*`; then repeat the profile flow.
+- [ ] Install TornPDA alpha.37-pda.26 once from the fixed branch URL, verify the launcher appears on both `https://www.torn.com/*` and `https://torn.com/*`, and confirm future PDA revisions are offered through the same installed script/update channel.
 - [ ] Do not merge or publish until owner accepts desktop and PDA live results.
 ## Product boundary
 

@@ -72,6 +72,8 @@ def metadata(version: str) -> str:
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-end
+// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/crm-v8-acquisitions-standalone-pricelist-alpha35/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
+// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/crm-v8-acquisitions-standalone-pricelist-alpha35/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
 // @noframes
 // ==/UserScript==
 
@@ -462,7 +464,7 @@ function __mmPdaDeleteValue(key){
 
 def cli() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pda-revision", type=int, default=25)
+    parser.add_argument("--pda-revision", type=int, default=26)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.pda_revision < 1:

@@ -1,13 +1,15 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.37-pda.25
+// @version      8.0.0-alpha.37-pda.26
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-end
+// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/crm-v8-acquisitions-standalone-pricelist-alpha35/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
+// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/crm-v8-acquisitions-standalone-pricelist-alpha35/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
 // @noframes
 // ==/UserScript==
 
@@ -6565,7 +6567,7 @@ function __mmPdaDeleteValue(key){
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.37-pda.25 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.37-pda.26 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
