@@ -68,6 +68,7 @@ def metadata(version: str) -> str:
 // @version      {version}
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
+// @match        https://torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-end
@@ -277,7 +278,7 @@ def build(pda_revision: int) -> str:
       const ret=GM_getValue(TRAVEL_RETURN_KEY,null);
       const requestedAt=Number(ret?.at||0);
       const returnUrl=String(ret?.url||'');
-      if(returnUrl.startsWith('https://www.torn.com/')&&Date.now()-requestedAt<5*60*1000){
+      if(isTornReturnUrl(returnUrl)&&Date.now()-requestedAt<5*60*1000){
         returned=true;
         GM_deleteValue(TRAVEL_RETURN_KEY);
         try{observer?.disconnect();}catch{}
@@ -311,7 +312,7 @@ def build(pda_revision: int) -> str:
       const ret=await pdaSharedGet(TRAVEL_RETURN_KEY,null);
       const requestedAt=Number(ret?.at||0);
       const returnUrl=String(ret?.url||'');
-      if(returnUrl.startsWith('https://www.torn.com/')&&Date.now()-requestedAt<5*60*1000){
+      if(isTornReturnUrl(returnUrl)&&Date.now()-requestedAt<5*60*1000){
         returned=true;
         await pdaSharedDelete(TRAVEL_RETURN_KEY);
         try{observer?.disconnect();}catch{}
@@ -389,7 +390,7 @@ def build(pda_revision: int) -> str:
 
 def cli() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pda-revision", type=int, default=23)
+    parser.add_argument("--pda-revision", type=int, default=24)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.pda_revision < 1:

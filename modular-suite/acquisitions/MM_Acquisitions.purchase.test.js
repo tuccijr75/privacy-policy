@@ -12,7 +12,9 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0-alpha.36'));
+assert(userSource.includes('// @version      8.0.0-alpha.37'));
+assert(userSource.includes('// @match        https://www.torn.com/*'));
+assert(userSource.includes('// @match        https://torn.com/*'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b6d2202ad507c6b138919e2d37e461cfc422b382/modular-suite/core/MM_Torn_Core.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e7dc3ee67948a527a83cda9c52c69c863680b264/modular-suite/acquisitions/MM_Acquisitions.market-pulse.js'));
 assert(userSource.includes('cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@e7dc3ee67948a527a83cda9c52c69c863680b264/modular-suite/acquisitions/MM_Acquisitions.logic.js'));
@@ -159,7 +161,9 @@ console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS
 const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      8.0.0-alpha.36-pda.23'));
+assert(pdaSource.includes('// @version      8.0.0-alpha.37-pda.24'));
+assert(pdaHeader.includes('// @match        https://www.torn.com/*'));
+assert(pdaHeader.includes('// @match        https://torn.com/*'));
 assert(!/globalThis\.GM_(?:getValue|setValue|deleteValue|xmlhttpRequest)\s*=/.test(pdaSource),'generated PDA must not monkey-patch GM helpers');
 assert(pdaSource.includes('function platformGetRequest(options)'),'generated PDA must contain the source-owned GET bridge');
 assert(pdaSource.includes("ctx?.mode==='traveling'||ctx?.mode==='abroad'"),'generated PDA must preserve the travel route guard');
@@ -205,7 +209,7 @@ const pdaBuilder=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
 assert(pdaBuilder.includes('def replace_once('));
 assert(pdaBuilder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(pdaBuilder.includes('"MMTornMarketPulse"'));
-assert(pdaBuilder.includes('default=23'));
+assert(pdaBuilder.includes('default=24'));
 assert(pdaBuilder.includes('f"v{base_version}"'));
 assert(pdaBuilder.includes('f"v{pda_version}"'));
 assert(!pdaBuilder.includes('PROFIT / RANKED / TRAVEL'));
@@ -256,7 +260,7 @@ assert(liveSource.includes('Torn API finished Auction House'));
 
 const userSourceStandalone=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceStandalone);
-assert(userSourceStandalone.includes('// @version      8.0.0-alpha.36'));
+assert(userSourceStandalone.includes('// @version      8.0.0-alpha.37'));
 assert(!/armory/i.test(userSourceStandalone),'desktop Acquisitions must contain no Armory-specific UI/protocol plumbing');
 assert(!userSourceStandalone.includes('factionInventory'));
 assert(!userSourceStandalone.includes('marketPulseDemand'));
@@ -343,9 +347,14 @@ const bridgeContext=extra=>{
   const travelEnd=normalized.indexOf('\n\n  async function refreshTravelContext',travelStart);
   assert(travelStart>=0&&travelEnd>travelStart,'travel context functions must be extractable');
   const travelSource=normalized.slice(travelStart,travelEnd);
-  const ctx={Date,String};
+  const ctx={Date,String,URL};
   vm.createContext(ctx);
-  vm.runInContext('let travelContext=null;\n'+travelSource+'\nthis.parseTravelContext=parseTravelContext;this.marketNavigationBlocked=marketNavigationBlocked;this.travelContextLabel=travelContextLabel;',ctx);
+  vm.runInContext('let travelContext=null;\n'+travelSource+'\nthis.parseTravelContext=parseTravelContext;this.marketNavigationBlocked=marketNavigationBlocked;this.isTornReturnUrl=isTornReturnUrl;this.travelContextLabel=travelContextLabel;',ctx);
+
+  assert.strictEqual(ctx.isTornReturnUrl('https://www.torn.com/index.php'),true);
+  assert.strictEqual(ctx.isTornReturnUrl('https://torn.com/index.php'),true);
+  assert.strictEqual(ctx.isTornReturnUrl('http://torn.com/index.php'),false);
+  assert.strictEqual(ctx.isTornReturnUrl('https://evil.torn.com/index.php'),false);
 
   const home=ctx.parseTravelContext({profile:{status:{state:'Okay',description:'In Torn'}}});
   assert.strictEqual(home.mode,'torn');

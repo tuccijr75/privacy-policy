@@ -2,17 +2,19 @@
 
 ## Candidate
 
-- Desktop: 8.0.0-alpha.36
-- TornPDA: 8.0.0-alpha.36-pda.23
+- Desktop: 8.0.0-alpha.37
+- TornPDA: 8.0.0-alpha.37-pda.24
 - Branch: crm-v8-acquisitions-standalone-pricelist-alpha35
 - Base: crm-v8-acquisitions-standalone-alpha34
 - Stable/customer publication: not approved
 - Status: non-production candidate
 - Final purchase, bid, travel and transfer actions remain manual.
 
-## Alpha.36 standalone customer profile + PDA contract correction
+## Alpha.37 standalone customer profile + TornPDA origin-match correction
 
-Alpha.36 preserves the alpha.35 customer-profile behavior and corrects the TornPDA platform boundary. The PDA adapter no longer assigns or replaces GM_getValue, GM_setValue, GM_deleteValue, or GM_xmlhttpRequest. Acquisitions now owns a local GET bridge that uses native GM_xmlhttpRequest when available and falls back to PDA_httpGet without mutating global GM helpers. Cross-origin Travel handoff remains on lexical PDA_storage.
+Alpha.37 preserves the alpha.36 customer-profile and GM-helper corrections and fixes a real TornPDA boot defect: the generated PDA metadata matched only `https://www.torn.com/*`, while TornPDA can run Torn on the bare `https://torn.com/*` origin. With no metadata match, the script never injected and no boot launcher/icon could exist. The generated PDA now matches both Torn origins, and cross-origin Travel return validation accepts both exact Torn hostnames over HTTPS.
+
+Alpha.36 preserved the alpha.35 customer-profile behavior and corrected the TornPDA platform boundary. The PDA adapter no longer assigns or replaces GM_getValue, GM_setValue, GM_deleteValue, or GM_xmlhttpRequest. Acquisitions now owns a local GET bridge that uses native GM_xmlhttpRequest when available and falls back to PDA_httpGet without mutating global GM helpers. Cross-origin Travel handoff remains on lexical PDA_storage.
 
 
 ### Contract
@@ -38,7 +40,7 @@ Alpha.36 preserves the alpha.35 customer-profile behavior and corrects the TornP
 - [ ] Invalid/foreign input does not replace the active profile.
 - [ ] Clear the profile; cached rows remain preserved but inactive while unrelated workflows continue.
 - [ ] Recheck Pricelist, Find One Item, Best Deals, Ranked Weapons, Travel, Inventory Restock, Market Pulse freshness, route guards and manual-action boundaries.
-- [ ] Repeat the profile flow on TornPDA alpha.36-pda.23.
+- [ ] Repeat the profile flow on TornPDA alpha.37-pda.24 and verify the launcher appears on both `https://www.torn.com/*` and `https://torn.com/*`.
 - [ ] Do not merge or publish until owner accepts desktop and PDA live results.
 ## Product boundary
 

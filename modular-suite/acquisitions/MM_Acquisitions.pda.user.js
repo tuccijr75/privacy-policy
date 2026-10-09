@@ -1,9 +1,10 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.36-pda.23
+// @version      8.0.0-alpha.37-pda.24
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
+// @match        https://torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-end
@@ -4498,6 +4499,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     return ctx?.mode==='traveling'||ctx?.mode==='abroad';
   }
 
+  function isTornReturnUrl(value){
+    try{
+      const url=new URL(String(value||''));
+      return url.protocol==='https:'&&(url.hostname==='torn.com'||url.hostname==='www.torn.com');
+    }catch{return false;}
+  }
+
   function travelContextLabel(ctx=travelContext){
     if(!ctx||ctx.mode==='unknown')return 'Travel context unavailable';
     if(ctx.mode==='traveling')return ctx.description||'Traveling';
@@ -4652,7 +4660,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       const ret=await pdaSharedGet(TRAVEL_RETURN_KEY,null);
       const requestedAt=Number(ret?.at||0);
       const returnUrl=String(ret?.url||'');
-      if(returnUrl.startsWith('https://www.torn.com/')&&Date.now()-requestedAt<5*60*1000){
+      if(isTornReturnUrl(returnUrl)&&Date.now()-requestedAt<5*60*1000){
         returned=true;
         await pdaSharedDelete(TRAVEL_RETURN_KEY);
         try{observer?.disconnect();}catch{}
@@ -6504,7 +6512,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.36-pda.23 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.37-pda.24 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
