@@ -68,16 +68,13 @@ def metadata(version: str) -> str:
 // @version      {version}
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
+// @match        https://torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-end
-// @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_deleteValue
-// @connect      api.torn.com
-// @connect      weav3r.dev
-// @connect      torn-intel.com
+// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/crm-v8-acquisitions-standalone-pricelist-alpha35/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
+// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/crm-v8-acquisitions-standalone-pricelist-alpha35/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
+// @noframes
 // ==/UserScript==
 
 """
@@ -129,7 +126,66 @@ def build(pda_revision: int) -> str:
     # Keep it lexical inside TornPDA's per-script closure; never publish the key
     # on window/globalThis.
     pda_key = "const __MM_PDA_API_KEY='###PDA-APIKEY###';\n"
-    pieces = [metadata(pda_version), pda_key, boot]
+    pda_prefs = r"""
+const __MM_PDA_PREF_KEYS=[
+  'mm_acquisitions_api_v1',
+  'mm_acquisitions_torn_intel_client_key_v1',
+  'mm_acquisitions_torn_intel_last_keyed_at_v1',
+  'mm_acquisitions_weav_watch_lease_v1',
+  'mm_acquisitions_market_pulse_lease_v1',
+  'mm_acquisitions_panel_open_v1'
+];
+const __MM_PDA_PREF_CACHE=Object.create(null);
+let __MM_PDA_PREF_QUEUE=Promise.resolve();
+const __MM_PDA_PREF_READY=(async()=>{
+  if(typeof PDA_storage!=='undefined'&&PDA_storage){
+    try{
+      if(typeof PDA_storage.getMany==='function'){
+        const values=await PDA_storage.getMany(__MM_PDA_PREF_KEYS);
+        for(const key of __MM_PDA_PREF_KEYS){if(values&&Object.prototype.hasOwnProperty.call(values,key))__MM_PDA_PREF_CACHE[key]=values[key];}
+        return;
+      }
+      if(typeof PDA_storage.get==='function'){
+        for(const key of __MM_PDA_PREF_KEYS){
+          const value=await PDA_storage.get(key,undefined);
+          if(value!==undefined)__MM_PDA_PREF_CACHE[key]=value;
+        }
+        return;
+      }
+    }catch(error){console.warn('[MM_Acquisitions PDA] preference preload failed',String(error?.message||error));}
+  }
+  try{
+    for(const key of __MM_PDA_PREF_KEYS){
+      const raw=localStorage.getItem('mm_acq_pda_pref:'+key);
+      if(raw!==null)__MM_PDA_PREF_CACHE[key]=JSON.parse(raw);
+    }
+  }catch{}
+})();
+function __mmPdaGetValue(key,def=null){
+  return Object.prototype.hasOwnProperty.call(__MM_PDA_PREF_CACHE,String(key))?__MM_PDA_PREF_CACHE[String(key)]:def;
+}
+function __mmPdaPersist(op,key,value){
+  const k=String(key);
+  __MM_PDA_PREF_QUEUE=__MM_PDA_PREF_QUEUE.then(async()=>{
+    if(typeof PDA_storage!=='undefined'&&PDA_storage){
+      if(op==='set'&&typeof PDA_storage.set==='function'){await PDA_storage.set(k,value);return;}
+      if(op==='delete'&&typeof PDA_storage.delete==='function'){await PDA_storage.delete(k);return;}
+    }
+    try{
+      const storageKey='mm_acq_pda_pref:'+k;
+      if(op==='set')localStorage.setItem(storageKey,JSON.stringify(value));
+      else localStorage.removeItem(storageKey);
+    }catch{}
+  }).catch(error=>console.warn('[MM_Acquisitions PDA] preference persistence failed',String(error?.message||error)));
+}
+function __mmPdaSetValue(key,value){
+  const k=String(key);__MM_PDA_PREF_CACHE[k]=value;__mmPdaPersist('set',k,value);return value;
+}
+function __mmPdaDeleteValue(key){
+  const k=String(key);delete __MM_PDA_PREF_CACHE[k];__mmPdaPersist('delete',k);return undefined;
+}
+"""
+    pieces = [metadata(pda_version), pda_key, boot, pda_prefs]
 
     stage_names = [
         "core",
@@ -147,6 +203,12 @@ def build(pda_revision: int) -> str:
         pieces.append(f"\n;globalThis.__MM_ACQ_PDA_STAGE='{stage}';\n")
 
     body = main_body(main_source)
+    body = replace_once(
+        body,
+        "(() => {\n  'use strict';",
+        "(async () => {\n  'use strict';\n  await __MM_PDA_PREF_READY;",
+        "PDA preference preload before UI bootstrap",
+    )
     body = replace_once(
         body,
         f"v{base_version}",
@@ -277,7 +339,7 @@ def build(pda_revision: int) -> str:
       const ret=GM_getValue(TRAVEL_RETURN_KEY,null);
       const requestedAt=Number(ret?.at||0);
       const returnUrl=String(ret?.url||'');
-      if(returnUrl.startsWith('https://www.torn.com/')&&Date.now()-requestedAt<5*60*1000){
+      if(isTornReturnUrl(returnUrl)&&Date.now()-requestedAt<5*60*1000){
         returned=true;
         GM_deleteValue(TRAVEL_RETURN_KEY);
         try{observer?.disconnect();}catch{}
@@ -311,7 +373,7 @@ def build(pda_revision: int) -> str:
       const ret=await pdaSharedGet(TRAVEL_RETURN_KEY,null);
       const requestedAt=Number(ret?.at||0);
       const returnUrl=String(ret?.url||'');
-      if(returnUrl.startsWith('https://www.torn.com/')&&Date.now()-requestedAt<5*60*1000){
+      if(isTornReturnUrl(returnUrl)&&Date.now()-requestedAt<5*60*1000){
         returned=true;
         await pdaSharedDelete(TRAVEL_RETURN_KEY);
         try{observer?.disconnect();}catch{}
@@ -360,6 +422,19 @@ def build(pda_revision: int) -> str:
 
     body = replace_once(
         body,
+        "    if(typeof GM_xmlhttpRequest==='function')return GM_xmlhttpRequest(opts);\n",
+        "",
+        "PDA native HTTP bridge",
+    )
+    body = body.replace("GM_getValue(", "__mmPdaGetValue(")
+    body = body.replace("GM_setValue(", "__mmPdaSetValue(")
+    body = body.replace("GM_deleteValue(", "__mmPdaDeleteValue(")
+    for forbidden in ("GM_getValue(", "GM_setValue(", "GM_deleteValue(", "GM_xmlhttpRequest("):
+        if forbidden in body:
+            raise RuntimeError(f"PDA UI still depends on runtime GM helper: {forbidden}")
+
+    body = replace_once(
+        body,
         "  function initializeAcquisitions(){",
         "  globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';\n  function initializeAcquisitions(){",
         "PDA ready/open bridge",
@@ -389,7 +464,7 @@ def build(pda_revision: int) -> str:
 
 def cli() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pda-revision", type=int, default=21)
+    parser.add_argument("--pda-revision", type=int, default=26)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.pda_revision < 1:
