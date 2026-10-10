@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MM_Dollar_Broker PDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.0-rc.20-pda.1
-// @description  TornPDA build of MM Dollar Broker. API-prefilters $1 listings, passively rejects locked cards, and leaves every purchase manual.
+// @version      0.1.0-rc.21-pda.2
+// @description  TornPDA build of MM Dollar Broker. Uses a dedicated scanner tab to live-verify discovered Bazaars while normal Torn play stays available.
 // @author       Manic-Mike
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -18,11 +18,11 @@
 
 const __MM_PDA_API_KEY='###PDA-APIKEY###';
 // ---- core ----
-const VERSION = '0.1.0-rc.20-pda.1';
+const VERSION = '0.1.0-rc.21-pda.2';
 const SCHEMA = 1;
 const KEY = 'mm-dollar-broker:state';
 const LOCK = 'mm-dollar-broker:transaction:v1';
-const LIMIT = Object.freeze({targets:250, events:5000, seen:20000, leads:50, sellers:1000, apiCandidateItems:5000, fresh:300000, marketFresh:30000, heartbeat:15000, stale:60000, navigation:30000, scanStale:120000});
+const LIMIT = Object.freeze({targets:250, events:5000, seen:20000, leads:50, sellers:1000, fresh:300000, marketFresh:30000, heartbeat:15000, stale:60000, navigation:30000, scanStale:120000});
 const phases = new Set(['ready','awaiting-inspection','inspecting','paused','navigating','error']);
 const validId = value => typeof value === 'string' && /^[1-9]\d{0,9}$/.test(value);
 const bazaarUrl = id => {
@@ -58,7 +58,7 @@ function exactPrice(text) {
   return Number.isSafeInteger(n) ? n : null;
 }
 const fingerprint = (target, item) => JSON.stringify([target, item.listingId || item.itemId || item.name, 1]);
-function emptyState() { return {schema:SCHEMA, version:VERSION, bazaarVerification:3, revision:0, targets:[], worker:null, sellerScan:null, events:[], seen:[], sellerLeads:[], marketLeads:[], discoveryCursor:0, lastSellerDiscovery:0, lastDiscovery:0, lastDetection:0}; }
+function emptyState() { return {schema:SCHEMA, version:VERSION, bazaarVerification:4, revision:0, targets:[], worker:null, sellerScan:null, events:[], seen:[], sellerLeads:[], marketLeads:[], discoveryCursor:0, lastSellerDiscovery:0, lastDiscovery:0, lastDetection:0}; }
 function clearDiscoveryResults(state) {
   state.worker=null;
   state.sellerScan=null;
@@ -122,40 +122,26 @@ function validSellerScan(scan) {
   if(scan===null) return true;
   if(!scan || !validScanId(scan.id) || !textField(scan.ownerTabId,80) || !textField(scan.scannerTabId,80) ||
      !sellerScanPhases.has(scan.phase) || !Array.isArray(scan.sellerIds) || !scan.sellerIds.length ||
-     scan.sellerIds.length>LIMIT.sellers || scan.sellerIds.some(id=>!validId(id)) ||
+     scan.sellerIds.length>LIMIT.sellers || scan.sellerIds.some(id=>!validId(id)) || new Set(scan.sellerIds).size!==scan.sellerIds.length ||
      !Number.isInteger(scan.index) || scan.index<0 || scan.index>=scan.sellerIds.length ||
      !Number.isInteger(scan.scanned) || scan.scanned<0 || scan.scanned>scan.sellerIds.length ||
      !Number.isInteger(scan.found) || scan.found<0 || !Number.isInteger(scan.observed) || scan.observed<0 || !Number.isInteger(scan.unverified) || scan.unverified<0 || !Number.isInteger(scan.unavailable) || scan.unavailable<0 || scan.found+scan.unverified+scan.unavailable>scan.observed || !finite(scan.startedAt) || !finite(scan.heartbeat) ||
      !finite(scan.completedAt) || !textField(scan.error,240) || !Array.isArray(scan.errors) ||
-     scan.errors.length>scan.sellerIds.length || scan.errors.some(e=>!e || !validId(e.sellerId) || !textField(e.error,240) || !finite(e.at)) ||
-     !Array.isArray(scan.apiCandidates) || scan.apiCandidates.length!==scan.sellerIds.length || scan.apiCandidates.some(c=>!validApiCandidate(c)) || apiCandidateItemCount(scan.apiCandidates)>LIMIT.apiCandidateItems) return false;
+     scan.errors.length>scan.sellerIds.length || scan.errors.some(e=>!e || !validId(e.sellerId) || !textField(e.error,240) || !finite(e.at))) return false;
   if(scan.phase==='complete') return scan.targetId===null && scan.scanned===scan.sellerIds.length;
   if(scan.phase==='error') return scan.targetId===null;
   return validId(scan.targetId) && scan.targetId===scan.sellerIds[scan.index];
 }
-function validApiCandidateItem(item) {
-  return !!item && validId(String(item.itemId)) && textField(item.listingId||'',80) && textField(item.name) && item.name.length>0 &&
-    Number.isSafeInteger(item.quantity) && item.quantity>0 && item.price===1 && Number.isSafeInteger(item.marketPrice) && item.marketPrice>=0;
-}
-function validApiCandidate(candidate) {
-  return !!candidate && validId(candidate.sellerId) && textField(candidate.sellerName) && candidate.sellerName.length>0 &&
-    candidate.isOpen===true && finite(candidate.sourceTimestamp) && finite(candidate.fetchedAt) &&
-    Array.isArray(candidate.items) && candidate.items.length>0 && candidate.items.length<=LIMIT.apiCandidateItems && candidate.items.every(validApiCandidateItem);
-}
-function apiCandidateItemCount(candidates) {
-  return Array.isArray(candidates)?candidates.reduce((sum,candidate)=>sum+(Array.isArray(candidate?.items)?candidate.items.length:0),0):Infinity;
-}
-function beginSellerScan(state,ownerTabId,scanId,now,apiCandidates) {
+function beginSellerScan(state,ownerTabId,scanId,now,sellerIds) {
   if(!textField(ownerTabId,80) || !validScanId(scanId) || !finite(now)) throw new Error('Seller scan identity is invalid.');
   if(sellerScanIsActive(state.sellerScan) && !sellerScanIsStale(state.sellerScan,now)) throw new Error('A dollar Bazaar scan is already running.');
-  if(!Array.isArray(apiCandidates)||!apiCandidates.length||apiCandidates.some(c=>!validApiCandidate(c))||apiCandidateItemCount(apiCandidates)>LIMIT.apiCandidateItems) throw new Error('API-confirmed dollar Bazaar candidates are invalid or exceed the bounded verification queue.');
-  const normalized=structuredClone(apiCandidates);
-  const sellerIds=normalized.map(x=>x.sellerId);
-  if(new Set(sellerIds).size!==sellerIds.length) throw new Error('Duplicate API Bazaar candidates are invalid.');
+  if(!Array.isArray(sellerIds)||!sellerIds.length||sellerIds.length>LIMIT.sellers||sellerIds.some(id=>!validId(String(id)))) throw new Error('Discovered Bazaar verification queue is invalid or exceeds its safety bound.');
+  const normalized=sellerIds.map(String);
+  if(new Set(normalized).size!==normalized.length) throw new Error('Duplicate Bazaar seller IDs are invalid.');
   state.events=[];state.seen=[];state.lastDetection=0;
-  state.sellerScan={id:scanId,ownerTabId,scannerTabId:'',phase:'launching',sellerIds,index:0,targetId:sellerIds[0],apiCandidates:normalized,
+  state.sellerScan={id:scanId,ownerTabId,scannerTabId:'',phase:'launching',sellerIds:normalized,index:0,targetId:normalized[0],
     scanned:0,found:0,observed:0,unverified:0,unavailable:0,startedAt:now,heartbeat:now,completedAt:0,error:'',errors:[]};
-  return bazaarScanUrl(sellerIds[0],scanId);
+  return bazaarScanUrl(normalized[0],scanId);
 }
 function claimSellerScan(state,tabId,scanId,url,now) {
   const scan=state.sellerScan;
@@ -165,24 +151,17 @@ function claimSellerScan(state,tabId,scanId,url,now) {
   scan.scannerTabId=tabId;scan.phase='scanning';scan.heartbeat=now;scan.error='';
   return true;
 }
-function matchApiItem(candidate,item) {
-  if(!candidate) return null;
-  return candidate.items.find(api=>String(api.itemId)===String(item.itemId))||null;
-}
-function appendObservedEvents(state,snapshot,workerId,documentId,now,apiCandidate=null) {
+function appendObservedEvents(state,snapshot,workerId,documentId,now) {
   const newEvents=[];
   for(const item of snapshot.items) {
     if(item.price!==1 || item.liveState!=='available' || item.available!==true || !Number.isSafeInteger(item.quantity) || item.quantity<1) continue;
-    const apiItem=apiCandidate?matchApiItem(apiCandidate,item):null;
-    if(apiCandidate&&!apiItem) continue;
     const fp=fingerprint(snapshot.targetId,item);
     if(state.seen.includes(fp)) continue;
     if(state.seen.length>=LIMIT.seen || state.events.length>=LIMIT.events) throw new Error('Dollar-sale result ledger reached its safety bound. This Bazaar was skipped instead of truncating results.');
     const event={schema:SCHEMA,id:workerId+':'+now+':'+state.seen.length,fingerprint:fp,targetId:snapshot.targetId,
-      seller:snapshot.seller,item:{name:item.name,itemId:item.itemId||'',listingId:item.listingId||apiItem?.listingId||'',quantity:item.quantity},price:1,
+      seller:snapshot.seller,item:{name:item.name,itemId:item.itemId||'',listingId:item.listingId||'',quantity:item.quantity},price:1,
       url:bazaarUrl(snapshot.targetId),detectedAt:snapshot.at,expiresAt:snapshot.at+LIMIT.fresh,workerId,documentId,
-      sourceTimestamp:apiCandidate?.sourceTimestamp||0,fetchedAt:apiCandidate?.fetchedAt||snapshot.at,
-      validity:'live-verified',verification:apiCandidate?'official-user-bazaar+unlocked-card':'unlocked-card',acknowledged:false};
+      sourceTimestamp:0,fetchedAt:snapshot.at,validity:'live-verified',verification:'unlocked-card',acknowledged:false};
     if(!validEvent(event)) throw new Error('Listing contract failed validation.');
     state.seen.push(fp);state.events.unshift(event);newEvents.push(event);state.lastDetection=snapshot.at;
   }
@@ -206,8 +185,7 @@ function recordSellerScanSnapshot(state,tabId,scanId,snapshot,now) {
   scan.observed+=dollarItems.length;
   scan.unverified+=dollarItems.filter(item=>item.liveState==='unverified').length;
   scan.unavailable+=dollarItems.filter(item=>item.liveState==='unavailable').length;
-  const apiCandidate=scan.apiCandidates.find(candidate=>candidate.sellerId===scan.targetId);
-  const added=appendObservedEvents(state,snapshot,'scan:'+scan.id,snapshot.documentId,now,apiCandidate);
+  const added=appendObservedEvents(state,snapshot,'scan:'+scan.id,snapshot.documentId,now);
   scan.found+=added.length;
   return {...advanceSellerScan(scan,now),added:added.length};
 }
@@ -293,14 +271,14 @@ function validEvent(e) {
     textField(e.seller) && textField(e.item?.name) && e.item.name.length > 0 && textField(e.item.itemId,80) && textField(e.item.listingId,80) && Number.isSafeInteger(e.item.quantity) && e.item.quantity>0 &&
     e.price === 1 && e.url === bazaarUrl(e.targetId) && validEventTtl(e) && finite(e.sourceTimestamp) && finite(e.fetchedAt) &&
     textField(e.workerId,80) && textField(e.documentId,80) && e.validity === 'live-verified' &&
-    (e.verification === 'official-user-bazaar+unlocked-card' || e.verification === 'unlocked-card') && typeof e.acknowledged === 'boolean';
+    e.verification === 'unlocked-card' && typeof e.acknowledged === 'boolean';
 }
 function readState(raw) {
   if (raw == null) return emptyState();
   if (raw.schema !== SCHEMA) throw new Error('Storage schema is unsupported. Update all Broker tabs; existing data was preserved.');
   const copy=structuredClone(raw);
-  if(copy.bazaarVerification!==3) {
-    copy.bazaarVerification=3;
+  if(copy.bazaarVerification!==4) {
+    copy.bazaarVerification=4;
     copy.events=[];
     copy.seen=[];
     copy.sellerScan=null;
@@ -314,7 +292,7 @@ function readState(raw) {
   if(copy.lastSellerDiscovery===undefined) copy.lastSellerDiscovery=0;
   if(copy.lastDiscovery===undefined) copy.lastDiscovery=0;
   const w = copy.worker;
-  if (copy.bazaarVerification!==3 || !Number.isSafeInteger(copy.revision) || copy.revision < 0 || !Array.isArray(copy.targets) || copy.targets.length > LIMIT.targets || copy.targets.some(x=>!validId(x)) ||
+  if (copy.bazaarVerification!==4 || !Number.isSafeInteger(copy.revision) || copy.revision < 0 || !Array.isArray(copy.targets) || copy.targets.length > LIMIT.targets || copy.targets.some(x=>!validId(x)) ||
       !Array.isArray(copy.events) || copy.events.length > LIMIT.events || copy.events.some(e=>!validEvent(e)) ||
       !Array.isArray(copy.seen) || copy.seen.length > LIMIT.seen || copy.seen.some(x=>!textField(x,400)) ||
       !Array.isArray(copy.sellerLeads) || copy.sellerLeads.length>LIMIT.sellers || copy.sellerLeads.some(x=>!validSellerLead(x)) ||
@@ -864,10 +842,9 @@ function inspectBazaar(doc, win, context) {
 
 
 // ---- market ----
-
 const API_KEY_KEY='mm-dollar-broker:api-key:v1';
 const PREF_KEY='mm-dollar-broker:discovery-prefs:v1';
-const DISCOVERY=Object.freeze({batch:50,gap:1250,minValue:1,maxBatch:50,directoryGap:0,sellerGap:1250});
+const DISCOVERY=Object.freeze({batch:50,gap:1250,minValue:1,maxBatch:50,directoryGap:0});
 const BAZAAR_CATEGORIES=Object.freeze([
   'Alcohol','Artifact','Booster','Candy','Car','Clothing','Collectible','Defensive','Drug','Energy Drink','Enhancer','Flower',
   'Jewelry','Material','Medical','Melee','Other','Plushie','Primary','Secondary','Special','Supply Pack','Temporary','Tool'
@@ -909,12 +886,6 @@ function apiRequest(gm,path,key) {
   if(!/^(?:torn\/items|market\/bazaar|market\/[1-9]\d{0,8}\/itemmarket)(?:\?.*)?$/.test(path)) throw new Error('Blocked non-market API route.');
   return requestJson(gm,'https://api.torn.com/v2/'+path,key);
 }
-function userBazaarRequest(gm,sellerId,key) {
-  const id=String(sellerId||'');
-  if(!/^[1-9]\d{0,9}$/.test(id)) throw new Error('Invalid Bazaar seller ID.');
-  return requestJson(gm,'https://api.torn.com/user/'+id+'?selections=bazaar',key);
-}
-
 function normalizeBazaarRows(rows,{dollar=false}={}) {
   if(!Array.isArray(rows)) return [];
   return rows.map(row=>{
@@ -984,51 +955,6 @@ async function discoverDollarSellers({gm,key,onProgress=()=>{}}) {
   }
   const sellers=sortDirectorySellers([...merged.values()]);
   return {sellers,open:sellers.filter(x=>x.isOpen).length,total:sellers.length,requests:1+BAZAAR_CATEGORIES.length};
-}
-
-function normalizeUserBazaar(data,seller,now=Date.now()) {
-  const sellerId=String(seller?.sellerId||'');
-  const sellerName=typeof seller?.name==='string'?seller.name.trim().slice(0,180):'';
-  if(!/^[1-9]\d{0,9}$/.test(sellerId)||!sellerName) throw new Error('Bazaar seller identity is invalid.');
-  const timestamp=integer(data?.bazaar_timestamp,0);
-  if(timestamp===null||typeof data?.bazaar_is_open!=='boolean'||!Array.isArray(data?.bazaar)) throw new Error('Torn user Bazaar response is unsupported.');
-  const items=[];
-  for(const row of data.bazaar) {
-    const itemId=integer(row?.ID,1),quantity=integer(row?.quantity,1),price=integer(row?.price,1);
-    const name=typeof row?.name==='string'?row.name.trim().slice(0,180):'';
-    const marketPrice=integer(row?.market_price,0);
-    const uid=row?.UID===undefined||row?.UID===null?'':String(row.UID).slice(0,80);
-    if(!itemId||!quantity||!price||!name) continue;
-    if(price===1) {
-      if(items.length>=LIMIT.apiCandidateItems) throw new Error('Torn user Bazaar returned more exact-$1 rows than the bounded verification queue allows.');
-      items.push({itemId:String(itemId),listingId:uid,name,quantity,price,marketPrice:marketPrice??0});
-    }
-  }
-  return {sellerId,sellerName,isOpen:data.bazaar_is_open,sourceTimestamp:timestamp*1000,fetchedAt:now,items};
-}
-
-async function scanDollarSellerBazaars({gm,key,sellers,onProgress=()=>{},shouldStop=()=>false}) {
-  if(!Array.isArray(sellers)) throw new Error('Dollar seller list is invalid.');
-  const open=sellers.filter(x=>x?.isOpen===true);
-  const candidates=[],errors=[];
-  let observed=0;
-  for(let i=0;i<open.length;i++) {
-    if(shouldStop()) throw new Error('Seller scan stopped.');
-    const seller=open[i];
-    onProgress({phase:'seller-api',current:i+1,total:open.length,seller,observed,candidates:candidates.length,errors:errors.length});
-    try {
-      const snapshot=normalizeUserBazaar(await userBazaarRequest(gm,seller.sellerId,key),seller,Date.now());
-      observed+=snapshot.items.length;
-      if(snapshot.isOpen&&snapshot.items.length)candidates.push(snapshot);
-    } catch(error) {
-      const message=String(error?.message||error).slice(0,240);
-      if(error?.name!=='TornApiError' || ![6,7].includes(error.tornCode)) throw error;
-      errors.push({sellerId:String(seller.sellerId),error:message,at:Date.now()});
-    }
-    if(i<open.length-1) await sleep(DISCOVERY.sellerGap);
-  }
-  onProgress({phase:'seller-api-done',current:open.length,total:open.length,observed,candidates:candidates.length,errors:errors.length});
-  return {candidates,errors,scanned:open.length,observed};
 }
 
 function normalizeCatalog(data) {
@@ -1165,7 +1091,7 @@ function makeUI(doc) {
   panel.innerHTML=`<header id="header"><div><small>MM TORN SYSTEMS</small><strong>DOLLAR BROKER</strong></div><button type="button" id="minimize" aria-label="Minimize Broker">−</button></header>
     <div class="body">
       <div class="status"><span class="dot"></span><span id="status" role="status">Ready</span></div>
-      <div id="mode" class="muted">Official directory + cached user-Bazaar API prefilter · live item-control verification · manual purchase only</div>
+      <div id="mode" class="muted">Official directory discovery · live Bazaar DOM is the sole verifier · manual purchase only</div>
       <p id="notice" role="status"></p>
       <div class="row"><button id="find-deals" class="primary" type="button">Find & Scan Dollar Sellers</button><button id="refresh-scan" type="button">Refresh / Start Over</button><button id="clear-results" type="button">Clear Results</button><button id="reset-scan" type="button">Reset after closing tab</button></div>
       <div id="discovery-progress" class="muted"></div>
@@ -1180,7 +1106,7 @@ function makeUI(doc) {
         <label for="min-value">Minimum normal market value</label><input id="min-value" type="number" min="1" step="1000">
         <div class="row"><button id="save-api-key" type="button">Save key locally</button><button id="clear-api-key" type="button">Clear key</button></div>
         <div class="row"><button id="deep-scan" type="button">Deep Item Market scan</button></div>
-        <div class="muted">Find & Scan sweeps Torn's Bazaar directory, checks open sellers through Torn's cached user-Bazaar API, then reuses the current TornPDA tab across exact-$1 candidate Bazaars for live verification and returns here when finished. API timestamps and local fetch time stay distinct. Torn's Directory is a showcase, not a complete registry of every Bazaar in the game. Deep Item Market scan remains a slower secondary check.</div>
+        <div class="muted">Find & Scan sweeps Torn's Bazaar directory, then uses a dedicated TornPDA scanner tab across every discovered Bazaar while the original Torn tab remains free for normal play. Directory open/closed metadata and cached Bazaar API snapshots do not veto a seller. The current live Bazaar DOM alone decides closed/no-$1/locked/unlocked. Torn's Directory is a showcase, not a complete registry of every Bazaar in the game. Deep Item Market scan remains a slower secondary check.</div>
       </details>
 
       <details><summary>Known Bazaar scanner (secondary)</summary>
@@ -1298,7 +1224,7 @@ function renderUI(ui,state,identity,now,localError='',session={}) {
       const ack=document.createElement('button');ack.type='button';ack.textContent=e.acknowledged?'Acknowledged':'Acknowledge';ack.disabled=e.acknowledged;ack.dataset.ack=e.id;
       actions.append(link,ack);card.append(name,tag,seller,timing,actions);ui.el('events').append(card);
     }
-    if(!state.events.length){const p=document.createElement('div');p.className='muted';p.textContent=scanActive?'Verifying API-confirmed $1 candidates against current Torn listing controls…':'No live-verified $1 Bazaar listings found in the latest candidate verification.';ui.el('events').append(p);}
+    if(!state.events.length){const p=document.createElement('div');p.className='muted';p.textContent=scanActive?'Live-verifying every discovered Bazaar against current Torn listing controls…':'No live-verified $1 Bazaar listings found in the latest full directory verification.';ui.el('events').append(p);}
   }
   ui.el('diagnostics').textContent=JSON.stringify({script:VERSION,schema:state.schema,revision:state.revision,sellerLeads:state.sellerLeads.length,openDollarSellers:state.sellerLeads.filter(x=>x.isOpen).length,lastSellerDiscovery:state.lastSellerDiscovery||null,sellerScan:scan?{phase:scan.phase,scanned:scan.scanned,total:scan.sellerIds.length,observedDollar:scan.observed,liveVerified:scan.found,unverified:scan.unverified,unavailable:scan.unavailable,errors:scan.errors.length,target:scan.targetId}:null,marketLeads:state.marketLeads.length,actionableMarket:actionable.length,discoveryCursor:state.discoveryCursor,lastDiscovery:state.lastDiscovery||null,workerId:w?.id||null,phase:w?.phase||'stopped',target:w?.targetId||null,targetCount:state.targets.length,lastDetection:state.lastDetection||null,events:state.events.length,duplicateLedger:`${state.seen.length}/${LIMIT.seen}`,apiConfigured:!!session.apiConfigured,discoveryBusy:!!session.discoveryBusy,window:ui.panel.hidden?'minimized':'open',error:localError||scan?.error||w?.error||null},null,2);
 }
@@ -1415,7 +1341,6 @@ async function boot(gm, win, doc) {
   if(!(launcher instanceof HTMLElement)) throw new Error('Shared MM dock launcher could not be registered.');
   ui.setLauncher(launcher,active=>sharedCore.setDockLauncherActive?.(MODULE_ID,active));
   sharedCore.makePanelDraggable(ui.panel,ui.el('header'),MODULE_ID,{right:'12px',top:'82px'});
-  if(await __MM_PDA_ENV__.consumeScannerReturn()){ui.setOpen(true);}
 
   const played=new Set(),playedMarket=new Set();
   function active() {return !closed && doc.visibilityState==='visible' && doc.hasFocus();}
@@ -1491,11 +1416,11 @@ async function boot(gm, win, doc) {
 
   async function runSellerDiscovery(resetFirst=false) {
     if(!apiKey) throw new Error('Save a Torn public API key first.');
-    // TornPDA uses same-tab verification; no background-tab API is required.
+    if(typeof __MM_PDA_ENV__.openReservedScanner!=='function') throw new Error('TornPDA dedicated scanner-tab support is unavailable.');
     if(sellerScanIsActive(state.sellerScan)) {
       if(!sellerScanIsStale(state.sellerScan,Date.now())) throw new Error('A dollar Bazaar scan is already running.');
       const staleId=state.sellerScan.id;
-      await change(s=>failSellerScan(s,staleId,'Stale TornPDA same-tab scanner was reset before restart.',Date.now()));
+      await change(s=>failSellerScan(s,staleId,'Stale TornPDA dedicated scanner state was reset before restart.',Date.now()));
     }
     if(resetFirst) {
       if(scannerTab){try{scannerTab.close?.();}catch{} scannerTab=null;}
@@ -1515,26 +1440,19 @@ async function boot(gm, win, doc) {
         replaceSellerLeads(s,result.sellers,at);
         s.events=[];s.seen=[];s.sellerScan=null;s.lastDetection=0;
       });
-      discoveryProgress=`Directory returned ${result.open} open Bazaar${result.open===1?'':'s'} · checking official user-Bazaar API for exact-$1 stock…`;render();
-      const apiScan=await scanDollarSellerBazaars({
-        gm,key:apiKey,sellers:result.sellers,shouldStop:()=>closed,
-        onProgress:progress=>{
-          if(progress.phase==='seller-api') discoveryProgress=`Seller API ${progress.current}/${progress.total} · ${progress.observed} exact-$1 item${progress.observed===1?'':'s'} · ${progress.candidates} candidate Bazaar${progress.candidates===1?'':'s'} · ${progress.errors} error${progress.errors===1?'':'s'}`;
-          else discoveryProgress=`Seller API checked ${progress.total} open Bazaar${progress.total===1?'':'s'} · ${progress.observed} exact-$1 item${progress.observed===1?'':'s'} · ${progress.candidates} candidate Bazaar${progress.candidates===1?'':'s'}`;
-          render();
-        }
-      });
-      if(!apiScan.candidates.length) {
-        discoveryProgress=`Seller API checked ${apiScan.scanned} open Bazaar${apiScan.scanned===1?'':'s'} · no exact-$1 candidate Bazaars need live verification${apiScan.errors.length?` · ${apiScan.errors.length} seller API error${apiScan.errors.length===1?'':'s'}`:''}.`;
+      if(!result.sellers.length) {
+        __MM_PDA_ENV__.cancelReservedScanner();
+        discoveryProgress='Directory returned no Bazaars to live-verify.';
         return;
       }
-      const newScanId=win.crypto.randomUUID(),prepared=await change(s=>beginSellerScan(s,identity.tabId,newScanId,Date.now(),apiScan.candidates));
-      discoveryProgress=`API found ${apiScan.observed} exact-$1 item${apiScan.observed===1?'':'s'} across ${apiScan.candidates.length} candidate Bazaar${apiScan.candidates.length===1?'':'s'} · live-verifying only those candidates in one temporary tab.`;
+      const sellerIds=result.sellers.map(seller=>seller.sellerId);
+      const newScanId=win.crypto.randomUUID(),prepared=await change(s=>beginSellerScan(s,identity.tabId,newScanId,Date.now(),sellerIds));
+      discoveryProgress=`Directory found ${result.total} unique Bazaar${result.total===1?'':'s'} (${result.open} currently marked open by directory metadata) · live-verifying every discovered Bazaar in one temporary tab. Live Torn DOM is the only final verifier.`;
       try {
-        await __MM_PDA_ENV__.startScanner(prepared.result,initialUrl);
-        return;
+        scannerTab=await __MM_PDA_ENV__.openReservedScanner(prepared.result);
       } catch(openError) {
-        await change(s=>failSellerScan(s,newScanId,'Could not start the TornPDA same-tab scanner.',Date.now()));
+        __MM_PDA_ENV__.cancelReservedScanner();
+        await change(s=>failSellerScan(s,newScanId,'Could not start the TornPDA dedicated scanner tab.',Date.now()));
         throw openError;
       }
     } finally {
@@ -1542,9 +1460,9 @@ async function boot(gm, win, doc) {
     }
   }
 
-  on(ui.el('find-deals'),'click',e=>act(e,()=>runSellerDiscovery(false)));
+  on(ui.el('find-deals'),'click',e=>act(e,()=>{__MM_PDA_ENV__.reserveScannerTab();return runSellerDiscovery(false);}));
 
-  on(ui.el('refresh-scan'),'click',e=>act(e,()=>runSellerDiscovery(true)));
+  on(ui.el('refresh-scan'),'click',e=>act(e,()=>{__MM_PDA_ENV__.reserveScannerTab();return runSellerDiscovery(true);}));
 
   on(ui.el('clear-results'),'click',e=>act(e,async()=>{
     if(sellerScanIsActive(state.sellerScan)) throw new Error('Wait for the active Bazaar scan to finish, or close/reset the scanner before clearing results.');
@@ -1725,7 +1643,9 @@ function makeChime() {
 // ---- pda ----
 function createPdaEnvironment(injectedApiKey,win,doc) {
   const PREFIX='mm-dollar-broker:pda:';
-  const RETURN_KEY=PREFIX+'scanner-return:v1';
+  const LEGACY_RETURN_KEY=PREFIX+'scanner-return:v1';
+  const SCANNER_META_KEY=PREFIX+'scanner-meta:v2';
+  const SCANNER_WINDOW='mm-dollar-broker-pda-scanner';
   const LAUNCHER_POS_KEY=PREFIX+'launcher-pos:v1';
   const PANEL_POS_KEY=PREFIX+'panel-pos:v1';
   const TAB_KEY=PREFIX+'tab:v1';
@@ -1736,6 +1656,7 @@ function createPdaEnvironment(injectedApiKey,win,doc) {
   const appKey=injected && injected!==unresolved ? injected : '';
   let memoryTab={};
   let storageQueue=Promise.resolve();
+  let reservedScanner=null;
 
   const clone=value=>{
     if(value===undefined)return undefined;
@@ -1817,6 +1738,14 @@ function createPdaEnvironment(injectedApiKey,win,doc) {
     return {abort(){aborted=true;if(timer)win.clearTimeout(timer);}};
   }
 
+  function scannerTokenFromLocation() {
+    try {
+      const url=new URL(win.location.href);
+      const token=String(url.searchParams.get('mmDollarScan')||'');
+      return /^[A-Za-z0-9._~-]{8,120}$/.test(token)?token:'';
+    } catch { return ''; }
+  }
+
   const gm=Object.freeze({
     async getValue(key,def=null) {
       const value=await storageGet(key,undefined);
@@ -1825,8 +1754,15 @@ function createPdaEnvironment(injectedApiKey,win,doc) {
       return def;
     },
     async setValue(key,value) {await storageSet(key,value);},
-    async getTab() {return clone(sessionRead())||{};},
-    async saveTab(value) {sessionWrite(value||{});},
+    async getTab() {
+      const scanId=scannerTokenFromLocation();
+      if(scanId)return {mmDollarBrokerTab:'pda-scanner:'+scanId};
+      return clone(sessionRead())||{};
+    },
+    async saveTab(value) {
+      if(scannerTokenFromLocation())return;
+      sessionWrite(value||{});
+    },
     async addValueChangeListener(){return null;},
     async removeValueChangeListener(){},
     xmlHttpRequest(details){return nativeRequest(details);}
@@ -1983,35 +1919,67 @@ function createPdaEnvironment(injectedApiKey,win,doc) {
     ui.el('save-api-key').hidden=true;
     ui.el('clear-api-key').hidden=true;
     ui.el('reset-scan').textContent='Reset stale scan';
-    ui.el('mode').textContent='TornPDA · API prefilter · passive unlocked-card verification · manual purchase only';
+    ui.el('mode').textContent='TornPDA · dedicated scanner tab · panel may be closed · live DOM sole verification · manual purchase only';
     const settings=ui.shadow.querySelector('details summary');
     if(settings)settings.textContent='Discovery settings · TornPDA key supplied automatically';
   }
 
-  async function startScanner(url,returnUrl) {
+  function reserveScannerTab() {
+    if(!win.navigator?.locks?.request) throw new Error('Update TornPDA: a dedicated scanner tab requires Web Locks for safe cross-tab state.');
+    const reservationId=win.crypto.randomUUID();
+    const reserveUrl='https://www.torn.com/?mmDollarScannerReserve='+encodeURIComponent(reservationId);
+    const child=win.open(reserveUrl,SCANNER_WINDOW);
+    if(!child) throw new Error('TornPDA blocked the Dollar Broker scanner tab.');
+    reservedScanner={reservationId,child,startedAt:Date.now(),ownerUrl:win.location.href,timer:null};
+    reservedScanner.timer=win.setTimeout(()=>{
+      if(reservedScanner?.reservationId===reservationId)cancelReservedScanner();
+    },90000);
+    void storageDelete(LEGACY_RETURN_KEY);
+    void storageSet(SCANNER_META_KEY,{reservationId,phase:'reserved',ownerUrl:win.location.href,startedAt:reservedScanner.startedAt});
+    try{child.blur?.();win.focus?.();}catch{}
+    return reservationId;
+  }
+
+  async function openReservedScanner(url) {
     const target=new URL(String(url),win.location.href);
-    const back=new URL(String(returnUrl||win.location.href),win.location.href);
-    if(target.origin!=='https://www.torn.com' || target.pathname!=='/bazaar.php') throw new Error('PDA scanner target is invalid.');
-    if(back.origin!=='https://www.torn.com') throw new Error('PDA scanner return URL is invalid.');
-    await storageSet(RETURN_KEY,{returnUrl:back.href,phase:'scanning',startedAt:Date.now()});
-    win.location.assign(target.href);
+    const scanId=String(target.searchParams.get('mmDollarScan')||'');
+    if(target.origin!=='https://www.torn.com' || target.pathname!=='/bazaar.php' || !scanId) throw new Error('PDA scanner target is invalid.');
+    const reservation=reservedScanner;
+    if(!reservation || !reservation.child || reservation.child.closed) throw new Error('The dedicated TornPDA scanner tab was closed before verification started.');
+    if(reservation.timer)win.clearTimeout(reservation.timer);
+    await storageSet(SCANNER_META_KEY,{scanId,phase:'scanning',ownerUrl:reservation.ownerUrl,startedAt:reservation.startedAt,updatedAt:Date.now()});
+    reservation.child.location.replace(target.href);
+    try{reservation.child.blur?.();win.focus?.();}catch{}
+    return Object.freeze({
+      close(){
+        try{reservation.child.close?.();}catch{}
+        if(reservedScanner?.reservationId===reservation.reservationId)reservedScanner=null;
+      }
+    });
+  }
+
+  function cancelReservedScanner() {
+    const reservation=reservedScanner;
+    reservedScanner=null;
+    if(reservation?.timer)win.clearTimeout(reservation.timer);
+    try{reservation?.child?.close?.();}catch{}
+    if(reservation?.reservationId)void storageSet(SCANNER_META_KEY,{reservationId:reservation.reservationId,phase:'cancelled',ownerUrl:reservation.ownerUrl,startedAt:reservation.startedAt,finishedAt:Date.now()});
   }
 
   async function finishScanner() {
-    const state=await storageGet(RETURN_KEY,null);
-    const returnUrl=String(state?.returnUrl||'https://www.torn.com/');
-    let target;
-    try{target=new URL(returnUrl);}catch{target=new URL('https://www.torn.com/');}
-    if(target.origin!=='https://www.torn.com')target=new URL('https://www.torn.com/');
-    await storageSet(RETURN_KEY,{returnUrl:target.href,phase:'returning',startedAt:Number(state?.startedAt||Date.now()),finishedAt:Date.now()});
-    win.location.replace(target.href);
+    const scanId=scannerTokenFromLocation();
+    const previous=await storageGet(SCANNER_META_KEY,null);
+    if(scanId) await storageSet(SCANNER_META_KEY,{scanId,phase:'complete',ownerUrl:String(previous?.ownerUrl||''),startedAt:Number(previous?.startedAt||Date.now()),finishedAt:Date.now()});
+    try{win.close();}catch{}
+    await new Promise(resolve=>win.setTimeout(resolve,80));
+    if(!win.closed) win.location.replace('https://www.torn.com/?mmDollarScannerComplete='+encodeURIComponent(scanId||'unknown'));
   }
 
-  async function consumeScannerReturn() {
-    const state=await storageGet(RETURN_KEY,null);
-    if(!state || state.phase!=='returning')return false;
-    await storageDelete(RETURN_KEY);
-    return Date.now()-Number(state.finishedAt||0)<10*60*1000;
+  function isScannerPlaceholder() {
+    try {
+      const url=new URL(win.location.href);
+      return url.searchParams.has('mmDollarScannerReserve') || url.searchParams.has('mmDollarScannerComplete');
+    } catch { return false; }
   }
 
   const serialLocks=(()=>{
@@ -2030,16 +1998,18 @@ function createPdaEnvironment(injectedApiKey,win,doc) {
     gm,
     uiCore,
     configureUI,
-    startScanner,
+    reserveScannerTab,
+    openReservedScanner,
+    cancelReservedScanner,
     finishScanner,
-    consumeScannerReturn,
+    isScannerPlaceholder,
     locks:win.navigator?.locks?.request?win.navigator.locks:serialLocks,
     platform:'tornpda'
   });
 }
 
 const __MM_PDA_ENV__=createPdaEnvironment(__MM_PDA_API_KEY,window,document);
-if(window.top===window.self) void boot(__MM_PDA_ENV__.gm,window,document).catch(error=>{
+if(window.top===window.self && !__MM_PDA_ENV__.isScannerPlaceholder()) void boot(__MM_PDA_ENV__.gm,window,document).catch(error=>{
   const note=document.createElement('div');
   note.textContent='MM Dollar Broker PDA could not start: '+String(error?.message||error||'unknown error');
   note.style.cssText='position:fixed;left:8px;right:8px;top:64px;z-index:2147483647;background:#302b22;color:#ffd68b;padding:10px;border:1px solid #8f7440;border-radius:7px;font:12px/1.4 system-ui,sans-serif';
