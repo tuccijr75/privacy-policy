@@ -1,47 +1,16 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-pda.6
-// @description  Stable one-time installer. On each Torn reload, securely fetches the latest Bazaar Ledger runtime, with offline bundled fallback.
+// @version      2.2.0-pda.9
+// @description  Complete self-contained TornPDA Bazaar Ledger; native API key and supported remote update notifications.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
 // @run-at       document-end
-// @updateURL    https://raw.githubusercontent.com/tuccijr75/privacy-policy/main/MorpheusPDA.user.js
-// @downloadURL  https://raw.githubusercontent.com/tuccijr75/privacy-policy/main/MorpheusPDA.user.js
+// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/MorpheusPDA.user.js
+// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/MorpheusPDA.user.js
 // @noframes
 // ==/UserScript==
 (async () => {
- 'use strict';
- if(window.top!==window.self)return;
- if(window.__morpheusPdaBootstrapLoaded)return;
- window.__morpheusPdaBootstrapLoaded=true;
- // TornPDA substitutes this marker with the user's existing PDA API key.
- const PDA_KEY='###PDA-APIKEY###';
- const RUNTIME_URL='https://raw.githubusercontent.com/tuccijr75/privacy-policy/main/MorpheusPDA.runtime.js';
- let launched=false;
- try {
-   if(typeof PDA_httpGet!=='function'||typeof PDA_storage==='undefined')
-     throw Error('TornPDA script APIs unavailable');
-   const response=await PDA_httpGet(RUNTIME_URL+'?refresh='+Date.now(),{});
-   const code=Number(response?.status);
-   const source=response?.responseText;
-   if(code<200||code>=300||typeof source!=='string'||source.length<25000||source.length>200000)
-     throw Error('Latest runtime unavailable');
-   if(!source.startsWith('// Morpheus Bazaar Ledger dynamic runtime, v2.2.0-')||
-      !source.includes('const PDA_API_KEY=PDA_RUNTIME_KEY;')||
-      !source.includes('return (async () => {'))
-     throw Error('Remote runtime format did not pass validation');
-   // Only the controlled official GitHub main branch is used. No key is sent to GitHub.
-   const execute=new Function('PDA_RUNTIME_KEY',source+'\n//# sourceURL=MorpheusPDA.runtime.js');
-   launched=true;
-   await execute(PDA_KEY);
-   return;
- }catch(error) {
-   console.warn('[Morpheus Ledger] Online code unavailable; starting bundled fallback:',String(error?.message||error));
-   if(launched&&window.__morpheusPdaLedgerLoaded)return;
- }
- // Bundled known-good version works when GitHub is temporarily unreachable or eval is blocked.
- await (async () => {
  'use strict';
  if (window.top !== window.self) return;
  if (typeof PDA_storage === 'undefined' || typeof PDA_httpGet !== 'function' || typeof PDA_httpPost !== 'function') {
@@ -50,26 +19,27 @@
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.2.0-pda.6';
+ const VERSION='2.2.0-pda.9';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
- const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY'].map(x=>prefix+x);
+ const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY','lastPurchaseScanAt'].map(x=>prefix+x);
  const cache=await PDA_storage.getMany(keys);
  const read=k=>String(cache[prefix+k] ?? '');
  const save=async(k,v)=>{const value=String(v??'').trim();await PDA_storage.set(prefix+k,value);cache[prefix+k]=value;};
  // TornPDA replaces this marker with the API key configured in the app. Owner may override it
- // with a separate least-privilege Custom key that includes private Bazaar-sale logs.
- const PDA_API_KEY=PDA_KEY;
+ // with a saved Full Access key, if the TornPDA-supplied key lacks purchase-log permissions.
+ const PDA_API_KEY='###PDA-APIKEY###';
  // A single placeholder occurrence is required: TornPDA substitutes EVERY occurrence.
  const appKey=/^[A-Za-z0-9_-]{12,100}$/.test(PDA_API_KEY)?PDA_API_KEY:'';
- const cfg=()=>({relay:read('relay'),token:read('token'),torn:read('torn')||appKey,partnerId:Number(read('partnerId')||0)});
+ let purchaseKeyInUse='';
+  const cfg=()=>({relay:read('relay'),token:read('token'),torn:read('torn')||appKey,partnerId:Number(read('partnerId')||0)});
  const money=n=>'$'+Number(n||0).toLocaleString('en-US',{maximumFractionDigits:0});
  const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const numeric=x=>{const n=Number(String(x??'').replace(/[$,\s]/g,''));return Number.isSafeInteger(n)?n:NaN;};
  const uuid=()=>crypto.randomUUID?.()||('mb-'+Date.now()+'-'+Math.random().toString(36).slice(2));
  // New pipeline starts at install time so legacy manually logged sales are not double counted.
  if(!read('v2SaleStart')) await save('v2SaleStart',Date.now()-120000);
- let state=null,working=false,opened=false,status='Not connected',lastTrades=0,lastLogs=0,lastBazaar=0,lastPurchaseScan=0,lastPurchaseResult='Not scanned on this device';
+ let state=null,working=false,opened=false,status='Not connected',lastTrades=0,lastLogs=0,lastBazaar=0,lastPurchaseScan=Number(read('lastPurchaseScanAt')||0),lastPurchaseResult='Not scanned on this device';
  const scannedTradeIds=new Set();
  const itemNames=new Map();
  const minutes=n=>n*60000;
@@ -100,7 +70,7 @@
    return data;
  }
  async function api(path,params={}){
-   const key=cfg().torn;if(!key)throw Error('Add your own Torn Custom API key to Settings');
+   const key=purchaseKeyInUse||cfg().torn;if(!key)throw Error('TornPDA API key not available');
    const q=new URLSearchParams({...params,key});return request('https://api.torn.com/v2/'+path+'?'+q);
  }
  async function relay(op,data={}){
@@ -145,7 +115,7 @@
            let displayName='Item #'+di.id;
            try{const catalog=await api('torn/'+di.id+'/items');const entry=Array.isArray(catalog.items)?catalog.items.find(x=>x.id===di.id):null;
              if(entry&&typeof entry.name==='string'&&entry.name.length<=100)displayName=entry.name;
-           }catch(_){/* A Custom user-only key may omit torn/items; item ID stays valid. */}
+           }catch(_){/* Some valid keys may omit torn/items; item ID stays valid. */}
            itemNames.set(di.id,displayName);
          }
          await relay('trade_intake',{tradeId:t.id,line,completedAt:detail.completed_at,name:itemNames.get(di.id),itemId:di.id,uid:di.uid??null,qty:di.amount,senderId:otherId,receiverId:ownerId});
@@ -196,16 +166,49 @@
    }
    return remaining===0&&parts.length<=40?parts:null;
  }
+ async function choosePurchaseKey(){
+   // Prefer the key TornPDA already supplies. Use a saved override only if it has better coverage.
+   const keys=[{source:'TornPDA',key:appKey},{source:'Ledger override',key:read('torn')}]
+     .filter(x=>x.key&&/^[A-Za-z0-9_-]{12,100}$/.test(x.key))
+     .filter((x,i,a)=>a.findIndex(y=>y.key===x.key)===i);
+   if(!keys.length)throw Error('TornPDA has not supplied a usable API key');
+   const expected=new Set(state.lots.filter(l=>l.mode==='supplier'&&l.status==='awaiting_cost'&&l.tradeRef).map(l=>l.senderId));
+   let best=null;
+   for(const candidate of keys){
+     try{
+       const basic=await request('https://api.torn.com/v2/user/basic?'+new URLSearchParams({key:candidate.key}));
+       const id=Number(basic?.profile?.id);
+       if(!expected.has(id))continue;
+       let access=0;
+       for(const logType of [1112,1225,4200,4201]){
+         try{
+           const check=await request('https://api.torn.com/v2/user/log?'+new URLSearchParams({
+             log:String(logType),limit:'1',key:candidate.key
+           }));
+           if(Array.isArray(check.log))access++;
+         }catch(_){}
+       }
+       if(!best||access>best.access)best={key:candidate.key,source:candidate.source,access,playerId:id};
+       if(access===4)break;
+     }catch(_){}
+   }
+   if(!best)throw Error('No installed Torn API key belongs to the Morpheus sender of pending trades');
+   if(best.access===0)throw Error('TornPDA key does not allow purchase logs. Public, Minimal and Limited are insufficient; choose Full Access for the key provided to TornPDA. Authorization is one-time, not per item.');
+   purchaseKeyInUse=best.key;
+   return best;
+ }
  async function syncPurchaseLogs(){
    if(state?.role!=='supplier')throw Error('Sign in as Morpheus to scan his purchase logs');
-   if(!cfg().torn)throw Error('No Torn API key: enter a Custom key or enable TornPDA app key with purchase-log permissions');
+   const awaitingLots=state.lots.filter(l=>l.tradeRef&&l.mode==='supplier'&&l.status==='awaiting_cost');
+   if(!awaitingLots.length)return {noPending:true,read:0,relevant:0,imported:0,matched:0,skipped:0,errors:[]};
+   const selected=await choosePurchaseKey();
    const supplierId=await verifyKey();
-   const lots=state.lots.filter(l=>l.tradeRef&&l.senderId===supplierId&&l.mode==='supplier'&&l.status==='awaiting_cost');
-   if(!lots.length)return {noPending:true,read:0,relevant:0,imported:0,matched:0,skipped:0,errors:[]};
+   const lots=awaitingLots.filter(l=>l.senderId===supplierId);
+   if(!lots.length)throw Error('TornPDA API account does not match the supplier of pending inventory');
    const wanted=new Set(lots.map(l=>l.itemId)),floor=Math.floor((Math.min(...lots.map(l=>new Date(l.createdAt).getTime()))-120*86400000)/1000);
-   const stats={read:0,relevant:0,imported:0,matched:0,skipped:0,pages:0,errors:[],truncated:[]};
+   const stats={read:0,relevant:0,imported:0,matched:0,skipped:0,pages:0,errors:[],truncated:[],keySource:selected.source,keyPermissions:selected.access};
    for(const type of [1112,1225,4200,4201]){
-     let url='https://api.torn.com/v2/user/log?'+new URLSearchParams({log:String(type),limit:'100',from:String(floor),key:cfg().torn});
+     let url='https://api.torn.com/v2/user/log?'+new URLSearchParams({log:String(type),limit:'100',from:String(floor),key:purchaseKeyInUse});
      const seen=new Set();
      try{
        for(let page=0;page<8&&url;page++){
@@ -226,7 +229,7 @@
          const nextUrl=new URL(next);
          if(nextUrl.protocol!=='https:'||nextUrl.hostname!=='api.torn.com'||nextUrl.pathname!=='/v2/user/log')
            throw Error('Untrusted pagination address');
-         nextUrl.searchParams.set('key',cfg().torn);url=nextUrl.href;
+         nextUrl.searchParams.set('key',purchaseKeyInUse);url=nextUrl.href;
          if(page===7)stats.truncated.push(type);
        }
      }catch(e){stats.errors.push(String(type)+': '+e.message);}
@@ -301,15 +304,16 @@
        try{await syncSales();}catch(e){warnings.push('Sales: '+e.message);}
        if(Date.now()-lastBazaar>minutes(5))try{await snapshot();}catch(e){warnings.push('Listings: '+e.message);}
       }else if(state.role==='supplier'){
-        if(!cfg().torn){
-          lastPurchaseResult='NOT SCANNED: No Torn API key with purchase-log access.';
-          warnings.push('Purchase scan skipped: Torn API key unavailable');
+        if(!appKey&&!read('torn')){
+          lastPurchaseResult='NOT SCANNED: TornPDA API key not available.';
+          warnings.push('Purchase scan skipped: API key unavailable');
         }else if(!silent||Date.now()-lastPurchaseScan>minutes(10)){
           lastPurchaseScan=Date.now();
+          try{await save('lastPurchaseScanAt',lastPurchaseScan);}catch(error){console.warn('[Morpheus Ledger] Scan throttle persistence failed',error);}
           try{
             const stats=await syncPurchaseLogs();
             lastPurchaseResult=stats.noPending?'No supplier lots awaiting purchase costs':
-              'Purchase evidence: '+stats.read+' logs read; '+stats.relevant+' relevant; '+stats.imported+' saved; '+
+              'Purchase evidence ('+stats.keySource+', '+stats.keyPermissions+'/4 log permissions): '+stats.read+' logs read; '+stats.relevant+' relevant; '+stats.imported+' saved; '+
               stats.matched+' lots priced; '+stats.pending+' pending; '+stats.skipped+' log formats skipped.'+
               (stats.truncated.length?' More pages may exist for '+stats.truncated.join(', ')+'.':'')+
               (stats.errors.length?' Errors: '+stats.errors.join(' | '):'');
@@ -395,7 +399,7 @@
  function draw(){if(!opened)return;const c=cfg(),s=state?.summary,role=state?.role;
    let html=`<header><b>Morpheus Bazaar Ledger</b><span class="muted">v${VERSION}</span><button data-action="close">Close</button></header><section class="row"><b>${esc(status)}</b><button data-action="refresh" ${working?'disabled':''}>Refresh ledger</button><button data-action="scan" ${working?'disabled':''}>Scan Torn API</button></section>`;
    if(s){html+=`<section><div class="muted">Signed in: <b>${role==='owner'?'Bazaar Owner':'Morpheus'}</b> • Business day ${esc(s.openDay)} (19:00 ET cutoff)</div><div class="metrics"><div><span class="muted">${role==='owner'?'Expected to pay':'Expected pay'} — today</span><strong class="num">${money(s.current.morpheusDue)}</strong></div><div><span class="muted">${role==='owner'?'Daily expected to pay':'Daily expected'} — last close</span><strong class="num">${money(s.lastClosed.morpheusDue)}</strong></div><div><span class="muted">Lifetime unpaid balance</span><strong class="num">${money(s.remaining)}</strong></div></div><div class="metrics" style="margin-top:9px"><div><span class="muted">Today's gross sales</span><strong>${money(s.current.gross)}</strong></div><div><span class="muted">Today's net profit</span><strong>${money(s.current.profit)}</strong></div><div><span class="muted">Your earnings today</span><strong>${money(role==='owner'?s.current.ownerProfit:s.current.morpheusProfit)}</strong></div></div><p class="muted"><b>Today:</b> ${money(s.current.morpheusProfit)} Morpheus profit + ${money(s.current.capitalDue)} capital reimbursement = ${money(s.current.morpheusDue)} total payable. <b>Last close:</b> ${money(s.lastClosed.morpheusProfit)} profit + ${money(s.lastClosed.capitalDue)} capital = ${money(s.lastClosed.morpheusDue)} payable. Lifetime debt survives rollover. Cash transfers remain manual.</p></section>`;
-     if(role==='supplier')html+=`<section><b>Purchase cost sync</b><p class="muted">${esc(lastPurchaseResult)}. To fetch Morpheus purchase costs, add HIS Custom Torn API key below and tap Scan Torn API. The Shared Ledger does not read his key from your device.</p></section>`;
+     if(role==='supplier')html+=`<section><b>Purchase cost sync</b><p class="muted">${esc(lastPurchaseResult)}. The script automatically checks TornPDA's API key, scans permitted purchase logs, and selects an existing override only if necessary. No separate key entry is needed when TornPDA's key has sufficient access.</p></section>`;
      if(role==='supplier')html+=`<section><b>Optional: source a purchase lead</b><form id="newlot"><div class="grid"><div><label>Item name</label><input name="name" required></div><div><label>Torn Item ID (required to auto-verify trades)</label><input name="itemId" type="number" min="1" required></div><div><label>Quantity</label><input name="qty" type="number" min="1" required></div><div><label>My buy cost per unit ($)</label><input name="cost" placeholder="Can fill in later"></div><div><label>Funding</label><select name="mode"><option value="supplier">I purchased — 50/50 profit</option><option value="owner">Owner purchases my lead — sourcing fee</option></select></div><div><label>Sourcing fee (%) if owner-funded</label><input name="fee" type="number" value="20" min="0" max="100"></div><div><label>Item UID (optional, for unique equipment)</label><input name="uid" type="number" min="1"></div></div><label>Notes</label><textarea name="note"></textarea><button>Submit to shared ledger</button></form><p class="muted">For an ordinary item transfer, no submission is needed: trade directly and the owner scanner imports it. Only sourcing leads need this form.</p><button data-action="trade">Open partner's Torn profile to trade</button></section>`;
      if(role==='owner')html+=`<section><b>Trade & sale reconciliation</b><p class="muted">Completed incoming item trades from all Torn players are imported automatically with no manual proposal. New receipts are marked pending until funding/cost is classified. Only your Bazaar sale logs are scanned (Torn log 1226). Only unambiguous sales book profit.</p><button data-action="trade">Open Morpheus's profile</button> <button data-action="scan">Check trades & sales now</button> <button data-action="crimeBulk">Classify crime drops in trade</button> <button data-action="approveMorpheus100">Approve all Morpheus crime drops - 100%</button> <p class="muted">Last trade scan: ${lastTrades?new Date(lastTrades).toLocaleString():'not yet'} · Last sale scan: ${lastLogs?new Date(lastLogs).toLocaleString():'not yet'}</p></section>`;
      html+=`<section><details open><summary>Inventory lots (${state.lots.length})</summary><div class="scroll">${state.lots.map(itemRow).join('')||'No inventory yet'}</div></details></section>`;
@@ -403,8 +407,8 @@
      if(role==='owner')html+=`<section><b>Payment after sending Torn cash</b><form id="payment"><div class="grid"><div><label>Amount sent</label><input name="amount" type="number" min="1" max="${s.remaining}" required></div><div><label>Torn reference</label><input name="reference"></div></div><button ${s.remaining<=0?'disabled':''}>Record payment sent</button></form></section>`;
      html+=`<section><details><summary>Payments (${state.payments.length})</summary>${state.payments.map(p=>`<div class="line">${money(p.amount)} • ${esc(p.at)} • ${p.acknowledged?'Acknowledged':'Awaiting acknowledgment'} ${role==='supplier'&&!p.acknowledged?`<button data-action="ack" data-id="${esc(p.id)}">Confirm receipt</button>`:''}</div>`).join('')||'No payments'}</details><details><summary>Sales history (${state.sales.length})</summary><div class="scroll">${state.sales.slice(0,100).map(x=>`<div class="line">${esc(x.name)} × ${x.qty} • ${money(x.gross)} revenue • ${money(x.cost)} cost • Morpheus profit ${money(x.morpheusProfit)} + capital ${money(x.capitalDue)} = ${money(x.morpheusDue)} due • Owner ${money(x.ownerProfit)} <span class="muted">${esc(x.at)} / ${esc(x.sourceId||'legacy/manual')}</span></div>`).join('')}</div></details></section>`;
      html+=`<section><details><summary>Daily, weekly & monthly reports</summary>${[['Daily',state.daily],['Weekly',state.weekly],['Monthly',state.monthly]].map(([label,x])=>`<b>${label}</b><table><thead><tr><th>Period</th><th>Sales</th><th>Net profit</th><th>Profit to Morpheus</th><th>Total owed</th><th>Owner</th></tr></thead><tbody>${rowsReport(x)}</tbody></table>`).join('')}<button data-action="export">Export CSV</button></details></section>`;
-   }else html+=`<section class="warning">Configure the shared relay and personal token below to connect. Owner auto-sales require a Custom Torn API key with user/log 1226.</section>`;
-   html+=`<section><details ${s?'':'open'}><summary>Settings</summary><form id="settings"><label>Same Google Apps Script /exec URL for both users</label><input name="relay" required value="${esc(c.relay)}"><label>Personal relay token (different for each player)</label><input name="token" type="password" required value="${esc(c.token)}"><label>Optional Custom Torn API key (overrides TornPDA app key; never sent to relay)</label><input name="torn" type="password" value="${esc(c.torn)}"><label>Partner's Torn player ID</label><input name="partnerId" type="number" min="1" value="${c.partnerId||''}"><button>Save & connect</button> <button type="button" data-action="verify">Verify Torn API key</button><p class="muted">Owner: Custom key granting v2 user/log log type 1226, plus user/trades, user/{tradeId}/trade and user/basic; v1 user/bazaar for listing snapshots. Morpheus: Torn key optional for ledger; if using it, Public is enough for user/basic. Data policy: your override key and relay token are stored privately in TornPDA's per-script storage; trade and sale identifiers, quantities, costs, and proceeds stored in your private Google Sheet, visible to both partners.</p></form></details></section>`;
+   }else html+=`<section class="warning">Configure the shared relay and personal token below to connect. Owner auto-sales require a Full Access key with user/log 1226.</section>`;
+   html+=`<section><details ${s?'':'open'}><summary>Settings</summary><form id="settings"><label>Same Google Apps Script /exec URL for both users</label><input name="relay" required value="${esc(c.relay)}"><label>Personal relay token (different for each player)</label><input name="token" type="password" required value="${esc(c.token)}"><label>Optional key override (the script automatically selects TornPDA's key first)</label><input name="torn" type="password" value="${esc(c.torn)}"><label>Partner's Torn player ID</label><input name="partnerId" type="number" min="1" value="${c.partnerId||''}"><button>Save & connect</button> <button type="button" data-action="verify">Verify Torn API key</button><p class="muted">Owner: Full Access needed to import Bazaar sales from user/log 1226. Morpheus: Full Access is needed to read private purchase logs for automatic costs. The script uses the API key already provided by TornPDA when it has those permissions. Public, Minimal and Limited do not authorize private purchase logs. Data policy: your override key and relay token are stored privately in TornPDA's per-script storage; trade and sale identifiers, quantities, costs, and proceeds stored in your private Google Sheet, visible to both partners.</p></form></details></section>`;
    panel.innerHTML=html;
    panel.querySelectorAll('button[data-action]').forEach(x=>x.addEventListener('click',()=>act(x.dataset.action,x.dataset.id)));
    panel.querySelector('#settings')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);const updates={};for(const k of ['relay','token','torn','partnerId'])updates[prefix+k]=String(f.get(k)??'').trim();try{await PDA_storage.setMany(updates);Object.assign(cache,updates);state=null;await refresh();}catch(e){alert('Could not save settings in TornPDA: '+e.message);}});
@@ -506,7 +510,6 @@
      await writeOp('sale_reconcile',{sourceId:ex.id,lotId:choice,itemId:ex.itemId,uid:ex.uid,qty:ex.qty,unitPrice:ex.unitPrice,timestamp},'Sale matched');
    }
  }
- if(cfg().relay&&cfg().token)refresh(true);
+ if(cfg().relay&&cfg().token)syncAll(true);
  setInterval(()=>{if(document.visibilityState==='visible'&&cfg().relay&&cfg().token&&!working)syncAll(true);},minutes(3));
-})();
 })();
