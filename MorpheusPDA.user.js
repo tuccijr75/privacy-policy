@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-pda.11
+// @version      2.2.0-pda.12
 // @description  Complete self-contained TornPDA Bazaar Ledger; native API key and supported remote update notifications.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -19,10 +19,10 @@
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.2.0-pda.11';
+ const VERSION='2.2.0-pda.12';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
- const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY','lastPurchaseScanAt'].map(x=>prefix+x);
+ const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY','acquisitionCursor','acquisitionEvidence'].map(x=>prefix+x);
  const cache=await PDA_storage.getMany(keys);
  const read=k=>String(cache[prefix+k] ?? '');
  const save=async(k,v)=>{const value=String(v??'').trim();await PDA_storage.set(prefix+k,value);cache[prefix+k]=value;};
@@ -39,7 +39,7 @@
  const uuid=()=>crypto.randomUUID?.()||('mb-'+Date.now()+'-'+Math.random().toString(36).slice(2));
  // New pipeline starts at install time so legacy manually logged sales are not double counted.
  if(!read('v2SaleStart')) await save('v2SaleStart',Date.now()-120000);
- let state=null,working=false,opened=false,status='Not connected',lastTrades=0,lastLogs=0,lastBazaar=0,lastPurchaseScan=Number(read('lastPurchaseScanAt')||0),lastPurchaseResult='Not scanned on this device';
+ let state=null,working=false,opened=false,status='Not connected',lastTrades=0,lastLogs=0,lastBazaar=0,lastPurchaseResult='Not scanned on this device';
  const scannedTradeIds=new Set();
  const itemNames=new Map();
  const minutes=n=>n*60000;
@@ -57,7 +57,7 @@
      try{return await PDA_httpGet(url,{});}
      catch(e){
        if(attempt===2)throw Error('GET '+new URL(url).hostname+': '+safeError(e));
-       await new Promise(resolve=>setTimeout(resolve,500*(attempt+1)));
+       await new Promise(resolve=>setTimeout(resolve,2500));
      }
    }
  }
@@ -80,7 +80,8 @@
      try{if(location)redirect=new URL(String(location).trim(),url);}catch(_){}
      if(!redirect || redirect.protocol!=='https:' || redirect.hostname!=='script.googleusercontent.com' || redirect.pathname!=='/macros/echo')
        throw Error('HTTP '+code+': Google response redirect missing or unexpected (check web app access)');
-     result=await safeGet(redirect.href);
+     // A Google ContentService redirect is a one-time response address: never retry it.
+     try{result=await PDA_httpGet(redirect.href,{});}catch(e){throw Error('Google response unavailable: '+safeError(e));}
    }
    const status=Number(result && result.status);
    if(!Number.isFinite(status)||status<200||status>=300)throw Error('HTTP '+String(result?.status??'unknown'));
@@ -93,12 +94,18 @@
    const key=purchaseKeyInUse||cfg().torn;if(!key)throw Error('TornPDA API key not available');
    const q=new URLSearchParams({...params,key});return request('https://api.torn.com/v2/'+path+'?'+q);
  }
- async function relay(op,data={}){
+ function evidenceRequestId(data){
+   // Stable across interrupted scans so an accepted-but-unacknowledged batch is not appended twice.
+   const raw=JSON.stringify(data);let a=2166136261,b=2246822519;
+   for(let i=0;i<raw.length;i++){a=Math.imul(a^raw.charCodeAt(i),16777619);b=Math.imul(b^raw.charCodeAt(i),2246822519);}
+   return 'evidence-'+(a>>>0).toString(36)+'-'+(b>>>0).toString(36)+'-'+raw.length;
+ }
+ async function relay(op,data={},reqId=uuid()){
    const c=cfg();if(!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(c.relay))throw Error('Google relay URL must end in /exec');
    if(c.token.length<24)throw Error('Missing relay token');
-   const r=await request(c.relay,{token:c.token,op,data,reqId:uuid()});if(!r.ok)throw Error(r.error||'Relay failed');state=r.state;return state;
+   const r=await request(c.relay,{token:c.token,op,data,reqId});if(!r.ok)throw Error(r.error||'Relay failed');if(r.state)state=r.state;return (op==='evidence_batch'||op==='acquisition_apply_batch')?r:state;
  }
- async function refresh(silent=false){if(working||!cfg().relay||!cfg().token)return;working=true;try{await relay('state');status='Synchronized';}catch(e){status='Sync failed: '+e.message;if(!silent)alert(status);}finally{working=false;draw();}}
+ async function refresh(silent=false){if(working||!cfg().relay||!cfg().token)return;working=true;try{await relay('state');status='Synchronized';}catch(e){status='Sync failed: '+safeError(e);if(!silent)alert(status);}finally{purchaseKeyInUse='';working=false;draw();}}
  async function writeOp(op,data,message){if(working)return;working=true;try{await relay(op,data);status=message;draw();}catch(e){status='ERROR: '+e.message;alert(status);}finally{working=false;draw();}}
  async function verifyKey(){const r=await api('user/basic');const p=r.profile;if(!p?.id)throw Error('Expected v2 user/basic profile');await PDA_storage.setMany({[prefix+'playerId']:String(p.id),[prefix+'playerName']:String(p.name)});cache[prefix+'playerId']=String(p.id);cache[prefix+'playerName']=String(p.name);status='Torn API verified: '+p.name+' ['+p.id+']';draw();return p.id;}
  function isPositive(n){return Number.isSafeInteger(n)&&n>0;}
@@ -232,95 +239,183 @@
    if(!Array.isArray(r.logtypes))throw Error('Torn log-type discovery returned unexpected format');
    return r.logtypes.map(x=>({id:numeric(x.id),title:String(x.title||''),kind:originKindForTitle(x.title)})).filter(x=>isPositive(x.id)&&x.kind);
  }
- async function readPurchasePagedLogs(type,floor,onLog,stats){
-   let url='https://api.torn.com/v2/user/log?'+new URLSearchParams({log:String(type),limit:'100',from:String(floor),key:purchaseKeyInUse});
+ async function readPurchasePagedLogs(type,floor,onLog,stats,resumeQuery='',maxPages=4){
+   const base='https://api.torn.com/v2/user/log';
+   const url=new URL(base);
+   if(resumeQuery){
+     const next=new URL(resumeQuery,base);
+     if(next.origin!==url.origin||next.pathname!==url.pathname||next.searchParams.get('log')!==String(type))throw Error('Invalid saved log pagination checkpoint');
+     url.search=next.search;
+   }else url.search=new URLSearchParams({log:String(type),limit:'100',from:String(floor)}).toString();
+   url.searchParams.set('key',purchaseKeyInUse);
    const seen=new Set();
-   for(let page=0;page<8&&url;page++){
-     if(seen.has(url))throw Error('Repeated pagination link');seen.add(url);
-     const response=await request(url);if(!Array.isArray(response.log))throw Error('Invalid log response');stats.pages++;
+   let current=url.href;
+   for(let page=0;page<maxPages&&current;page++){
+     if(seen.has(current))throw Error('Repeated pagination address');seen.add(current);
+     const response=await request(current);
+     if(!Array.isArray(response.log))throw Error('Invalid log response');
+     stats.pages++;
      for(const raw of response.log)await onLog(raw);
-     const next=response._metadata?.links?.next;if(!next){url=null;break;}
+     const next=response._metadata?.links?.next;
+     if(!next)return '';
      const nextUrl=new URL(next);
      if(nextUrl.protocol!=='https:'||nextUrl.hostname!=='api.torn.com'||nextUrl.pathname!=='/v2/user/log')throw Error('Untrusted pagination address');
-     nextUrl.searchParams.set('key',purchaseKeyInUse);url=nextUrl.href;if(page===7)stats.truncated.push(type);
+     nextUrl.searchParams.set('key',purchaseKeyInUse);
+     if(page===maxPages-1){
+       stats.truncated.push(type);
+       nextUrl.searchParams.delete('key');
+       return nextUrl.pathname+nextUrl.search;
+     }
+     current=nextUrl.href;
    }
+   return '';
  }
+
  async function choosePurchaseKey(){
-   // Prefer the key TornPDA already supplies. Use a saved override only if it has better coverage.
+   // Select the account once per scan; the actual log reads validate per-type permissions.
+   // No preflight log probes, persistent API-key copies, or hidden fallback to another account.
    const keys=[{source:'TornPDA',key:appKey},{source:'Ledger override',key:read('torn')}]
      .filter(x=>x.key&&/^[A-Za-z0-9_-]{12,100}$/.test(x.key))
      .filter((x,i,a)=>a.findIndex(y=>y.key===x.key)===i);
-   if(!keys.length)throw Error('TornPDA has not supplied a usable API key');
-   const expected=new Set(state.lots.filter(l=>l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending'))).map(l=>l.senderId));
-   let best=null;
+   if(!keys.length)throw Error('TornPDA has not supplied a usable Torn API key');
+   const expected=new Set(state.lots.filter(l=>l.tradeRef&&['awaiting_cost','received_pending'].includes(l.status)).map(l=>l.senderId));
    for(const candidate of keys){
      try{
        const basic=await request('https://api.torn.com/v2/user/basic?'+new URLSearchParams({key:candidate.key}));
        const id=Number(basic?.profile?.id);
        if(!expected.has(id))continue;
-       let access=0;
-       for(const logType of [1112,1225,4200,4201]){
-         try{
-           const check=await request('https://api.torn.com/v2/user/log?'+new URLSearchParams({
-             log:String(logType),limit:'1',key:candidate.key
-           }));
-           if(Array.isArray(check.log))access++;
-         }catch(_){}
-       }
-       if(!best||access>best.access)best={key:candidate.key,source:candidate.source,access,playerId:id};
-       if(access===4)break;
-     }catch(_){}
+       purchaseKeyInUse=candidate.key;
+       return {source:candidate.source,playerId:id};
+     }catch(_){/* Other configured candidate may be available. */}
    }
-   if(!best)throw Error('No installed Torn API key belongs to the Morpheus sender of pending trades');
-   if(best.access!==4)throw Error('Morpheus acquisition log permission incomplete ('+best.access+'/4 required purchase log types). TornPDA needs Full Access or a Custom key with all required log types enabled. No costs or origins will be inferred from inaccessible logs.');
-   purchaseKeyInUse=best.key;
-   return best;
+   throw Error('No configured Torn API key could verify the Morpheus account of the pending receipts');
  }
+
  async function syncPurchaseLogs(){
-   if(state?.role!=='supplier')throw Error('Sign in as Morpheus to scan his acquisition logs');
-   const awaitingLots=state.lots.filter(l=>l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending')));
-   if(!awaitingLots.length)return {noPending:true,read:0,relevant:0,imported:0,originImported:0,matched:0,earned:0,ambiguous:0,skipped:0,errors:[]};
+   if(state?.role!=='supplier')throw Error('Sign in as Morpheus to scan acquisition logs');
+   const pending=state.lots.filter(l=>l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending')));
+   if(!pending.length)return {noPending:true,read:0,imported:0,originImported:0,matched:0,earned:0,errors:[]};
+   // Key selection and its permission probes happen once per scan. The key is lexical and never cached.
    const selected=await choosePurchaseKey(),supplierId=selected.playerId;
-   if(state.partnership&&state.partnership.morpheusId!==supplierId)throw Error('TornPDA API account does not match the Morpheus account locked to this Ledger');
-   const lots=awaitingLots.filter(l=>l.senderId===supplierId);
-   if(!lots.length)throw Error('TornPDA API account does not match the sender of pending partnership inventory');
-   const wanted=new Set(lots.map(l=>l.itemId)),floor=Math.floor((Math.min(...lots.map(l=>new Date(l.createdAt).getTime()))-120*86400000)/1000);
-   // Torn v2 /user/log requires full-access authorization; an identity-only key is insufficient.
-   const stats={read:0,relevant:0,imported:0,originImported:0,matched:0,earned:0,ambiguous:0,skipped:0,pages:0,errors:[],truncated:[],keySource:selected.source,keyPermissions:selected.access,originTypes:[],cityFindType:false};
-   for(const type of [1112,1225,4200,4201]){
-     try{await readPurchasePagedLogs(type,floor,async raw=>{
-       stats.read++;const p=parsePurchaseLog(raw,type);if(!p){stats.skipped++;return;}if(!wanted.has(p.itemId))return;
-       stats.relevant++;if(state.purchaseLogs.some(x=>x.logId===p.logId))return;await relay('purchase_log',p);stats.imported++;
-     },stats);}catch(e){stats.errors.push(String(type)+': '+safeError(e));}
+   if(state.partnership&&state.partnership.morpheusId!==supplierId)throw Error('Morpheus account does not match partnership');
+   const lots=pending.filter(l=>l.senderId===supplierId);
+   if(!lots.length)throw Error('Morpheus is not the sender of the pending receipts');
+   const wanted=new Set(lots.map(l=>l.itemId)),floor=Math.floor((Math.min(...lots.map(l=>Date.parse(l.createdAt)))-120*86400000)/1000);
+   let cursor={};try{const stored=JSON.parse(read('acquisitionCursor')||'{}');if(stored.supplierId===supplierId&&stored.progress&&typeof stored.progress==='object')cursor=stored.progress;}catch(_){}
+   // Parsed evidence is retained locally for late-arriving receipts; never store raw Torn
+   // responses or duplicate the API key. 120-day retention and 5,000-record hard bound.
+   const EVIDENCE_LIMIT=5000,cacheCutoff=Math.floor(Date.now()/1000)-120*86400;
+   let savedEvidence={};try{const stored=JSON.parse(read('acquisitionEvidence')||'{}');if(stored.supplierId===supplierId)savedEvidence=stored;}catch(_){}
+   const cacheP=new Map(),cacheO=new Map();
+   for(const p of Array.isArray(savedEvidence.purchases)?savedEvidence.purchases:[])
+     if(p&&typeof p.logId==='string'&&p.timestamp>=cacheCutoff)cacheP.set(p.logId,p);
+   for(const o of Array.isArray(savedEvidence.origins)?savedEvidence.origins:[])
+     if(o&&typeof o.evidenceId==='string'&&o.timestamp>=cacheCutoff)cacheO.set(o.evidenceId,o);
+   const stagedP=[],stagedO=[],seenP=new Set(state.purchaseLogs.map(x=>x.logId)),
+     seenO=new Set(state.originLogs.map(x=>x.evidenceId));
+   for(const p of cacheP.values())if(wanted.has(p.itemId)&&!seenP.has(p.logId)){seenP.add(p.logId);stagedP.push(p);}
+   for(const o of cacheO.values())if(wanted.has(o.itemId)&&!seenO.has(o.evidenceId)){seenO.add(o.evidenceId);stagedO.push(o);}
+   const stats={read:0,relevant:0,imported:0,originImported:0,matched:0,earned:0,ambiguous:0,skipped:0,pages:0,errors:[],truncated:[],keySource:selected.source,keyPermissions:0,originTypes:[],cityFindType:false};
+   let types=[{id:1112},{id:1225},{id:4200},{id:4201}],originTypes=[];
+   try{
+     originTypes=await discoverOriginLogTypes();
+     stats.originTypes=originTypes.map(x=>x.id+': '+x.title);
+     stats.cityFindType=originTypes.some(x=>x.kind==='city_find');
+     types=types.concat(originTypes);
+   }catch(e){stats.errors.push('Log-type discovery: '+safeError(e));}
+   const progress={...cursor},scanStartedAt=Math.floor(Date.now()/1000);
+   // Retrieve evidence into session memory before sending any writes or attempting attribution.
+   const MAX_LOG_PAGES=12;
+   for(const type of types){
+     if(stats.pages>=MAX_LOG_PAGES){stats.truncated.push(type.id);continue;}
+     try{
+       const checkpoint=cursor[type.id]&&typeof cursor[type.id]==='object'?cursor[type.id]:{highWater:Number(cursor[type.id]||0)};
+       const after=Math.max(floor,Number(checkpoint.highWater||0)-600);
+       const windowStart=checkpoint.next?Number(checkpoint.scanStartedAt||scanStartedAt):scanStartedAt;
+       let newest=Number(checkpoint.highWater||0);
+       const resume=await readPurchasePagedLogs(type.id,after,async raw=>{
+         stats.read++;
+         const ts=numeric(raw.timestamp);
+         if(isPositive(ts))newest=Math.max(newest,ts);
+         if(type.kind){
+           const entries=parseOriginLog(raw,type);
+           if(!entries.length){stats.skipped++;return;}
+           for(const entry of entries){
+             cacheO.set(entry.evidenceId,entry);
+             if(wanted.has(entry.itemId)&&!seenO.has(entry.evidenceId)){
+               seenO.add(entry.evidenceId);stagedO.push(entry);stats.relevant++;
+             }
+           }
+         }else{
+           const entry=parsePurchaseLog(raw,type.id);
+           if(!entry){stats.skipped++;return;}
+           cacheP.set(entry.logId,entry);
+           if(wanted.has(entry.itemId)&&!seenP.has(entry.logId)){
+             seenP.add(entry.logId);stagedP.push(entry);stats.relevant++;
+           }
+         }
+       },stats,String(checkpoint.next||''),Math.min(4,MAX_LOG_PAGES-stats.pages));
+       if(!type.kind)stats.keyPermissions++;
+       progress[type.id]={highWater:resume?newest:Math.max(newest,windowStart),next:resume,scanStartedAt:windowStart};
+     }catch(e){stats.errors.push(String(type.id)+': '+safeError(e));}
    }
-   let originTypes=[];
-   try{originTypes=await discoverOriginLogTypes();stats.originTypes=originTypes.map(x=>x.id+': '+x.title);stats.cityFindType=originTypes.some(x=>x.kind==='city_find');}
-   catch(e){stats.errors.push('Log-type discovery: '+safeError(e));}
-   for(const typeInfo of originTypes){
-     try{await readPurchasePagedLogs(typeInfo.id,floor,async raw=>{
-       stats.read++;const entries=parseOriginLog(raw,typeInfo);if(!entries.length){stats.skipped++;return;}
-       for(const p of entries){if(!wanted.has(p.itemId))continue;stats.relevant++;if(state.originLogs.some(x=>x.evidenceId===p.evidenceId))continue;await relay('origin_log',p);stats.originImported++;}
-     },stats);}catch(e){stats.errors.push(String(typeInfo.id)+' '+typeInfo.title+': '+safeError(e));}
+   // Batch is validated atomically by the relay. At most 35 entries per append-only event.
+   const staged=stagedP.map(x=>({purchase:x})).concat(stagedO.map(x=>({origin:x})));
+   for(let i=0;i<staged.length;i+=35){
+     const batch=staged.slice(i,i+35);
+     try{
+       const payload={purchases:batch.filter(x=>x.purchase).map(x=>x.purchase),origins:batch.filter(x=>x.origin).map(x=>x.origin)};
+       const ack=await relay('evidence_batch',payload,evidenceRequestId(payload));
+       if(ack.accepted?.purchases!==payload.purchases.length||ack.accepted?.origins!==payload.origins.length)throw Error('Invalid evidence batch acknowledgment');
+       stats.imported+=batch.filter(x=>x.purchase).length;
+       stats.originImported+=batch.filter(x=>x.origin).length;
+     }catch(e){stats.errors.push('Evidence batch: '+safeError(e));break;}
    }
-   // Partial evidence is not negative evidence: never infer provenance from an incomplete scan.
-   // Read-only log storage may have succeeded, but financial attribution must remain inactive.
-   if(stats.errors.length||stats.truncated.length||!originTypes.length){
+   if(stats.imported===stagedP.length&&stats.originImported===stagedO.length){
+     // A cursor must never outlive the evidence it skips. Persist parsed records first.
+     if(cacheP.size+cacheO.size>EVIDENCE_LIMIT)stats.errors.push('Parsed evidence cache capacity reached; checkpoint held');
+     else{
+       await save('acquisitionEvidence',JSON.stringify({supplierId,purchases:[...cacheP.values()],origins:[...cacheO.values()]}));
+       await save('acquisitionCursor',JSON.stringify({supplierId,progress}));
+     }
+   }
+   if(stats.errors.length||stats.truncated.length||!originTypes.length||stats.imported!==stagedP.length||stats.originImported!==stagedO.length){
      stats.attributionHeld=true;
+     purchaseKeyInUse='';
      stats.pending=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&['awaiting_cost','received_pending'].includes(l.status)).length;
      return stats;
    }
-   const pending=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending'))).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
-   for(const l of pending){
+   // A compact batch ack carries no Ledger state. Refresh once after ALL ingestion.
+   await relay('state');
+   // Scan first, ingest second, and only then reconcile against the authoritative returned ledger.
+   const remaining=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending'))).sort((a,b)=>Date.parse(a.createdAt)-Date.parse(b.createdAt));
+   const actions=[],reservedP=new Set(),reservedO=new Set();
+   for(const l of remaining){
      const purchase=chooseExactPurchaseEvidence(l,state.lots,state.purchaseLogs),origin=chooseExactOriginEvidence(l,state.lots,state.originLogs);
      if(purchase&&origin){stats.ambiguous++;continue;}
-     try{
-       if(purchase){await relay('purchase_apply_bundle',{lotId:l.id,supplierId,parts:purchase});stats.matched++;}
-       else if(origin){await relay('origin_apply_bundle',{lotId:l.id,supplierId,parts:origin});stats.earned++;}
-     }catch(e){stats.errors.push(l.name+': '+safeError(e));}
+     const parts=purchase||origin;
+     if(!parts)continue;
+     const claimed=origin?reservedO:reservedP,key=origin?'evidenceId':'logId';
+     if(parts.some(x=>claimed.has(x[key]))){stats.ambiguous++;continue;}
+     for(const x of parts)claimed.add(x[key]);
+     actions.push({op:origin?'origin_apply_bundle':'purchase_apply_bundle',data:{lotId:l.id,supplierId,parts}});
    }
+   // Attribution is also committed as validated batches, with proof reservation checked
+   // against earlier actions in the same batch. No per-lot Apps Script round trips.
+   for(let i=0;i<actions.length;i+=12){
+     const payload={actions:actions.slice(i,i+12)};
+     try{
+       const ack=await relay('acquisition_apply_batch',payload,evidenceRequestId(payload));
+       if(ack.accepted?.actions!==payload.actions.length)throw Error('Invalid attribution acknowledgment');
+       stats.matched+=payload.actions.filter(x=>x.op==='purchase_apply_bundle').length;
+       stats.earned+=payload.actions.filter(x=>x.op==='origin_apply_bundle').length;
+     }catch(e){stats.errors.push('Attribution batch: '+safeError(e));break;}
+   }
+   if(actions.length)await relay('state');
    stats.pending=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&['awaiting_cost','received_pending'].includes(l.status)).length;
    return stats;
  }
+
  function parseBazaarLog(log){
    if(Number(log?.details?.id)!==1226)return null;
    const data=log.data||{},items=data.items;
@@ -381,9 +476,7 @@
         if(!appKey&&!read('torn')){
           lastPurchaseResult='NOT SCANNED: TornPDA API key not available.';
           warnings.push('Purchase scan skipped: API key unavailable');
-        }else if(!silent||Date.now()-lastPurchaseScan>minutes(10)){
-          lastPurchaseScan=Date.now();
-          try{await save('lastPurchaseScanAt',lastPurchaseScan);}catch(error){console.warn('[Morpheus Ledger] Scan throttle persistence failed',error);}
+        }else{
           try{
             const stats=await syncPurchaseLogs();
             lastPurchaseResult=stats.noPending?'No Morpheus transfers awaiting acquisition evidence':
@@ -509,6 +602,11 @@
      await writeOp('sale_reconcile',{sourceId:ex.id,lotId:choice,itemId:ex.itemId,uid:ex.uid,qty:ex.qty,unitPrice:ex.unitPrice,timestamp},'Sale matched');
    }
  }
+ let rescanAfterHide=false;
  if(cfg().relay&&cfg().token)syncAll(true);
- setInterval(()=>{if(document.visibilityState==='visible'&&cfg().relay&&cfg().token&&!working)syncAll(true);},minutes(3));
+ document.addEventListener('visibilitychange',()=>{
+   if(document.visibilityState!=='visible')rescanAfterHide=true;
+   else if(rescanAfterHide){rescanAfterHide=false;if(cfg().relay&&cfg().token)syncAll(true);}
+ });
+ // One automatic scan per userscript lifecycle. Resync after reopening or explicit Scan action.
 })();
