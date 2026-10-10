@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-pda.12
+// @version      2.2.0-pda.13
 // @description  Complete self-contained TornPDA Bazaar Ledger; native API key and supported remote update notifications.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -13,13 +13,15 @@
 (async () => {
  'use strict';
  if (window.top !== window.self) return;
+ const dollarScanParams=new URL(location.href).searchParams;
+ if(dollarScanParams.has('mmDollarScannerReserve')||dollarScanParams.has('mmDollarScan')||dollarScanParams.has('mmDollarScannerComplete')) return;
  if (typeof PDA_storage === 'undefined' || typeof PDA_httpGet !== 'function' || typeof PDA_httpPost !== 'function') {
    console.error('[Morpheus PDA] This script requires TornPDA userscript APIs (PDA_storage and PDA_httpGet/Post).');
    return;
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.2.0-pda.12';
+ const VERSION='2.2.0-pda.13';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
  const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY','acquisitionCursor','acquisitionEvidence'].map(x=>prefix+x);
@@ -390,9 +392,28 @@
    // Scan first, ingest second, and only then reconcile against the authoritative returned ledger.
    const remaining=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending'))).sort((a,b)=>Date.parse(a.createdAt)-Date.parse(b.createdAt));
    const actions=[],reservedP=new Set(),reservedO=new Set();
+   // A partial matching proof is still conflicting evidence. Mirror the relay's
+   // purchaseAvailable_/originAvailable_ gates before submitting attribution.
+   const unallocatedEvidence=(lot,records,kind)=>{
+     const recv=Date.parse(lot.createdAt),used=new Map(),field=kind==='purchase'?'logId':'evidenceId';
+     for(const other of state.lots){
+       if(other.id===lot.id)continue;
+       for(const part of (kind==='purchase'?other.purchaseParts:other.originParts)||[])
+         used.set(part[field],(used.get(part[field])||0)+part.qty);
+       if(kind==='purchase'&&other.purchaseLogId){
+         const proof=state.purchaseLogs.find(p=>p.logId===other.purchaseLogId);
+         if(proof)used.set(proof.logId,(used.get(proof.logId)||0)+proof.qty);
+       }
+     }
+     return records.some(p=>p.itemId===lot.itemId&&sameUid(lot,p)
+       &&p.timestamp*1000<=recv+300000&&p.timestamp*1000>=recv-120*86400000
+       &&p.qty-(used.get(p[field])||0)>0);
+   };
    for(const l of remaining){
      const purchase=chooseExactPurchaseEvidence(l,state.lots,state.purchaseLogs),origin=chooseExactOriginEvidence(l,state.lots,state.originLogs);
      if(purchase&&origin){stats.ambiguous++;continue;}
+     if((origin&&unallocatedEvidence(l,state.purchaseLogs,'purchase'))||
+        (purchase&&unallocatedEvidence(l,state.originLogs,'origin'))){stats.ambiguous++;continue;}
      const parts=purchase||origin;
      if(!parts)continue;
      const claimed=origin?reservedO:reservedP,key=origin?'evidenceId':'logId';
