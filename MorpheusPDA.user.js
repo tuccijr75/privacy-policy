@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-pda.12
+// @version      2.2.0-pda.13
 // @description  Complete self-contained TornPDA Bazaar Ledger; native API key and supported remote update notifications.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -13,13 +13,15 @@
 (async () => {
  'use strict';
  if (window.top !== window.self) return;
+ const dollarScanParams=new URL(location.href).searchParams;
+ if(dollarScanParams.has('mmDollarScannerReserve')||dollarScanParams.has('mmDollarScan')||dollarScanParams.has('mmDollarScannerComplete')) return;
  if (typeof PDA_storage === 'undefined' || typeof PDA_httpGet !== 'function' || typeof PDA_httpPost !== 'function') {
    console.error('[Morpheus PDA] This script requires TornPDA userscript APIs (PDA_storage and PDA_httpGet/Post).');
    return;
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.2.0-pda.12';
+ const VERSION='2.2.0-pda.13';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
  const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY','acquisitionCursor','acquisitionEvidence'].map(x=>prefix+x);
