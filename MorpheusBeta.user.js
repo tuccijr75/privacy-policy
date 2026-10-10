@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger 2 Candidate
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-beta.5
+// @version      2.2.0-beta.6
 // @description  Shared Torn trade verification, Bazaar sale-log ingestion, 7 PM ET closeout and reports. No automated Torn trades.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -20,7 +20,7 @@
  'use strict';
  if (window.__morpheusLedgerLoaded) return;
  window.__morpheusLedgerLoaded=true;
- const VERSION='2.2.0-beta.5';
+ const VERSION='2.2.0-beta.6';
  const prefix='mledger_';
  const read=k=>GM_getValue(prefix+k,'');
  const save=(k,v)=>GM_setValue(prefix+k,String(v??'').trim());
@@ -301,7 +301,18 @@
      if(role==='supplier')html+=`<section><b>Optional: source a purchase lead</b><form id="newlot"><div class="grid"><div><label>Item name</label><input name="name" required></div><div><label>Torn Item ID (required to auto-verify trades)</label><input name="itemId" type="number" min="1" required></div><div><label>Quantity</label><input name="qty" type="number" min="1" required></div><div><label>My buy cost per unit ($)</label><input name="cost" placeholder="Can fill in later"></div><div><label>Funding</label><select name="mode"><option value="supplier">I purchased — 50/50 profit</option><option value="owner">Owner purchases my lead — sourcing fee</option></select></div><div><label>Sourcing fee (%) if owner-funded</label><input name="fee" type="number" value="20" min="0" max="100"></div><div><label>Item UID (optional, for unique equipment)</label><input name="uid" type="number" min="1"></div></div><label>Notes</label><textarea name="note"></textarea><button>Submit to shared ledger</button></form><p class="muted">For an ordinary item transfer, no submission is needed: trade directly and the owner scanner imports it. Only sourcing leads need this form.</p><button data-action="trade">Open partner's Torn profile to trade</button></section>`;
      if(role==='owner')html+=`<section><b>Trade & sale reconciliation</b><p class="muted">Completed incoming item trades from all Torn players are imported automatically with no manual proposal. New receipts are marked pending until funding/cost is classified. Only your Bazaar sale logs are scanned (Torn log 1226). Only unambiguous sales book profit.</p><button data-action="trade">Open Morpheus's profile</button> <button data-action="scan">Check trades & sales now</button> <button data-action="crimeBulk">Classify crime drops in trade</button> <button data-action="approveMorpheus100">Approve all Morpheus crime drops - 100%</button> <p class="muted">Last trade scan: ${lastTrades?new Date(lastTrades).toLocaleString():'not yet'} · Last sale scan: ${lastLogs?new Date(lastLogs).toLocaleString():'not yet'}</p></section>`;
      html+=`<section><details open><summary>Inventory lots (${state.lots.length})</summary><div class="scroll">${state.lots.map(itemRow).join('')||'No inventory yet'}</div></details></section>`;
-     if(state.exceptions?.length)html+=`<section><details open><summary>Unmatched Bazaar sales (${state.exceptions.length}) — action required</summary>${state.exceptions.map(x=>`<div class="line"><b>Sale ${esc(x.id)}</b> • Item #${x.itemId} • ${x.qty} × ${money(x.unitPrice)}<div class="critical">${esc(x.reason)}</div>${role==='owner'?`<button data-action="reconcile" data-id="${esc(x.id)}">Assign to inventory lot</button>`:''}</div>`).join('')}</details></section>`;
+     if(state.exceptions?.length)html+=`<section><details open><summary>Unmatched Bazaar sale quantities (${state.exceptions.length}) — action required</summary>${state.exceptions.map(x=>{
+       const remaining=x.remainingQty??x.qty,matched=state.lots.filter(l=>l.status==='confirmed'&&l.itemId===x.itemId&&
+         (l.uid==null||l.uid===x.uid)&&l.unitCost!==null&&l.unitCost<=x.unitPrice&&
+         l.qty-l.sold-l.returned>0&&new Date(l.confirmedAt).getTime()<=new Date(x.at).getTime()+300000);
+       const eligible=matched.reduce((n,l)=>n+Math.min(remaining,l.qty-l.sold-l.returned),0);
+       return `<div class="line"><b>Sale ${esc(x.id)}</b> • Item #${x.itemId} • originally ${x.qty} × ${money(x.unitPrice)}
+         <div class="muted">${x.allocatedQty||0} partnership units assigned · ${x.excludedQty||0} marked outside partnership · <b>${remaining} remain unresolved</b></div>
+         <div class="critical">${esc(x.reason)}</div>
+         ${role==='owner'&&eligible?`<button data-action="allocate" data-id="${esc(x.id)}">Assign up to ${Math.min(eligible,remaining)} documented unit(s)</button>`:''}
+         ${role==='owner'?`<button data-action="exclude" data-id="${esc(x.id)}">Declare ${remaining} unit(s) outside partnership</button>`:''}
+         ${!eligible?'<span class="muted">No remaining priced partner inventory matches this sale.</span>':''}</div>`;
+     }).join('')}</details></section>`;
      if(role==='owner')html+=`<section><b>Payment after sending Torn cash</b><form id="payment"><div class="grid"><div><label>Amount sent</label><input name="amount" type="number" min="1" max="${s.remaining}" required></div><div><label>Torn reference</label><input name="reference"></div></div><button ${s.remaining<=0?'disabled':''}>Record payment sent</button></form></section>`;
      html+=`<section><details><summary>Payments (${state.payments.length})</summary>${state.payments.map(p=>`<div class="line">${money(p.amount)} • ${esc(p.at)} • ${p.acknowledged?'Acknowledged':'Awaiting acknowledgment'} ${role==='supplier'&&!p.acknowledged?`<button data-action="ack" data-id="${esc(p.id)}">Confirm receipt</button>`:''}</div>`).join('')||'No payments'}</details><details><summary>Sales history (${state.sales.length})</summary><div class="scroll">${state.sales.slice(0,100).map(x=>`<div class="line">${esc(x.name)} × ${x.qty} • ${money(x.gross)} revenue • ${money(x.cost)} cost • Morpheus profit ${money(x.morpheusProfit)} + capital ${money(x.capitalDue)} = ${money(x.morpheusDue)} due • Owner ${money(x.ownerProfit)} <span class="muted">${esc(x.at)} / ${esc(x.sourceId||'legacy/manual')}</span></div>`).join('')}</div></details></section>`;
      html+=`<section><details><summary>Daily, weekly & monthly reports</summary>${[['Daily',state.daily],['Weekly',state.weekly],['Monthly',state.monthly]].map(([label,x])=>`<b>${label}</b><table><thead><tr><th>Period</th><th>Sales</th><th>Net profit</th><th>Profit to Morpheus</th><th>Total owed</th><th>Owner</th></tr></thead><tbody>${rowsReport(x)}</tbody></table>`).join('')}<button data-action="export">Export CSV</button></details></section>`;
@@ -398,14 +409,35 @@
    if(action==='reject'&&l&&confirm('Reject this lot?'))await writeOp('reject',{lotId:l.id},'Rejected');
    if(action==='return'&&l){const q=prompt('How many units were actually returned?');if(q!==null)await writeOp('return',{lotId:l.id,qty:numeric(q)},'Return recorded');}
    if(action==='ack'&&confirm('Have you actually received this payment in Torn?'))await writeOp('ack',{paymentId:id},'Receipt acknowledged');
-   if(action==='reconcile'){
+   if(action==='allocate'){
      const ex=state.exceptions.find(x=>x.id===id);if(!ex)return;
-     const options=state.lots.filter(x=>x.status==='confirmed'&&x.itemId===ex.itemId&&(x.uid==null||x.uid===ex.uid)&&x.qty-x.sold-x.returned>=ex.qty&&x.unitCost!==null&&x.unitCost<=ex.unitPrice);
-     if(!options.length)return alert('No valid lot has enough stock. Review inventory and pricing first.');
-     const choice=prompt('Choose inventory LOT ID for this sale:\n'+options.map(x=>x.id+' • '+x.name+' • '+(x.qty-x.sold-x.returned)+' remaining • '+money(x.unitCost)+' cost').join('\n'),options[0].id);
-     if(!choice||!options.some(x=>x.id===choice))return alert('No valid lot chosen');
-     const timestamp=Math.floor(new Date(ex.at).getTime()/1000);if(!confirm(`Assign Torn sale ${ex.id} to lot ${choice}? This books ${money(ex.gross)} revenue.`))return;
-     await writeOp('sale_reconcile',{sourceId:ex.id,lotId:choice,itemId:ex.itemId,uid:ex.uid,qty:ex.qty,unitPrice:ex.unitPrice,timestamp},'Sale matched');
+     const remaining=ex.remainingQty??ex.qty;
+     const available=state.lots.filter(l=>l.status==='confirmed'&&l.itemId===ex.itemId&&
+       (l.uid==null||l.uid===ex.uid)&&l.unitCost!==null&&l.unitCost<=ex.unitPrice&&
+       l.qty-l.sold-l.returned>0&&new Date(l.confirmedAt).getTime()<=new Date(ex.at).getTime()+300000);
+     if(!available.length)return alert('No priced inventory remains for this sale; do not assign the full Torn quantity.');
+     let lot=available[0];
+     if(available.length>1){
+       const text=prompt('Select the documented lot ID for this partial sale:\n'+
+         available.map(x=>x.id+' — '+x.name+' — '+(x.qty-x.sold-x.returned)+' units available').join('\n'),lot.id);
+       if(text===null)return;
+       lot=available.find(x=>x.id===text);
+       if(!lot)return alert('No matching lot selected. No change recorded.');
+     }
+     const qty=Math.min(remaining,lot.qty-lot.sold-lot.returned);
+     if(!confirm('Attribute '+qty+' of '+ex.qty+' Torn-sold units of item #'+ex.itemId+
+       ' to documented '+lot.name+' lot '+lot.id+' at '+money(ex.unitPrice)+' each?\n'+
+       'Only this attributed quantity will enter the Morpheus payout. '+(remaining-qty)+' units will still need classification.'))return;
+     await writeOp('sale_allocate',{sourceId:ex.id,lotId:lot.id,qty},'Documented units assigned; remaining quantity stays pending');
+     return;
+   }
+   if(action==='exclude'){
+     const ex=state.exceptions.find(x=>x.id===id);if(!ex)return;
+     const remaining=ex.remainingQty??ex.qty;
+     if(!confirm('Confirm that '+remaining+' unsplit units from Torn sale '+ex.id+
+       ' are NOT part of the Morpheus partnership?\n\nThis creates an audited exclusion: no Morpheus reimbursement or profit will be generated for these units. Do not confirm if their ownership is unknown.'))return;
+     await writeOp('sale_exclude',{sourceId:ex.id,qty:remaining,reason:'outside_partnership'},'Non-partnership portion recorded; no Morpheus payout');
+     return;
    }
  }
  if(cfg().relay&&cfg().token)refresh(true);
