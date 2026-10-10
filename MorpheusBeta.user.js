@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger 2 Candidate
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-beta.8
+// @version      2.2.0-beta.9
 // @description  Shared Torn trade verification, Bazaar sale-log ingestion, 7 PM ET closeout and reports. No automated Torn trades.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -18,9 +18,11 @@
 // ==/UserScript==
 (() => {
  'use strict';
+ const dollarScanParams=new URL(location.href).searchParams;
+ if(dollarScanParams.has('mmDollarScannerReserve')||dollarScanParams.has('mmDollarScan')||dollarScanParams.has('mmDollarScannerComplete')) return;
  if (window.__morpheusLedgerLoaded) return;
  window.__morpheusLedgerLoaded=true;
- const VERSION='2.2.0-beta.8';
+ const VERSION='2.2.0-beta.9';
  const prefix='mledger_';
  const read=k=>GM_getValue(prefix+k,'');
  const save=(k,v)=>GM_setValue(prefix+k,String(v??'').trim());
@@ -341,9 +343,28 @@
    // Scan first, ingest second, and only then reconcile against the authoritative returned ledger.
    const remaining=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending'))).sort((a,b)=>Date.parse(a.createdAt)-Date.parse(b.createdAt));
    const actions=[],reservedP=new Set(),reservedO=new Set();
+   // A partial matching proof is still conflicting evidence. Mirror the relay's
+   // purchaseAvailable_/originAvailable_ gates before submitting attribution.
+   const unallocatedEvidence=(lot,records,kind)=>{
+     const recv=Date.parse(lot.createdAt),used=new Map(),field=kind==='purchase'?'logId':'evidenceId';
+     for(const other of state.lots){
+       if(other.id===lot.id)continue;
+       for(const part of (kind==='purchase'?other.purchaseParts:other.originParts)||[])
+         used.set(part[field],(used.get(part[field])||0)+part.qty);
+       if(kind==='purchase'&&other.purchaseLogId){
+         const proof=state.purchaseLogs.find(p=>p.logId===other.purchaseLogId);
+         if(proof)used.set(proof.logId,(used.get(proof.logId)||0)+proof.qty);
+       }
+     }
+     return records.some(p=>p.itemId===lot.itemId&&sameUid(lot,p)
+       &&p.timestamp*1000<=recv+300000&&p.timestamp*1000>=recv-120*86400000
+       &&p.qty-(used.get(p[field])||0)>0);
+   };
    for(const l of remaining){
      const purchase=chooseExactPurchaseEvidence(l,state.lots,state.purchaseLogs),origin=chooseExactOriginEvidence(l,state.lots,state.originLogs);
      if(purchase&&origin){stats.ambiguous++;continue;}
+     if((origin&&unallocatedEvidence(l,state.purchaseLogs,'purchase'))||
+        (purchase&&unallocatedEvidence(l,state.originLogs,'origin'))){stats.ambiguous++;continue;}
      const parts=purchase||origin;
      if(!parts)continue;
      const claimed=origin?reservedO:reservedP,key=origin?'evidenceId':'logId';
