@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger 2 Candidate
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-beta.7
+// @version      2.2.0-beta.8
 // @description  Shared Torn trade verification, Bazaar sale-log ingestion, 7 PM ET closeout and reports. No automated Torn trades.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -20,7 +20,7 @@
  'use strict';
  if (window.__morpheusLedgerLoaded) return;
  window.__morpheusLedgerLoaded=true;
- const VERSION='2.2.0-beta.7';
+ const VERSION='2.2.0-beta.8';
  const prefix='mledger_';
  const read=k=>GM_getValue(prefix+k,'');
  const save=(k,v)=>GM_setValue(prefix+k,String(v??'').trim());
@@ -56,10 +56,16 @@
    const key=cfg().torn;if(!key)throw Error('Add your own Torn Custom API key to Settings');
    const q=new URLSearchParams({...params,key});return request('https://api.torn.com/v2/'+path+'?'+q);
  }
- async function relay(op,data={}){
+ function evidenceRequestId(data){
+   // Stable across interrupted scans so an accepted-but-unacknowledged batch is not appended twice.
+   const raw=JSON.stringify(data);let a=2166136261,b=2246822519;
+   for(let i=0;i<raw.length;i++){a=Math.imul(a^raw.charCodeAt(i),16777619);b=Math.imul(b^raw.charCodeAt(i),2246822519);}
+   return 'evidence-'+(a>>>0).toString(36)+'-'+(b>>>0).toString(36)+'-'+raw.length;
+ }
+ async function relay(op,data={},reqId=uuid()){
    const c=cfg();if(!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(c.relay))throw Error('Google relay URL must end in /exec');
    if(c.token.length<24)throw Error('Missing relay token');
-   const r=await request(c.relay,{token:c.token,op,data,reqId:uuid()});if(!r.ok)throw Error(r.error||'Relay failed');state=r.state;return state;
+   const r=await request(c.relay,{token:c.token,op,data,reqId});if(!r.ok)throw Error(r.error||'Relay failed');if(r.state)state=r.state;return (op==='evidence_batch'||op==='acquisition_apply_batch')?r:state;
  }
  async function refresh(silent=false){if(working||!cfg().relay||!cfg().token)return;working=true;try{await relay('state');status='Synchronized';}catch(e){status='Sync failed: '+e.message;if(!silent)alert(status);}finally{working=false;draw();}}
  async function writeOp(op,data,message){if(working)return;working=true;try{await relay(op,data);status=message;draw();}catch(e){status='ERROR: '+e.message;alert(status);}finally{working=false;draw();}}
@@ -203,65 +209,164 @@
    return r.logtypes.map(x=>({id:numeric(x.id),title:String(x.title||''),kind:originKindForTitle(x.title)}))
      .filter(x=>isPositive(x.id)&&x.kind);
  }
- async function readPagedLogs(type,floor,onLog,stats){
-   let url='https://api.torn.com/v2/user/log?'+new URLSearchParams({log:String(type),limit:'100',from:String(floor),key:cfg().torn});
+ async function readPagedLogs(type,floor,onLog,stats,resumeQuery='',maxPages=4){
+   const base='https://api.torn.com/v2/user/log';
+   const url=new URL(base);
+   if(resumeQuery){
+     const next=new URL(resumeQuery,base);
+     if(next.origin!==url.origin||next.pathname!==url.pathname||next.searchParams.get('log')!==String(type))throw Error('Invalid saved log pagination checkpoint');
+     url.search=next.search;
+   }else url.search=new URLSearchParams({log:String(type),limit:'100',from:String(floor)}).toString();
+   url.searchParams.set('key',cfg().torn);
    const seen=new Set();
-   for(let page=0;page<8&&url;page++){
-     if(seen.has(url))throw Error('Repeated pagination link');seen.add(url);
-     const response=await request(url);if(!Array.isArray(response.log))throw Error('Invalid log response');
+   let current=url.href;
+   for(let page=0;page<maxPages&&current;page++){
+     if(seen.has(current))throw Error('Repeated pagination address');seen.add(current);
+     const response=await request(current);
+     if(!Array.isArray(response.log))throw Error('Invalid log response');
      stats.pages++;
      for(const raw of response.log)await onLog(raw);
-     const next=response._metadata?.links?.next;if(!next){url=null;break;}
+     const next=response._metadata?.links?.next;
+     if(!next)return '';
      const nextUrl=new URL(next);
      if(nextUrl.protocol!=='https:'||nextUrl.hostname!=='api.torn.com'||nextUrl.pathname!=='/v2/user/log')throw Error('Untrusted pagination address');
-     nextUrl.searchParams.set('key',cfg().torn);url=nextUrl.href;
-     if(page===7)stats.truncated.push(type);
+     nextUrl.searchParams.set('key',cfg().torn);
+     if(page===maxPages-1){
+       stats.truncated.push(type);
+       nextUrl.searchParams.delete('key');
+       return nextUrl.pathname+nextUrl.search;
+     }
+     current=nextUrl.href;
    }
+   return '';
  }
+
  async function syncPurchaseLogs(){
-   if(state?.role!=='supplier')throw Error('Sign in as Morpheus to scan his acquisition logs');
-   if(!cfg().torn)throw Error('No Torn API key: Morpheus requires a full-access key or a Custom key explicitly authorized for user/log and all purchase/earned log types');
+   if(state?.role!=='supplier')throw Error('Sign in as Morpheus to scan acquisition logs');
+   if(!cfg().torn)throw Error('Morpheus Torn API key is required');
+   const pending=state.lots.filter(l=>l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending')));
+   if(!pending.length)return {noPending:true,read:0,imported:0,originImported:0,matched:0,earned:0,errors:[]};
+   // Key selection and its permission probes happen once per scan. The key is lexical and never cached.
    const supplierId=await verifyKey();
-   if(state.partnership&&state.partnership.morpheusId!==supplierId)throw Error('This Torn key is not the Morpheus account locked to this Ledger');
-   const lots=state.lots.filter(l=>l.tradeRef&&l.senderId===supplierId&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending')));
-   if(!lots.length)return {noPending:true,read:0,relevant:0,imported:0,originImported:0,matched:0,earned:0,ambiguous:0,skipped:0,errors:[]};
-   const wanted=new Set(lots.map(l=>l.itemId)),floor=Math.floor((Math.min(...lots.map(l=>new Date(l.createdAt).getTime()))-120*86400000)/1000);
-   // Torn v2 /user/log requires full-access authorization; an identity-only key is insufficient.
-   const stats={read:0,relevant:0,imported:0,originImported:0,matched:0,earned:0,ambiguous:0,skipped:0,pages:0,errors:[],truncated:[],originTypes:[],cityFindType:false};
-   for(const type of [1112,1225,4200,4201]){
-     try{await readPagedLogs(type,floor,async raw=>{
-       stats.read++;const p=parsePurchaseLog(raw,type);if(!p){stats.skipped++;return;}if(!wanted.has(p.itemId))return;
-       stats.relevant++;if(state.purchaseLogs.some(x=>x.logId===p.logId))return;await relay('purchase_log',p);stats.imported++;
-     },stats);}catch(e){stats.errors.push(String(type)+': '+e.message);}
+   if(state.partnership&&state.partnership.morpheusId!==supplierId)throw Error('Morpheus account does not match partnership');
+   const lots=pending.filter(l=>l.senderId===supplierId);
+   if(!lots.length)throw Error('Morpheus is not the sender of the pending receipts');
+   const wanted=new Set(lots.map(l=>l.itemId)),floor=Math.floor((Math.min(...lots.map(l=>Date.parse(l.createdAt)))-120*86400000)/1000);
+   let cursor={};try{const stored=JSON.parse(read('acquisitionCursor')||'{}');if(stored.supplierId===supplierId&&stored.progress&&typeof stored.progress==='object')cursor=stored.progress;}catch(_){}
+   // Parsed evidence is retained locally for late-arriving receipts; never store raw Torn
+   // responses or duplicate the API key. 120-day retention and 5,000-record hard bound.
+   const EVIDENCE_LIMIT=5000,cacheCutoff=Math.floor(Date.now()/1000)-120*86400;
+   let savedEvidence={};try{const stored=JSON.parse(read('acquisitionEvidence')||'{}');if(stored.supplierId===supplierId)savedEvidence=stored;}catch(_){}
+   const cacheP=new Map(),cacheO=new Map();
+   for(const p of Array.isArray(savedEvidence.purchases)?savedEvidence.purchases:[])
+     if(p&&typeof p.logId==='string'&&p.timestamp>=cacheCutoff)cacheP.set(p.logId,p);
+   for(const o of Array.isArray(savedEvidence.origins)?savedEvidence.origins:[])
+     if(o&&typeof o.evidenceId==='string'&&o.timestamp>=cacheCutoff)cacheO.set(o.evidenceId,o);
+   const stagedP=[],stagedO=[],seenP=new Set(state.purchaseLogs.map(x=>x.logId)),
+     seenO=new Set(state.originLogs.map(x=>x.evidenceId));
+   for(const p of cacheP.values())if(wanted.has(p.itemId)&&!seenP.has(p.logId)){seenP.add(p.logId);stagedP.push(p);}
+   for(const o of cacheO.values())if(wanted.has(o.itemId)&&!seenO.has(o.evidenceId)){seenO.add(o.evidenceId);stagedO.push(o);}
+   const stats={read:0,relevant:0,imported:0,originImported:0,matched:0,earned:0,ambiguous:0,skipped:0,pages:0,errors:[],truncated:[],keySource:'Desktop',keyPermissions:0,originTypes:[],cityFindType:false};
+   let types=[{id:1112},{id:1225},{id:4200},{id:4201}],originTypes=[];
+   try{
+     originTypes=await discoverOriginLogTypes();
+     stats.originTypes=originTypes.map(x=>x.id+': '+x.title);
+     stats.cityFindType=originTypes.some(x=>x.kind==='city_find');
+     types=types.concat(originTypes);
+   }catch(e){stats.errors.push('Log-type discovery: '+String(e.message||e));}
+   const progress={...cursor},scanStartedAt=Math.floor(Date.now()/1000);
+   // Retrieve evidence into session memory before sending any writes or attempting attribution.
+   const MAX_LOG_PAGES=12;
+   for(const type of types){
+     if(stats.pages>=MAX_LOG_PAGES){stats.truncated.push(type.id);continue;}
+     try{
+       const checkpoint=cursor[type.id]&&typeof cursor[type.id]==='object'?cursor[type.id]:{highWater:Number(cursor[type.id]||0)};
+       const after=Math.max(floor,Number(checkpoint.highWater||0)-600);
+       const windowStart=checkpoint.next?Number(checkpoint.scanStartedAt||scanStartedAt):scanStartedAt;
+       let newest=Number(checkpoint.highWater||0);
+       const resume=await readPagedLogs(type.id,after,async raw=>{
+         stats.read++;
+         const ts=numeric(raw.timestamp);
+         if(isPositive(ts))newest=Math.max(newest,ts);
+         if(type.kind){
+           const entries=parseOriginLog(raw,type);
+           if(!entries.length){stats.skipped++;return;}
+           for(const entry of entries){
+             cacheO.set(entry.evidenceId,entry);
+             if(wanted.has(entry.itemId)&&!seenO.has(entry.evidenceId)){
+               seenO.add(entry.evidenceId);stagedO.push(entry);stats.relevant++;
+             }
+           }
+         }else{
+           const entry=parsePurchaseLog(raw,type.id);
+           if(!entry){stats.skipped++;return;}
+           cacheP.set(entry.logId,entry);
+           if(wanted.has(entry.itemId)&&!seenP.has(entry.logId)){
+             seenP.add(entry.logId);stagedP.push(entry);stats.relevant++;
+           }
+         }
+       },stats,String(checkpoint.next||''),Math.min(4,MAX_LOG_PAGES-stats.pages));
+       if(!type.kind)stats.keyPermissions++;
+       progress[type.id]={highWater:resume?newest:Math.max(newest,windowStart),next:resume,scanStartedAt:windowStart};
+     }catch(e){stats.errors.push(String(type.id)+': '+String(e.message||e));}
    }
-   let originTypes=[];
-   try{originTypes=await discoverOriginLogTypes();stats.originTypes=originTypes.map(x=>x.id+': '+x.title);stats.cityFindType=originTypes.some(x=>x.kind==='city_find');}
-   catch(e){stats.errors.push('Log-type discovery: '+e.message);}
-   for(const typeInfo of originTypes){
-     try{await readPagedLogs(typeInfo.id,floor,async raw=>{
-       stats.read++;const entries=parseOriginLog(raw,typeInfo);if(!entries.length){stats.skipped++;return;}
-       for(const p of entries){if(!wanted.has(p.itemId))continue;stats.relevant++;if(state.originLogs.some(x=>x.evidenceId===p.evidenceId))continue;await relay('origin_log',p);stats.originImported++;}
-     },stats);}catch(e){stats.errors.push(String(typeInfo.id)+' '+typeInfo.title+': '+e.message);}
+   // Batch is validated atomically by the relay. At most 35 entries per append-only event.
+   const staged=stagedP.map(x=>({purchase:x})).concat(stagedO.map(x=>({origin:x})));
+   for(let i=0;i<staged.length;i+=35){
+     const batch=staged.slice(i,i+35);
+     try{
+       const payload={purchases:batch.filter(x=>x.purchase).map(x=>x.purchase),origins:batch.filter(x=>x.origin).map(x=>x.origin)};
+       const ack=await relay('evidence_batch',payload,evidenceRequestId(payload));
+       if(ack.accepted?.purchases!==payload.purchases.length||ack.accepted?.origins!==payload.origins.length)throw Error('Invalid evidence batch acknowledgment');
+       stats.imported+=batch.filter(x=>x.purchase).length;
+       stats.originImported+=batch.filter(x=>x.origin).length;
+     }catch(e){stats.errors.push('Evidence batch: '+String(e.message||e));break;}
    }
-   // Partial evidence is not negative evidence: never infer provenance from an incomplete scan.
-   // Read-only log storage may have succeeded, but financial attribution must remain inactive.
-   if(stats.errors.length||stats.truncated.length||!originTypes.length){
+   if(stats.imported===stagedP.length&&stats.originImported===stagedO.length){
+     // A cursor must never outlive the evidence it skips. Persist parsed records first.
+     if(cacheP.size+cacheO.size>EVIDENCE_LIMIT)stats.errors.push('Parsed evidence cache capacity reached; checkpoint held');
+     else{
+       save('acquisitionEvidence',JSON.stringify({supplierId,purchases:[...cacheP.values()],origins:[...cacheO.values()]}));
+       save('acquisitionCursor',JSON.stringify({supplierId,progress}));
+     }
+   }
+   if(stats.errors.length||stats.truncated.length||!originTypes.length||stats.imported!==stagedP.length||stats.originImported!==stagedO.length){
      stats.attributionHeld=true;
+     
      stats.pending=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&['awaiting_cost','received_pending'].includes(l.status)).length;
      return stats;
    }
-   const pending=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending'))).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
-   for(const l of pending){
+   // A compact batch ack carries no Ledger state. Refresh once after ALL ingestion.
+   await relay('state');
+   // Scan first, ingest second, and only then reconcile against the authoritative returned ledger.
+   const remaining=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending'))).sort((a,b)=>Date.parse(a.createdAt)-Date.parse(b.createdAt));
+   const actions=[],reservedP=new Set(),reservedO=new Set();
+   for(const l of remaining){
      const purchase=chooseExactPurchaseEvidence(l,state.lots,state.purchaseLogs),origin=chooseExactOriginEvidence(l,state.lots,state.originLogs);
      if(purchase&&origin){stats.ambiguous++;continue;}
-     try{
-       if(purchase){await relay('purchase_apply_bundle',{lotId:l.id,supplierId,parts:purchase});stats.matched++;}
-       else if(origin){await relay('origin_apply_bundle',{lotId:l.id,supplierId,parts:origin});stats.earned++;}
-     }catch(e){stats.errors.push(l.name+': '+e.message);}
+     const parts=purchase||origin;
+     if(!parts)continue;
+     const claimed=origin?reservedO:reservedP,key=origin?'evidenceId':'logId';
+     if(parts.some(x=>claimed.has(x[key]))){stats.ambiguous++;continue;}
+     for(const x of parts)claimed.add(x[key]);
+     actions.push({op:origin?'origin_apply_bundle':'purchase_apply_bundle',data:{lotId:l.id,supplierId,parts}});
    }
+   // Attribution is also committed as validated batches, with proof reservation checked
+   // against earlier actions in the same batch. No per-lot Apps Script round trips.
+   for(let i=0;i<actions.length;i+=12){
+     const payload={actions:actions.slice(i,i+12)};
+     try{
+       const ack=await relay('acquisition_apply_batch',payload,evidenceRequestId(payload));
+       if(ack.accepted?.actions!==payload.actions.length)throw Error('Invalid attribution acknowledgment');
+       stats.matched+=payload.actions.filter(x=>x.op==='purchase_apply_bundle').length;
+       stats.earned+=payload.actions.filter(x=>x.op==='origin_apply_bundle').length;
+     }catch(e){stats.errors.push('Attribution batch: '+String(e.message||e));break;}
+   }
+   if(actions.length)await relay('state');
    stats.pending=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&['awaiting_cost','received_pending'].includes(l.status)).length;
    return stats;
  }
+
  function parseBazaarLog(log){
    if(Number(log?.details?.id)!==1226)return null;
    const data=log.data||{},items=data.items;
@@ -318,7 +423,7 @@
        try{await syncTrades();}catch(e){warnings.push('Trades: '+e.message);}
        try{await syncSales();}catch(e){warnings.push('Sales: '+e.message);}
        if(Date.now()-lastBazaar>minutes(5))try{await snapshot();}catch(e){warnings.push('Listings: '+e.message);}
-     }else if(state.role==='supplier'&&cfg().torn&&(!silent||Date.now()-lastPurchaseScan>minutes(10))){
+     }else if(state.role==='supplier'&&cfg().torn){
        lastPurchaseScan=Date.now();
        try{const a=await syncPurchaseLogs();if(a&&!a.noPending){if(a.attributionHeld)warnings.push('Acquisition evidence incomplete — no lots attributed');if(!a.cityFindType)warnings.push('City-find log type unavailable; city finds remain inactive');}}catch(e){warnings.push('Acquisition evidence: '+e.message);}
      }
@@ -427,6 +532,11 @@
      return;
    }
  }
- if(cfg().relay&&cfg().token)refresh(true);
- setInterval(()=>{if(document.visibilityState==='visible'&&cfg().relay&&cfg().token&&!working)syncAll(true);},minutes(3));
+ let rescanAfterHide=false;
+ if(cfg().relay&&cfg().token)syncAll(true);
+ document.addEventListener('visibilitychange',()=>{
+   if(document.visibilityState!=='visible')rescanAfterHide=true;
+   else if(rescanAfterHide){rescanAfterHide=false;if(cfg().relay&&cfg().token)syncAll(true);}
+ });
+ // One automatic scan per userscript lifecycle; subsequent acquisition scans are manual.
 })();
