@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-pda.10
+// @version      2.2.0-pda.11
 // @description  Complete self-contained TornPDA Bazaar Ledger; native API key and supported remote update notifications.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -19,7 +19,7 @@
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.2.0-pda.10';
+ const VERSION='2.2.0-pda.11';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
  const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY','lastPurchaseScanAt'].map(x=>prefix+x);
@@ -43,11 +43,31 @@
  const scannedTradeIds=new Set();
  const itemNames=new Map();
  const minutes=n=>n*60000;
+ function safeError(error){
+   let message=String(error?.message||error||'Unknown request error');
+   // ClientException may embed full URLs, including live Torn keys and Google redirect tokens.
+   message=message.replace(/https?:\/\/\S+/gi,match=>{
+     try{return new URL(match.replace(/[),.;]+$/,'')).hostname;}catch(_){return '[request address hidden]';}
+   }).replace(/(?:key|token|user_content_key)\s*[=:]\s*[A-Za-z0-9_%-]{8,}/gi,'credential=[redacted]');
+   return message.slice(0,350);
+ }
+ async function safeGet(url){
+   // Only retry idempotent GETs. Never replay a relay POST after an ambiguous failure.
+   for(let attempt=0;attempt<3;attempt++){
+     try{return await PDA_httpGet(url,{});}
+     catch(e){
+       if(attempt===2)throw Error('GET '+new URL(url).hostname+': '+safeError(e));
+       await new Promise(resolve=>setTimeout(resolve,500*(attempt+1)));
+     }
+   }
+ }
  async function request(url,payload){
    // Torn API credentials stay local; requests to the relay carry tokens, not API keys.
-   let result=payload===undefined
-     ? await PDA_httpGet(url,{})
-     : await PDA_httpPost(url,{'Content-Type':'text/plain;charset=utf-8'},JSON.stringify(payload));
+   let result;
+   try{result=payload===undefined
+     ? await safeGet(url)
+     : await PDA_httpPost(url,{'Content-Type':'text/plain;charset=utf-8'},JSON.stringify(payload));}
+   catch(e){throw Error('Request '+new URL(url).hostname+': '+safeError(e));}
    // Apps Script ContentService returns a 302/303 to a one-time GET-only URL.
    // On iOS TornPDA follow ONLY the trusted Google URL; never retry the POST.
    const code=Number(result?.status);
@@ -60,7 +80,7 @@
      try{if(location)redirect=new URL(String(location).trim(),url);}catch(_){}
      if(!redirect || redirect.protocol!=='https:' || redirect.hostname!=='script.googleusercontent.com' || redirect.pathname!=='/macros/echo')
        throw Error('HTTP '+code+': Google response redirect missing or unexpected (check web app access)');
-     result=await PDA_httpGet(redirect.href,{});
+     result=await safeGet(redirect.href);
    }
    const status=Number(result && result.status);
    if(!Number.isFinite(status)||status<200||status>=300)throw Error('HTTP '+String(result?.status??'unknown'));
@@ -271,16 +291,16 @@
      try{await readPurchasePagedLogs(type,floor,async raw=>{
        stats.read++;const p=parsePurchaseLog(raw,type);if(!p){stats.skipped++;return;}if(!wanted.has(p.itemId))return;
        stats.relevant++;if(state.purchaseLogs.some(x=>x.logId===p.logId))return;await relay('purchase_log',p);stats.imported++;
-     },stats);}catch(e){stats.errors.push(String(type)+': '+e.message);}
+     },stats);}catch(e){stats.errors.push(String(type)+': '+safeError(e));}
    }
    let originTypes=[];
    try{originTypes=await discoverOriginLogTypes();stats.originTypes=originTypes.map(x=>x.id+': '+x.title);stats.cityFindType=originTypes.some(x=>x.kind==='city_find');}
-   catch(e){stats.errors.push('Log-type discovery: '+e.message);}
+   catch(e){stats.errors.push('Log-type discovery: '+safeError(e));}
    for(const typeInfo of originTypes){
      try{await readPurchasePagedLogs(typeInfo.id,floor,async raw=>{
        stats.read++;const entries=parseOriginLog(raw,typeInfo);if(!entries.length){stats.skipped++;return;}
        for(const p of entries){if(!wanted.has(p.itemId))continue;stats.relevant++;if(state.originLogs.some(x=>x.evidenceId===p.evidenceId))continue;await relay('origin_log',p);stats.originImported++;}
-     },stats);}catch(e){stats.errors.push(String(typeInfo.id)+' '+typeInfo.title+': '+e.message);}
+     },stats);}catch(e){stats.errors.push(String(typeInfo.id)+' '+typeInfo.title+': '+safeError(e));}
    }
    // Partial evidence is not negative evidence: never infer provenance from an incomplete scan.
    // Read-only log storage may have succeeded, but financial attribution must remain inactive.
@@ -296,7 +316,7 @@
      try{
        if(purchase){await relay('purchase_apply_bundle',{lotId:l.id,supplierId,parts:purchase});stats.matched++;}
        else if(origin){await relay('origin_apply_bundle',{lotId:l.id,supplierId,parts:origin});stats.earned++;}
-     }catch(e){stats.errors.push(l.name+': '+e.message);}
+     }catch(e){stats.errors.push(l.name+': '+safeError(e));}
    }
    stats.pending=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&['awaiting_cost','received_pending'].includes(l.status)).length;
    return stats;
@@ -374,7 +394,7 @@
               (stats.truncated.length?' More pages may exist for '+stats.truncated.join(', ')+'.':'')+
               (stats.errors.length?' Errors: '+stats.errors.join(' | '):'');
             if(stats.errors.length)warnings.push('Acquisition evidence: '+stats.errors.join(' | '));
-          }catch(e){lastPurchaseResult='Acquisition scan FAILED: '+e.message;warnings.push('Acquisition evidence: '+e.message);}
+          }catch(e){lastPurchaseResult='Acquisition scan FAILED: '+safeError(e);warnings.push('Acquisition evidence: '+safeError(e));}
         }
       }
       status=warnings.length?'Sync partial — '+warnings.join(' | '):
