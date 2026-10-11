@@ -84,12 +84,75 @@ test('sorting is immutable', () => {
   const rows=[{maxReward:100,level:5},{maxReward:200,level:10}];
   const sorted=E.sortRows(rows,'reward'); assert.equal(sorted[0].maxReward,200); assert.equal(rows[0].maxReward,100);
 });
+test('Torn API status normalization handles missing until without making up a countdown', () => {
+  const travel = E.extractProfile({ profile:{level:35,status:{state:'Traveling',description:'Traveling from Torn to South Africa',details:null,until:null}} });
+  assert.equal(travel.status, 'Traveling');
+  assert.equal(travel.statusCategory, 'travel');
+  assert.equal(travel.statusUntil, null);
+  assert.equal(travel.statusDescription, 'Traveling from Torn to South Africa');
+  const r=E.statusDisplay({profile:travel,profileFetchedAt:Date.now()});
+  assert.match(r.timing,/No end time supplied/);
+  assert.equal(travel.rank, null); // profile absence of rank does not suppress verified state
+});
+test('Hospital/Jail/Federal classifications and absolute Unix status timestamps', () => {
+  const until = Math.floor(Date.now() / 1000)+3900;
+  for (const [input,expect] of [['Hospital','hospital'],['Jail','jail'],['Federal','jail'],['Okay','available'],['Abroad','travel']]) {
+    const p=E.extractProfile({profile:{level:30,status:{state:input,until}}});
+    assert.equal(p.statusCategory,expect);
+    assert.equal(p.statusUntil,until);
+  }
+  assert.equal(E.normalizeStatus({state:'Hospital',until:'not-a-timestamp'}).until,null);
+});
+test('Countdowns decline without silently declaring ended Hospital stays Available', () => {
+  const when=1750000000;
+  const row={profile:{status:'Hospital',statusUntil:when,statusDescription:'Hospitalized',statusDetails:''},profileFetchedAt:(when-300)*1000};
+  const future=E.statusDisplay(row,(when-3661)*1000);
+  assert.equal(future.category,'hospital');
+  assert.match(future.timing,/1h 1m left/);
+  const expired=E.statusDisplay(row,(when+30)*1000);
+  assert.equal(expired.category,'hospital');
+  assert.match(expired.timing,/end passed/);
+  assert.doesNotMatch(expired.timing,/Available/);
+});
+test('Availability filter treats unassessed as unknown, not available', () => {
+  const rows=[{id:1,profile:{status:'Okay'}},{id:2,profile:{status:'Hospital'}},{id:3},{id:4,profile:{status:'Traveling'}},{id:5,profile:{status:'Unknown'}}];
+  assert.deepEqual(E.filterAvailability(rows,'available').map(r=>r.id),[1]);
+  assert.deepEqual(E.filterAvailability(rows,'unknown').map(r=>r.id),[3,5]);
+  assert.deepEqual(E.filterAvailability(rows,'travel').map(r=>r.id),[4]);
+  assert.equal(E.filterAvailability(rows,'all').length,5);
+  assert.equal(E.availability(rows[2]),'unknown');
+});
+test('Availability sort places checked Available before unavailable/unknown without mutating source', () => {
+  const rows=[{id:1, maxReward:9000},{id:2,maxReward:10,profile:{status:'Hospital'}},
+              {id:3,maxReward:50,profile:{status:'Okay'}},{id:4,maxReward:200,profile:{status:'Traveling'}},
+              {id:5,maxReward:100,profile:{status:'Okay'}}];
+  const sorted=E.sortRows(rows,'availability');
+  assert.deepEqual(sorted.map(x=>x.id),[5,3,2,4,1]);
+  assert.equal(rows[0].id,1);
+});
+test('Soonest reported end ignores missing/expired timestamps and favors future end', () => {
+  const now=Math.floor(Date.now()/1000);
+  const rows=[{id:1,maxReward:200,profile:{statusUntil:null}},
+    {id:2,maxReward:5,profile:{statusUntil:now+3600}},
+    {id:3,maxReward:7,profile:{statusUntil:now+120}},
+    {id:4,maxReward:11,profile:{statusUntil:now-12}}];
+  assert.deepEqual(E.sortRows(rows,'statusEnd').map(x=>x.id),[3,2,1,4]);
+});
+test('UI offers explicit availability filter and clear status badges, but no background API polling', () => {
+  const src=fs.readFileSync(require.resolve('../MM_Bounty_Hunter.user.js'),'utf8');
+  assert.match(src,/id="mm-bh-availability"/);
+  assert.match(src,/value="available">Available \(checked\)/);
+  assert.match(src,/value="availability">Availability \(available first\)/);
+  assert.match(src,/class="status-pill \$\{st.category\}"/);
+  assert.match(src,/setInterval\(\(\) => \{ if \(!document.hidden && state.rows.length\) render\(\); \}, 60 \* 1000\)/);
+  assert.match(src,/const top = ENGINE.sortRows\(eligibleByBaseFilters\(\), 'reward'\)/);
+});
 test('script metadata and prohibited background transport paths', () => {
   const src=fs.readFileSync(require.resolve('../MM_Bounty_Hunter.user.js'),'utf8');
   assert.match(src, /@match\s+https:\/\/www\.torn\.com\/bounties\.php\*/);
   assert.match(src, /@connect\s+api\.torn\.com/);
   assert.match(src, /@grant\s+GM_xmlhttpRequest/);
-  assert.match(src, /@version\s+0\.1\.1-rc\.1/);
+  assert.match(src, /@version\s+0\.1\.1-rc\.2/);
   const meta = src.split('// ==/UserScript==')[0];
   const u = meta.match(/^\/\/ @updateURL\s+(\S+)$/m)?.[1];
   const d = meta.match(/^\/\/ @downloadURL\s+(\S+)$/m)?.[1];
