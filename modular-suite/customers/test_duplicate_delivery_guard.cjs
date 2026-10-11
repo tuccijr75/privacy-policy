@@ -11,7 +11,9 @@ const checks=[
  ['unconfirmed or clicked send can be manually verified',src.includes("pending.state==='send-unconfirmed'||pending.state==='send-clicked'")],
  ['cancel requires explicit Outbox check',src.includes('Cancel tracking ONLY if this message was not sent')],
  ['recovery requires explicit Outbox check',src.includes('Only restore if you verified in Torn Outbox')],
- ['candidate version updated',src.includes('8.0.0-alpha.21.2')],
+ ['prior Outbox delivery can be reconciled',src.includes("data-reconcile-welcome")&&src.includes("Verify Prior Send")&&src.includes("at least one message was actually sent")],
+ ['manual reconciliation does not invent a precise send count',src.includes("current.messageCount=Math.max(1,n(current.messageCount))")],
+ ['candidate version updated',src.includes('8.0.0-alpha.21.3')],
  ['pinned logic dependency',/MM_Customers\.logic\.js/.test(src)&&/@32b6c41afbca4265160d1f0a0fe14a320d7e789c/.test(src)]
 ];
 for(const [name,passed] of checks){assert.ok(passed,name);console.log('PASS',name);}
