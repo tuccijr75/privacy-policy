@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger 2 Candidate
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-beta.9
+// @version      2.2.0-beta.10
 // @description  Shared Torn trade verification, Bazaar sale-log ingestion, 7 PM ET closeout and reports. No automated Torn trades.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -22,7 +22,7 @@
  if(dollarScanParams.has('mmDollarScannerReserve')||dollarScanParams.has('mmDollarScan')||dollarScanParams.has('mmDollarScannerComplete')) return;
  if (window.__morpheusLedgerLoaded) return;
  window.__morpheusLedgerLoaded=true;
- const VERSION='2.2.0-beta.9';
+ const VERSION='2.2.0-beta.10';
  const prefix='mledger_';
  const read=k=>GM_getValue(prefix+k,'');
  const save=(k,v)=>GM_setValue(prefix+k,String(v??'').trim());
@@ -493,12 +493,16 @@
          (l.uid==null||l.uid===x.uid)&&l.unitCost!==null&&l.unitCost<=x.unitPrice&&
          l.qty-l.sold-l.returned>0&&new Date(l.confirmedAt).getTime()<=new Date(x.at).getTime()+300000);
        const eligible=matched.reduce((n,l)=>n+Math.min(remaining,l.qty-l.sold-l.returned),0);
+       const evidencePending=state.lots.filter(l=>l.itemId===x.itemId&&
+         (l.uid==null||l.uid===x.uid)&&['received_pending','awaiting_cost'].includes(l.status)&&
+         l.qty-l.sold-l.returned>0&&new Date(l.createdAt).getTime()<=new Date(x.at).getTime()+300000)
+         .reduce((n,l)=>n+(l.qty-l.sold-l.returned),0);
        return `<div class="line"><b>Sale ${esc(x.id)}</b> • Item #${x.itemId} • originally ${x.qty} × ${money(x.unitPrice)}
          <div class="muted">${x.allocatedQty||0} partnership units assigned · ${x.excludedQty||0} marked outside partnership · <b>${remaining} remain unresolved</b></div>
          <div class="critical">${esc(x.reason)}</div>
          ${role==='owner'&&eligible?`<button data-action="allocate" data-id="${esc(x.id)}">Assign up to ${Math.min(eligible,remaining)} documented unit(s)</button>`:''}
-         ${role==='owner'?`<button data-action="exclude" data-id="${esc(x.id)}">Declare ${remaining} unit(s) outside partnership</button>`:''}
-         ${!eligible?'<span class="muted">No remaining priced partner inventory matches this sale.</span>':''}</div>`;
+         ${role==='owner'&&!evidencePending?`<button data-action="exclude" data-id="${esc(x.id)}">Review ${remaining} unit(s) for documented outside-partnership exclusion</button>`:''}
+         ${evidencePending?`<span class="critical">Morpheus inventory exists but acquisition evidence is unresolved (${evidencePending} pending same-item unit(s)). Do not exclude this sale on the basis of missing prices. Resolve provenance first.</span>`:(!eligible?'<span class="muted">No eligible priced partner inventory is currently available; inspect historical receipts before any exclusion.</span>':'')}</div>`;
      }).join('')}</details></section>`;
      if(role==='owner')html+=`<section><b>Payment after sending Torn cash</b><form id="payment"><div class="grid"><div><label>Amount sent</label><input name="amount" type="number" min="1" max="${s.remaining}" required></div><div><label>Torn reference</label><input name="reference"></div></div><button ${s.remaining<=0?'disabled':''}>Record payment sent</button></form></section>`;
      html+=`<section><details><summary>Payments (${state.payments.length})</summary>${state.payments.map(p=>`<div class="line">${money(p.amount)} • ${esc(p.at)} • ${p.acknowledged?'Acknowledged':'Awaiting acknowledgment'} ${role==='supplier'&&!p.acknowledged?`<button data-action="ack" data-id="${esc(p.id)}">Confirm receipt</button>`:''}</div>`).join('')||'No payments'}</details><details><summary>Sales history (${state.sales.length})</summary><div class="scroll">${state.sales.slice(0,100).map(x=>`<div class="line">${esc(x.name)} × ${x.qty} • ${money(x.gross)} revenue • ${money(x.cost)} cost • Morpheus profit ${money(x.morpheusProfit)} + capital ${money(x.capitalDue)} = ${money(x.morpheusDue)} due • Owner ${money(x.ownerProfit)} <span class="muted">${esc(x.at)} / ${esc(x.sourceId||'legacy/manual')}</span></div>`).join('')}</div></details></section>`;
