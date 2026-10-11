@@ -278,7 +278,7 @@
     const rows=await fetchSalesLogs((Date.now()-SALES_LOOKBACK_MS)/1000);
     let result=null;
     await updateCustomerState(draft=>{result=logic.importSalesEntries(draft,rows);return draft;});
-    const newCustomerIds=Object.keys(state?.customers||{}).filter(id=>!beforeIds.has(id));
+    const newCustomerIds=Object.keys(state?.customers||{}).filter(id=>!beforeIds.has(id)&&state.customers[id]?.firstObservedAt);
     const resolved=await resolveMissingUsernames(USERNAME_RESOLVE_BATCH);
     return {...result,newCustomers:newCustomerIds.length,resolvedNames:resolved};
   }
@@ -286,7 +286,7 @@
   function newCustomerRows(){
     return logic.customerRfmRows(state||{})
       .filter(row=>!state?.removedCustomers?.[row.id])
-      .filter(row=>!row.contacted&&!row.firstMessageSent&&!n(row.messageCount))
+      .filter(row=>row.segment==='NEW'&&!row.contacted&&!row.firstMessageSent&&!n(row.messageCount))
       .sort((a,b)=>(Date.parse(b.firstPurchase||b.createdAt||0)||0)-(Date.parse(a.firstPurchase||a.createdAt||0)||0));
   }
 
@@ -432,14 +432,15 @@
       };
     }
     const first=!customer?.contacted&&!customer?.firstMessageSent&&!n(customer?.messageCount);
-    const greeting=(first?'WELCOME TO ':'WELCOME BACK TO ')+SHOP_NAME+', '+name+'!';
+    const newlyObserved=first&&Boolean(customer?.firstObservedAt);
+    const greeting=(newlyObserved?'WELCOME TO ':'WELCOME BACK TO ')+SHOP_NAME+', '+name+'!';
     const columns=[
       {title:'HOW IT WORKS',lines:['1. Buy normally from my Bazaar','2. Message me your coupon code','3. I verify the purchase','4. Cashback is sent']},
       {title:'CASHBACK TIERS',lines:['$50,000+ → $5,000 cashback','$250,000+ → $10,000 cashback','$1,000,000+ → $20,000 cashback']},
       {title:'IMPORTANT',lines:['Purchases must be made after the coupon is issued','Qualifying purchases remain eligible for 24 hours','Each sale can only be used once']}
     ];
     const footer=['Reply RESTOCK to receive restock notifications.','Reply STOP at any time to leave the notification list.'];
-    const subject=first?'Welcome to '+SHOP_NAME+'!':'Welcome Back to '+SHOP_NAME+'!';
+    const subject=newlyObserved?'Welcome to '+SHOP_NAME+'!':'Welcome Back to '+SHOP_NAME+'!';
     return {
       subject,
       body:plainMessageText({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' redemption'+(remaining===1?'':'s')+' remaining',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer,couponCode:coupon.code}),
@@ -1142,7 +1143,7 @@
       return '<details class="mm-cu-member"><summary><span><b>'+esc(displayName)+'</b> <span class="mm-cu-muted">['+esc(row.id)+'] · '+esc(row.segment)+'</span></span><span class="mm-cu-muted">'+money(row.monetary)+' · '+fmt(row.frequency)+' purchase(s)</span></summary>'+
         '<div class="mm-cu-detail"><div class="mm-cu-tiles">'+tile('SPENT',money(row.monetary))+tile('UNITS',fmt(row.units))+tile('LAST',when(row.lastPurchase))+tile('COUPON',coupon?.code||'—')+tile('USES LEFT',fmt(logic.couponRemaining(coupon)))+tile('CASHBACK',q.qualified?money(q.cashback):q.reason)+'</div>'+
         '<div class="mm-cu-actions" style="margin-top:5px;">'+
-          '<button data-welcome="'+esc(row.id)+'" style="'+button(true)+'">'+(firstContact?'Prepare Welcome':'Prepare Message')+'</button>'+
+          '<button data-welcome="'+esc(row.id)+'" style="'+button(true)+'">'+(firstContact&&row.segment==='NEW'?'Prepare Welcome':'Prepare Message')+'</button>'+
           (coupon?.issuedAt?'<button data-reminder="'+esc(row.id)+'" style="'+button(q.qualified)+'">Coupon Reminder</button>':'')+
           '<button data-subscribe="'+esc(row.id)+'" style="'+button()+'">'+(sub?'Restock−':'Restock+')+'</button>'+
           (q.qualified?'<button data-refund-start="'+esc(row.id)+'" style="'+button(true)+'">Create Cashback</button>':'')+
@@ -1157,7 +1158,7 @@
   }
 
   function newCustomersHtml(){
-    return customerRowsHtml(newCustomerRows(),'No new customers require first-contact follow-up.');
+    return customerRowsHtml(newCustomerRows(),'No first-observed new customers require first-contact follow-up. Existing uncontacted customers remain in Customers.');
   }
 
   function couponsHtml(){
