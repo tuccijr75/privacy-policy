@@ -398,6 +398,10 @@
       state?.coupons?.[id]?.playerName||
       ''
     ).trim();
+    const unresolved=GM_getValue(PENDING_SEND_KEY,null);
+    if(unresolved&&unresolved.playerId){
+      throw new Error('Unresolved delivery for '+String(unresolved.recipientName||unresolved.playerId)+'. Check Torn Outbox and confirm or cancel tracking before preparing another message. Previous delivery state was preserved.');
+    }
     const composeId='cu-compose-'+createdAt+'-'+id+'-'+Math.random().toString(36).slice(2,8);
     const payload={composeId,playerId:id,recipientName,subject:String(subject||''),body:String(body||''),bodyHtml:String(bodyHtml||''),createdAt};
     GM_setValue(PENDING_COMPOSE_KEY,payload);
@@ -991,10 +995,7 @@
 
     const initial=GM_getValue(PENDING_SEND_KEY,null);
     const id=String(initial?.playerId||'').trim(),createdAt=Number(initial?.createdAt||0);
-    if(!id||!createdAt||Date.now()-createdAt>PENDING_DELIVERY_TTL_MS){
-      if(initial)GM_deleteValue(PENDING_SEND_KEY);
-      return;
-    }
+    if(!id||!createdAt)return; // Never delete uncertain send evidence on age alone.
 
     const detectorKey=String(initial?.deliveryId||createdAt+'-'+id);
     let active=true,expiryTimer=null,verifying=false;
@@ -1092,12 +1093,8 @@
     document.addEventListener('click',clickHandler,true);
     document.addEventListener('submit',submitHandler,true);
 
-    const remaining=Math.max(0,PENDING_DELIVERY_TTL_MS-(Date.now()-createdAt));
-    expiryTimer=setTimeout(()=>{
-      const pending=currentPending();
-      if(pending&&Date.now()-Number(pending.createdAt||0)>=PENDING_DELIVERY_TTL_MS)GM_deleteValue(PENDING_SEND_KEY);
-      cleanup();
-    },remaining+1000);
+    // Pending deliveries persist across navigation/reload until confirmed or
+    // explicitly cancelled after Outbox review. No age-based auto-clear.
 
     if(Number(initial.sendClickedAt||0)&&initial.state==='send-clicked')verifyDeliveryAfterSend();
   }
@@ -1222,15 +1219,14 @@
   function pendingDeliveryHtml(){
     const pending=GM_getValue(PENDING_SEND_KEY,null);
     if(!pending||typeof pending!=='object')return '';
-    if(Date.now()-Number(pending.createdAt||0)>PENDING_DELIVERY_TTL_MS)return '';
     const customer=state?.customers?.[String(pending.playerId||'').trim()];
     const name=customer?.name||pending.playerId||'customer';
     const stateLabel=pending.state==='send-unconfirmed'?'SEND CLICK UNCONFIRMED':pending.state==='send-clicked'?'WAITING FOR TORN CONFIRMATION':'DRAFT PREPARED';
     return card('<div class="mm-cu-row"><div class="mm-cu-main"><b>Pending delivery · '+esc(name)+'</b><div class="mm-cu-muted">'+esc(stateLabel)+' · '+esc(pending.subject||'')+'</div>'+
-      (pending.state==='send-unconfirmed'?'<div class="mm-cu-warn mm-cu-mini" style="margin-top:3px;">Torn did not provide confirmation. Customer state was left unchanged; verify Outbox before confirming or resending.</div>':'')+
+      '<div class="mm-cu-warn mm-cu-mini" style="margin-top:3px;">Further CRM messages are blocked until this delivery is resolved. Inspect Torn Outbox before confirming or cancelling. Do not resend an unconfirmed message.</div>'+
       '</div><div class="mm-cu-actions">'+
-      (pending.state!=='send-clicked'?'<button data-pending-reopen="1" style="'+button(true)+'">Reopen Draft</button>':'')+
-      (pending.state==='send-unconfirmed'?'<button data-pending-confirm="1" style="'+button()+'">Confirm Sent</button>':'')+
+      (pending.state==='awaiting-send'?'<button data-pending-reopen="1" style="'+button(true)+'">Reopen Draft</button>':'')+
+      ((pending.state==='send-unconfirmed'||pending.state==='send-clicked')?'<button data-pending-confirm="1" style="'+button()+'">Confirm Sent</button>':'')+
       '<button data-pending-cancel="1" style="'+button()+'">Cancel Tracking</button></div></div>');
   }
 
@@ -1293,8 +1289,8 @@
     };
     root.querySelector('[data-pending-reopen]')?.addEventListener('click',()=>{
       const pending=GM_getValue(PENDING_SEND_KEY,null);if(!pending)return;
-      if(pending.state==='send-clicked'){
-        statusText='Torn send verification is still running. Wait for confirmation before reopening.';
+      if(pending.state!=='awaiting-send'){
+        statusText='Send outcome may be unknown. Check Torn Outbox and resolve tracking before reopening.';
         render();
         return;
       }
@@ -1315,8 +1311,11 @@
       try{window.location.assign(url);}catch{location.href=url;}
     });
     root.querySelector('[data-pending-cancel]')?.addEventListener('click',()=>{
+      const pending=GM_getValue(PENDING_SEND_KEY,null);
+      if(!pending)return;
+      if(!confirm('Verify Torn Outbox first. Cancel tracking ONLY if this message was not sent. Cancel without marking the customer contacted?'))return;
       GM_deleteValue(PENDING_SEND_KEY);GM_deleteValue(PENDING_COMPOSE_KEY);
-      statusText='Pending message tracking cancelled. Customer state was not changed.';render();
+      statusText='Tracking cancelled after operator confirmation. Customer state was not changed.';render();
     });
     root.querySelector('[data-pending-confirm]')?.addEventListener('click',()=>run('Confirming sent message…',async()=>{
       const pending=GM_getValue(PENDING_SEND_KEY,null);if(!pending)throw new Error('No pending delivery.');
@@ -1326,6 +1325,7 @@
     }));
     root.querySelectorAll('[data-recover-unsent]').forEach(b=>b.addEventListener('click',()=>run('Restoring unsent first contact…',async()=>{
       const id=String(b.dataset.recoverUnsent||'').trim();
+      if(!confirm('Only restore if you verified in Torn Outbox that this welcome was NOT sent. Restoring will permit another welcome. Continue?'))return 'Recovery cancelled.';
       await updateCustomerState(draft=>{
         const customer=draft.customers?.[id];if(!customer)throw new Error('Customer not found.');
         if(n(customer.messageCount)!==1||!customer.firstMessageSent)throw new Error('Customer no longer matches first-contact recovery criteria.');
