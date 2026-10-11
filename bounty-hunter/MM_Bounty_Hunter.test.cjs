@@ -105,7 +105,7 @@ test('Hospital/Jail/Federal classifications and absolute Unix status timestamps'
 });
 test('Countdowns decline without silently declaring ended Hospital stays Available', () => {
   const when=1750000000;
-  const row={profile:{status:'Hospital',statusUntil:when,statusDescription:'Hospitalized',statusDetails:''},profileFetchedAt:(when-300)*1000};
+  const row={profile:{status:'Hospital',statusUntil:when,statusDescription:'Hospitalized',statusDetails:''}};
   const future=E.statusDisplay(row,(when-3661)*1000);
   assert.equal(future.category,'hospital');
   assert.match(future.timing,/1h 1m left/);
@@ -132,10 +132,10 @@ test('Availability sort places checked Available before unavailable/unknown with
 });
 test('Soonest reported end ignores missing/expired timestamps and favors future end', () => {
   const now=Math.floor(Date.now()/1000);
-  const rows=[{id:1,maxReward:200,profile:{statusUntil:null}},
-    {id:2,maxReward:5,profile:{statusUntil:now+3600}},
-    {id:3,maxReward:7,profile:{statusUntil:now+120}},
-    {id:4,maxReward:11,profile:{statusUntil:now-12}}];
+  const rows=[{id:1,maxReward:200,profile:{status:'Unknown',statusUntil:null}},
+    {id:2,maxReward:5,profile:{status:'Hospital',statusUntil:now+3600}},
+    {id:3,maxReward:7,profile:{status:'Hospital',statusUntil:now+120}},
+    {id:4,maxReward:11,profile:{status:'Hospital',statusUntil:now-12}}];
   assert.deepEqual(E.sortRows(rows,'statusEnd').map(x=>x.id),[3,2,1,4]);
 });
 test('UI offers explicit availability filter and clear status badges, but no background API polling', () => {
@@ -145,20 +145,86 @@ test('UI offers explicit availability filter and clear status badges, but no bac
   assert.match(src,/value="availability">Availability \(available first\)/);
   assert.match(src,/class="status-pill \$\{st.category\}"/);
   assert.match(src,/setInterval\(\(\) => \{ if \(!document.hidden && state.rows.length\) render\(\); \}, 60 \* 1000\)/);
-  assert.match(src,/const top = ENGINE.sortRows\(eligibleByBaseFilters\(\), 'reward'\)/);
+  assert.match(src,/ENGINE.preScreenCandidates\(eligibleByBaseFilters\(\), state.myLevel, SETTINGS.enrich\)/);
 });
 test('script metadata and prohibited background transport paths', () => {
   const src=fs.readFileSync(require.resolve('../MM_Bounty_Hunter.user.js'),'utf8');
   assert.match(src, /@match\s+https:\/\/www\.torn\.com\/bounties\.php\*/);
   assert.match(src, /@connect\s+api\.torn\.com/);
   assert.match(src, /@grant\s+GM_xmlhttpRequest/);
-  assert.match(src, /@version\s+0\.1\.1-rc\.2/);
+  assert.match(src, /@version\s+0\.1\.1-rc\.3/);
   const meta = src.split('// ==/UserScript==')[0];
   const u = meta.match(/^\/\/ @updateURL\s+(\S+)$/m)?.[1];
   const d = meta.match(/^\/\/ @downloadURL\s+(\S+)$/m)?.[1];
   assert.equal(u, 'https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Bounty_Hunter.user.js');
   assert.equal(d, u);
   assert.doesNotMatch(src, /raw\.githubusercontent\.com|@require|window\.open\(|attack\.php|\bfetch\s*\(/);
-  assert.match(src, /Authorization: `ApiKey \$\{state\.key\}`/);
+  assert.match(src, /Authorization: `ApiKey \$\{requestKey\}`/);
 });
+test('manual four-stat profile requires all four valid integers and preserves zero', () => {
+  assert.deepEqual(E.manualBattleStats({ strength:'1000',speed:'0',defense:'2000',dexterity:'3000' }),
+    { strength:1000,speed:0,defense:2000,dexterity:3000,total:6000 });
+  assert.equal(E.manualBattleStats({strength:1000,speed:'',defense:20,dexterity:5}),null);
+  assert.equal(E.manualBattleStats({strength:1,speed:2.5,defense:3,dexterity:4}),null);
+  assert.equal(E.manualBattleStats({strength:1,speed:2,defense:3,dexterity:-4}),null);
+});
+test('actual v2 battlestats nested value shape and consistency fail closed', () => {
+  const payload={battlestats:{strength:{value:100,modifier:0,modifiers:[]},speed:{value:200,modifier:0,modifiers:[]},defense:{value:300,modifier:0,modifiers:[]},dexterity:{value:400,modifier:0,modifiers:[]},total:1000}};
+  assert.equal(E.parseOwnBattleStats(payload).total,1000);
+  assert.equal(E.parseOwnBattleStats({battlestats:{...payload.battlestats,total:999}}),null);
+  assert.equal(E.parseOwnBattleStats({battlestats:{...payload.battlestats,speed:undefined}}),null);
+});
+test('pre-screen samples level/reward/balanced cohorts, not solely jackpot players', () => {
+  const rows=[{id:1,level:95,maxReward:10000000},{id:2,level:95,maxReward:9000000},
+    {id:3,level:95,maxReward:8000000},{id:4,level:30,maxReward:500000},
+    {id:5,level:29,maxReward:450000},{id:6,level:31,maxReward:400000}];
+  const out=E.preScreenCandidates(rows,30,4);
+  assert.equal(out.length,4);
+  assert.equal(out[0].id,1);
+  assert.ok(out.some(r=>r.level<=31));
+  assert.equal(new Set(out.map(r=>r.id)).size,4);
+  assert.equal(E.preScreenCandidates(rows,30,0).length,0);
+  assert.equal(rows[0].id,1);
+});
+test('public combat evidence is observational and guarded by sample size', () => {
+  const x=E.extractPersonalStats({personalstats:{attacking:{attacks:{won:400},defends:{won:90,lost:10},hits:{success:2000,miss:1000},damage:{total:600000}},other:{refills:{energy:25}}}});
+  const signals=E.combatSignals(x);
+  assert.equal(signals.hitRate,67);
+  assert.equal(signals.avgDamage,300);
+  assert.equal(signals.defendWarning,true);
+  assert.equal(signals.energyRefills,25);
+  assert.equal(E.combatSignals({defendsWon:1,defendsLost:0}).defendWarning,false);
+});
+test('four-stat advantage label is not a probability or verified defeat', () => {
+  const e=E.estimateRank({rank:'Average',level:14,crimes:3227,networth:7264572});
+  const r={estimate:e,stats:{defendsWon:50,defendsLost:10}};
+  const info=E.evidence(r,{strength:200000,speed:100000,defense:100000,dexterity:100000,total:500000});
+  assert.equal(info.category,'favorable');
+  assert.match(info.reasons.join(' '),/opponent four-stat distribution unknown/i);
+  assert.doesNotMatch(info.heading,/win probability|guaranteed|verified winnable/i);
+});
+test('stale source status cannot be considered currently available',()=>{
+  const row={id:19,profile:{status:'Okay'},profileFetchedAt:Date.now()-150000};
+  assert.equal(E.availability(row),'unknown');
+  assert.equal(E.filterAvailability([row],'available').length,0);
+  assert.equal(E.statusDisplay(row).category,'unknown');
+});
+test('scoped private key has no storage calls or new @connect hosts',()=>{
+  const src=fs.readFileSync(require.resolve('../MM_Bounty_Hunter.user.js'),'utf8');
+  const meta=src.split('// ==/UserScript==')[0];
+  assert.deepEqual([...meta.matchAll(/^\/\/ @connect\s+(.+)$/gm)].map(m=>m[1]),['api.torn.com']);
+  assert.match(src,/api\('\/user\/battlestats', \{\}, privateKey\)/);
+  assert.match(src,/api\('\/user\/profile', \{ striptags: 'true' \}, privateKey\)/);
+  assert.match(src,/publicId !== scopedId/);
+  assert.match(src,/el\('mm-bh-private'\)\.value = ''/);
+  assert.doesNotMatch(src,/sets\('private'|GM_setValue\([^\n]*privateKey/);
+});
+
+test('attackability separates available status from verified combat access',()=>{
+  assert.deepEqual(E.attackability({profile:{status:'Okay'}}),{kind:'review',label:'Status okay · country and eligibility unverified'});
+  assert.equal(E.attackability({profile:{status:'Traveling'}}).kind,'blocked');
+  assert.equal(E.attackability({profile:{status:'Hospital'}}).kind,'blocked');
+  assert.equal(E.attackability({profile:{status:'Okay'},profileFetchedAt:Date.now()-180000}).kind,'unknown');
+});
+
 console.log(`\n${passed}/${passed} assertions suites PASS`);
