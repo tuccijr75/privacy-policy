@@ -231,6 +231,9 @@
   function importSalesEntries(slice,entries=[]){
     ensureCustomerSlice(slice);
     let imported=0,rejected=0,checked=0;
+    const knownCustomers=new Set(Object.keys(slice.customers));
+    const knownSaleCustomers=new Set(Object.values(slice.sales).map(sale=>asId(sale?.playerId)).filter(Boolean));
+    const importedSaleCounts=new Map();
     const sorted=[...(entries||[])].sort((a,b)=>n(a?.timestamp)-n(b?.timestamp));
     for(const entry of sorted){
       checked++;
@@ -238,9 +241,19 @@
       if(!sale){rejected++;continue;}
       if(slice.sales[sale.id])continue;
       slice.sales[sale.id]=sale;
+      importedSaleCounts.set(sale.playerId,(importedSaleCounts.get(sale.playerId)||0)+1);
       imported++;
     }
     recalculateCustomers(slice);
+    // Existing/migrated customer records never become "new" simply because they
+    // lack contact history or their retained sale ledger is incomplete.
+    for(const [id,count] of importedSaleCounts){
+      const customer=slice.customers[id];
+      if(!customer||knownCustomers.has(id)||knownSaleCustomers.has(id)||customerRemoved(slice,id))continue;
+      if(count===1&&n(customer.purchases)===1){
+        customer.firstObservedAt=customer.firstObservedAt||nowIso();
+      }
+    }
     slice.operations.customers.lastSalesAt=nowIso();
     slice.operations.customers.lastSalesResult={imported,rejected,checked};
     return {slice,imported,rejected,checked};
@@ -263,7 +276,7 @@
       if(recencyDays<=7&&frequency>=8)segment='VIP';
       else if(recencyDays<=14&&frequency>=4)segment='LOYAL';
       else if(recencyDays<=30&&frequency>=2)segment='REGULAR';
-      else if(frequency<=1&&recencyDays<=30)segment='NEW';
+      else if(frequency===1&&recencyDays<=30&&customer.firstObservedAt)segment='NEW';
       else if(frequency>=3&&recencyDays<=60)segment='AT RISK';
       return {...clone(customer),recencyDays,frequency,monetary,segment,
         topProducts:Object.entries(affinity[asId(customer.id)]||{}).sort((a,b)=>b[1]-a[1]).slice(0,3)};
