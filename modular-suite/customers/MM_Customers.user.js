@@ -1141,6 +1141,7 @@
         '<div class="mm-cu-detail"><div class="mm-cu-tiles">'+tile('SPENT',money(row.monetary))+tile('UNITS',fmt(row.units))+tile('LAST',when(row.lastPurchase))+tile('COUPON',coupon?.code||'—')+tile('USES LEFT',fmt(logic.couponRemaining(coupon)))+tile('CASHBACK',q.qualified?money(q.cashback):q.reason)+'</div>'+
         '<div class="mm-cu-actions" style="margin-top:5px;">'+
           '<button data-welcome="'+esc(row.id)+'" style="'+button(true)+'">'+(firstContact&&row.segment==='NEW'?'Prepare Welcome':'Prepare Message')+'</button>'+
+          (firstContact?'<button data-reconcile-welcome="'+esc(row.id)+'" style="'+button()+'">Verify Prior Send</button>':'')+
           (coupon?.issuedAt?'<button data-reminder="'+esc(row.id)+'" style="'+button(q.qualified)+'">Coupon Reminder</button>':'')+
           '<button data-subscribe="'+esc(row.id)+'" style="'+button()+'">'+(sub?'Restock−':'Restock+')+'</button>'+
           (q.qualified?'<button data-refund-start="'+esc(row.id)+'" style="'+button(true)+'">Create Cashback</button>':'')+
@@ -1360,6 +1361,27 @@
       render();
     });
 
+    root.querySelectorAll('[data-reconcile-welcome]').forEach(b=>b.addEventListener('click',()=>run('Reconciling verified Outbox delivery…',async()=>{
+      const id=String(b.dataset.reconcileWelcome||'').trim();
+      const customer=state?.customers?.[id];
+      if(!customer)throw new Error('Customer not found.');
+      const pending=GM_getValue(PENDING_SEND_KEY,null);
+      if(pending&&String(pending.playerId||'')===id){
+        throw new Error('Pending delivery exists for this customer. Resolve the pending delivery confirmation instead.');
+      }
+      if(!confirm('Verify Torn Outbox first: at least one message was actually sent to '+String(customer.name||id)+' ['+id+']. This records MINIMUM one confirmed contact (not a claim that only one was sent). Continue?'))return 'No changes.';
+      await updateCustomerState(draft=>{
+        const current=draft.customers?.[id];
+        if(!current)throw new Error('Customer not found.');
+        current.contacted=true;
+        current.firstMessageSent=true;
+        current.messageCount=Math.max(1,n(current.messageCount));
+        current.lastContacted=current.lastContacted||new Date().toISOString();
+        const coupon=logic.ensureCoupon(draft,current);
+        if(hasRealUsername(current))coupon.playerName=current.name;
+      });
+      return 'Verified prior delivery recorded (at least one contact). Welcome queue cleared for this customer.';
+    })));
     root.querySelectorAll('[data-welcome]').forEach(b=>b.addEventListener('click',()=>run('Preparing customer message…',async()=>{
       const id=b.dataset.welcome;
       let customer=state?.customers?.[id];if(!customer)throw new Error('Customer not found.');
