@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.21
+// @version      8.0.0-alpha.21.1
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@63d47b40c0cebf546032218d7166ad4e5b5cef18/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b07cc05e6366f164f5f8e37dd00c1c98a7f47832/modular-suite/customers/MM_Customers.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@32b6c41afbca4265160d1f0a0fe14a320d7e789c/modular-suite/customers/MM_Customers.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.21';
+  const VERSION='8.0.0-alpha.21.1';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
