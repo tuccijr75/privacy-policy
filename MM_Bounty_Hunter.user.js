@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MM Bounty Hunter — Target Finder
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.1-rc.5
-// @description  PREVIEW CHANNEL: API-only Torn bounty discovery and cautious rank-trigger target assessment; no automated attacks.
+// @version      0.1.1-rc.6
+// @description  PREVIEW: Official Torn API bounty discovery with on-demand rank evidence checks; all attacks manual.
 // @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/bounty-hunter-preview/MM_Bounty_Hunter.user.js
 // @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/bounty-hunter-preview/MM_Bounty_Hunter.user.js
 // @author       MM Torn Systems
@@ -55,8 +55,10 @@
     function estimateRank({ rank, level, crimes, networth }) {
       const ri = rankIndex(rank);
       const lv = nonnegative(level), cr = nonnegative(crimes), nw = number(networth);
-      if (ri < 0 || lv === null || cr === null || nw === null)
-        return { status: 'missing', label: 'Unknown', note: 'Rank / public crimes / net worth unavailable' };
+      if (ri < 0 || lv === null || cr === null || nw === null) {
+        const missing = [ri < 0 && 'rank', lv === null && 'level', cr === null && 'public crimes', nw === null && 'public net worth'].filter(Boolean);
+        return { status: 'missing', label: 'Insufficient data', missing, note: `Missing: ${missing.join(', ')}` };
+      }
       const l = count(LEVEL_TRIGGERS, lv), c = count(CRIME_TRIGGERS, cr), n = count(NETWORTH_TRIGGERS, nw);
       const b = ri - l - c - n;
       const breakdown = { total: ri, level: l, crimes: c, networth: n, battle: b };
@@ -178,6 +180,18 @@
       }
       return {category,label,timing,description: p?.statusDescription || '',details: p?.statusDetails || '',
         checked: checked ? `Checked locally ${new Date(checked).toLocaleTimeString()} · ${now - checked < 60_000 ? 'just now' : `${formatDuration((now - checked) / 1000)} ago`}` : 'Not checked'};
+    }
+    function rankDisplay(row) {
+      if (!row?.profile) return row?.profileError
+        ? {label:'PROFILE ERROR', note:'Profile request failed; scan again to retry', kind:'error'}
+        : {label:'NOT CHECKED', note:'Select Assess next batch to check more candidates', kind:'pending'};
+      if (row.statsError) return {label:'STATS UNAVAILABLE', note:'Public personal-stats request failed; scan again to retry', kind:'error'};
+      if (!row.stats) return {label:'STATS NOT CHECKED', note:'Public crime and net-worth evidence not requested', kind:'pending'};
+      const e = row.estimate;
+      if (!e) return {label:'NOT CALCULATED', note:'No rank assessment was run', kind:'pending'};
+      if (e.status === 'estimated') return {label:e.label, note:e.note || 'Approximation, not verified battle stats', kind:'estimated'};
+      return {label:e.status === 'missing' ? 'INSUFFICIENT DATA' : 'UNRELIABLE ESTIMATE',
+        note:e.note || 'The public evidence cannot support a reliable stat band', kind:'uncertain'};
     }
     function extractPersonalStats(json) {
       const p = json?.personalstats;
@@ -328,7 +342,7 @@
       return copy;
     }
     return { RANKS, rankIndex, estimateRank, normalizeBounties, extractProfile, extractSelfId, extractPersonalStats,
-      normalizeStatus, statusCategory, availability, attackability, filterAvailability, formatDuration, statusDisplay,
+      normalizeStatus, statusCategory, availability, attackability, filterAvailability, formatDuration, statusDisplay, rankDisplay,
       parseOwnBattleStats, manualBattleStats, combatSignals, preScreenCandidates, evidence, classify, sortRows };
   })();
 
@@ -337,12 +351,12 @@
     return;
   }
   if (typeof document === 'undefined' || !document.body || document.getElementById('mm-bounty-hunter-v01')) return;
-  const SETTINGS = { maxPages: 3, pageSize: 100, enrich: 18, deepStats: 10, requestGapMs: 1000, cacheMs: 2 * 60e3 };
+  const SETTINGS = { maxPages: 3, pageSize: 100, enrich: 18, requestGapMs: 1000, cacheMs: 2 * 60e3 };
   const fmt = n => Number.isFinite(n) ? Math.round(n).toLocaleString('en-US') : '—';
   const money = n => `$${fmt(n)}`;
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
   const state = { running: false, rows: [], nowFetched: 0, sourceTime: 0, delay: 0,
-    myLevel: null, myId: null, cache: new Map(), sort: 'priority', availabilityFilter: 'all', key: '', ownBattle: null, ownBattleSource: 'none', ownBattleAt: 0, ownBattleOwnerId: null };
+    myLevel: null, myId: null, scanQueue: [], scanCursor: 0, cache: new Map(), sort: 'priority', availabilityFilter: 'all', key: '', ownBattle: null, ownBattleSource: 'none', ownBattleAt: 0, ownBattleOwnerId: null };
   const css = document.createElement('style');
   css.textContent = `
     #mm-bounty-hunter-v01{color:#e5eaf1;background:#18212d;border:1px solid #506078;border-radius:10px;margin:12px auto 18px;max-width:1050px;padding:14px;font:13px/1.45 Arial,sans-serif;box-shadow:0 7px 25px #0005;box-sizing:border-box}
@@ -392,7 +406,7 @@
   const root = document.createElement('section');
   root.id = 'mm-bounty-hunter-v01';
   root.innerHTML = `
-    <div class="head"><div><h2>MM Bounty Hunter · Target Finder <small>v0.1.1-rc.5 PREVIEW</small></h2><div class="sub">Official API only · uncertain battle stats stay uncertain · attacks are always manual</div></div>
+    <div class="head"><div><h2>MM Bounty Hunter · Target Finder <small>v0.1.1-rc.6 PREVIEW</small></h2><div class="sub">Official API only · uncertain battle stats stay uncertain · attacks are always manual</div></div>
     <a href="https://wiki.torn.com/wiki/Rank" target="_blank" rel="noopener noreferrer">Rank methodology</a></div>
     <div class="controls">
       <label>Torn API key (public access)<input id="mm-bh-key" type="password" autocomplete="off" spellcheck="false" aria-label="Torn API key"></label>
@@ -404,6 +418,7 @@
       <label>Availability filter<select id="mm-bh-availability"><option value="all">All targets</option><option value="available">Available (checked)</option><option value="hospital">Hospital</option><option value="travel">Traveling / Abroad</option><option value="jail">Jail / Federal</option><option value="other">Other statuses</option><option value="unknown">Not checked / Unknown</option></select></label>
       <label>Sort by<select id="mm-bh-sort"><option value="availability">Availability (available first)</option><option value="statusEnd">Soonest reported status end</option><option value="priority">Priority heuristic</option><option value="reward">Highest single bounty</option><option value="strength">Lowest estimated stat band</option></select></label>
       <button id="mm-bh-scan" type="button">Scan bounties</button>
+      <button id="mm-bh-more" type="button" disabled>Assess next 18</button>
     </div>
     <details class="my-stats"><summary>My four combat stats — manual or optional API</summary>
       <div class="controls">
@@ -424,7 +439,7 @@
     <div class="counts" id="mm-bh-counts" aria-label="Checked target status totals">Status counts appear after scanning.</div>
     <div class="tablewrap"><table><thead><tr><th>Target</th><th>Largest listed reward</th><th>Rank estimate</th><th>Status</th><th>Combat evidence</th><th>Priority</th><th>Review flags</th></tr></thead><tbody id="mm-bh-list"><tr><td colspan="7" class="muted">Scan to load opportunities.</td></tr></tbody></table></div>
     <div class="foot" id="mm-bh-foot">Screening points are not a fight-win probability; opponent four-stat distributions are unknown. Listed totals are not guaranteed earnings.</div>
-    <details><summary>Data, limits and warnings</summary><div class="foot">Fetches up to 300 official bounty listings and checks the status of up to 18 diversified bounty candidates per scan (payout, nearby level and blended). Public combat statistics are requested for up to 10 available profiles; all other rows are marked Not checked. Availability filters operate on checked targets, not all 300 listings. A status timer is only shown when Torn supplies an actual status-until timestamp, and reaching zero never assumes the player became available. Status snapshots can change; always verify on Torn. Requests are spaced; profile results are kept in session memory for at most 2 minutes before refetching. API keys are stored locally only when saved. The rank formula can be misled by ghost net-worth triggers and stat imbalance. No automatic attacks, claims, page scraping, notifications, or offsite tracking.</div></details>
+    <details><summary>Data, limits and warnings</summary><div class="foot">Fetches up to 300 official bounty listings and checks the status of up to 18 diversified bounty candidates per scan (payout, nearby level and blended). Public combat statistics are requested for each of up to 18 profiled targets per manual batch, including hospitalized/traveling players when their profile is available; other rows are explicitly Not checked. Select Assess next 18 to examine another bounded batch. Availability filters operate on checked targets, not all 300 listings. A status timer is only shown when Torn supplies an actual status-until timestamp, and reaching zero never assumes the player became available. Status snapshots can change; always verify on Torn. Requests are spaced; profile results are kept in session memory for at most 2 minutes before refetching. API keys are stored locally only when saved. The rank formula can be misled by ghost net-worth triggers and stat imbalance. No automatic attacks, claims, page scraping, notifications, or offsite tracking.</div></details>
   `;
   const mount = document.querySelector('#mainContainer') || document.querySelector('main') || document.body;
   mount.insertBefore(root, mount.firstChild);
@@ -490,16 +505,22 @@
     const base = state.rows.filter(r => r.id !== state.myId);
     for (const row of base) counts[ENGINE.availability(row)]++;
     const checked = base.filter(r => Boolean(r.profile)).length;
-    el('mm-bh-counts').innerHTML = `<span>Checked ${fmt(checked)} / ${fmt(base.length)}</span><span class="good">Available ${fmt(counts.available)}</span><span class="warn">Hospital ${fmt(counts.hospital)}</span><span>Travel / Abroad ${fmt(counts.travel)}</span><span>Jail ${fmt(counts.jail)}</span><span>Unknown / unchecked ${fmt(counts.unknown)}</span>`;
+    const estimates = base.filter(r => r.estimate?.status === 'estimated').length;
+    const statsChecked = base.filter(r => r.stats && !r.statsError).length;
+    const remaining = Math.max(0, state.scanQueue.length - state.scanCursor);
+    el('mm-bh-more').disabled = state.running || !remaining;
+    el('mm-bh-more').textContent = remaining ? `Assess next ${Math.min(SETTINGS.enrich,remaining)} (${remaining} remain)` : 'No more queued';
+    el('mm-bh-counts').innerHTML = `<span>Rank estimated ${fmt(estimates)} / ${fmt(base.length)}</span><span>Combat data ${fmt(statsChecked)}</span><span>Profiles checked ${fmt(checked)}</span><span>Awaiting assessment ${fmt(remaining)}</span><span class="good">Available ${fmt(counts.available)}</span><span class="warn">Hospital ${fmt(counts.hospital)}</span><span>Travel / Abroad ${fmt(counts.travel)}</span><span>Jail ${fmt(counts.jail)}</span><span>Unknown / unchecked ${fmt(counts.unknown)}</span>`;
     const selected = ENGINE.sortRows(filtered(), state.sort).slice(0, 100);
     const tbody = el('mm-bh-list');
     if (!selected.length) {
       tbody.innerHTML = '<tr><td colspan="7">No matching targets among the checked results. Change availability filters or scan again.</td></tr>';
-      el('mm-bh-foot').textContent = 'Availability filters include only official profile statuses that were checked; unassessed targets are never treated as Available.';
+      el('mm-bh-foot').textContent = 'Availability filters include only officially checked statuses. Unassessed targets are not assumed available. Change filters or assess another batch.';
       return;
     }
     tbody.innerHTML = selected.map(r => {
       const p = r.profile, e = r.estimate, a = r.assessment;
+      const rank = ENGINE.rankDisplay(r);
       const ev = ENGINE.evidence(r, state.ownBattle, ownTotalFallback());
       const st = ENGINE.statusDisplay(r);
       const able = ENGINE.attackability(r);
@@ -507,7 +528,7 @@
       const expires = new Date(r.expiresAt * 1000).toLocaleString();
       return `<tr><td><a href="https://www.torn.com/profiles.php?XID=${r.id}" target="_blank" rel="noopener noreferrer">${esc(r.name)} [${r.id}]</a><div class="muted">Level ${r.level}${p?.age != null ? ` · ${fmt(p.age)} days` : ''}</div></td>
         <td><b>${money(r.maxReward)}</b><div class="muted">${fmt(r.listedQuantity)} listed claim(s) · ${fmt(r.rows)} listing(s)</div><div class="muted">Earliest expiry: ${esc(expires)}</div></td>
-        <td>${e?.status === 'estimated' ? esc(e.label) : '<span class="warn">Unknown</span>'}<div class="notes">${e?.breakdown ? `Rank ${e.breakdown.total} − level ${e.breakdown.level} − crime ${e.breakdown.crimes} − net worth ${e.breakdown.networth} = ${e.breakdown.battle} stat triggers` : 'No defensible calculation'}</div></td>
+        <td><b class="${rank.kind === 'uncertain' || rank.kind === 'error' ? 'warn' : rank.kind === 'estimated' ? 'good' : 'muted'}">${esc(rank.label)}</b><div class="notes">${e?.breakdown ? `Rank ${e.breakdown.total} − level ${e.breakdown.level} − crime ${e.breakdown.crimes} − net worth ${e.breakdown.networth} = ${e.breakdown.battle} stat triggers` : esc(rank.note)}</div></td>
         <td class="status-cell"><span class="status-pill ${st.category}">${st.label}</span><div class="status-time">${esc(st.timing)}</div><div class="status-detail">${esc(able.label)}</div>${st.description ? `<div class="status-detail">${esc(st.description)}</div>` : ''}${st.details ? `<div class="status-detail">${esc(st.details)}</div>` : ''}<div class="status-detail">${esc(st.checked)} · upstream profile timestamp not supplied</div>${p ? `<div class="status-detail">Rank: ${esc(p.rank || 'Not supplied')}</div>` : ''}</td>
         <td><span class="evidence ${ev.category}">${esc(ev.heading)}</span><div class="notes">${esc(ev.reasons.join(' · '))}</div>${ev.signals?.defendRecord ? `<div class="notes">Defends: ${esc(ev.signals.defendRecord)}</div>` : ''}${ev.signals?.energyRefills != null ? `<div class="notes">Energy refills: ${fmt(ev.signals.energyRefills)}</div>` : ''}</td>
         <td>${a?.score >= 0 ? `<b>${fmt(a.score)} screening points</b>` : '—'}<div class="notes">${a ? esc(a.text) : 'Reward only'}</div></td>
@@ -517,15 +538,71 @@
     const fetchedLabel = state.nowFetched ? new Date(state.nowFetched).toLocaleString() : 'not fetched';
     const lag = state.sourceTime ? Math.max(0, Math.round(Date.now() / 1000 - state.sourceTime)) : null;
     const stale = lag !== null && lag > Math.max(300, state.delay * 2);
-    el('mm-bh-foot').textContent = `${selected.length} displayed / ${filtered().length} matching / ${state.rows.length} unique in fetched feed. ${fmt(checked)} profile statuses checked and ${fmt(counts.unknown)} unknown or not checked. Upstream bounty snapshot: ${sourceLabel}; minimum upstream cache delay: ${fmt(state.delay)}s; locally fetched: ${fetchedLabel}. ${stale ? 'UPSTREAM DATA MAY BE STALE. ' : ''}Timers count down from reported API until values, not a guaranteed change of status. Verify on Torn before acting.`;
+    el('mm-bh-foot').textContent = `${selected.length} displayed / ${filtered().length} matching / ${state.rows.length} unique in fetched feed. ${fmt(checked)} profiles checked; ${fmt(estimates)} rank bands estimated; ${fmt(statsChecked)} combat-data responses; ${fmt(remaining)} in the selected assessment queue. Upstream bounty snapshot: ${sourceLabel}; minimum upstream cache delay: ${fmt(state.delay)}s; locally fetched: ${fetchedLabel}. ${stale ? 'UPSTREAM DATA MAY BE STALE. ' : ''}Timers count down from reported API until values, not a guaranteed change of status. Verify on Torn before acting.`;
+  }
+
+  // One bounded, user-triggered batch; no unattended fetching or background page cycling.
+  async function assessNextBatch() {
+    const rows = state.scanQueue.slice(state.scanCursor, state.scanCursor + SETTINGS.enrich);
+    let checked = 0, profilesOk = 0, statsOk = 0;
+    for (const row of rows) {
+      status(`Assessment ${state.scanCursor + 1}/${state.scanQueue.length}: checking official profile and public rank inputs…`);
+      const detail = state.cache.get(row.id) || {};
+      if (!detail.profileFetchedAt || Date.now() - detail.profileFetchedAt > SETTINGS.cacheMs) {
+        try {
+          detail.profile = ENGINE.extractProfile(await api(`/user/${row.id}/profile`, { striptags: 'true' }));
+          detail.profileError = !detail.profile;
+        } catch (err) {
+          if (/Torn API error (2|5|13|16|18)/.test(err.message)) throw err;
+          detail.profile = null; detail.profileError = true;
+        }
+        detail.profileFetchedAt = Date.now();
+      }
+      row.profile = detail.profile || null;
+      row.profileFetchedAt = detail.profileFetchedAt;
+      row.profileError = Boolean(detail.profileError);
+      if (row.profile) {
+        profilesOk++;
+        // Do not gate rank evidence on current attackability; hospital/travelers
+        // still deserve a ranked assessment if we might revisit them later.
+        if (!detail.statsFetchedAt || Date.now() - detail.statsFetchedAt > SETTINGS.cacheMs) {
+          try {
+            detail.stats = ENGINE.extractPersonalStats(await api(`/user/${row.id}/personalstats`, { cat: 'popular' }));
+            detail.statsError = !detail.stats;
+          } catch (err) {
+            if (/Torn API error (2|5|13|16|18)/.test(err.message)) throw err;
+            detail.stats = null; detail.statsError = true;
+          }
+          detail.statsFetchedAt = Date.now();
+        }
+        row.stats = detail.stats || null;
+        row.statsError = Boolean(detail.statsError);
+        if (row.stats) statsOk++;
+        row.estimate = ENGINE.estimateRank({rank: row.profile.rank,level:row.profile.level ?? row.level,
+          crimes:row.stats?.crimes,networth:row.stats?.networth});
+        row.assessment = ENGINE.classify(row, state.myLevel, state.ownBattle?.total ?? ownTotalFallback());
+      } else {
+        row.stats = null; row.estimate = null; row.assessment = null;
+      }
+      state.cache.set(row.id, detail);
+      state.scanCursor++;
+      checked++;
+      if (checked % 3 === 0 || checked === rows.length) render();
+    }
+    while (state.cache.size > 50) state.cache.delete(state.cache.keys().next().value);
+    render();
+    status(`Batch complete: ${checked} examined, ${profilesOk} profiles, ${statsOk} personal-stat responses; ${state.scanQueue.length - state.scanCursor} queued. Rank rows explain missing inputs. No gameplay action executed.`);
   }
 
   async function scan() {
     if (state.running) return;
     const entered = el('mm-bh-key').value.trim();
     if (!/^[a-zA-Z0-9]{16,128}$/.test(entered)) { status('Enter a valid Torn API key before scanning (stored only if you select Save key).'); return; }
+    if (state.key && entered !== state.key) state.cache.clear();
     state.key = entered;
     state.running = true;
+    state.scanQueue = []; state.scanCursor = 0;
+    el('mm-bh-more').disabled = true;
     el('mm-bh-scan').disabled = true;
     const now = Date.now();
     let pagesDone = 0;
@@ -566,70 +643,25 @@
       state.rows = [...merged.values()]; state.nowFetched = Date.now();
       state.sourceTime = sourceTime || 0; state.delay = delay || 0;
       render();
-      const top = ENGINE.preScreenCandidates(eligibleByBaseFilters(), state.myLevel, SETTINGS.enrich);
-      let done = 0, failed = 0, deep = 0;
-      // Stage one: inexpensive status snapshots for a diversified shortlist.
-      for (const row of top) {
-        status(`Official profile checks: ${done + 1}/${top.length}. Other bounty listings remain unchecked.`);
-        const detail = state.cache.get(row.id) || {};
-        if (!detail.profileFetchedAt || Date.now() - detail.profileFetchedAt > SETTINGS.cacheMs) {
-          try {
-            const raw = await api(`/user/${row.id}/profile`, { striptags: 'true' });
-            detail.profile = ENGINE.extractProfile(raw);
-            detail.profileFetchedAt = Date.now(); detail.profileError = !detail.profile;
-          } catch (err) {
-            if (/Torn API error (2|5|13|16|18)/.test(err.message)) throw err;
-            detail.profile = null; detail.profileFetchedAt = Date.now(); detail.profileError = true;
-          }
-        }
-        state.cache.set(row.id, detail);
-        row.profile = detail.profile || null;
-        row.profileFetchedAt = detail.profileFetchedAt;
-        row.profileError = Boolean(detail.profileError);
-        if (!row.profile) failed++;
-        done++;
-        if (done % 3 === 0 || done === top.length) render();
-      }
-      // Stage two: only available candidates, diversified again. Never let failed
-      // personalstats replace or invalidate already verified public profile state.
-      const targets = ENGINE.preScreenCandidates(top.filter(r => ENGINE.availability(r) === 'available'), state.myLevel, SETTINGS.deepStats);
-      for (const row of targets) {
-        const detail = state.cache.get(row.id);
-        status(`Combat data checks: ${deep + 1}/${targets.length}; preserving checked status when stats are unavailable.`);
-        if (!detail.statsFetchedAt || Date.now() - detail.statsFetchedAt > SETTINGS.cacheMs) {
-          try {
-            const raw = await api(`/user/${row.id}/personalstats`, { cat: 'popular' });
-            detail.stats = ENGINE.extractPersonalStats(raw);
-            detail.statsError = !detail.stats;
-          } catch (err) {
-            if (/Torn API error (2|5|13|16|18)/.test(err.message)) throw err;
-            detail.stats = null; detail.statsError = true;
-          }
-          detail.statsFetchedAt = Date.now();
-        }
-        deep++;
-        row.stats = detail.stats || null;
-        row.statsError = Boolean(detail.statsError);
-        row.estimate = ENGINE.estimateRank({rank: row.profile.rank, level: row.profile.level ?? row.level,
-          crimes: row.stats?.crimes, networth: row.stats?.networth });
-        row.assessment = ENGINE.classify(row, state.myLevel, state.ownBattle?.total ?? ownTotalFallback());
-        if (deep % 3 === 0 || deep === targets.length) render();
-      }
-      // Cheap classifications for profiled targets whose deeper stats were skipped.
-      for (const row of top) {
-        if (!row.profile) continue;
-        if (!row.estimate) row.estimate = ENGINE.estimateRank({rank: row.profile.rank, level: row.profile.level ?? row.level,
-          crimes: row.stats?.crimes, networth: row.stats?.networth });
-        if (!row.assessment) row.assessment = ENGINE.classify(row, state.myLevel, state.ownBattle?.total ?? ownTotalFallback());
-      }
-      while (state.cache.size > 50) state.cache.delete(state.cache.keys().next().value);
-      render();
-      status(`Scan complete: ${state.rows.length} unique bounty targets across ${pagesDone} page(s); ${done - failed} profiles checked, ${failed} unresolved, ${deep} deep-stat checks. Other listings remain unverified. No live attack or claim executed.`);
+      state.scanQueue = ENGINE.preScreenCandidates(eligibleByBaseFilters(), state.myLevel, state.rows.length);
+      state.scanCursor = 0;
+      await assessNextBatch();
+      status(`Bounty scan complete: ${state.rows.length} unique targets across ${pagesDone} page(s). ${state.scanCursor} checked from ${state.scanQueue.length} eligible; select Assess next batch for more. Status and stat evidence are independently labeled. No attack or claim executed.`);
     } catch (e) {
       status(`Scan stopped: ${e.message}. ${state.rows.length ? 'Already obtained rows remain on screen, but freshness and completeness may be limited.' : 'No verified target list is available.'}`);
       render();
-    } finally { state.running = false; el('mm-bh-scan').disabled = false; }
+    } finally { state.running = false; el('mm-bh-scan').disabled = false; render(); }
   }
+  el('mm-bh-more').addEventListener('click', async () => {
+    if (state.running || !state.scanQueue.length || state.scanCursor >= state.scanQueue.length) return;
+    const key = el('mm-bh-key').value.trim();
+    if (!key || key !== state.key) { status('API key changed; run Scan bounties again before continuing.'); return; }
+    state.running = true;
+    el('mm-bh-scan').disabled = true; el('mm-bh-more').disabled = true;
+    try { await assessNextBatch(); }
+    catch (err) { status(`Batch stopped: ${err.message}. Only completed rows were counted. Rescan to retry failed requests.`); }
+    finally { state.running = false; el('mm-bh-scan').disabled = false; render(); }
+  });
   el('mm-bh-manual').addEventListener('click', () => {
     const stats = ENGINE.manualBattleStats({ strength: el('mm-bh-str').value, speed: el('mm-bh-spd').value,
       defense: el('mm-bh-def').value, dexterity: el('mm-bh-dex').value });
