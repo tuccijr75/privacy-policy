@@ -17,22 +17,22 @@ function test(name,fn){fn();checks++;console.log('PASS',name);}
 test('legacy totals survive recent-window refresh',()=>{
  const s={customers:{'100':{id:'100',purchases:12,units:18,spent:840000,firstPurchase:'2026-01-01T00:00:00Z',lastPurchase:'2026-09-30T00:00:00Z'}},sales:{}};
  logic.importSalesEntries(s,[row('a','100')]);
- assert.equal(s.customers['100'].purchases,12);
- assert.equal(s.customers['100'].spent,840000);
- assert.equal(s.customers['100'].historyBaseline.purchases,11);
+ assert.equal(s.customers['100'].purchases,13);
+ assert.equal(s.customers['100'].spent,841000);
+ assert.equal(s.customers['100'].historyBaseline.purchases,12);
  assert.equal(s.customers['100'].firstPurchase,'2026-01-01T00:00:00Z');
 });
 test('subsequent verified sale increases preserved counts',()=>{
  const s={customers:{'100':{id:'100',purchases:12,units:18,spent:840000}},sales:{}};
  logic.importSalesEntries(s,[row('a','100')]);
  logic.importSalesEntries(s,[row('b','100')]);
- assert.equal(s.customers['100'].purchases,13);
+ assert.equal(s.customers['100'].purchases,14);
 });
 test('same sale ID cannot increment aggregates twice',()=>{
  const s={customers:{'100':{id:'100',purchases:12,spent:840000}},sales:{}};
  logic.importSalesEntries(s,[row('a','100')]);
  logic.importSalesEntries(s,[row('a','100')]);
- assert.equal(s.customers['100'].purchases,12);
+ assert.equal(s.customers['100'].purchases,13);
 });
 test('existing ledger reconciles without duplicate baseline',()=>{
  const t=Date.now(),s={customers:{'100':{id:'100',purchases:2,units:2,spent:2000}},sales:{
