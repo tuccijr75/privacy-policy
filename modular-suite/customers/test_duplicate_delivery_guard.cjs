@@ -13,8 +13,8 @@ const checks=[
  ['recovery requires explicit Outbox check',src.includes('Only restore if you verified in Torn Outbox')],
  ['prior Outbox delivery can be reconciled',src.includes("data-reconcile-welcome")&&src.includes("Verify Prior Send")&&src.includes("at least one message was actually sent")],
  ['manual reconciliation does not invent a precise send count',src.includes("current.messageCount=Math.max(1,n(current.messageCount))")],
- ['candidate version updated',src.includes('8.0.0-alpha.21.4')],
- ['pinned logic dependency',/MM_Customers\.logic\.js/.test(src)&&/@5cbe5bee13d3bc204805262ddee8f2240a95f87d/.test(src)]
+ ['candidate version updated',src.includes('8.0.0-alpha.21.5')],
+ ['pinned logic dependency',/MM_Customers\.logic\.js/.test(src)&&/@2c6f97157eb96b7c4fad09297c6f3e6b617f2205/.test(src)]
 ];
 for(const [name,passed] of checks){assert.ok(passed,name);console.log('PASS',name);}
 console.log(checks.length+' duplicate-delivery safety gates passed.');
