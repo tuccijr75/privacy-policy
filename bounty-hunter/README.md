@@ -1,4 +1,4 @@
-# MM Bounty Hunter — Target Finder v0.1.1-rc.3
+# MM Bounty Hunter — Target Finder v0.1.1-rc.4
 
 **Status:** desktop Tampermonkey development candidate; repo-review artifact, not yet published to stable `main` and not certified in a live Torn session. Standalone and fully self-contained (no `@require`).
 
@@ -44,7 +44,7 @@ Rank thresholds used:
 - Net worth: $5M, $50M, $500M, $5B, $50B
 - Battle-stat score triggers: six thresholds, so the calculation returns 0–6.
 
-The approximate stat bands come from the user-provided guide, supplemented by the wiki score-trigger ranges. Torn explains that *battle-stat balance* influences when triggers fire. Prior net worth can generate **ghost triggers**. **Negative net worth disables confident rank estimates**; 250M+ is open-ended. No inference should override a current spy or verified battle-stat measurement (none is imported in v0.1.1-rc.3).
+The approximate stat bands come from the user-provided guide, supplemented by the wiki score-trigger ranges. Torn explains that *battle-stat balance* influences when triggers fire. Prior net worth can generate **ghost triggers**. **Negative net worth disables confident rank estimates**; 250M+ is open-ended. No inference should override a current spy or verified battle-stat measurement (none is imported in v0.1.1-rc.4).
 
 ## Freshness, integrity and manual boundary
 
@@ -92,3 +92,8 @@ Deterministic Node suite: **34/34 PASS**. These are logic, API-shape fixture, me
 - Torn scripting rules: https://www.torn.com/forums.php?p=threads&t=16037108
 
 This feature-branch version is staged in `tuccijr75/privacy-policy` for review; it has not been released on `main`. New product ownership is separate from Acquisitions and from the retired Market Mugger.
+
+## Pre-release correction rc.4
+
+- Corrected v2 user identity parsing for the documented top-level `player_id` response field, with explicit nested/legacy ID fallbacks. Optional Limited/Custom and public keys still must identify the same player; no new permissions were added.
+- Stable release remains blocked on authenticated live Torn acceptance and actual delivery/update verification.
