@@ -217,14 +217,47 @@
 
   function recalculateCustomers(slice){
     ensureCustomerSlice(slice);
-    for(const customer of Object.values(slice.customers)){
-      customer.purchases=0;customer.units=0;customer.spent=0;customer.firstPurchase=null;customer.lastPurchase=null;
-    }
-    const sales=Object.values(slice.sales).slice().sort((a,b)=>n(a.timestamp)-n(b.timestamp));
+    const sales=Object.values(slice.sales).filter(sale=>sale?.playerId&&!customerRemoved(slice,sale.playerId))
+      .slice().sort((a,b)=>n(a.timestamp)-n(b.timestamp));
+    const ledger=new Map();
     for(const sale of sales){
-      if(!sale?.playerId||customerRemoved(slice,sale.playerId))continue;
-      applySaleToCustomer(slice,sale);
+      const id=asId(sale.playerId),totals=ledger.get(id)||{purchases:0,units:0,spent:0,first:0,last:0};
+      const timestamp=n(sale.timestamp);
+      totals.purchases++;
+      totals.units+=n(sale.units);
+      totals.spent+=n(sale.total);
+      if(timestamp&&(!totals.first||timestamp<totals.first))totals.first=timestamp;
+      if(timestamp&&timestamp>totals.last)totals.last=timestamp;
+      ledger.set(id,totals);
     }
+    for(const [id,customer] of Object.entries(slice.customers)){
+      const known=ledger.get(id)||{purchases:0,units:0,spent:0,first:0,last:0};
+      // Capture a pre-existing customer aggregate only once. The current ledger
+      // is deducted to avoid counting known sale IDs twice. Where overlap with
+      // an unrecorded sale is unknowable, this is a conservative floor.
+      if(!customer.historyBaseline){
+        const first=Date.parse(customer.firstPurchase||'')||0;
+        const last=Date.parse(customer.lastPurchase||'')||0;
+        const purchases=Math.max(0,n(customer.purchases)-known.purchases);
+        const units=Math.max(0,n(customer.units)-known.units);
+        const spent=Math.max(0,n(customer.spent)-known.spent);
+        const earlierFirst=first&&(!known.first||first<known.first)?customer.firstPurchase:null;
+        const laterLast=last&&(!known.last||last>known.last)?customer.lastPurchase:null;
+        if(purchases||units||spent||earlierFirst||laterLast){
+          customer.historyBaseline={
+            schema:1,purchases,units,spent,firstPurchase:earlierFirst,lastPurchase:laterLast,
+            capturedAt:nowIso(),source:'existing-customer-aggregate',reconciled:false
+          };
+        }
+      }
+      const baseline=customer.historyBaseline||{};
+      customer.purchases=n(baseline.purchases);
+      customer.units=n(baseline.units);
+      customer.spent=n(baseline.spent);
+      customer.firstPurchase=baseline.firstPurchase||null;
+      customer.lastPurchase=baseline.lastPurchase||null;
+    }
+    for(const sale of sales)applySaleToCustomer(slice,sale);
     return slice;
   }
 
