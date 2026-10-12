@@ -215,41 +215,46 @@
     return customer;
   }
 
-  function recalculateCustomers(slice){
+  function captureHistoricalBaselines(slice){
     ensureCustomerSlice(slice);
-    const sales=Object.values(slice.sales).filter(sale=>sale?.playerId&&!customerRemoved(slice,sale.playerId))
-      .slice().sort((a,b)=>n(a.timestamp)-n(b.timestamp));
+    // This must run BEFORE adding fresh sales. Otherwise new purchases are
+    // subtracted from pre-existing totals, silently undercounting customers.
     const ledger=new Map();
-    for(const sale of sales){
-      const id=asId(sale.playerId),totals=ledger.get(id)||{purchases:0,units:0,spent:0,first:0,last:0};
+    for(const sale of Object.values(slice.sales)){
+      const id=asId(sale?.playerId);
+      if(!id||customerRemoved(slice,id))continue;
+      const sum=ledger.get(id)||{purchases:0,units:0,spent:0,first:0,last:0};
       const timestamp=n(sale.timestamp);
-      totals.purchases++;
-      totals.units+=n(sale.units);
-      totals.spent+=n(sale.total);
-      if(timestamp&&(!totals.first||timestamp<totals.first))totals.first=timestamp;
-      if(timestamp&&timestamp>totals.last)totals.last=timestamp;
-      ledger.set(id,totals);
+      sum.purchases++;
+      sum.units+=n(sale.units);
+      sum.spent+=n(sale.total);
+      if(timestamp&&(!sum.first||timestamp<sum.first))sum.first=timestamp;
+      if(timestamp&&timestamp>sum.last)sum.last=timestamp;
+      ledger.set(id,sum);
     }
     for(const [id,customer] of Object.entries(slice.customers)){
+      if(customer.historyBaseline)continue;
       const known=ledger.get(id)||{purchases:0,units:0,spent:0,first:0,last:0};
-      // Capture a pre-existing customer aggregate only once. The current ledger
-      // is deducted to avoid counting known sale IDs twice. Where overlap with
-      // an unrecorded sale is unknowable, this is a conservative floor.
-      if(!customer.historyBaseline){
-        const first=Date.parse(customer.firstPurchase||'')||0;
-        const last=Date.parse(customer.lastPurchase||'')||0;
-        const purchases=Math.max(0,n(customer.purchases)-known.purchases);
-        const units=Math.max(0,n(customer.units)-known.units);
-        const spent=Math.max(0,n(customer.spent)-known.spent);
-        const earlierFirst=first&&(!known.first||first<known.first)?customer.firstPurchase:null;
-        const laterLast=last&&(!known.last||last>known.last)?customer.lastPurchase:null;
-        if(purchases||units||spent||earlierFirst||laterLast){
-          customer.historyBaseline={
-            schema:1,purchases,units,spent,firstPurchase:earlierFirst,lastPurchase:laterLast,
-            capturedAt:nowIso(),source:'existing-customer-aggregate',reconciled:false
-          };
-        }
+      const first=Date.parse(customer.firstPurchase||'')||0;
+      const last=Date.parse(customer.lastPurchase||'')||0;
+      const purchases=Math.max(0,n(customer.purchases)-known.purchases);
+      const units=Math.max(0,n(customer.units)-known.units);
+      const spent=Math.max(0,n(customer.spent)-known.spent);
+      const earlierFirst=first&&(!known.first||first<known.first)?customer.firstPurchase:null;
+      const laterLast=last&&(!known.last||last>known.last)?customer.lastPurchase:null;
+      if(purchases||units||spent||earlierFirst||laterLast){
+        customer.historyBaseline={
+          schema:1,purchases,units,spent,firstPurchase:earlierFirst,lastPurchase:laterLast,
+          capturedAt:nowIso(),source:'existing-customer-aggregate',reconciled:false
+        };
       }
+    }
+  }
+
+  function recalculateCustomers(slice){
+    ensureCustomerSlice(slice);
+    captureHistoricalBaselines(slice);
+    for(const customer of Object.values(slice.customers)){
       const baseline=customer.historyBaseline||{};
       customer.purchases=n(baseline.purchases);
       customer.units=n(baseline.units);
@@ -257,6 +262,8 @@
       customer.firstPurchase=baseline.firstPurchase||null;
       customer.lastPurchase=baseline.lastPurchase||null;
     }
+    const sales=Object.values(slice.sales).filter(sale=>sale?.playerId&&!customerRemoved(slice,sale.playerId))
+      .slice().sort((a,b)=>n(a.timestamp)-n(b.timestamp));
     for(const sale of sales)applySaleToCustomer(slice,sale);
     return slice;
   }
@@ -264,6 +271,7 @@
   function importSalesEntries(slice,entries=[]){
     ensureCustomerSlice(slice);
     let imported=0,rejected=0,checked=0;
+    captureHistoricalBaselines(slice);
     const knownCustomers=new Set(Object.keys(slice.customers));
     const knownSaleCustomers=new Set(Object.values(slice.sales).map(sale=>asId(sale?.playerId)).filter(Boolean));
     const importedSaleCounts=new Map();
