@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger 2 Candidate
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-beta.10
+// @version      2.2.0-beta.11
 // @description  Shared Torn trade verification, Bazaar sale-log ingestion, 7 PM ET closeout and reports. No automated Torn trades.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -22,7 +22,7 @@
  if(dollarScanParams.has('mmDollarScannerReserve')||dollarScanParams.has('mmDollarScan')||dollarScanParams.has('mmDollarScannerComplete')) return;
  if (window.__morpheusLedgerLoaded) return;
  window.__morpheusLedgerLoaded=true;
- const VERSION='2.2.0-beta.10';
+ const VERSION='2.2.0-beta.11';
  const prefix='mledger_';
  const read=k=>GM_getValue(prefix+k,'');
  const save=(k,v)=>GM_setValue(prefix+k,String(v??'').trim());
@@ -151,31 +151,39 @@
      qty,unitCost,totalCost};
  }
  function sameUid(l,e){return l.uid==null?e.uid==null:e.uid===l.uid;}
- function chooseExactPurchaseEvidence(l,allLots,purchases){
-   if(!((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending'))||!l.tradeRef)return null;
-   const recvTime=new Date(l.createdAt).getTime(),used={};
+ function eligibleEvidence(l){
+   return !!l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||
+     (l.mode==='unclassified'&&l.status==='received_pending'));
+ }
+ function unallocatedEvidenceParts(l,allLots,records,kind){
+   if(!eligibleEvidence(l))return [];
+   const purchase=kind==='purchase',idKey=purchase?'logId':'evidenceId',used={};
    for(const other of allLots){
      if(other.id===l.id)continue;
-     for(const part of other.purchaseParts||[])used[part.logId]=(used[part.logId]||0)+part.qty;
-     if(other.purchaseLogId){const proof=purchases.find(p=>p.logId===other.purchaseLogId);if(proof)used[proof.logId]=(used[proof.logId]||0)+proof.qty;}
+     const parts=purchase?other.purchaseParts:other.originParts;
+     for(const part of parts||[])used[part[idKey]]=(used[part[idKey]]||0)+part.qty;
+     if(purchase&&other.purchaseLogId){
+       const proof=records.find(p=>p.logId===other.purchaseLogId);
+       if(proof)used[proof.logId]=(used[proof.logId]||0)+proof.qty;
+     }
    }
-   const available=purchases.filter(p=>p.itemId===l.itemId&&sameUid(l,p)
+   const recvTime=new Date(l.createdAt).getTime();
+   const available=records.filter(p=>p.itemId===l.itemId&&sameUid(l,p)
      &&p.timestamp*1000<=recvTime+300000&&p.timestamp*1000>=recvTime-120*86400000
-     &&p.qty-(used[p.logId]||0)>0)
-     .map(p=>({logId:p.logId,qty:p.qty-(used[p.logId]||0)}));
+     &&p.qty-(used[p[idKey]]||0)>0)
+     .map(p=>({[idKey]:p[idKey],qty:p.qty-(used[p[idKey]]||0)}));
+   return available;
+ }
+ function exactUnallocatedEvidence(l,allLots,records,kind){
+   const available=unallocatedEvidenceParts(l,allLots,records,kind);
    const total=available.reduce((n,p)=>n+p.qty,0);
    return total===l.qty&&available.length&&available.length<=40?available:null;
  }
+ function chooseExactPurchaseEvidence(l,allLots,purchases){
+   return exactUnallocatedEvidence(l,allLots,purchases,'purchase');
+ }
  function chooseExactOriginEvidence(l,allLots,origins){
-   if(!((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending'))||!l.tradeRef)return null;
-   const recvTime=new Date(l.createdAt).getTime(),used={};
-   for(const other of allLots)if(other.id!==l.id)for(const part of other.originParts||[])used[part.evidenceId]=(used[part.evidenceId]||0)+part.qty;
-   const available=origins.filter(p=>p.itemId===l.itemId&&sameUid(l,p)
-     &&p.timestamp*1000<=recvTime+300000&&p.timestamp*1000>=recvTime-120*86400000
-     &&p.qty-(used[p.evidenceId]||0)>0)
-     .map(p=>({evidenceId:p.evidenceId,qty:p.qty-(used[p.evidenceId]||0)}));
-   const total=available.reduce((n,p)=>n+p.qty,0);
-   return total===l.qty&&available.length&&available.length<=40?available:null;
+   return exactUnallocatedEvidence(l,allLots,origins,'origin');
  }
  function originKindForTitle(title){
    const t=String(title||'').toLowerCase().replace(/\s+/g,' ').trim();
@@ -230,9 +238,7 @@
      for(const raw of response.log)await onLog(raw);
      const next=response._metadata?.links?.next;
      if(!next)return '';
-     const nextUrl=new URL(next);
-     if(nextUrl.protocol!=='https:'||nextUrl.hostname!=='api.torn.com'||nextUrl.pathname!=='/v2/user/log')throw Error('Untrusted pagination address');
-     nextUrl.searchParams.set('key',cfg().torn);
+     const nextUrl=trustedLogContinuation(next,cfg().torn,type);
      if(page===maxPages-1){
        stats.truncated.push(type);
        nextUrl.searchParams.delete('key');
@@ -345,21 +351,8 @@
    const actions=[],reservedP=new Set(),reservedO=new Set();
    // A partial matching proof is still conflicting evidence. Mirror the relay's
    // purchaseAvailable_/originAvailable_ gates before submitting attribution.
-   const unallocatedEvidence=(lot,records,kind)=>{
-     const recv=Date.parse(lot.createdAt),used=new Map(),field=kind==='purchase'?'logId':'evidenceId';
-     for(const other of state.lots){
-       if(other.id===lot.id)continue;
-       for(const part of (kind==='purchase'?other.purchaseParts:other.originParts)||[])
-         used.set(part[field],(used.get(part[field])||0)+part.qty);
-       if(kind==='purchase'&&other.purchaseLogId){
-         const proof=state.purchaseLogs.find(p=>p.logId===other.purchaseLogId);
-         if(proof)used.set(proof.logId,(used.get(proof.logId)||0)+proof.qty);
-       }
-     }
-     return records.some(p=>p.itemId===lot.itemId&&sameUid(lot,p)
-       &&p.timestamp*1000<=recv+300000&&p.timestamp*1000>=recv-120*86400000
-       &&p.qty-(used.get(p[field])||0)>0);
-   };
+   const unallocatedEvidence=(lot,records,kind)=>
+     unallocatedEvidenceParts(lot,state.lots,records,kind).length>0;
    for(const l of remaining){
      const purchase=chooseExactPurchaseEvidence(l,state.lots,state.purchaseLogs),origin=chooseExactOriginEvidence(l,state.lots,state.originLogs);
      if(purchase&&origin){stats.ambiguous++;continue;}
@@ -397,6 +390,63 @@
    if(!isPositive(each)||each*qty!==gross)return {skip:'Sale total does not equal quantity × unit price'};
    return {sourceId:String(log.id),itemId:id,uid:isPositive(numeric(item.uid))?numeric(item.uid):null,qty,unitPrice:each,gross,timestamp};
  }
+ function saleDecision(s,lots){
+   const sameItem=lots.filter(l=>l.status==='confirmed'&&l.itemId===s.itemId);
+   const possible=sameItem.filter(l=>(l.uid==null||l.uid===s.uid)
+     &&l.qty-l.sold-l.returned>=s.qty&&l.unitCost!==null
+     &&new Date(l.confirmedAt).getTime()<=s.timestamp*1000+300000);
+   const viable=possible.filter(l=>l.unitCost<=s.unitPrice);
+   if(viable.length===1)return {op:'sale_import',lotId:viable[0].id};
+   if(sameItem.length)return {op:'sale_pending',reason:viable.length>1?
+     'Multiple eligible inventory lots':'Quantity, price, or inventory-cost conflict'};
+   return null;
+ }
+ function trustedLogContinuation(next,key,expectedType){
+   const url=new URL(next,'https://api.torn.com');
+   if(url.protocol!=='https:'||url.hostname!=='api.torn.com'||url.pathname!=='/v2/user/log'||
+      (expectedType!=null&&url.searchParams.get('log')!==String(expectedType)))
+     throw Error('Untrusted Torn log continuation');
+   url.searchParams.set('key',key);
+   return url;
+ }
+ async function readSaleLogPages(firstUrl,fetchPage,key){
+   // Torn may omit a continuation link on a full 100-row page. Split bounded
+   // time windows rather than treating a truncated response as complete.
+   const parsed=new URL(firstUrl),floor=Number(parsed.searchParams.get('from'));
+   if(!Number.isSafeInteger(floor)||floor<1)throw Error('Invalid sale scan start');
+   const ceiling=Math.floor(Date.now()/1000)+300,queue=[{from:floor,to:ceiling,url:firstUrl}];
+   const all=[],seenIds=new Set(),seenUrls=new Set();let requests=0;
+   while(queue.length){
+     const window=queue.shift();
+     if(window.from>window.to)continue;
+     if(++requests>60)throw Error('Sale history exceeds 60-page safety budget; narrow the scan window');
+     const current=window.url||'https://api.torn.com/v2/user/log?'+
+       new URLSearchParams({log:'1226',limit:'100',from:String(window.from),
+         to:String(window.to),key});
+     if(seenUrls.has(current))throw Error('Repeated Torn sale page cursor');
+     seenUrls.add(current);
+     const response=await fetchPage(current);
+     if(!Array.isArray(response.log))throw Error('Expected Torn v2 user/log array');
+     for(const raw of response.log){
+       if(!Number.isSafeInteger(Number(raw.timestamp))||
+          Number(raw.timestamp)<window.from||Number(raw.timestamp)>window.to)
+         throw Error('Torn sale log outside requested scan window');
+       if(!seenIds.has(String(raw.id))){seenIds.add(String(raw.id));all.push(raw);}
+     }
+     const next=response._metadata?.links?.next||null;
+     if(next){
+       const cursor=trustedLogContinuation(next,key,'1226');
+       queue.unshift({...window,url:cursor.href});
+     }else if(response.log.length>=100){
+       const mid=Math.floor((window.from+window.to)/2);
+       if(mid>=window.to||mid<window.from)
+         throw Error('At least 100 sales share one timestamp; manual backfill required');
+       queue.unshift({from:mid+1,to:window.to,url:null});
+       queue.unshift({from:window.from,to:mid,url:null});
+     }
+   }
+   return all;
+ }
  async function syncSales(){
    if(state?.role!=='owner')return 0;
    const lots=state.lots.filter(l=>l.status==='confirmed'&&isPositive(l.itemId)&&l.qty>l.sold+l.returned);
@@ -405,26 +455,20 @@
    const first=Math.min(...lots.map(l=>new Date(l.confirmedAt||l.createdAt).getTime()));
    const from=Math.floor(Math.max(first-minutes(30),Number(read('v2SaleStart')),Date.now()-90*86400000)/1000);
    let url='https://api.torn.com/v2/user/log?'+new URLSearchParams({log:'1226',limit:'100',from:String(from),key:cfg().torn});
-   const all=[],seenPages=new Set();
-   for(let p=0;p<15&&url;p++){
-     if(seenPages.has(url))break;seenPages.add(url);
-     const r=await request(url);if(!Array.isArray(r.log))throw Error('Expected Torn v2 user/log array');all.push(...r.log);
-     const next=r._metadata?.links?.next||null;
-     if(r.log.length>=100&&!next)throw Error('100-log page without continuation; sale history may be incomplete');
-     if(next&&/^https:\/\/api\.torn\.com\/v2\/user\/log\?/.test(next)){
-       const n=new URL(next);n.searchParams.set('key',cfg().torn);url=n.href;
-     }else url=null;
-     if(p===14&&next)throw Error('More than 15 pages of sale logs: batch incomplete; retry later');
-   }
+   const all=await readSaleLogPages(url,request,cfg().torn);
    all.sort((a,b)=>a.timestamp-b.timestamp||String(a.id).localeCompare(String(b.id)));
    let count=0,exceptions=0,unparsed=0;
+   const recorded=new Set([...state.sales.map(x=>x.sourceId),...state.exceptions.map(x=>x.id)]);
    for(const log of all){
      const s=parseBazaarLog(log);if(!s)continue;if(s.skip){unparsed++;continue;}
-     if(state.sales.some(x=>x.sourceId===s.sourceId)||state.exceptions.some(x=>x.id===s.sourceId))continue;
-     const possible=state.lots.filter(l=>l.status==='confirmed'&&l.itemId===s.itemId&&(l.uid==null||l.uid===s.uid)&&l.qty-l.sold-l.returned>=s.qty&&l.unitCost!==null&&new Date(l.confirmedAt).getTime()<=s.timestamp*1000+300000);
-     const viable=possible.filter(l=>l.unitCost<=s.unitPrice);
-     if(viable.length===1){await relay('sale_import',{...s,lotId:viable[0].id});count++;}
-     else if(possible.length||state.lots.some(l=>l.status==='confirmed'&&l.itemId===s.itemId)){await relay('sale_pending',{...s,reason:viable.length>1?'Multiple eligible inventory lots':'Quantity, price, or inventory-cost conflict'});exceptions++;}
+     if(recorded.has(s.sourceId))continue;
+     const decision=saleDecision(s,state.lots);
+     if(decision){
+       const {op,...details}=decision;
+       await relay(op,{...s,...details});
+       recorded.add(s.sourceId);
+       if(op==='sale_import')count++;else exceptions++;
+     }
    }
    lastLogs=Date.now();status=`Sale scan: ${count} imported, ${exceptions} need matching, ${unparsed} unsupported layouts`;if(unparsed)throw Error(unparsed+' unsupported sale-log layouts require manual review');return count;
  }
