@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         MM Bounty Hunter — Target Finder
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.1-rc.4
-// @description  API-only Torn bounty discovery and cautious rank-trigger target assessment; no attacks or non-API automation.
-// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Bounty_Hunter.user.js
-// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Bounty_Hunter.user.js
+// @version      0.1.1-rc.5
+// @description  PREVIEW CHANNEL: API-only Torn bounty discovery and cautious rank-trigger target assessment; no automated attacks.
+// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/bounty-hunter-preview/MM_Bounty_Hunter.user.js
+// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/bounty-hunter-preview/MM_Bounty_Hunter.user.js
 // @author       MM Torn Systems
 // @match        https://www.torn.com/bounties.php*
 // @match        https://torn.com/bounties.php*
@@ -392,7 +392,7 @@
   const root = document.createElement('section');
   root.id = 'mm-bounty-hunter-v01';
   root.innerHTML = `
-    <div class="head"><div><h2>MM Bounty Hunter · Target Finder <small>v0.1.1-rc.4</small></h2><div class="sub">Official API only · uncertain battle stats stay uncertain · attacks are always manual</div></div>
+    <div class="head"><div><h2>MM Bounty Hunter · Target Finder <small>v0.1.1-rc.5 PREVIEW</small></h2><div class="sub">Official API only · uncertain battle stats stay uncertain · attacks are always manual</div></div>
     <a href="https://wiki.torn.com/wiki/Rank" target="_blank" rel="noopener noreferrer">Rank methodology</a></div>
     <div class="controls">
       <label>Torn API key (public access)<input id="mm-bh-key" type="password" autocomplete="off" spellcheck="false" aria-label="Torn API key"></label>
