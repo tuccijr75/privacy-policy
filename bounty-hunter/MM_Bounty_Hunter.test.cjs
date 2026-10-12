@@ -240,6 +240,7 @@ test('attackability separates available status from verified combat access',()=>
   assert.equal(E.attackability({profile:{status:'Okay'},profileFetchedAt:Date.now()-180000}).kind,'unknown');
 });
 
+
 test('official v2 popular stats and profile yield an actual stat band', () => {
   const profile=E.extractProfile({profile:{id:123,rank:'Average',level:14,status:{state:'Hospital',until:Math.floor(Date.now()/1000)+60}}});
   const stats=E.extractPersonalStats({personalstats:{crimes:{total:3227,version:'2'},networth:{total:7264572},drugs:{xanax:2}}});
