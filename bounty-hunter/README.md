@@ -1,4 +1,8 @@
-# MM Bounty Hunter — Target Finder v0.1.1-rc.4
+# PREVIEW CHANNEL — NOT STABLE
+
+This branch is an opt-in, auto-updating manual test channel (`bounty-hunter-preview`). It uses moving `raw.githack.com` metadata that follows this branch. Stable/customer distribution remains `privacy-policy/main` and is not yet approved by live acceptance. Install this preview only if you want to test it; disable older copies to prevent duplicate injection. Later stable migration may require reinstalling from the stable URL. No live Torn, TornPDA or end-to-end Tampermonkey update verification has been completed.
+
+# MM Bounty Hunter — Target Finder v0.1.1-rc.5
 
 **Status:** desktop Tampermonkey development candidate; repo-review artifact, not yet published to stable `main` and not certified in a live Torn session. Standalone and fully self-contained (no `@require`).
 
@@ -44,7 +48,7 @@ Rank thresholds used:
 - Net worth: $5M, $50M, $500M, $5B, $50B
 - Battle-stat score triggers: six thresholds, so the calculation returns 0–6.
 
-The approximate stat bands come from the user-provided guide, supplemented by the wiki score-trigger ranges. Torn explains that *battle-stat balance* influences when triggers fire. Prior net worth can generate **ghost triggers**. **Negative net worth disables confident rank estimates**; 250M+ is open-ended. No inference should override a current spy or verified battle-stat measurement (none is imported in v0.1.1-rc.4).
+The approximate stat bands come from the user-provided guide, supplemented by the wiki score-trigger ranges. Torn explains that *battle-stat balance* influences when triggers fire. Prior net worth can generate **ghost triggers**. **Negative net worth disables confident rank estimates**; 250M+ is open-ended. No inference should override a current spy or verified battle-stat measurement (none is imported in v0.1.1-rc.5).
 
 ## Freshness, integrity and manual boundary
 
