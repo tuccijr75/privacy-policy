@@ -152,11 +152,11 @@ test('script metadata and prohibited background transport paths', () => {
   assert.match(src, /@match\s+https:\/\/www\.torn\.com\/bounties\.php\*/);
   assert.match(src, /@connect\s+api\.torn\.com/);
   assert.match(src, /@grant\s+GM_xmlhttpRequest/);
-  assert.match(src, /@version\s+0\.1\.1-rc\.4/);
+  assert.match(src, /@version\s+0\.1\.1-rc\.5/);
   const meta = src.split('// ==/UserScript==')[0];
   const u = meta.match(/^\/\/ @updateURL\s+(\S+)$/m)?.[1];
   const d = meta.match(/^\/\/ @downloadURL\s+(\S+)$/m)?.[1];
-  assert.equal(u, 'https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Bounty_Hunter.user.js');
+  assert.equal(u, 'https://raw.githack.com/tuccijr75/privacy-policy/bounty-hunter-preview/MM_Bounty_Hunter.user.js');
   assert.equal(d, u);
   assert.doesNotMatch(src, /raw\.githubusercontent\.com|@require|window\.open\(|attack\.php|\bfetch\s*\(/);
   assert.match(src, /Authorization: `ApiKey \$\{requestKey\}`/);
