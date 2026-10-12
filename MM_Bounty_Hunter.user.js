@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM Bounty Hunter — Target Finder
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      0.1.1-rc.3
+// @version      0.1.1-rc.4
 // @description  API-only Torn bounty discovery and cautious rank-trigger target assessment; no attacks or non-API automation.
 // @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Bounty_Hunter.user.js
 // @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/MM_Bounty_Hunter.user.js
@@ -115,6 +115,13 @@
         description: typeof status.description === 'string' ? status.description.slice(0, 160) : '',
         details: typeof status.details === 'string' ? status.details.slice(0, 120) : ''
       };
+    }
+    function extractSelfId(json) {
+      // Torn v2 uses player_id for the authenticated user. Preserve support for
+      // explicit nested/legacy ID shapes, but fail closed on missing/invalid IDs.
+      const o = json?.profile && typeof json.profile === 'object' ? json.profile : json;
+      const id = nonnegative(o?.player_id ?? o?.id);
+      return Number.isSafeInteger(id) && id > 0 ? id : null;
     }
     function extractProfile(json) {
       // Rank is not guaranteed in every v2 profile shape. Valid status/level still matter.
@@ -320,7 +327,7 @@
       });
       return copy;
     }
-    return { RANKS, rankIndex, estimateRank, normalizeBounties, extractProfile, extractPersonalStats,
+    return { RANKS, rankIndex, estimateRank, normalizeBounties, extractProfile, extractSelfId, extractPersonalStats,
       normalizeStatus, statusCategory, availability, attackability, filterAvailability, formatDuration, statusDisplay,
       parseOwnBattleStats, manualBattleStats, combatSignals, preScreenCandidates, evidence, classify, sortRows };
   })();
@@ -385,7 +392,7 @@
   const root = document.createElement('section');
   root.id = 'mm-bounty-hunter-v01';
   root.innerHTML = `
-    <div class="head"><div><h2>MM Bounty Hunter · Target Finder <small>v0.1.1-rc.3</small></h2><div class="sub">Official API only · uncertain battle stats stay uncertain · attacks are always manual</div></div>
+    <div class="head"><div><h2>MM Bounty Hunter · Target Finder <small>v0.1.1-rc.4</small></h2><div class="sub">Official API only · uncertain battle stats stay uncertain · attacks are always manual</div></div>
     <a href="https://wiki.torn.com/wiki/Rank" target="_blank" rel="noopener noreferrer">Rank methodology</a></div>
     <div class="controls">
       <label>Torn API key (public access)<input id="mm-bh-key" type="password" autocomplete="off" spellcheck="false" aria-label="Torn API key"></label>
@@ -527,8 +534,8 @@
       const mine = await api('/user/profile', { striptags: 'true' });
       const own = ENGINE.extractProfile(mine);
       state.myLevel = own?.level ?? null;
-      const ownId = mine?.player_id ?? mine?.id ?? mine?.profile?.player_id ?? mine?.profile?.id;
-      state.myId = Number.isSafeInteger(ownId) && ownId > 0 ? ownId : null;
+      const ownId = ENGINE.extractSelfId(mine);
+      state.myId = ownId;
       if (state.ownBattle && state.ownBattleOwnerId && state.myId && state.ownBattleOwnerId !== state.myId) {
         state.ownBattle = null; state.ownBattleSource = 'none'; state.ownBattleAt = 0; state.ownBattleOwnerId = null;
         el('mm-bh-own-status').textContent = 'The public key now identifies a different account. Previous four-stat evidence was cleared.';
@@ -653,8 +660,8 @@
       const publicIdentity = ENGINE.extractProfile(publicRaw);
       const scopedIdentity = ENGINE.extractProfile(scopedRaw);
       // Public and limited/custom keys MUST resolve the same player, not merely two plausible profiles.
-      const publicId = publicRaw?.profile?.id ?? publicRaw?.id;
-      const scopedId = scopedRaw?.profile?.id ?? scopedRaw?.id;
+      const publicId = ENGINE.extractSelfId(publicRaw);
+      const scopedId = ENGINE.extractSelfId(scopedRaw);
       if (!publicIdentity || !scopedIdentity || !Number.isSafeInteger(publicId) || publicId <= 0 || publicId !== scopedId) throw Error('Public and optional keys must belong to the same player. No private stats loaded');
       const stats = ENGINE.parseOwnBattleStats(await api('/user/battlestats', {}, privateKey));
       if (!stats) throw Error('Unexpected battlestats response; previous stats preserved');
