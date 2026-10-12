@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.21
+// @version      8.0.0-alpha.21.5
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@63d47b40c0cebf546032218d7166ad4e5b5cef18/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@b07cc05e6366f164f5f8e37dd00c1c98a7f47832/modular-suite/customers/MM_Customers.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@2c6f97157eb96b7c4fad09297c6f3e6b617f2205/modular-suite/customers/MM_Customers.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.21';
+  const VERSION='8.0.0-alpha.21.5';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -278,7 +278,7 @@
     const rows=await fetchSalesLogs((Date.now()-SALES_LOOKBACK_MS)/1000);
     let result=null;
     await updateCustomerState(draft=>{result=logic.importSalesEntries(draft,rows);return draft;});
-    const newCustomerIds=Object.keys(state?.customers||{}).filter(id=>!beforeIds.has(id));
+    const newCustomerIds=Object.keys(state?.customers||{}).filter(id=>!beforeIds.has(id)&&state.customers[id]?.firstObservedAt);
     const resolved=await resolveMissingUsernames(USERNAME_RESOLVE_BATCH);
     return {...result,newCustomers:newCustomerIds.length,resolvedNames:resolved};
   }
@@ -286,7 +286,7 @@
   function newCustomerRows(){
     return logic.customerRfmRows(state||{})
       .filter(row=>!state?.removedCustomers?.[row.id])
-      .filter(row=>!row.contacted&&!row.firstMessageSent&&!n(row.messageCount))
+      .filter(row=>row.segment==='NEW'&&!row.contacted&&!row.firstMessageSent&&!n(row.messageCount))
       .sort((a,b)=>(Date.parse(b.firstPurchase||b.createdAt||0)||0)-(Date.parse(a.firstPurchase||a.createdAt||0)||0));
   }
 
@@ -398,6 +398,10 @@
       state?.coupons?.[id]?.playerName||
       ''
     ).trim();
+    const unresolved=GM_getValue(PENDING_SEND_KEY,null);
+    if(unresolved&&unresolved.playerId){
+      throw new Error('Unresolved delivery for '+String(unresolved.recipientName||unresolved.playerId)+'. Check Torn Outbox and confirm or cancel tracking before preparing another message. Previous delivery state was preserved.');
+    }
     const composeId='cu-compose-'+createdAt+'-'+id+'-'+Math.random().toString(36).slice(2,8);
     const payload={composeId,playerId:id,recipientName,subject:String(subject||''),body:String(body||''),bodyHtml:String(bodyHtml||''),createdAt};
     GM_setValue(PENDING_COMPOSE_KEY,payload);
@@ -432,14 +436,15 @@
       };
     }
     const first=!customer?.contacted&&!customer?.firstMessageSent&&!n(customer?.messageCount);
-    const greeting=(first?'WELCOME TO ':'WELCOME BACK TO ')+SHOP_NAME+', '+name+'!';
+    const newlyObserved=first&&Boolean(customer?.firstObservedAt);
+    const greeting=(newlyObserved?'WELCOME TO ':'WELCOME BACK TO ')+SHOP_NAME+', '+name+'!';
     const columns=[
       {title:'HOW IT WORKS',lines:['1. Buy normally from my Bazaar','2. Message me your coupon code','3. I verify the purchase','4. Cashback is sent']},
       {title:'CASHBACK TIERS',lines:['$50,000+ → $5,000 cashback','$250,000+ → $10,000 cashback','$1,000,000+ → $20,000 cashback']},
       {title:'IMPORTANT',lines:['Purchases must be made after the coupon is issued','Qualifying purchases remain eligible for 24 hours','Each sale can only be used once']}
     ];
     const footer=['Reply RESTOCK to receive restock notifications.','Reply STOP at any time to leave the notification list.'];
-    const subject=first?'Welcome to '+SHOP_NAME+'!':'Welcome Back to '+SHOP_NAME+'!';
+    const subject=newlyObserved?'Welcome to '+SHOP_NAME+'!':'Welcome Back to '+SHOP_NAME+'!';
     return {
       subject,
       body:plainMessageText({customerName:name,greeting,centerText:'Coupon: '+coupon.code,rightText:remaining+' redemption'+(remaining===1?'':'s')+' remaining',columns,footerTitle:'RESTOCK ALERTS',footerLines:footer,couponCode:coupon.code}),
@@ -990,10 +995,7 @@
 
     const initial=GM_getValue(PENDING_SEND_KEY,null);
     const id=String(initial?.playerId||'').trim(),createdAt=Number(initial?.createdAt||0);
-    if(!id||!createdAt||Date.now()-createdAt>PENDING_DELIVERY_TTL_MS){
-      if(initial)GM_deleteValue(PENDING_SEND_KEY);
-      return;
-    }
+    if(!id||!createdAt)return; // Never delete uncertain send evidence on age alone.
 
     const detectorKey=String(initial?.deliveryId||createdAt+'-'+id);
     let active=true,expiryTimer=null,verifying=false;
@@ -1091,12 +1093,8 @@
     document.addEventListener('click',clickHandler,true);
     document.addEventListener('submit',submitHandler,true);
 
-    const remaining=Math.max(0,PENDING_DELIVERY_TTL_MS-(Date.now()-createdAt));
-    expiryTimer=setTimeout(()=>{
-      const pending=currentPending();
-      if(pending&&Date.now()-Number(pending.createdAt||0)>=PENDING_DELIVERY_TTL_MS)GM_deleteValue(PENDING_SEND_KEY);
-      cleanup();
-    },remaining+1000);
+    // Pending deliveries persist across navigation/reload until confirmed or
+    // explicitly cancelled after Outbox review. No age-based auto-clear.
 
     if(Number(initial.sendClickedAt||0)&&initial.state==='send-clicked')verifyDeliveryAfterSend();
   }
@@ -1140,9 +1138,10 @@
       const realName=hasRealUsername(row),displayName=realName?row.name:'Resolving name…';
       const firstContact=!row.contacted&&!row.firstMessageSent&&!n(row.messageCount);
       return '<details class="mm-cu-member"><summary><span><b>'+esc(displayName)+'</b> <span class="mm-cu-muted">['+esc(row.id)+'] · '+esc(row.segment)+'</span></span><span class="mm-cu-muted">'+money(row.monetary)+' · '+fmt(row.frequency)+' purchase(s)</span></summary>'+
-        '<div class="mm-cu-detail"><div class="mm-cu-tiles">'+tile('SPENT',money(row.monetary))+tile('UNITS',fmt(row.units))+tile('LAST',when(row.lastPurchase))+tile('COUPON',coupon?.code||'—')+tile('USES LEFT',fmt(logic.couponRemaining(coupon)))+tile('CASHBACK',q.qualified?money(q.cashback):q.reason)+'</div>'+
+        '<div class="mm-cu-detail">'+(row.historyBaseline?'<div class="mm-cu-warn mm-cu-mini" style="margin-bottom:4px;">Historical customer totals preserved from older records. Individual older sale details may be incomplete; cashback uses only verified post-coupon sales.</div>':'<div class="mm-cu-muted" style="margin-bottom:4px;">Recorded sales only; older purchases may be absent from the local ledger (automatic sync covers the last 72 hours).</div>')+'<div class="mm-cu-tiles">'+tile('RECORDED PURCHASES',fmt(row.frequency))+tile('RECORDED SPENT',money(row.monetary))+tile('UNITS',fmt(row.units))+tile('FIRST',row.firstPurchase?when(row.firstPurchase):'Unknown')+tile('LAST',when(row.lastPurchase))+tile('COUPON',coupon?.code||'—')+tile('USES LEFT',fmt(logic.couponRemaining(coupon)))+tile('CASHBACK',q.qualified?money(q.cashback):q.reason)+'</div>'+
         '<div class="mm-cu-actions" style="margin-top:5px;">'+
-          '<button data-welcome="'+esc(row.id)+'" style="'+button(true)+'">'+(firstContact?'Prepare Welcome':'Prepare Message')+'</button>'+
+          '<button data-welcome="'+esc(row.id)+'" style="'+button(true)+'">'+(firstContact&&row.segment==='NEW'?'Prepare Welcome':'Prepare Message')+'</button>'+
+          (firstContact?'<button data-reconcile-welcome="'+esc(row.id)+'" style="'+button()+'">Verify Prior Send</button>':'')+
           (coupon?.issuedAt?'<button data-reminder="'+esc(row.id)+'" style="'+button(q.qualified)+'">Coupon Reminder</button>':'')+
           '<button data-subscribe="'+esc(row.id)+'" style="'+button()+'">'+(sub?'Restock−':'Restock+')+'</button>'+
           (q.qualified?'<button data-refund-start="'+esc(row.id)+'" style="'+button(true)+'">Create Cashback</button>':'')+
@@ -1157,7 +1156,7 @@
   }
 
   function newCustomersHtml(){
-    return customerRowsHtml(newCustomerRows(),'No new customers require first-contact follow-up.');
+    return customerRowsHtml(newCustomerRows(),'No first-observed new customers require first-contact follow-up. Existing uncontacted customers remain in Customers.');
   }
 
   function couponsHtml(){
@@ -1221,15 +1220,14 @@
   function pendingDeliveryHtml(){
     const pending=GM_getValue(PENDING_SEND_KEY,null);
     if(!pending||typeof pending!=='object')return '';
-    if(Date.now()-Number(pending.createdAt||0)>PENDING_DELIVERY_TTL_MS)return '';
     const customer=state?.customers?.[String(pending.playerId||'').trim()];
     const name=customer?.name||pending.playerId||'customer';
     const stateLabel=pending.state==='send-unconfirmed'?'SEND CLICK UNCONFIRMED':pending.state==='send-clicked'?'WAITING FOR TORN CONFIRMATION':'DRAFT PREPARED';
     return card('<div class="mm-cu-row"><div class="mm-cu-main"><b>Pending delivery · '+esc(name)+'</b><div class="mm-cu-muted">'+esc(stateLabel)+' · '+esc(pending.subject||'')+'</div>'+
-      (pending.state==='send-unconfirmed'?'<div class="mm-cu-warn mm-cu-mini" style="margin-top:3px;">Torn did not provide confirmation. Customer state was left unchanged; verify Outbox before confirming or resending.</div>':'')+
+      '<div class="mm-cu-warn mm-cu-mini" style="margin-top:3px;">Further CRM messages are blocked until this delivery is resolved. Inspect Torn Outbox before confirming or cancelling. Do not resend an unconfirmed message.</div>'+
       '</div><div class="mm-cu-actions">'+
-      (pending.state!=='send-clicked'?'<button data-pending-reopen="1" style="'+button(true)+'">Reopen Draft</button>':'')+
-      (pending.state==='send-unconfirmed'?'<button data-pending-confirm="1" style="'+button()+'">Confirm Sent</button>':'')+
+      (pending.state==='awaiting-send'?'<button data-pending-reopen="1" style="'+button(true)+'">Reopen Draft</button>':'')+
+      ((pending.state==='send-unconfirmed'||pending.state==='send-clicked')?'<button data-pending-confirm="1" style="'+button()+'">Confirm Sent</button>':'')+
       '<button data-pending-cancel="1" style="'+button()+'">Cancel Tracking</button></div></div>');
   }
 
@@ -1292,8 +1290,8 @@
     };
     root.querySelector('[data-pending-reopen]')?.addEventListener('click',()=>{
       const pending=GM_getValue(PENDING_SEND_KEY,null);if(!pending)return;
-      if(pending.state==='send-clicked'){
-        statusText='Torn send verification is still running. Wait for confirmation before reopening.';
+      if(pending.state!=='awaiting-send'){
+        statusText='Send outcome may be unknown. Check Torn Outbox and resolve tracking before reopening.';
         render();
         return;
       }
@@ -1314,8 +1312,11 @@
       try{window.location.assign(url);}catch{location.href=url;}
     });
     root.querySelector('[data-pending-cancel]')?.addEventListener('click',()=>{
+      const pending=GM_getValue(PENDING_SEND_KEY,null);
+      if(!pending)return;
+      if(!confirm('Verify Torn Outbox first. Cancel tracking ONLY if this message was not sent. Cancel without marking the customer contacted?'))return;
       GM_deleteValue(PENDING_SEND_KEY);GM_deleteValue(PENDING_COMPOSE_KEY);
-      statusText='Pending message tracking cancelled. Customer state was not changed.';render();
+      statusText='Tracking cancelled after operator confirmation. Customer state was not changed.';render();
     });
     root.querySelector('[data-pending-confirm]')?.addEventListener('click',()=>run('Confirming sent message…',async()=>{
       const pending=GM_getValue(PENDING_SEND_KEY,null);if(!pending)throw new Error('No pending delivery.');
@@ -1325,6 +1326,7 @@
     }));
     root.querySelectorAll('[data-recover-unsent]').forEach(b=>b.addEventListener('click',()=>run('Restoring unsent first contact…',async()=>{
       const id=String(b.dataset.recoverUnsent||'').trim();
+      if(!confirm('Only restore if you verified in Torn Outbox that this welcome was NOT sent. Restoring will permit another welcome. Continue?'))return 'Recovery cancelled.';
       await updateCustomerState(draft=>{
         const customer=draft.customers?.[id];if(!customer)throw new Error('Customer not found.');
         if(n(customer.messageCount)!==1||!customer.firstMessageSent)throw new Error('Customer no longer matches first-contact recovery criteria.');
@@ -1359,6 +1361,27 @@
       render();
     });
 
+    root.querySelectorAll('[data-reconcile-welcome]').forEach(b=>b.addEventListener('click',()=>run('Reconciling verified Outbox delivery…',async()=>{
+      const id=String(b.dataset.reconcileWelcome||'').trim();
+      const customer=state?.customers?.[id];
+      if(!customer)throw new Error('Customer not found.');
+      const pending=GM_getValue(PENDING_SEND_KEY,null);
+      if(pending&&String(pending.playerId||'')===id){
+        throw new Error('Pending delivery exists for this customer. Resolve the pending delivery confirmation instead.');
+      }
+      if(!confirm('Verify Torn Outbox first: at least one message was actually sent to '+String(customer.name||id)+' ['+id+']. This records MINIMUM one confirmed contact (not a claim that only one was sent). Continue?'))return 'No changes.';
+      await updateCustomerState(draft=>{
+        const current=draft.customers?.[id];
+        if(!current)throw new Error('Customer not found.');
+        current.contacted=true;
+        current.firstMessageSent=true;
+        current.messageCount=Math.max(1,n(current.messageCount));
+        current.lastContacted=current.lastContacted||new Date().toISOString();
+        const coupon=logic.ensureCoupon(draft,current);
+        if(hasRealUsername(current))coupon.playerName=current.name;
+      });
+      return 'Verified prior delivery recorded (at least one contact). Welcome queue cleared for this customer.';
+    })));
     root.querySelectorAll('[data-welcome]').forEach(b=>b.addEventListener('click',()=>run('Preparing customer message…',async()=>{
       const id=b.dataset.welcome;
       let customer=state?.customers?.[id];if(!customer)throw new Error('Customer not found.');
