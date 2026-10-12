@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         MM_Customers
 // @namespace    manic-mike.torn.customers
-// @version      8.0.0-alpha.21.3
+// @version      8.0.0-alpha.21.4
 // @description  Dedicated customer CRM: Bazaar sales history, coupons, cashback, restock subscribers and manual customer messaging.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
 // @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@63d47b40c0cebf546032218d7166ad4e5b5cef18/modular-suite/core/MM_Torn_Core.js
-// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@32b6c41afbca4265160d1f0a0fe14a320d7e789c/modular-suite/customers/MM_Customers.logic.js
+// @require      https://cdn.jsdelivr.net/gh/tuccijr75/privacy-policy@5cbe5bee13d3bc204805262ddee8f2240a95f87d/modular-suite/customers/MM_Customers.logic.js
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -17,7 +17,7 @@
 (() => {
   'use strict';
 
-  const VERSION='8.0.0-alpha.21.3';
+  const VERSION='8.0.0-alpha.21.4';
   const ROOT_ID='mm-customers';
   const LAUNCHER_ID='mm-customers-launcher';
   const STYLE_ID='mm-customers-style';
@@ -1138,7 +1138,7 @@
       const realName=hasRealUsername(row),displayName=realName?row.name:'Resolving name…';
       const firstContact=!row.contacted&&!row.firstMessageSent&&!n(row.messageCount);
       return '<details class="mm-cu-member"><summary><span><b>'+esc(displayName)+'</b> <span class="mm-cu-muted">['+esc(row.id)+'] · '+esc(row.segment)+'</span></span><span class="mm-cu-muted">'+money(row.monetary)+' · '+fmt(row.frequency)+' purchase(s)</span></summary>'+
-        '<div class="mm-cu-detail"><div class="mm-cu-tiles">'+tile('SPENT',money(row.monetary))+tile('UNITS',fmt(row.units))+tile('LAST',when(row.lastPurchase))+tile('COUPON',coupon?.code||'—')+tile('USES LEFT',fmt(logic.couponRemaining(coupon)))+tile('CASHBACK',q.qualified?money(q.cashback):q.reason)+'</div>'+
+        '<div class="mm-cu-detail">'+(row.historyBaseline?'<div class="mm-cu-warn mm-cu-mini" style="margin-bottom:4px;">Historical customer totals preserved from older records. Individual older sale details may be incomplete; cashback uses only verified post-coupon sales.</div>':'<div class="mm-cu-muted" style="margin-bottom:4px;">Recorded sales only; older purchases may be absent from the local ledger (automatic sync covers the last 72 hours).</div>')+'<div class="mm-cu-tiles">'+tile('RECORDED PURCHASES',fmt(row.frequency))+tile('RECORDED SPENT',money(row.monetary))+tile('UNITS',fmt(row.units))+tile('FIRST',row.firstPurchase?when(row.firstPurchase):'Unknown')+tile('LAST',when(row.lastPurchase))+tile('COUPON',coupon?.code||'—')+tile('USES LEFT',fmt(logic.couponRemaining(coupon)))+tile('CASHBACK',q.qualified?money(q.cashback):q.reason)+'</div>'+
         '<div class="mm-cu-actions" style="margin-top:5px;">'+
           '<button data-welcome="'+esc(row.id)+'" style="'+button(true)+'">'+(firstContact&&row.segment==='NEW'?'Prepare Welcome':'Prepare Message')+'</button>'+
           (firstContact?'<button data-reconcile-welcome="'+esc(row.id)+'" style="'+button()+'">Verify Prior Send</button>':'')+
