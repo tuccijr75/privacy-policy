@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-pda.14
+// @version      2.2.0-pda.18
 // @description  Complete self-contained TornPDA Bazaar Ledger; native API key and supported remote update notifications.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -21,10 +21,10 @@
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.2.0-pda.14';
+ const VERSION='2.2.0-pda.18';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
- const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY','acquisitionCursor','acquisitionEvidence'].map(x=>prefix+x);
+ const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY','acquisitionCursor','acquisitionEvidence','ownerPurchaseEvidence'].map(x=>prefix+x);
  const cache=await PDA_storage.getMany(keys);
  const read=k=>String(cache[prefix+k] ?? '');
  const save=async(k,v)=>{const value=String(v??'').trim();await PDA_storage.set(prefix+k,value);cache[prefix+k]=value;};
@@ -42,6 +42,16 @@
  // New pipeline starts at install time so legacy manually logged sales are not double counted.
  if(!read('v2SaleStart')) await save('v2SaleStart',Date.now()-120000);
  let state=null,working=false,opened=false,status='Not connected',lastTrades=0,lastLogs=0,lastBazaar=0,lastPurchaseResult='Not scanned on this device';
+ let ownerReview=null;
+ try {
+   const storedReview=read('ownerPurchaseEvidence');
+   if(storedReview.length<=300000){
+     const parsed=JSON.parse(storedReview);
+     if(parsed&&Array.isArray(parsed.reviews)&&Number.isSafeInteger(parsed.ownerId))
+       ownerReview=parsed;
+   }
+ }catch(_){ownerReview=null;}
+ 
  const scannedTradeIds=new Set();
  const itemNames=new Map();
  const minutes=n=>n*60000;
@@ -442,12 +452,12 @@
    return {sourceId:String(log.id),itemId:id,uid:isPositive(numeric(item.uid))?numeric(item.uid):null,qty,unitPrice:each,gross,timestamp};
  }
  function saleDecision(s,lots){
-   const sameItem=lots.filter(l=>l.status==='confirmed'&&l.itemId===s.itemId);
-   const possible=sameItem.filter(l=>(l.uid==null||l.uid===s.uid)
+   const sameItem=lots.filter(l=>['confirmed','received_pending','awaiting_cost'].includes(l.status)&&l.itemId===s.itemId);
+   const possible=sameItem.filter(l=>l.status==='confirmed'&&(l.uid==null||l.uid===s.uid)
      &&l.qty-l.sold-l.returned>=s.qty&&l.unitCost!==null
      &&new Date(l.confirmedAt).getTime()<=s.timestamp*1000+300000);
    const viable=possible.filter(l=>l.unitCost<=s.unitPrice);
-   if(viable.length===1)return {op:'sale_import',lotId:viable[0].id};
+   if(viable.length===1)return {op:'sale_pending',reason:'Owner purchase review required before partnership payout'};
    if(sameItem.length)return {op:'sale_pending',reason:viable.length>1?
      'Multiple eligible inventory lots':'Quantity, price, or inventory-cost conflict'};
    return null;
@@ -498,9 +508,112 @@
    }
    return all;
  }
+ function ownerReviewFingerprint(data){
+   if(!data)return '';
+   return JSON.stringify({
+     partnership:data.partnership?[data.partnership.ownerId,data.partnership.morpheusId]:null,
+     lots:(data.lots||[]).map(l=>[l.id,l.itemId,l.uid,l.qty,l.sold,l.returned,l.status,l.mode,l.unitCost,l.confirmedAt]),
+     exceptions:(data.exceptions||[]).map(x=>[x.id,x.itemId,x.uid,x.qty,x.remainingQty,x.allocatedQty,x.excludedQty,x.at]),
+     sales:(data.sales||[]).map(x=>[x.sourceId,x.lotId,x.itemId,x.qty,x.at]),
+     exclusions:(data.exclusions||[]).map(x=>[x.sourceId,x.itemId,x.qty,x.at])
+   });
+ }
+ function reviewOwnerPurchaseMatches(exceptions,purchases,lots=[],historicalSales=[]){
+   const reviews=[],claims=new Map();
+   for(const sale of exceptions){
+     if(sale.status!=='pending')continue;
+     const at=Date.parse(sale.at||sale.soldAt||sale.date);
+     const qty=Number(sale.remainingQty??sale.qty),itemId=Number(sale.itemId);
+     if(!Number.isFinite(at)||!Number.isSafeInteger(qty)||qty<=0||
+        !Number.isSafeInteger(itemId)||itemId<=0)continue;
+     const candidates=purchases.filter(p=>
+       p.itemId===itemId&&Number.isSafeInteger(p.qty)&&p.qty>0&&
+       Number.isSafeInteger(p.timestamp)&&p.timestamp*1000<=at+300000&&
+       (sale.uid==null?p.uid==null:p.uid===sale.uid));
+     for(const p of candidates){
+       const key=p.logType+':'+p.logId;
+       claims.set(key,(claims.get(key)||0)+1);
+     }
+     reviews.push({sourceId:sale.id,itemId,qty,candidates:candidates.map(p=>({
+       logId:p.logId,logType:p.logType,qty:p.qty,unitCost:p.unitCost,timestamp:p.timestamp
+     }))});
+   }
+   for(const review of reviews){
+     const sale=exceptions.find(x=>x.id===review.sourceId);
+     const previousExclusions=Math.max(0,Number(sale.excludedQty)||0);
+     const total=review.candidates.reduce((n,p)=>n+p.qty,0);
+     review.priorExcludedQty=previousExclusions;
+     review.coveredQty=Math.min(review.qty,Math.max(0,total-previousExclusions));
+     review.uncoveredQty=review.qty-review.coveredQty;
+     const soldAt=Date.parse(sale.at||sale.soldAt||sale.date);
+     const relevantLots=lots.filter(l=>l.itemId===review.itemId&&
+       (sale.uid==null?l.uid==null:l.uid===sale.uid)&&
+       Date.parse(l.createdAt)<=soldAt+300000&&
+       l.qty-l.sold-l.returned>0);
+     review.currentSupplierUnallocatedQty=relevantLots.filter(l=>
+       l.status==='confirmed'&&(l.mode==='supplier'||l.mode==='earned'))
+       .reduce((n,l)=>n+l.qty-l.sold-l.returned,0);
+     review.supplierEvidencePendingQty=relevantLots.filter(l=>
+       l.status==='received_pending'||l.status==='awaiting_cost')
+       .reduce((n,l)=>n+l.qty-l.sold-l.returned,0);
+     review.competingSupplierEvidence=review.candidates.length>0&&
+       (review.currentSupplierUnallocatedQty>0||review.supplierEvidencePendingQty>0);
+     review.priorSaleClaimCount=historicalSales.filter(s=>
+       s.sourceId!==review.sourceId&&s.itemId===review.itemId&&
+       review.candidates.some(p=>p.timestamp*1000<=Date.parse(s.at)+300000)
+     ).length;
+     review.status=review.candidates.length===0?'no_purchase_evidence':
+       review.competingSupplierEvidence||review.priorSaleClaimCount>0||review.candidates.length>1||
+       review.candidates.some(p=>claims.get(p.logType+':'+p.logId)>1)?'ambiguous':
+       review.uncoveredQty>0?'partial_evidence':'candidate_only';
+   }
+   return reviews;
+ }
+  async function scanOwnerPurchaseEvidence(){
+   if(state?.role!=='owner')throw Error('Owner purchase evidence requires owner role');
+   const ownerId=await verifyKey();
+   if(state.partnership&&ownerId!==state.partnership.ownerId)throw Error('Owner Torn key does not match partnership');
+   const unresolved=state.exceptions.filter(x=>x.status==='pending');
+   const wanted=new Set(unresolved.map(x=>Number(x.itemId)));
+   if(!wanted.size)return {found:0,scanned:0};
+   const floor=Math.floor(Date.now()/1000)-120*86400,records=new Map();
+   let scanned=0;
+   for(const type of [1112,1225,4200,4201]){
+     const initial='https://api.torn.com/v2/user/log?'+
+       new URLSearchParams({log:String(type),from:String(floor),limit:'100',key:cfg().torn});
+     let url=initial;const visited=new Set();
+     for(let page=0;page<12&&url;page++){
+       if(visited.has(url))throw Error('Repeated owner purchase cursor');
+       visited.add(url);
+       const response=await request(url);
+       if(!Array.isArray(response.log))throw Error('Invalid owner purchase log response');
+       scanned+=response.log.length;
+       for(const raw of response.log){
+         const purchase=parsePurchaseLog(raw,type);
+         if(purchase&&wanted.has(purchase.itemId))
+           records.set(type+':'+purchase.logId,purchase);
+       }
+       const next=response._metadata?.links?.next||null;
+       if(!next&&response.log.length>=100)
+         throw Error('Owner purchase scan incomplete: full page without continuation');
+       if(next&&page===11)throw Error('Owner purchase scan exceeds 12 pages');
+       url=next?trustedLogContinuation(next,cfg().torn,type).href:null;
+     }
+   }
+   if(records.size>500)throw Error('Owner purchase evidence exceeds 500 matching receipts; review incomplete');
+   const matches=[...records.values()].sort((a,b)=>a.timestamp-b.timestamp);
+   const reviews=reviewOwnerPurchaseMatches(unresolved,matches,state.lots,[...state.sales,...(state.exclusions||[])]);
+   const payload={ownerId,fetchedAt:new Date().toISOString(),scanned,matches,reviews,ledgerFingerprint:ownerReviewFingerprint(state)};
+   await save('ownerPurchaseEvidence',JSON.stringify(payload));
+   ownerReview=payload;
+   return {found:matches.length,scanned,candidates:reviews.filter(x=>x.status==='candidate_only').length,
+     partial:reviews.filter(x=>x.status==='partial_evidence').length,
+     conflicts:reviews.filter(x=>x.competingSupplierEvidence).length,
+     ambiguous:reviews.filter(x=>x.status==='ambiguous').length};
+ }
  async function syncSales(){
    if(state?.role!=='owner')return 0;
-   const lots=state.lots.filter(l=>l.status==='confirmed'&&isPositive(l.itemId)&&l.qty>l.sold+l.returned);
+   const lots=state.lots.filter(l=>['confirmed','received_pending','awaiting_cost'].includes(l.status)&&isPositive(l.itemId)&&l.qty>l.sold+l.returned);
    if(!lots.length)return 0;
    // Long-running inventory may need extended backfill. Look back at least 30 days; paginate to avoid lost sales.
    const first=Math.min(...lots.map(l=>new Date(l.confirmedAt||l.createdAt).getTime()));
@@ -509,7 +622,7 @@
    const all=await readSaleLogPages(url,request,cfg().torn);
    all.sort((a,b)=>a.timestamp-b.timestamp||String(a.id).localeCompare(String(b.id)));
    let count=0,exceptions=0,unparsed=0;
-   const recorded=new Set([...state.sales.map(x=>x.sourceId),...state.exceptions.map(x=>x.id)]);
+   const recorded=new Set([...state.sales.map(x=>x.sourceId),...(state.usedSaleSources||[])]);
    for(const log of all){
      const s=parseBazaarLog(log);if(!s)continue;if(s.skip){unparsed++;continue;}
      if(recorded.has(s.sourceId))continue;
@@ -634,9 +747,38 @@
    if(s){html+=`<section><div class="muted">Signed in: <b>${role==='owner'?'Bazaar Owner':'Morpheus'}</b> • Business day ${esc(s.openDay)} (19:00 ET cutoff)</div><div class="metrics"><div><span class="muted">${role==='owner'?'Expected to pay':'Expected pay'} — today</span><strong class="num">${money(s.current.morpheusDue)}</strong></div><div><span class="muted">${role==='owner'?'Daily expected to pay':'Daily expected'} — last close</span><strong class="num">${money(s.lastClosed.morpheusDue)}</strong></div><div><span class="muted">Lifetime unpaid balance</span><strong class="num">${money(s.remaining)}</strong></div></div><div class="metrics" style="margin-top:9px"><div><span class="muted">Today's gross sales</span><strong>${money(s.current.gross)}</strong></div><div><span class="muted">Today's net profit</span><strong>${money(s.current.profit)}</strong></div><div><span class="muted">Your earnings today</span><strong>${money(role==='owner'?s.current.ownerProfit:s.current.morpheusProfit)}</strong></div></div><p class="muted"><b>Today:</b> ${money(s.current.morpheusProfit)} Morpheus profit + ${money(s.current.capitalDue)} capital reimbursement = ${money(s.current.morpheusDue)} total payable. <b>Last close:</b> ${money(s.lastClosed.morpheusProfit)} profit + ${money(s.lastClosed.capitalDue)} capital = ${money(s.lastClosed.morpheusDue)} payable. Lifetime debt survives rollover. Cash transfers remain manual.</p></section>`;
      if(role==='supplier')html+=`<section><b>Purchase cost sync</b><p class="muted">${esc(lastPurchaseResult)}. The script automatically checks TornPDA's API key, scans permitted purchase logs, and selects an existing override only if necessary. No separate key entry is needed when TornPDA's key has sufficient access.</p></section>`;
      if(role==='supplier')html+=`<section><b>Optional: source a purchase lead</b><form id="newlot"><div class="grid"><div><label>Item name</label><input name="name" required></div><div><label>Torn Item ID (required to auto-verify trades)</label><input name="itemId" type="number" min="1" required></div><div><label>Quantity</label><input name="qty" type="number" min="1" required></div><div><label>My buy cost per unit ($)</label><input name="cost" placeholder="Can fill in later"></div><div><label>Funding</label><select name="mode"><option value="supplier">I purchased — 50/50 profit</option><option value="owner">Owner purchases my lead — sourcing fee</option></select></div><div><label>Sourcing fee (%) if owner-funded</label><input name="fee" type="number" value="20" min="0" max="100"></div><div><label>Item UID (optional, for unique equipment)</label><input name="uid" type="number" min="1"></div></div><label>Notes</label><textarea name="note"></textarea><button>Submit to shared ledger</button></form><p class="muted">For an ordinary item transfer, no submission is needed: trade directly and the owner scanner imports it. Only sourcing leads need this form.</p><button data-action="trade">Open partner's Torn profile to trade</button></section>`;
-     if(role==='owner')html+=`<section><b>Trade & sale reconciliation</b><p class="muted">Only completed item transfers from the configured Morpheus account are eligible for partnership inventory. Morpheus acquisition logs automatically classify verified purchases at actual cost or verified finds/rewards at $0. Ambiguous evidence remains financially inactive. Only your Bazaar sale logs are scanned (Torn log 1226).</p><button data-action="trade">Open Morpheus's profile</button> <button data-action="scan">Check trades & sales now</button> <p class="muted">Last trade scan: ${lastTrades?new Date(lastTrades).toLocaleString():'not yet'} · Last sale scan: ${lastLogs?new Date(lastLogs).toLocaleString():'not yet'}</p></section>`;
+     if(role==='owner')html+=`<section><b>Trade & sale reconciliation</b><p class="muted">Only completed item transfers from the configured Morpheus account are eligible for partnership inventory. Morpheus acquisition logs automatically classify verified purchases at actual cost or verified finds/rewards at $0. Ambiguous evidence remains financially inactive. Only your Bazaar sale logs are scanned (Torn log 1226).</p><button data-action="trade">Open Morpheus's profile</button> <button data-action="scan">Check trades & sales now</button> <button data-action="ownerEvidence">Check my purchases</button> <p class="muted">Last trade scan: ${lastTrades?new Date(lastTrades).toLocaleString():'not yet'} · Last sale scan: ${lastLogs?new Date(lastLogs).toLocaleString():'not yet'}</p></section>`;
      html+=`<section><details open><summary>Inventory lots (${state.lots.length})</summary><div class="scroll">${state.lots.map(itemRow).join('')||'No inventory yet'}</div></details></section>`;
-     if(state.exceptions?.length)html+=`<section><details open><summary>Unmatched Bazaar sales (${state.exceptions.length}) — action required</summary>${state.exceptions.map(x=>`<div class="line"><b>Sale ${esc(x.id)}</b> • Item #${x.itemId} • ${x.qty} × ${money(x.unitPrice)}<div class="critical">${esc(x.reason)}</div>${role==='owner'?`<button data-action="reconcile" data-id="${esc(x.id)}">Assign to inventory lot</button>`:''}</div>`).join('')}</details></section>`;
+     const verifiedMorpheusLot=l=>state.partnership&&l.tradeRef&&l.senderId===state.partnership.morpheusId&&l.status==='confirmed'&&['supplier','earned'].includes(l.mode)&&((l.purchaseParts&&l.purchaseParts.length)||(l.originParts&&l.originParts.length));
+     if(state.exceptions?.length)html+=`<section><details open><summary>Sale ownership and financial reconciliation (${state.exceptions.length}) — ${state.exceptions.filter(x=>x.ownership!=='morpheus_owner_confirmed').length} ownership open; ${state.exceptions.length} financial allocations pending</summary>${role==='owner'&&state.exceptions.some(x=>x.ownership!=='morpheus_owner_confirmed')?'<button data-action="confirmOwnership">Confirm outstanding sales as Morpheus-owned</button>':''}${state.exceptions.map(x=>{
+       const remaining=x.remainingQty??x.qty,matched=state.lots.filter(l=>l.status==='confirmed'&&l.itemId===x.itemId&&
+         (l.uid==null||l.uid===x.uid)&&l.unitCost!==null&&l.unitCost<=x.unitPrice&&
+         l.qty-l.sold-l.returned>0&&new Date(l.confirmedAt).getTime()<=new Date(x.at).getTime()+300000);
+       const eligible=matched.filter(l=>x.ownership!=='morpheus_owner_confirmed'||verifiedMorpheusLot(l)).reduce((n,l)=>n+Math.min(remaining,l.qty-l.sold-l.returned),0);
+       const evidencePending=state.lots.filter(l=>l.itemId===x.itemId&&
+         (l.uid==null||l.uid===x.uid)&&['received_pending','awaiting_cost'].includes(l.status)&&
+         l.qty-l.sold-l.returned>0&&new Date(l.createdAt).getTime()<=new Date(x.at).getTime()+300000)
+         .reduce((n,l)=>n+(l.qty-l.sold-l.returned),0);
+       const freshReview=role==='owner'&&ownerReview?.ownerId===state.partnership?.ownerId&&
+         Date.now()-Date.parse(ownerReview.fetchedAt)<=minutes(15)&&ownerReview.ledgerFingerprint===ownerReviewFingerprint(state);
+       const review=freshReview?ownerReview.reviews.find(r=>r.sourceId===x.id&&r.qty===remaining):null;
+       const proofLine=review?
+         '<div class="muted">Owner purchase review: '+esc(review.status)+
+         ' · possible coverage '+review.coveredQty+'/'+remaining+
+         ' · supplier unallocated '+review.currentSupplierUnallocatedQty+
+         ' · supplier pending '+review.supplierEvidencePendingQty+
+         ' · prior sale claims '+review.priorSaleClaimCount+
+         ' · candidate receipts '+review.candidates.length+
+         ' (purchase evidence only; not proven sale ownership)</div>':
+         '<div class="muted">Owner purchase review missing or older than 15 minutes. Run Check my purchases.</div>';
+       return `<div class="line"><b>Sale ${esc(x.id)}</b> • Item #${x.itemId} • originally ${x.qty} × ${money(x.unitPrice)}
+         <div class="muted">${x.allocatedQty||0} partnership units assigned · ${x.excludedQty||0} marked outside partnership · <b>${remaining} remain unresolved</b></div>
+         <div class="muted">${x.ownership==='morpheus_owner_confirmed'?'Morpheus ownership confirmed; cost/lot allocation pending':esc(x.reason)}</div>
+         ${role==='owner'&&x.ownership!=='morpheus_owner_confirmed'?proofLine:''}
+         ${role==='owner'&&eligible&&(x.ownership==='morpheus_owner_confirmed'||(review&&review.candidates.length===0))?`<button data-action="allocate" data-id="${esc(x.id)}">Assign up to ${Math.min(eligible,remaining)} documented unit(s)</button>`:''}
+         ${role==='owner'&&x.ownership!=='morpheus_owner_confirmed'&&!evidencePending&&!eligible&&review&&(review.status==='candidate_only'||review.status==='partial_evidence')&&review.coveredQty>0?`<button data-action="exclude" data-id="${esc(x.id)}">Review ${Math.min(remaining,review.coveredQty)} owner-funded unit(s) for documented exclusion</button>`:''}
+         ${evidencePending?`<span class="critical">Morpheus inventory exists but acquisition evidence is unresolved (${evidencePending} pending same-item unit(s)). Do not exclude this sale on the basis of missing prices. Resolve provenance first.</span>`:(!eligible?'<span class="muted">No eligible priced partner inventory is currently available; inspect historical receipts before any exclusion.</span>':'')}</div>`;
+     }).join('')}</details></section>`;
      if(role==='owner')html+=`<section><b>Payment after sending Torn cash</b><form id="payment"><div class="grid"><div><label>Amount sent</label><input name="amount" type="number" min="1" max="${s.remaining}" required></div><div><label>Torn reference</label><input name="reference"></div></div><button ${s.remaining<=0?'disabled':''}>Record payment sent</button></form></section>`;
      html+=`<section><details><summary>Payments (${state.payments.length})</summary>${state.payments.map(p=>`<div class="line">${money(p.amount)} • ${esc(p.at)} • ${p.acknowledged?'Acknowledged':'Awaiting acknowledgment'} ${role==='supplier'&&!p.acknowledged?`<button data-action="ack" data-id="${esc(p.id)}">Confirm receipt</button>`:''}</div>`).join('')||'No payments'}</details><details><summary>Sales history (${state.sales.length})</summary><div class="scroll">${state.sales.slice(0,100).map(x=>`<div class="line">${esc(x.name)} × ${x.qty} • ${money(x.gross)} revenue • ${money(x.cost)} cost • Morpheus profit ${money(x.morpheusProfit)} + capital ${money(x.capitalDue)} = ${money(x.morpheusDue)} due • Owner ${money(x.ownerProfit)} <span class="muted">${esc(x.at)} / ${esc(x.sourceId||'legacy/manual')}</span></div>`).join('')}</div></details></section>`;
      html+=`<section><details><summary>Daily, weekly & monthly reports</summary>${[['Daily',state.daily],['Weekly',state.weekly],['Monthly',state.monthly]].map(([label,x])=>`<b>${label}</b><table><thead><tr><th>Period</th><th>Sales</th><th>Net profit</th><th>Profit to Morpheus</th><th>Total owed</th><th>Owner</th></tr></thead><tbody>${rowsReport(x)}</tbody></table>`).join('')}<button data-action="export">Export CSV</button></details></section>`;
@@ -648,7 +790,7 @@
    panel.querySelector('#newlot')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget);const cost=String(f.get('cost')||'').trim(),uid=String(f.get('uid')||'').trim();await writeOp('propose',{lotId:uuid(),name:String(f.get('name')),itemId:numeric(f.get('itemId')),uid:uid?numeric(uid):null,qty:numeric(f.get('qty')),unitCost:cost?numeric(cost):null,mode:String(f.get('mode')),feePct:numeric(f.get('fee')),note:String(f.get('note'))},'Inventory proposed; now complete Torn trade');});
    panel.querySelector('#payment')?.addEventListener('submit',async e=>{e.preventDefault();const f=new FormData(e.currentTarget),amount=numeric(f.get('amount'));if(!isPositive(amount)||amount>state.summary.remaining)return alert('Invalid amount');if(!confirm('Have you actually SENT '+money(amount)+' to Morpheus in Torn?'))return;await writeOp('payment',{amount,reference:String(f.get('reference'))},'Payment recorded');});
  }
- async function act(action,id){if(action==='close'){opened=false;panel.classList.add('hide');return;}if(action==='refresh')return refresh();if(action==='scan')return syncAll();if(action==='verify'){try{await verifyKey();}catch(e){alert(e.message)}return;}if(action==='trade'){
+ async function act(action,id){if(action==='close'){opened=false;panel.classList.add('hide');return;}if(action==='refresh')return refresh();if(action==='scan')return syncAll();if(action==='ownerEvidence'){if(working)return;working=true;try{const r=await scanOwnerPurchaseEvidence();status='Owner purchase review: '+r.found+' records; '+r.candidates+' full sale candidates, '+r.partial+' partial, '+r.conflicts+' supplier conflicts, '+r.ambiguous+' ambiguous; '+r.scanned+' logs checked (no financial changes)';}catch(e){status='Owner purchase review incomplete: '+e.message;}finally{working=false;draw();}return;}if(action==='verify'){try{await verifyKey();}catch(e){alert(e.message)}return;}if(action==='trade'){
      if(!isPositive(cfg().partnerId))return alert('Set the partner Torn player ID in Settings first');
      window.location.assign('https://www.torn.com/profiles.php?XID='+cfg().partnerId);return;
    }
@@ -659,14 +801,64 @@
    if(action==='reject'&&l&&confirm('Reject this lot?'))await writeOp('reject',{lotId:l.id},'Rejected');
    if(action==='return'&&l){const q=prompt('How many units were actually returned?');if(q!==null)await writeOp('return',{lotId:l.id,qty:numeric(q)},'Return recorded');}
    if(action==='ack'&&confirm('Have you actually received this payment in Torn?'))await writeOp('ack',{paymentId:id},'Receipt acknowledged');
-   if(action==='reconcile'){
+   if(action==='confirmOwnership'){
+     if(state.role!=='owner')return;
+     try{await relay('state');}catch(e){return alert('Unable to verify the current exception list: '+e.message);}
+     const ids=state.exceptions.filter(x=>x.ownership!=='morpheus_owner_confirmed').map(x=>x.id);
+     if(!ids.length)return alert('All active sale exceptions already have ownership confirmation.');
+     if(!confirm('Record your ownership declaration for '+ids.length+' sale exceptions as Morpheus-owned? This does NOT calculate acquisition costs, post sales, or change payouts.'))return;
+     return writeOp('sale_ownership_confirm_batch',{sourceIds:ids},'Ownership confirmed for '+ids.length+' sales; financial allocations await source evidence');
+   }
+   if(action==='allocate'){
+     const reviewedSnapshot=ownerReview;
+     try{await relay('state');}catch(e){return alert('Cannot verify current Ledger before financial review: '+e.message);}
+     if(reviewedSnapshot!==ownerReview)return alert('Purchase review changed. Scan again.');
      const ex=state.exceptions.find(x=>x.id===id);if(!ex)return;
-     const options=state.lots.filter(x=>x.status==='confirmed'&&x.itemId===ex.itemId&&(x.uid==null||x.uid===ex.uid)&&x.qty-x.sold-x.returned>=ex.qty&&x.unitCost!==null&&x.unitCost<=ex.unitPrice);
-     if(!options.length)return alert('No valid lot has enough stock. Review inventory and pricing first.');
-     const choice=prompt('Choose inventory LOT ID for this sale:\n'+options.map(x=>x.id+' • '+x.name+' • '+(x.qty-x.sold-x.returned)+' remaining • '+money(x.unitCost)+' cost').join('\n'),options[0].id);
-     if(!choice||!options.some(x=>x.id===choice))return alert('No valid lot chosen');
-     const timestamp=Math.floor(new Date(ex.at).getTime()/1000);if(!confirm(`Assign Torn sale ${ex.id} to lot ${choice}? This books ${money(ex.gross)} revenue.`))return;
-     await writeOp('sale_reconcile',{sourceId:ex.id,lotId:choice,itemId:ex.itemId,uid:ex.uid,qty:ex.qty,unitPrice:ex.unitPrice,timestamp},'Sale matched');
+     const proof=ownerReview?.ownerId===state.partnership?.ownerId&&
+       Date.now()-Date.parse(ownerReview.fetchedAt)<=minutes(15)&&ownerReview.ledgerFingerprint===ownerReviewFingerprint(state)&&
+       ownerReview.reviews.find(r=>r.sourceId===ex.id&&r.qty===(ex.remainingQty??ex.qty));
+     if(ex.ownership!=='morpheus_owner_confirmed'&&(!proof||proof.candidates.length||proof.competingSupplierEvidence||proof.priorSaleClaimCount))
+       return alert('Ownership review is missing or conflicting. Scan your purchases again before assigning proceeds.');
+     const remaining=ex.remainingQty??ex.qty;
+     const available=state.lots.filter(l=>(ex.ownership!=='morpheus_owner_confirmed'||(state.partnership&&l.tradeRef&&l.senderId===state.partnership.morpheusId&&['supplier','earned'].includes(l.mode)&&((l.purchaseParts&&l.purchaseParts.length)||(l.originParts&&l.originParts.length))))&&l.status==='confirmed'&&l.itemId===ex.itemId&&
+       (l.uid==null||l.uid===ex.uid)&&l.unitCost!==null&&l.unitCost<=ex.unitPrice&&
+       l.qty-l.sold-l.returned>0&&new Date(l.confirmedAt).getTime()<=new Date(ex.at).getTime()+300000);
+     if(!available.length)return alert('No priced inventory remains for this sale; do not assign the full Torn quantity.');
+     let lot=available[0];
+     if(available.length>1){
+       const text=prompt('Select the documented lot ID for this partial sale:\n'+
+         available.map(x=>x.id+' — '+x.name+' — '+(x.qty-x.sold-x.returned)+' units available').join('\n'),lot.id);
+       if(text===null)return;
+       lot=available.find(x=>x.id===text);
+       if(!lot)return alert('No matching lot selected. No change recorded.');
+     }
+     const qty=Math.min(remaining,lot.qty-lot.sold-lot.returned);
+     if(!confirm('Attribute '+qty+' of '+ex.qty+' Torn-sold units of item #'+ex.itemId+
+       ' to documented '+lot.name+' lot '+lot.id+' at '+money(ex.unitPrice)+' each?\n'+
+       'Only this attributed quantity will enter the Morpheus payout. '+(remaining-qty)+' units will still need classification.'))return;
+     await writeOp('sale_allocate',{sourceId:ex.id,lotId:lot.id,qty},'Documented units assigned; remaining quantity stays pending');
+     return;
+   }
+   if(action==='exclude'){
+     const reviewedSnapshot=ownerReview;
+     try{await relay('state');}catch(e){return alert('Cannot verify current Ledger before financial review: '+e.message);}
+     if(reviewedSnapshot!==ownerReview)return alert('Purchase review changed. Scan again.');
+     const ex=state.exceptions.find(x=>x.id===id);if(!ex)return;
+     const proof=ownerReview?.ownerId===state.partnership?.ownerId&&
+       Date.now()-Date.parse(ownerReview.fetchedAt)<=minutes(15)&&ownerReview.ledgerFingerprint===ownerReviewFingerprint(state)&&
+       ownerReview.reviews.find(r=>r.sourceId===ex.id&&r.qty===(ex.remainingQty??ex.qty));
+     const competing=state.lots.some(l=>l.itemId===ex.itemId&&
+       (ex.uid==null?l.uid==null:l.uid===ex.uid)&&l.qty-l.sold-l.returned>0&&
+       Date.parse(l.createdAt)<=Date.parse(ex.at)+300000&&
+       (l.status==='confirmed'||l.status==='received_pending'||l.status==='awaiting_cost'));
+     if(!proof||!(proof.status==='candidate_only'||proof.status==='partial_evidence')||proof.coveredQty<1||competing)
+       return alert('This sale is not uniquely supported as owner-funded. Resolve conflicting evidence before exclusion.');
+     const remaining=ex.remainingQty??ex.qty;
+     const qty=Math.min(remaining,proof.coveredQty);
+     if(!confirm('Confirm that '+qty+' documented owner-funded units from Torn sale '+ex.id+
+       ' are NOT part of the Morpheus partnership?\n\nThis creates an audited exclusion: no Morpheus reimbursement or profit will be generated for these units. '+(remaining-qty)+' units stay unresolved. Do not confirm if their ownership is unknown.'))return;
+     await writeOp('sale_exclude',{sourceId:ex.id,qty,reason:'outside_partnership'},'Non-partnership portion recorded; no Morpheus payout');
+     return;
    }
  }
  let rescanAfterHide=false;
