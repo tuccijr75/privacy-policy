@@ -18,6 +18,6 @@ No member User API keys, third-party analytics feeds, automatic crime joining, p
 
 ## Tests
 
-`node --check MM_OC.user.js && node test.cjs`
+`node --check MM_OC.user.js && node MM_OC.test.cjs`
 
 Source-backed tests cannot validate the live Torn UI, actual API permissions, upstream cache timing or Tampermonkey Trigger Update. Preserve those as separate evidence gates.
