@@ -152,7 +152,7 @@ test('script metadata and prohibited background transport paths', () => {
   assert.match(src, /@match\s+https:\/\/www\.torn\.com\/bounties\.php\*/);
   assert.match(src, /@connect\s+api\.torn\.com/);
   assert.match(src, /@grant\s+GM_xmlhttpRequest/);
-  assert.match(src, /@version\s+0\.1\.1-rc\.3/);
+  assert.match(src, /@version\s+0\.1\.1-rc\.4/);
   const meta = src.split('// ==/UserScript==')[0];
   const u = meta.match(/^\/\/ @updateURL\s+(\S+)$/m)?.[1];
   const d = meta.match(/^\/\/ @downloadURL\s+(\S+)$/m)?.[1];
@@ -160,6 +160,19 @@ test('script metadata and prohibited background transport paths', () => {
   assert.equal(d, u);
   assert.doesNotMatch(src, /raw\.githubusercontent\.com|@require|window\.open\(|attack\.php|\bfetch\s*\(/);
   assert.match(src, /Authorization: `ApiKey \$\{requestKey\}`/);
+});
+test('official v2 player_id identity recognized for public and scoped keys', () => {
+  const profile={player_id:123456,level:50,status:{state:'Okay'},rank:'Professional'};
+  assert.equal(E.extractSelfId(profile),123456);
+  assert.equal(E.extractSelfId({profile}),123456);
+  assert.equal(E.extractSelfId({id:123456,level:50,status:{state:'Okay'}}),123456);
+  assert.equal(E.extractSelfId({profile:{id:'123456',level:50,status:{state:'Okay'}}}),123456);
+  assert.equal(E.extractSelfId({player_id:0}),null);
+  assert.equal(E.extractSelfId({player_id:-1}),null);
+  assert.equal(E.extractSelfId({player_id:'bad'}),null);
+  assert.equal(E.extractSelfId({player_id:123456.5}),null);
+  assert.equal(E.extractSelfId(null),null);
+  assert.notEqual(E.extractSelfId({player_id:123456}),E.extractSelfId({player_id:123457}));
 });
 test('manual four-stat profile requires all four valid integers and preserves zero', () => {
   assert.deepEqual(E.manualBattleStats({ strength:'1000',speed:'0',defense:'2000',dexterity:'3000' }),
