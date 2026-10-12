@@ -145,14 +145,14 @@ test('UI offers explicit availability filter and clear status badges, but no bac
   assert.match(src,/value="availability">Availability \(available first\)/);
   assert.match(src,/class="status-pill \$\{st.category\}"/);
   assert.match(src,/setInterval\(\(\) => \{ if \(!document.hidden && state.rows.length\) render\(\); \}, 60 \* 1000\)/);
-  assert.match(src,/ENGINE.preScreenCandidates\(eligibleByBaseFilters\(\), state.myLevel, SETTINGS.enrich\)/);
+  assert.match(src,/ENGINE.preScreenCandidates\(eligibleByBaseFilters\(\), state.myLevel, state.rows.length\)/);
 });
 test('script metadata and prohibited background transport paths', () => {
   const src=fs.readFileSync(require.resolve('../MM_Bounty_Hunter.user.js'),'utf8');
   assert.match(src, /@match\s+https:\/\/www\.torn\.com\/bounties\.php\*/);
   assert.match(src, /@connect\s+api\.torn\.com/);
   assert.match(src, /@grant\s+GM_xmlhttpRequest/);
-  assert.match(src, /@version\s+0\.1\.1-rc\.5/);
+  assert.match(src, /@version\s+0\.1\.1-rc\.6/);
   const meta = src.split('// ==/UserScript==')[0];
   const u = meta.match(/^\/\/ @updateURL\s+(\S+)$/m)?.[1];
   const d = meta.match(/^\/\/ @downloadURL\s+(\S+)$/m)?.[1];
@@ -238,6 +238,40 @@ test('attackability separates available status from verified combat access',()=>
   assert.equal(E.attackability({profile:{status:'Traveling'}}).kind,'blocked');
   assert.equal(E.attackability({profile:{status:'Hospital'}}).kind,'blocked');
   assert.equal(E.attackability({profile:{status:'Okay'},profileFetchedAt:Date.now()-180000}).kind,'unknown');
+});
+
+test('official v2 popular stats and profile yield an actual stat band', () => {
+  const profile=E.extractProfile({profile:{id:123,rank:'Average',level:14,status:{state:'Hospital',until:Math.floor(Date.now()/1000)+60}}});
+  const stats=E.extractPersonalStats({personalstats:{crimes:{total:3227,version:'2'},networth:{total:7264572},drugs:{xanax:2}}});
+  const calc=E.estimateRank({rank:profile.rank,level:profile.level,crimes:stats.crimes,networth:stats.networth});
+  assert.equal(calc.status,'estimated');
+  assert.equal(calc.breakdown.battle,1);
+  assert.equal(E.rankDisplay({profile,stats,estimate:calc}).kind,'estimated');
+});
+test('unassessed entries, profile failures and unavailable popular evidence are different', () => {
+  assert.equal(E.rankDisplay({}).label,'NOT CHECKED');
+  assert.equal(E.rankDisplay({profileError:true}).label,'PROFILE ERROR');
+  const profile={rank:'Average',level:14,status:'Okay'};
+  assert.equal(E.rankDisplay({profile}).label,'STATS NOT CHECKED');
+  assert.equal(E.rankDisplay({profile,statsError:true}).label,'STATS UNAVAILABLE');
+  const stats={crimes:3227,networth:null};
+  const estimate=E.estimateRank({rank:profile.rank,level:profile.level,...stats});
+  const result=E.rankDisplay({profile,stats,estimate});
+  assert.equal(result.label,'INSUFFICIENT DATA');
+  assert.match(result.note,/net worth/i);
+});
+test('batch selection is bounded and continues beyond the initial shortlist', () => {
+  const rows=Array.from({length:45},(_,i)=>({id:i+1,level:30,maxReward:1e6+i}));
+  const q=E.preScreenCandidates(rows,30,rows.length);
+  assert.equal(q.length,45);
+  assert.equal(new Set(q.map(v=>v.id)).size,45);
+  assert.equal(q.slice(0,18).length,18);
+  assert.equal(q.slice(18,36).length,18);
+  assert.equal(q.slice(36,54).length,9);
+  const src=fs.readFileSync(require.resolve('../MM_Bounty_Hunter.user.js'),'utf8');
+  assert.match(src,/assessNextBatch/);
+  assert.match(src,/mm-bh-more/);
+  assert.doesNotMatch(src,/No defensible calculation|deepStats: 10/);
 });
 
 console.log(`\n${passed}/${passed} assertions suites PASS`);
