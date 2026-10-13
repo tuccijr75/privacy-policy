@@ -15,7 +15,9 @@ for(const [name,source] of [
   ['desktop',desktop],['pda',pda],['pulse',pulse],['logic',logic],['live',live],['ranked',ranked]
 ])assert.doesNotThrow(()=>new vm.Script(source,{filename:name+'.js'}),name+' must parse');
 
-assert(desktop.includes('// @version      8.0.0-alpha.37'));
+assert(desktop.includes('// @version      8.0.0'));
+assert(desktop.includes('// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.user.js'),'desktop release must use stable raw.githack update URL');
+assert(desktop.includes('// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.user.js'),'desktop release must use stable raw.githack download URL');
 const requireLines=desktop.split(/\r?\n/).filter(line=>line.startsWith('// @require'));
 assert.strictEqual(requireLines.length,7,'desktop dependency count');
 assert(requireLines.some(line=>line.includes('/MM_Acquisitions.market-pulse.js')),'desktop must require Market Pulse');
@@ -30,7 +32,7 @@ for(const line of requireLines){
   assert(match,'MM-owned desktop dependencies must use immutable full-SHA jsDelivr URLs');
 }
 
-assert(pda.includes('// @version      8.0.0-alpha.37-pda.26'));
+assert(pda.includes('// @version      8.0.0-pda.26'));
 assert(desktop.includes('async function readSharedState()'),'desktop must bootstrap/read shared state through helper');
 assert(desktop.includes('core?.ensureSharedState'),'desktop must opt into fresh-install Core bootstrap');
 const pdaHeader=pda.slice(0,pda.indexOf('// ==/UserScript=='));
@@ -38,8 +40,8 @@ assert(!pdaHeader.includes('@require'),'PDA metadata must contain no @require');
 assert(!pdaHeader.includes('@grant'),'PDA metadata must not require GM permissions');
 assert(!pdaHeader.includes('@connect'),'PDA metadata must not require desktop connect permissions');
 assert(pdaHeader.includes('// @noframes'),'PDA metadata must avoid child-frame injection');
-assert(pdaHeader.includes('// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/crm-v8-acquisitions-standalone-pricelist-alpha35/modular-suite/acquisitions/MM_Acquisitions.pda.user.js'),'PDA must have a fixed update URL');
-assert(pdaHeader.includes('// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/crm-v8-acquisitions-standalone-pricelist-alpha35/modular-suite/acquisitions/MM_Acquisitions.pda.user.js'),'PDA must have a fixed download URL');
+assert(pdaHeader.includes('// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.pda.user.js'),'PDA must have a fixed update URL');
+assert(pdaHeader.includes('// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.pda.user.js'),'PDA must have a fixed download URL');
 assert(!pdaHeader.includes('raw.githubusercontent.com'),'PDA distribution must not use raw.githubusercontent.com');
 assert(pdaHeader.includes('// @match        https://www.torn.com/*'),'PDA metadata must match www Torn');
 assert(pdaHeader.includes('// @match        https://torn.com/*'),'PDA metadata must match bare Torn');
@@ -122,8 +124,8 @@ assert(pda.includes('customerPricelistProfile'),'PDA must bundle the shared prof
 assert(!pda.includes('DEFAULT_PRICELIST_USER_ID'),'PDA must not restore an implicit customer Pricelist default');
 assert(!pda.includes('4054377'),'PDA must not embed a customer-specific Pricelist ID');
 assert(!pda.includes('Pricelist Torn ID'),'PDA Ranked settings must not recreate a second customer profile input');
-assert(acceptance.includes('8.0.0-alpha.37'),'acceptance sheet must match desktop candidate');
-assert(acceptance.includes('8.0.0-alpha.37-pda.26'),'acceptance sheet must match PDA candidate');
+assert(acceptance.includes('8.0.0'),'acceptance sheet must match desktop release');
+assert(acceptance.includes('8.0.0-pda.26'),'acceptance sheet must match PDA candidate');
 assert(acceptance.includes('Verified Sales'),'acceptance sheet must cover official completed-sale evidence');
 assert(acceptance.includes('Cross-tab ownership'),'acceptance sheet must cover one-engine lease behavior');
 assert(/manual-action boundary/i.test(acceptance),'acceptance sheet must preserve manual final actions');

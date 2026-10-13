@@ -72,8 +72,8 @@ def metadata(version: str) -> str:
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-end
-// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/crm-v8-acquisitions-standalone-pricelist-alpha35/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
-// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/crm-v8-acquisitions-standalone-pricelist-alpha35/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
+// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
+// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
 // @noframes
 // ==/UserScript==
 

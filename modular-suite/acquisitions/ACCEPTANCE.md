@@ -1,13 +1,14 @@
 # MM_Acquisitions Acceptance — Standalone Customer Product
 
-## Candidate
+## Release
 
-- Desktop: 8.0.0-alpha.37
-- TornPDA: 8.0.0-alpha.37-pda.26
-- Branch: crm-v8-acquisitions-standalone-pricelist-alpha35
-- Base: crm-v8-acquisitions-standalone-alpha34
-- Stable/customer publication: not approved
-- Status: non-production candidate
+- Desktop: 8.0.0
+- TornPDA: 8.0.0-pda.26
+- Source branch: crm-v8-acquisitions-standalone-pricelist-alpha35
+- Source base: crm-v8-acquisitions-standalone-alpha34
+- Canonical stable distribution ref: main
+- Stable/customer publication: OWNER APPROVED 2026-10-12
+- Status: release promotion in progress
 - Final purchase, bid, travel and transfer actions remain manual.
 
 ## Alpha.37 standalone customer profile + native TornPDA bootstrap correction
@@ -40,8 +41,8 @@ Alpha.36 preserved the alpha.35 customer-profile behavior and corrected the Torn
 - [ ] Invalid/foreign input does not replace the active profile.
 - [ ] Clear the profile; cached rows remain preserved but inactive while unrelated workflows continue.
 - [ ] Recheck Pricelist, Find One Item, Best Deals, Ranked Weapons, Travel, Inventory Restock, Market Pulse freshness, route guards and manual-action boundaries.
-- [ ] Install TornPDA alpha.37-pda.26 once from the fixed branch URL, verify the launcher appears on both `https://www.torn.com/*` and `https://torn.com/*`, and confirm future PDA revisions are offered through the same installed script/update channel.
-- [ ] Do not merge or publish until owner accepts desktop and PDA live results.
+- [ ] Install TornPDA 8.0.0-pda.26 from the stable `main` raw.githack URL, verify the launcher appears on both `https://www.torn.com/*` and `https://torn.com/*`, and retain that stable update channel for future revisions.
+- [ ] Owner promotion approval is recorded; do not publish stable until the current PDA release build passes real-device acceptance.
 ## Product boundary
 
 MM_Acquisitions is a customer-facing standalone procurement and market-intelligence product.
