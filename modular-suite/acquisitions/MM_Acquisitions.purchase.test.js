@@ -12,7 +12,7 @@ assert.strictEqual(proc.acquisitions.length,1);
 
 const userSource=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSource);
-assert(userSource.includes('// @version      8.0.0'));
+assert(userSource.includes('// @version      8.0.1'));
 assert(userSource.includes('// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.user.js'));
 assert(userSource.includes('// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.user.js'));
 assert(userSource.includes('// @match        https://www.torn.com/*'));
@@ -161,7 +161,7 @@ console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS
 const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      8.0.0-pda.26'));
+assert(pdaSource.includes('// @version      8.0.1-pda.26'));
 assert(pdaHeader.includes('// @match        https://www.torn.com/*'));
 assert(pdaHeader.includes('// @match        https://torn.com/*'));
 assert(!/globalThis\.GM_(?:getValue|setValue|deleteValue|xmlhttpRequest)\s*=/.test(pdaSource),'generated PDA must not monkey-patch GM helpers');
@@ -299,7 +299,7 @@ assert(liveSource.includes('Torn API finished Auction House'));
 
 const userSourceStandalone=fs.readFileSync(__dirname+'/MM_Acquisitions.user.js','utf8');
 new Function(userSourceStandalone);
-assert(userSourceStandalone.includes('// @version      8.0.0'));
+assert(userSourceStandalone.includes('// @version      8.0.1'));
 assert(!/armory/i.test(userSourceStandalone),'desktop Acquisitions must contain no Armory-specific UI/protocol plumbing');
 assert(!userSourceStandalone.includes('factionInventory'));
 assert(!userSourceStandalone.includes('marketPulseDemand'));
