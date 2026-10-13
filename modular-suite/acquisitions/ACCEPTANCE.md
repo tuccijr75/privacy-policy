@@ -3,7 +3,7 @@
 ## Release
 
 - Desktop: 8.0.1
-- TornPDA: 8.0.1-pda.26
+- TornPDA: 8.0.1-pda.27
 - Source branch: crm-v8-acquisitions-standalone-pricelist-alpha35
 - Source base: crm-v8-acquisitions-standalone-alpha34
 - Canonical stable distribution ref: main
@@ -347,3 +347,16 @@ Root-cause hardening in `8.0.1-pda.27`:
 
 Candidate gate:
 - TornPDA `8.0.1-pda.27` must show the launcher on the real device after normal in-place update/reload.
+
+## Stable PDA hotfix publication — 2026-10-12
+
+PUBLISHED:
+- TornPDA `8.0.1-pda.27` published by PR #68; merge commit `9abe56766633e25df12a64087f0d0950bf137d22`;
+- desktop `8.0.1` was not changed;
+- stable raw.githack branch cache initially still served pda.26 after merge;
+- canonical PDA URL cache was explicitly purged through raw.githack's documented purge endpoint;
+- canonical stable PDA URL now serves `8.0.1-pda.27`;
+- fetched stable payload normalized SHA-256 `2B4F32E6175B285ABC85C32F9E0B5C2FE8CC0FB16EDAC65F702F80CEC6B70C03` and matches the approved pda.27 artifact exactly;
+- existing TornPDA installation should receive pda.27 through its normal Update action; no new URL is required.
+
+Real-device acceptance remains pending until the owner confirms the pda.27 launcher appears and opens after update/reload.
