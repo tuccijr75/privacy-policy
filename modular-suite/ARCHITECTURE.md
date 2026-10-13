@@ -77,7 +77,11 @@ Canonical record classes include:
 - writes procurement/market/travel state through the Core Market domain;
 - owns live acquisition discovery and routing;
 - owns purchase-log synchronization into `procurement.acquisitions`;
-- purchase logs 1112 (Item Market) and 1225 (Bazaar) feed the shared acquisition cost ledger.
+- purchase logs 1112 (Item Market) and 1225 (Bazaar) feed the shared acquisition cost ledger;
+- owns the optional Customer Pricelist Profile at `procurement.pricelist.profile` and is the only module that configures/fetches that provider profile;
+- any suite module that needs customer buy-rate or Bunker Buck context reads the validated active `procurement.pricelist` state rather than creating another customer-link field, provider request, cache, or source of truth;
+- missing, invalid, or cleared customer profile is non-fatal: customer-specific pricing is unavailable while unrelated suite workflows continue;
+- legacy unprofiled Pricelist cache may be preserved for migration safety but must not influence current calculations until an explicit valid profile is configured.
 
 **MM_Inventory Manager/ROI Tracker**
 - writes its listing/inventory operational snapshot under `operations.inventoryRoi`;

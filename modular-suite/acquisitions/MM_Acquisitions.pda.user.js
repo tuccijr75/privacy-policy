@@ -1,19 +1,16 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.0-alpha.34-pda.21
+// @version      8.0.1-pda.27
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
+// @match        https://torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-end
-// @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_deleteValue
-// @connect      api.torn.com
-// @connect      weav3r.dev
-// @connect      torn-intel.com
+// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
+// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
+// @noframes
 // ==/UserScript==
 
 
@@ -24,7 +21,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   'use strict';
   globalThis.__MM_ACQ_PDA_STAGE='boot';
   function ensureBootLauncher(){
-    if(!document.body)return;
+    if(!document.documentElement)return;
     let b=document.getElementById('mm-acquisitions-launcher');
     if(!b){
       b=document.createElement('button');
@@ -33,7 +30,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       b.setAttribute('aria-label','MM_Acquisitions');
       b.title='MM_Acquisitions';
       b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 4 4M9 7.5v6M6.8 9.2h4.4M6.8 11.8h4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
-      b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+      b.style.cssText='position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));z-index:2147483647;width:48px;height:48px;min-width:48px;min-height:48px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:24px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 2px 8px #000b;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;';
       b.addEventListener('click',()=>{
         if(typeof globalThis.__MM_ACQ_OPEN__==='function'){
           globalThis.__MM_ACQ_OPEN__();
@@ -45,16 +42,76 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
           d=document.createElement('div');
           d.id='mm-acq-pda-boot-diagnostic';
           d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';
-          document.body.appendChild(d);
+          document.documentElement.appendChild(d);
         }
         d.innerHTML='<b>MM_Acquisitions PDA boot diagnostic</b><div style="margin-top:6px;">Stopped at: <code>'+stage.replace(/[<>&]/g,'')+'</code></div><div style="margin-top:4px;color:#bbb;">Send a screenshot of this message.</div>';
       });
-      document.body.appendChild(b);
+      b.__mmAcqBootLauncher=true;
+      document.documentElement.appendChild(b);
     }
   }
-  if(document.body)ensureBootLauncher();
+  if(document.documentElement)ensureBootLauncher();
   else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
 })();
+
+
+const __MM_PDA_PREF_KEYS=[
+  'mm_acquisitions_api_v1',
+  'mm_acquisitions_torn_intel_client_key_v1',
+  'mm_acquisitions_torn_intel_last_keyed_at_v1',
+  'mm_acquisitions_weav_watch_lease_v1',
+  'mm_acquisitions_market_pulse_lease_v1',
+  'mm_acquisitions_panel_open_v1'
+];
+const __MM_PDA_PREF_CACHE=Object.create(null);
+let __MM_PDA_PREF_QUEUE=Promise.resolve();
+const __MM_PDA_PREF_READY=(async()=>{
+  if(typeof PDA_storage!=='undefined'&&PDA_storage){
+    try{
+      if(typeof PDA_storage.getMany==='function'){
+        const values=await PDA_storage.getMany(__MM_PDA_PREF_KEYS);
+        for(const key of __MM_PDA_PREF_KEYS){if(values&&Object.prototype.hasOwnProperty.call(values,key))__MM_PDA_PREF_CACHE[key]=values[key];}
+        return;
+      }
+      if(typeof PDA_storage.get==='function'){
+        for(const key of __MM_PDA_PREF_KEYS){
+          const value=await PDA_storage.get(key,undefined);
+          if(value!==undefined)__MM_PDA_PREF_CACHE[key]=value;
+        }
+        return;
+      }
+    }catch(error){console.warn('[MM_Acquisitions PDA] preference preload failed',String(error?.message||error));}
+  }
+  try{
+    for(const key of __MM_PDA_PREF_KEYS){
+      const raw=localStorage.getItem('mm_acq_pda_pref:'+key);
+      if(raw!==null)__MM_PDA_PREF_CACHE[key]=JSON.parse(raw);
+    }
+  }catch{}
+})();
+function __mmPdaGetValue(key,def=null){
+  return Object.prototype.hasOwnProperty.call(__MM_PDA_PREF_CACHE,String(key))?__MM_PDA_PREF_CACHE[String(key)]:def;
+}
+function __mmPdaPersist(op,key,value){
+  const k=String(key);
+  __MM_PDA_PREF_QUEUE=__MM_PDA_PREF_QUEUE.then(async()=>{
+    if(typeof PDA_storage!=='undefined'&&PDA_storage){
+      if(op==='set'&&typeof PDA_storage.set==='function'){await PDA_storage.set(k,value);return;}
+      if(op==='delete'&&typeof PDA_storage.delete==='function'){await PDA_storage.delete(k);return;}
+    }
+    try{
+      const storageKey='mm_acq_pda_pref:'+k;
+      if(op==='set')localStorage.setItem(storageKey,JSON.stringify(value));
+      else localStorage.removeItem(storageKey);
+    }catch{}
+  }).catch(error=>console.warn('[MM_Acquisitions PDA] preference persistence failed',String(error?.message||error)));
+}
+function __mmPdaSetValue(key,value){
+  const k=String(key);__MM_PDA_PREF_CACHE[k]=value;__mmPdaPersist('set',k,value);return value;
+}
+function __mmPdaDeleteValue(key){
+  const k=String(key);delete __MM_PDA_PREF_CACHE[k];__mmPdaPersist('delete',k);return undefined;
+}
 
 
 /* ===== MM Torn Core (bundled) ===== */
@@ -1254,54 +1311,12 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 (() => {
   'use strict';
 
-  const PDA_GM_PREFIX='mm_acquisitions_pda_gm_v1:';
   globalThis.__MM_TORN_PDA__=true;
 
-  if(typeof globalThis.GM_getValue!=='function'){
-    globalThis.GM_getValue=(key,def)=>{
-      try{
-        const raw=localStorage.getItem(PDA_GM_PREFIX+String(key));
-        return raw==null?def:JSON.parse(raw);
-      }catch{return def;}
-    };
-  }
-  if(typeof globalThis.GM_setValue!=='function'){
-    globalThis.GM_setValue=(key,value)=>{
-      try{localStorage.setItem(PDA_GM_PREFIX+String(key),JSON.stringify(value));}catch{}
-    };
-  }
-  if(typeof globalThis.GM_deleteValue!=='function'){
-    globalThis.GM_deleteValue=key=>{
-      try{localStorage.removeItem(PDA_GM_PREFIX+String(key));}catch{}
-    };
-  }
-
-  // TornPDA/GMforPDA exposes GM_* helpers as non-writable, non-configurable
-  // window properties. Never monkey-patch them. The PDA bundle keeps its
-  // injected API key in the outer TornPDA userscript closure instead of window.
-
-  if(typeof globalThis.GM_xmlhttpRequest!=='function'&&typeof globalThis.PDA_httpGet==='function'){
-    globalThis.GM_xmlhttpRequest=options=>{
-      const opts=options&&typeof options==='object'?options:{};
-      let aborted=false;
-      let settled=false;
-      let timer=null;
-      const finish=(fn,arg)=>{
-        if(settled||aborted)return;
-        settled=true;
-        if(timer)clearTimeout(timer);
-        try{fn?.(arg);}catch{}
-      };
-      if(Number(opts.timeout||0)>0){
-        timer=setTimeout(()=>finish(opts.ontimeout,{status:0,statusText:'timeout',responseText:''}),Number(opts.timeout));
-      }
-      Promise.resolve()
-        .then(()=>globalThis.PDA_httpGet(String(opts.url||''),opts.headers||{}))
-        .then(response=>finish(opts.onload,response))
-        .catch(error=>finish(opts.onerror,{status:0,statusText:String(error?.message||error||'request failed'),responseText:'',error}));
-      return {abort(){aborted=true;if(timer)clearTimeout(timer);}};
-    };
-  }
+  // TornPDA/GMforPDA may expose GM_* helpers as non-writable,
+  // non-configurable properties. Never assign or replace them here.
+  // Acquisitions owns its request fallback locally in the UI/runtime source;
+  // durable cross-origin handoff state uses lexical PDA_storage below.
 })();
 
 (() => {
@@ -1429,12 +1444,73 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     });
   }
 
+  const PDA_LAUNCHER_ID='mm-acquisitions-launcher';
+
+  function stylePdaLauncher(button,active=false){
+    if(!button)return null;
+    button.style.cssText='position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));z-index:2147483647;width:48px;height:48px;min-width:48px;min-height:48px;padding:0;margin:0;border:1px solid '+(active?'#d7ad4b':'#25282b')+';border-radius:24px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:'+(active?'0 0 0 2px #d7ad4b88,0 2px 8px #000b':'inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 2px 8px #000b')+';color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;';
+    return button;
+  }
+
+  function pdaRegisterDockLauncher({id,label,accent,icon,onClick}={}){
+    let button=document.getElementById(PDA_LAUNCHER_ID);
+    if(!button){
+      button=document.createElement('button');
+      button.id=PDA_LAUNCHER_ID;
+      button.type='button';
+      document.documentElement.appendChild(button);
+    }
+    button.dataset.mmDockId=String(id||'acquisitions');
+    button.dataset.mmPdaLauncher='1';
+    button.setAttribute('aria-label',String(label||'MM_Acquisitions'));
+    button.title=String(label||'MM_Acquisitions');
+    if(icon)button.innerHTML=String(icon);
+    button.style.setProperty('--mm-accent',accent||'#4d7f65');
+    if(!button.__mmAcqBootLauncher&&typeof onClick==='function'){
+      if(button.__mmPdaDockClick)button.removeEventListener('click',button.__mmPdaDockClick);
+      button.__mmPdaDockClick=onClick;
+      button.addEventListener('click',onClick);
+    }else{
+      button.__mmPdaDockClick=onClick;
+    }
+    return stylePdaLauncher(button,button.dataset.mmActive==='1');
+  }
+
+  function pdaSetDockLauncherActive(id,active){
+    const button=document.getElementById(PDA_LAUNCHER_ID);
+    if(!button)return false;
+    button.dataset.mmActive=active?'1':'0';
+    stylePdaLauncher(button,Boolean(active));
+    return true;
+  }
+
+  function pdaPositionDock(){
+    const button=document.getElementById(PDA_LAUNCHER_ID);
+    return stylePdaLauncher(button,button?.dataset?.mmActive==='1');
+  }
+
+  function pdaMakePanelDraggable(panel){
+    if(!panel)return panel;
+    panel.style.left='8px';
+    panel.style.right='8px';
+    panel.style.top='max(54px,env(safe-area-inset-top))';
+    panel.style.width='auto';
+    panel.style.maxWidth='none';
+    panel.style.maxHeight='calc(100dvh - 72px - env(safe-area-inset-top) - env(safe-area-inset-bottom))';
+    panel.style.touchAction='auto';
+    return panel;
+  }
+
   const api=Object.freeze({
     ...original,
     version:String(original.version||'')+'-pda',
     readLegacyState,
     updateDomainState,
-    inspectLegacyState
+    inspectLegacyState,
+    registerDockLauncher:pdaRegisterDockLauncher,
+    setDockLauncherActive:pdaSetDockLauncherActive,
+    positionDock:pdaPositionDock,
+    makePanelDraggable:pdaMakePanelDraggable
   });
 
   Object.defineProperty(globalThis,'MMTornCore',{
@@ -1835,7 +1911,10 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       if (/^\d+$/.test(id) && !ids.includes(id) && ids.length < cap) ids.push(id);
     };
     for (const row of rankPulseItems(state)) add(row.itemId);
-    const pricelist = Object.values(state?.procurement?.pricelist?.items || {}).sort((a,b) => num(b?.buyPrice) - num(a?.buyPrice));
+    const configuredPricelist=globalThis.MMTornAcquisitionsLogic?.customerPricelistProfile?.(state);
+    const pricelist = configuredPricelist
+      ? Object.values(state?.procurement?.pricelist?.items || {}).sort((a,b) => num(b?.buyPrice) - num(a?.buyPrice))
+      : [];
     for (const row of pricelist) add(row?.itemId ?? row?.id);
     const market = Object.values(state?.marketIntel?.marketplace || {}).sort((a,b) => {
       const ap = Math.max(num(a?.bazaarAverage), num(a?.marketPrice)) - num(a?.lowestPrice);
@@ -2017,6 +2096,44 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const marketPulse = globalThis.MMTornMarketPulse;
 
   const asId = value => String(value ?? '').trim();
+  const CUSTOMER_PRICELIST_SCHEMA = 1;
+
+  function parseCustomerPricelistReference(value) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+    let userId = '';
+    if (/^\d+$/.test(raw)) {
+      userId = raw;
+    } else {
+      const match = raw.match(/^https:\/\/(?:www\.)?weav3r\.dev\/pricelist\/(\d+)\/?(?:[?#].*)?$/i);
+      if (!match) return null;
+      userId = match[1];
+    }
+    return {
+      schema: CUSTOMER_PRICELIST_SCHEMA,
+      provider: 'weav3r',
+      userId,
+      url: 'https://weav3r.dev/pricelist/' + userId
+    };
+  }
+
+  function customerPricelistProfile(db) {
+    const raw = db?.procurement?.pricelist?.profile;
+    if (!raw || Number(raw.schema) !== CUSTOMER_PRICELIST_SCHEMA || raw.configured !== true) return null;
+    const parsed = parseCustomerPricelistReference(raw.url || raw.userId || '');
+    if (!parsed) return null;
+    if (raw.userId && asId(raw.userId) !== parsed.userId) return null;
+    return {
+      ...parsed,
+      configured: true,
+      configuredAt: String(raw.configuredAt || ''),
+      updatedAt: String(raw.updatedAt || '')
+    };
+  }
+
+  function activeCustomerPricelist(db) {
+    return customerPricelistProfile(db) ? (db?.procurement?.pricelist || null) : null;
+  }
 
   function businessRules(db) {
     const r = db?.businessRules || {};
@@ -2302,7 +2419,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const settings=intel.settings||{};
     const rules=businessRules(db);
     const freshness=freshnessInfo(intel.marketplaceGeneratedAt,Math.max(300,rules.maxListingAgeSec),nowMs);
-    const pricelist=db?.procurement?.pricelist?.items||{};
+    const pricelist=activeCustomerPricelist(db)?.items||{};
     const personal=salesItemMetrics(db,nowMs);
     const market=new Map();
     for(const row of Object.values(intel.marketplace||{})){
@@ -2463,6 +2580,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   }
 
   const api = Object.freeze({
+    parseCustomerPricelistReference,customerPricelistProfile,activeCustomerPricelist,
     businessRules,
     freshnessInfo,
     salesItemMetrics,
@@ -2886,9 +3004,10 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const hasTornKey=typeof deps.hasTornKey === 'function' ? deps.hasTornKey : ()=>true;
     const navigate=typeof deps.navigate === 'function' ? deps.navigate : url=>{ location.href=url; };
 
-    async function refreshPricelist(userId='4054377') {
-      const id=asId(userId);
-      if(!/^\d+$/.test(id))throw new Error('Invalid TornW3B pricelist user ID.');
+    async function refreshPricelist(profileReference) {
+      const profile=logic.parseCustomerPricelistReference?.(profileReference);
+      if(!profile)throw new Error('Enter a valid Weav3r pricelist link such as https://weav3r.dev/pricelist/1234567.');
+      const id=profile.userId;
       const data=await deps.weavRequest('/pricelist/'+encodeURIComponent(id));
       const rows=normalizePricelistRows(data);
       if(!rows.length)throw new Error('TornW3B pricelist returned no readable rows.');
@@ -2903,10 +3022,32 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       }
       await core.updateDomainState('market',draft=>{
         const proc=draft.procurement || (draft.procurement={});
-        proc.pricelist={userId:id,items,bunkerBuckRate:bbRate,pricedCount:priced,lastSyncAt:at,source:'TornW3B Pricelist API'};
+        const prior=proc.pricelist&&typeof proc.pricelist==='object'?proc.pricelist:{};
+        const previous=logic.customerPricelistProfile?.({procurement:{pricelist:prior}});
+        const configuredAt=previous?.userId===id&&previous.configuredAt?previous.configuredAt:at;
+        const preserved={...prior};
+        delete preserved.userId;
+        proc.pricelist={
+          ...preserved,
+          profile:{
+            schema:profile.schema,
+            configured:true,
+            provider:profile.provider,
+            userId:id,
+            url:profile.url,
+            configuredAt,
+            updatedAt:at
+          },
+          items,
+          bunkerBuckRate:bbRate,
+          pricedCount:priced,
+          sourceUpdatedAt:null,
+          lastSyncAt:at,
+          source:'TornW3B Pricelist API'
+        };
         return draft;
       });
-      return {state:await core.readLegacyState(),rows,priced,bbRate};
+      return {state:await core.readLegacyState(),rows,priced,bbRate,profile};
     }
 
     async function refreshRankedLive({pagesPerType=2,auctionPages=4,limit=100}={}) {
@@ -4246,8 +4387,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
 /* ===== Acquisitions UI ===== */
 
-(() => {
+(async () => {
   'use strict';
+  await __MM_PDA_PREF_READY;
 
   const ROOT_ID='mm-acquisitions';
   const LAUNCHER_ID='mm-acquisitions-launcher';
@@ -4272,7 +4414,6 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const PRICELIST_PAGE_SIZE=40;
   const RANKED_LIVE_STALE_MS=300_000;
   const PRICELIST_STALE_MS=3600_000;
-  const DEFAULT_PRICELIST_USER_ID='4054377';
   const PANEL_OPEN_KEY='mm_acquisitions_panel_open_v1';
 
   let activeView='pricelist';
@@ -4319,6 +4460,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   const rankedLogic=globalThis.MMTornRankedProfitLogic;
   const ledger=globalThis.MMTornAcquisitionLedger;
   const restockIntel=globalThis.MMTornRestockIntel;
+  const customerPricelistProfile=()=>logic?.customerPricelistProfile?.(state)||null;
+  const activePricelist=()=>customerPricelistProfile()?(state?.procurement?.pricelist||{}):{};
 
   async function readSharedState(){
     if(core?.ensureSharedState)return core.ensureSharedState();
@@ -4329,8 +4472,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     .replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
     .replaceAll('"','&quot;').replaceAll("'",'&#039;');
   const money=value=>'$'+Math.max(0,Number(value)||0).toLocaleString('en-US',{maximumFractionDigits:0});
-  const apiKey=()=>{const saved=String(GM_getValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(__MM_PDA_API_KEY||'').trim();const unresolved='###PDA-'+'APIKEY###';return pda&&pda!==unresolved?pda:'';};
-  const tornIntelKey=()=>String(GM_getValue(TORN_INTEL_KEY,'')||'').trim();
+  const apiKey=()=>{const saved=String(__mmPdaGetValue(API_KEY,'')||'').trim();if(saved)return saved;const pda=String(__MM_PDA_API_KEY||'').trim();const unresolved='###PDA-'+'APIKEY###';return pda&&pda!==unresolved?pda:'';};
+  const tornIntelKey=()=>String(__mmPdaGetValue(TORN_INTEL_KEY,'')||'').trim();
 
   function button(primary=false){
     return 'border:1px solid '+(primary?'#9a7b35':'#555')+';background:'+(primary?'#4b3b18':'#232323')+';color:#eee;border-radius:6px;padding:7px 10px;cursor:pointer;font:12px Arial,sans-serif;';
@@ -4474,6 +4617,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     return ctx?.mode==='traveling'||ctx?.mode==='abroad';
   }
 
+  function isTornReturnUrl(value){
+    try{
+      const url=new URL(String(value||''));
+      return url.protocol==='https:'&&(url.hostname==='torn.com'||url.hostname==='www.torn.com');
+    }catch{return false;}
+  }
+
   function travelContextLabel(ctx=travelContext){
     if(!ctx||ctx.mode==='unknown')return 'Travel context unavailable';
     if(ctx.mode==='traveling')return ctx.description||'Traveling';
@@ -4497,9 +4647,46 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     }
   }
 
+  function platformGetRequest(options){
+    const opts=options&&typeof options==='object'?options:{};
+    const pdaGet=(typeof PDA_httpGet==='function')
+      ?PDA_httpGet
+      :(typeof globalThis.PDA_httpGet==='function'?globalThis.PDA_httpGet:null);
+    if(!pdaGet){
+      const error={status:0,statusText:'No supported GET bridge is available.',responseText:''};
+      queueMicrotask(()=>{try{opts.onerror?.(error);}catch{}});
+      return {abort(){}};
+    }
+    if(String(opts.method||'GET').toUpperCase()!=='GET'){
+      const error={status:0,statusText:'PDA_httpGet supports GET requests only.',responseText:''};
+      queueMicrotask(()=>{try{opts.onerror?.(error);}catch{}});
+      return {abort(){}};
+    }
+    let aborted=false,settled=false,timer=null;
+    const finish=(fn,arg)=>{
+      if(settled||aborted)return;
+      settled=true;
+      if(timer)clearTimeout(timer);
+      try{fn?.(arg);}catch{}
+    };
+    if(Number(opts.timeout||0)>0){
+      timer=setTimeout(()=>finish(opts.ontimeout,{status:0,statusText:'timeout',responseText:''}),Number(opts.timeout));
+    }
+    Promise.resolve()
+      .then(()=>pdaGet(String(opts.url||''),opts.headers||{}))
+      .then(response=>finish(opts.onload,response))
+      .catch(error=>finish(opts.onerror,{
+        status:0,
+        statusText:String(error?.message||error||'request failed'),
+        responseText:'',
+        error
+      }));
+    return {abort(){aborted=true;if(timer)clearTimeout(timer);}};
+  }
+
   function gmText(url){
     return new Promise((resolve,reject)=>{
-      GM_xmlhttpRequest({
+      platformGetRequest({
         method:'GET',url,timeout:20000,headers:{Accept:'text/html,application/xhtml+xml'},
         onload:r=>{
           if(r.status<200||r.status>=300)return reject(new Error('HTTP '+r.status));
@@ -4522,7 +4709,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.get==='function'){
       return await PDA_storage.get(String(key),def);
     }
-    return GM_getValue(key,def);
+    return __mmPdaGetValue(key,def);
   }
 
   async function pdaSharedSet(key,value){
@@ -4530,7 +4717,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       await PDA_storage.set(String(key),value);
       return;
     }
-    GM_setValue(key,value);
+    __mmPdaSetValue(key,value);
   }
 
   async function pdaSharedDelete(key){
@@ -4538,7 +4725,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       await PDA_storage.delete(String(key));
       return;
     }
-    GM_deleteValue(key);
+    __mmPdaDeleteValue(key);
   }
 
   function normalizeTravelFeed(raw){
@@ -4590,7 +4777,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       const ret=await pdaSharedGet(TRAVEL_RETURN_KEY,null);
       const requestedAt=Number(ret?.at||0);
       const returnUrl=String(ret?.url||'');
-      if(returnUrl.startsWith('https://www.torn.com/')&&Date.now()-requestedAt<5*60*1000){
+      if(isTornReturnUrl(returnUrl)&&Date.now()-requestedAt<5*60*1000){
         returned=true;
         await pdaSharedDelete(TRAVEL_RETURN_KEY);
         try{observer?.disconnect();}catch{}
@@ -4631,7 +4818,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   function gmJsonResponse(url,{headers={}}={}){
     return new Promise((resolve,reject)=>{
       const started=Date.now();
-      GM_xmlhttpRequest({
+      platformGetRequest({
         method:'GET',url,timeout:20000,headers:{Accept:'application/json',...headers},
         onload:r=>{
           let data;
@@ -4701,7 +4888,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(isTornMarket&&marketNavigationBlocked()){
       throw new Error('Torn market purchase pages are unavailable while traveling or abroad. Return to Torn before routing this market purchase.');
     }
-    GM_setValue(PANEL_OPEN_KEY,true);
+    __mmPdaSetValue(PANEL_OPEN_KEY,true);
     setTimeout(()=>{location.href=target;},20);
   }
 
@@ -4715,8 +4902,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     core,
     refreshItemMarket:itemId=>service.refreshItemMarket(itemId),
     hasKey:()=>Boolean(apiKey()),
-    readLease:()=>GM_getValue(PULSE_LEASE_KEY,null),
-    writeLease:value=>GM_setValue(PULSE_LEASE_KEY,value),
+    readLease:()=>__mmPdaGetValue(PULSE_LEASE_KEY,null),
+    writeLease:value=>__mmPdaSetValue(PULSE_LEASE_KEY,value),
     ownerId:INSTANCE_ID,
     onState:next=>{state=next;}
   }):null;
@@ -4780,7 +4967,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const id=String(itemId||'').trim();
     if(!code||!/^\d+$/.test(id))throw new Error('Restock history needs a supported country and Torn item ID.');
 
-    const previousCall=Math.max(0,Number(GM_getValue(TORN_INTEL_LAST_KEYED_AT,0))||0);
+    const previousCall=Math.max(0,Number(__mmPdaGetValue(TORN_INTEL_LAST_KEYED_AT,0))||0);
     const wait=restockIntel.KEYED_COOLDOWN_MS-(Date.now()-previousCall);
     if(previousCall&&wait>0)throw new Error('Torn Intel history rate-limit guard: retry in '+durationMs(wait)+'.');
 
@@ -4788,7 +4975,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     url.searchParams.set('itemId',id);
     url.searchParams.set('country',code);
     url.searchParams.set('hours','48');
-    GM_setValue(TORN_INTEL_LAST_KEYED_AT,Date.now());
+    __mmPdaSetValue(TORN_INTEL_LAST_KEYED_AT,Date.now());
 
     const response=await gmJsonResponse(url.toString(),{headers:{'X-Torn-Intel-Key':key}});
     const model=restockIntel.deriveRestockModel(response.data,Date.now());
@@ -4959,9 +5146,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function claimWatchLease(){
     const now=Date.now();
-    const current=GM_getValue(WEAV_WATCH_LEASE_KEY,null);
+    const current=__mmPdaGetValue(WEAV_WATCH_LEASE_KEY,null);
     if(current?.owner&&current.owner!==INSTANCE_ID&&Number(current.expiresAt||0)>now)return false;
-    GM_setValue(WEAV_WATCH_LEASE_KEY,{owner:INSTANCE_ID,expiresAt:now+75000});
+    __mmPdaSetValue(WEAV_WATCH_LEASE_KEY,{owner:INSTANCE_ID,expiresAt:now+75000});
     return true;
   }
 
@@ -4994,8 +5181,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function stopWatcher(){
     if(watchTimer){clearInterval(watchTimer);watchTimer=null;}
-    const current=GM_getValue(WEAV_WATCH_LEASE_KEY,null);
-    if(current?.owner===INSTANCE_ID)GM_setValue(WEAV_WATCH_LEASE_KEY,{owner:INSTANCE_ID,expiresAt:0});
+    const current=__mmPdaGetValue(WEAV_WATCH_LEASE_KEY,null);
+    if(current?.owner===INSTANCE_ID)__mmPdaSetValue(WEAV_WATCH_LEASE_KEY,{owner:INSTANCE_ID,expiresAt:0});
   }
 
   function nextUrlFromMetadata(data){
@@ -5099,7 +5286,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function exportMarketPulseDiagnostics(){
     if(!pulse||!state)return;
-    const diagnostics=pulse.sanitizedDiagnostics(state,GM_getValue(PULSE_LEASE_KEY,null));
+    const diagnostics=pulse.sanitizedDiagnostics(state,__mmPdaGetValue(PULSE_LEASE_KEY,null));
     const blob=new Blob([JSON.stringify(diagnostics,null,2)],{type:'application/json'});
     const url=URL.createObjectURL(blob);
     const a=document.createElement('a');a.href=url;a.download='MM_Acquisitions-Market-Pulse-'+Date.now()+'.json';
@@ -5116,6 +5303,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const candidates=pulseItems.filter(row=>String(row?.tier||'')==='candidate').length;
     const budget=pulse?.budgetStatus?.(state)||{used:0,limit:0};
     const pulseAt=Number(pulseState.updatedAt||0);
+    const profile=customerPricelistProfile();
+    const pricelist=activePricelist();
     const hasMarket=Boolean(f.weav3rGeneratedAt||f.itemMarket);
     const label=!apiKey()?'SETUP NEEDED':hasMarket?'READY':'LOADING';
     const color=label==='READY'?'#9fe3a8':label==='LOADING'?'#ffd18a':'#ffb3b3';
@@ -5126,7 +5315,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
         '<span>· Item Market '+esc(age(f.itemMarket))+'</span>'+
         '<span>· Market activity '+(pulseAt?esc(age(new Date(pulseAt).toISOString())):'not synced')+' ('+proven+' strong / '+candidates+' building · API budget '+Number(budget.used||0)+'/'+Number(budget.limit||0)+')</span>'+
         '<span>· Travel '+esc(age(f.travel))+'</span>'+
-        '<span>· Pricelist '+esc(age(state?.procurement?.pricelist?.lastSyncAt))+'</span>'+
+        '<span>· Pricelist '+(profile?esc(age(pricelist.lastSyncAt)):'not configured')+'</span>'+
         '<span>· Ranked weapons '+esc(age(state?.procurement?.ranked?.lastLiveAt))+'</span>'+
         '<span>· Purchases '+esc(age(state?.procurement?.lastAcquisitionSyncAt))+'</span>'+
         '<span>· Torn key '+(apiKey()?'saved':'not saved')+'</span>'+
@@ -5498,7 +5687,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   }
 
   function pricelistRows(){
-    const list=state?.procurement?.pricelist?.items||{};
+    const list=activePricelist().items||{};
     const catalog=state?.procurement?.catalog||{};
     const marketplace=state?.marketIntel?.marketplace||{};
     const snapshots=state?.procurement?.marketSnapshots||{};
@@ -5581,7 +5770,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const id=String(itemId||'');
     const name=String(itemName||'').trim();
     if(source==='Travel'){
-      GM_setValue(PANEL_OPEN_KEY,true);
+      __mmPdaSetValue(PANEL_OPEN_KEY,true);
       location.href='https://www.torn.com/travelagency.php';
       return;
     }
@@ -5605,22 +5794,43 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function pricelistHtml(){
     const rows=pricelistRows();
-    const allItems=Object.values(state?.procurement?.pricelist?.items||{}).filter(row=>Number(row?.buyPrice||0)>0).length;
+    const profile=customerPricelistProfile();
+    const pricelist=activePricelist();
+    const legacyCachedCount=!profile
+      ?Object.values(state?.procurement?.pricelist?.items||{}).filter(row=>Number(row?.buyPrice||0)>0).length
+      :0;
+    const allItems=Object.values(pricelist.items||{}).filter(row=>Number(row?.buyPrice||0)>0).length;
     const pages=Math.max(1,Math.ceil(rows.length/PRICELIST_PAGE_SIZE));
     pricelistPage=Math.max(0,Math.min(pricelistPage,pages-1));
     const visible=rows.slice(pricelistPage*PRICELIST_PAGE_SIZE,(pricelistPage+1)*PRICELIST_PAGE_SIZE);
     const withinCount=rows.filter(row=>row.underRate).length;
-    const sourceName=String(state?.procurement?.pricelist?.source||'TornW3B Pricelist');
+    const sourceName=profile?String(pricelist.source||'TornW3B Pricelist API'):'not configured';
     const restockRequestHtml=procurementRequest?.requestKind==='inventory-restock'?procurementRequestHtml():'';
-    return inventoryRestockHtml()+restockRequestHtml+card(
+    return inventoryRestockHtml()+restockRequestHtml+
+    card(
+      '<b>Customer Pricelist Profile · optional / shared across MM suite</b>'+
+      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">Paste the customer\'s own Weav3r Pricelist link. Acquisitions owns the shared profile; any MM module that uses customer buy rates reads this same shared pricelist. The suite works normally when this is blank.</div>'+
+      '<div style="display:grid;grid-template-columns:minmax(220px,1fr) auto auto;gap:5px;align-items:center;">'+
+        '<input id="mm-acq-pricelist-profile-url" value="'+esc(profile?.url||'')+'" placeholder="https://weav3r.dev/pricelist/1234567" style="'+inputCss()+'width:100%;">'+
+        '<button id="mm-acq-pricelist-profile-save" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Save & Refresh</button>'+
+        (profile?'<button id="mm-acq-pricelist-profile-clear" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Clear</button>':'')+
+      '</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:6px;">'+
+        (profile
+          ?('Active shared profile: '+esc(profile.url)+' · last refreshed '+esc(age(pricelist.lastSyncAt||'')))
+          :'No customer pricelist configured. Customer-specific buy rates and BB floors are disabled.')+
+        (legacyCachedCount?' · '+legacyCachedCount.toLocaleString()+' legacy cached row(s) preserved but inactive.':'')+
+      '</div>'
+    )+
+    card(
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
-        '<div><b style="font-size:15px;">Customer Pricelist</b><div style="font-size:10px;color:#aaa;margin-top:3px;">This is the main non-ranked workflow. Look for <b style="color:#9fe3a8;">AT / UNDER BUY RATE</b>, then choose where to buy.</div></div>'+
+        '<div><b style="font-size:15px;">Customer Pricelist</b><div style="font-size:10px;color:#aaa;margin-top:3px;">This is the main non-ranked workflow when a customer profile is configured. Look for <b style="color:#9fe3a8;">AT / UNDER BUY RATE</b>, then choose where to buy.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
-          '<button id="mm-acq-pricelist-refresh-main" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Refresh Pricelist</button>'+
+          '<button id="mm-acq-pricelist-refresh-main" '+(busy||!profile?'disabled':'')+' style="'+button()+(busy||!profile?'opacity:.5;':'')+'">Refresh Pricelist</button>'+
           '<button id="mm-acq-pricelist-market-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Market Prices</button>'+
         '</div>'+
       '</div>'+
-      '<div style="font-size:10px;color:#888;margin-top:5px;">'+allItems.toLocaleString()+' priced items · source '+esc(sourceName)+' · updated '+esc(age(state?.procurement?.pricelist?.lastSyncAt||''))+' · '+withinCount.toLocaleString()+' currently at/under buy rate in this filtered view.</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:5px;">'+allItems.toLocaleString()+' priced items · source '+esc(sourceName)+' · updated '+(profile?esc(age(pricelist.lastSyncAt||'')):'not configured')+' · '+withinCount.toLocaleString()+' currently at/under buy rate in this filtered view.</div>'+
       '<div style="display:grid;grid-template-columns:minmax(160px,1fr) minmax(130px,.7fr) minmax(130px,.7fr) auto;gap:5px;margin-top:8px;">'+
         '<input id="mm-acq-pl-query" value="'+esc(pricelistQuery)+'" placeholder="Item name or ID" style="'+inputCss()+'width:100%;">'+
         '<select id="mm-acq-pl-status" style="'+inputCss()+'width:100%;">'+
@@ -5677,9 +5887,8 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function rankedSettings(){
     const saved=state?.procurement?.ranked?.settings||{};
-    const pricelist=state?.procurement?.pricelist||{};
+    const pricelist=activePricelist();
     return {
-      pricelistUserId:String(saved.pricelistUserId||pricelist.userId||DEFAULT_PRICELIST_USER_ID),
       historyDays:Math.max(7,Number(saved.historyDays||90)),
       bonusBand:Math.max(1,Number(saved.bonusBand||5)),
       minComparableSales:Math.max(1,Number(saved.minComparableSales||3)),
@@ -5689,14 +5898,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       auctionPages:Math.max(1,Math.min(6,Number(saved.auctionPages||4))),
       maxLiveAgeHours:Math.max(1,Math.min(168,Number(saved.maxLiveAgeHours||24))),
       lowTierBonuses:Array.isArray(saved.lowTierBonuses)?saved.lowTierBonuses:['Achilles','Conserve'],
-      bbRate:Math.max(0,Number(pricelist.bunkerBuckRate||saved.bbRate||0))
+      bbRate:Math.max(0,Number(pricelist.bunkerBuckRate||0))
     };
   }
 
   async function saveRankedSettings(root){
     const read=(selector,fallback='')=>String(root.querySelector(selector)?.value??fallback).trim();
     const settings={
-      pricelistUserId:read('#mm-acq-rw-pricelist',DEFAULT_PRICELIST_USER_ID),
       historyDays:Math.max(7,Number(read('#mm-acq-rw-history','90'))||90),
       bonusBand:Math.max(1,Number(read('#mm-acq-rw-band','5'))||5),
       minComparableSales:Math.max(1,Math.round(Number(read('#mm-acq-rw-min-sales','3'))||3)),
@@ -5707,7 +5915,6 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       maxLiveAgeHours:Math.max(1,Math.min(168,Number(read('#mm-acq-rw-max-age','24'))||24)),
       lowTierBonuses:read('#mm-acq-rw-low-bonuses','Achilles,Conserve').split(',').map(x=>x.trim()).filter(Boolean)
     };
-    if(!/^\d+$/.test(settings.pricelistUserId))throw new Error('Pricelist ID must be a Torn user ID.');
     await core.updateDomainState('market',draft=>{
       const proc=draft.procurement || (draft.procurement={});
       const ranked=proc.ranked&&typeof proc.ranked==='object'?proc.ranked:(proc.ranked={});
@@ -5719,13 +5926,60 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     render();
   }
 
-  async function refreshPricelist(){
+  async function saveCustomerPricelistProfile(root){
     if(busy)return;
+    const raw=String(root?.querySelector('#mm-acq-pricelist-profile-url')?.value||'').trim();
+    const parsed=logic?.parseCustomerPricelistReference?.(raw);
+    if(!parsed){
+      statusText='Enter a valid Weav3r pricelist link, for example https://weav3r.dev/pricelist/1234567.';
+      render();
+      return;
+    }
     busy=true;
-    statusText='Refreshing customer pricelist and Bunker Buck rate from TornW3B…';
+    statusText='Saving and refreshing this customer pricelist…';
     render();
     try{
-      const result=await service.refreshPricelist(rankedSettings().pricelistUserId);
+      const result=await service.refreshPricelist(parsed.url);
+      state=result?.state||await readSharedState();
+      statusText='Customer pricelist saved for this suite: '+Number(result?.priced||0).toLocaleString()+' priced items · '+money(result?.bbRate||0)+'/BB.';
+    }catch(error){
+      statusText='Customer pricelist was not changed: '+(error?.message||String(error));
+    }finally{busy=false;render();}
+  }
+
+  async function clearCustomerPricelistProfile(){
+    if(busy||!state)return;
+    busy=true;
+    statusText='Disconnecting the optional customer pricelist…';
+    render();
+    try{
+      await core.updateDomainState('market',draft=>{
+        const proc=draft.procurement || (draft.procurement={});
+        const pricelist=proc.pricelist&&typeof proc.pricelist==='object'?proc.pricelist:(proc.pricelist={});
+        pricelist.profile={schema:1,configured:false,clearedAt:new Date().toISOString()};
+        delete pricelist.userId;
+        return draft;
+      });
+      state=await readSharedState();
+      statusText='Customer pricelist disconnected. Cached rows are preserved but inactive; the rest of the suite continues normally.';
+    }catch(error){
+      statusText='Could not disconnect customer pricelist: '+(error?.message||String(error));
+    }finally{busy=false;render();}
+  }
+
+  async function refreshPricelist(){
+    if(busy)return;
+    const profile=customerPricelistProfile();
+    if(!profile){
+      statusText='No customer pricelist is configured. Paste the customer’s Weav3r Pricelist link in Customer Pricelist to enable this optional data.';
+      render();
+      return;
+    }
+    busy=true;
+    statusText='Refreshing the configured customer pricelist and Bunker Buck rate from TornW3B…';
+    render();
+    try{
+      const result=await service.refreshPricelist(profile.url);
       state=result?.state||await readSharedState();
       statusText='Pricelist updated: '+Number(result?.priced||0).toLocaleString()+' priced items · '+money(result?.bbRate||0)+'/BB.';
     }catch(error){statusText='Pricelist refresh failed: '+(error?.message||String(error));}
@@ -5750,17 +6004,18 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   }
 
   async function ensurePricelistFresh(){
-    if(busy)return;
-    const at=Date.parse(state?.procurement?.pricelist?.lastSyncAt||'')||0;
+    if(busy||!customerPricelistProfile())return;
+    const at=Date.parse(activePricelist()?.lastSyncAt||'')||0;
     if(!at||Date.now()-at>=PRICELIST_STALE_MS)await refreshPricelist();
   }
 
   async function ensureRankedFresh(){
     if(busy){setTimeout(ensureRankedFresh,1200);return;}
     const now=Date.now();
-    const pricelistAt=Date.parse(state?.procurement?.pricelist?.lastSyncAt||'')||0;
+    const profile=customerPricelistProfile();
+    const pricelistAt=profile?(Date.parse(activePricelist()?.lastSyncAt||'')||0):0;
     const rankedAt=Date.parse(state?.procurement?.ranked?.lastLiveAt||'')||0;
-    if(!pricelistAt||now-pricelistAt>=PRICELIST_STALE_MS)await refreshPricelist();
+    if(profile&&(!pricelistAt||now-pricelistAt>=PRICELIST_STALE_MS))await refreshPricelist();
     if(!rankedAt||Date.now()-rankedAt>=RANKED_LIVE_STALE_MS)await refreshRankedLive();
   }
 
@@ -5859,7 +6114,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     if(source==='auction'){
       const direct=String(row.url||'');
       if(/^https:\/\/www\.torn\.com\//i.test(direct)){
-        GM_setValue(PANEL_OPEN_KEY,true);
+        __mmPdaSetValue(PANEL_OPEN_KEY,true);
         location.href=direct;
         return;
       }
@@ -5868,7 +6123,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       if(row.itemName)url.searchParams.set('weaponName',String(row.itemName));
       if(row.rarity)url.searchParams.set('rarity',String(row.rarity).toLowerCase());
       if(row.bonuses?.[0]?.title)url.searchParams.set('bonus1',String(row.bonuses[0].title));
-      GM_setValue(PANEL_OPEN_KEY,true);
+      __mmPdaSetValue(PANEL_OPEN_KEY,true);
       location.href=url.toString();
       return;
     }
@@ -5888,7 +6143,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     rankedPage=Math.max(0,Math.min(rankedPage,pages-1));
     const visible=all.slice(rankedPage*RANKED_PAGE_SIZE,(rankedPage+1)*RANKED_PAGE_SIZE);
     const historyCount=Object.keys(ranked.history||{}).length;
-    const priceList=state?.procurement?.pricelist||{};
+    const profile=customerPricelistProfile();
     const liveMarketRows=Array.isArray(ranked.liveMarket)?ranked.liveMarket:[];
     const bazaarCount=liveMarketRows.filter(row=>String(row?.source||'').toLowerCase()==='bazaar').length;
     const itemMarketCount=liveMarketRows.filter(row=>['item market','market'].includes(String(row?.source||'').toLowerCase())).length;
@@ -5896,12 +6151,12 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap;">'+
         '<div><b style="font-size:15px;">Ranked Weapons</b><div style="font-size:10px;color:#aaa;margin-top:3px;">Look for weapons below BB/AH value with positive ROI and useful sales traffic. No bonus is excluded. Very early low auction bids are hidden from All Sources so a $1/$119 opening bid is not presented as a buy-price profit opportunity; choose Auction to inspect them.</div></div>'+
         '<div style="display:flex;gap:5px;flex-wrap:wrap;">'+
-          '<button id="mm-acq-rw-pricelist-refresh" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Update BB Rate</button>'+
+          '<button id="mm-acq-rw-pricelist-refresh" '+(busy||!profile?'disabled':'')+' style="'+button()+(busy||!profile?'opacity:.5;':'')+'">Refresh Customer Pricelist</button>'+
           '<button id="mm-acq-rw-live-refresh" '+(busy?'disabled':'')+' style="'+button(true)+(busy?'opacity:.5;':'')+'">Refresh Weapons</button>'+
           '<button id="mm-acq-rw-analyze-visible" '+(busy?'disabled':'')+' style="'+button()+(busy?'opacity:.5;':'')+'">Load Completed Sales</button>'+
         '</div>'+
       '</div>'+
-      '<div style="font-size:10px;color:#888;margin-top:5px;">BB rate '+money(cfg.bbRate)+'/buck · '+bazaarCount.toLocaleString()+' Bazaar · '+itemMarketCount.toLocaleString()+' Item Market · '+Number(ranked.liveAuction?.length||0).toLocaleString()+' Auction · completed-sale history '+historyCount+' weapon types · updated '+esc(age(ranked.lastLiveAt))+'</div>'+
+      '<div style="font-size:10px;color:#888;margin-top:5px;">BB rate '+(profile?(money(cfg.bbRate)+'/buck'):'not configured')+' · '+bazaarCount.toLocaleString()+' Bazaar · '+itemMarketCount.toLocaleString()+' Item Market · '+Number(ranked.liveAuction?.length||0).toLocaleString()+' Auction · completed-sale history '+historyCount+' weapon types · updated '+esc(age(ranked.lastLiveAt))+'</div>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:5px;margin-top:8px;">'+
         '<select id="mm-acq-rw-type" style="'+inputCss()+'width:100%;"><option value="all">All weapon types</option><option value="primary"'+(rankedType==='primary'?' selected':'')+'>Primary</option><option value="secondary"'+(rankedType==='secondary'?' selected':'')+'>Secondary</option><option value="melee"'+(rankedType==='melee'?' selected':'')+'>Melee</option></select>'+
         '<select id="mm-acq-rw-source" style="'+inputCss()+'width:100%;"><option value="all">All sources</option><option value="bazaar"'+(rankedSource==='bazaar'?' selected':'')+'>Bazaar</option><option value="item-market"'+(rankedSource==='item-market'?' selected':'')+'>Item Market</option><option value="auction"'+(rankedSource==='auction'?' selected':'')+'>Auction</option></select>'+
@@ -5967,7 +6222,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
   function catalogRows(){
     const catalog=state?.procurement?.catalog||{};
-    const pricelist=state?.procurement?.pricelist?.items||{};
+    const pricelist=activePricelist().items||{};
     const marketplace=state?.marketIntel?.marketplace||{};
     const snapshots=state?.procurement?.marketSnapshots||{};
     return Object.entries(catalog).map(([id,row])=>({
@@ -6315,9 +6570,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     )+
     card(
       '<b>Ranked Weapon Rules</b>'+
-      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">BB floor uses Torn exchange values and the Bunker Bucks price from the configured TornW3B pricelist. Completed auction history comes from Torn API. Live ranked market/auction listings use the existing TornW3B dependency.</div>'+
+      '<div style="font-size:10px;color:#888;margin:4px 0 7px;">BB floor uses Torn exchange values and the Bunker Bucks price from the optional shared Customer Pricelist Profile. Configure that once in the Customer Pricelist view; Ranked Weapons consumes the same shared profile automatically. Completed auction history comes from Torn API.</div>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:5px;">'+
-        '<label style="font-size:10px;color:#aaa;">Pricelist Torn ID<input id="mm-acq-rw-pricelist" value="'+esc(rankedSettings().pricelistUserId)+'" style="'+inputCss()+'width:100%;"></label>'+
+
         '<label style="font-size:10px;color:#aaa;">AH history days<input id="mm-acq-rw-history" type="number" min="7" max="365" value="'+Number(rankedSettings().historyDays)+'" style="'+inputCss()+'width:100%;"></label>'+
         '<label style="font-size:10px;color:#aaa;">Bonus roll band %<input id="mm-acq-rw-band" type="number" min="1" max="25" value="'+Number(rankedSettings().bonusBand)+'" style="'+inputCss()+'width:100%;"></label>'+
         '<label style="font-size:10px;color:#aaa;">Min comparable sales<input id="mm-acq-rw-min-sales" type="number" min="1" max="20" value="'+Number(rankedSettings().minComparableSales)+'" style="'+inputCss()+'width:100%;"></label>'+
@@ -6374,7 +6629,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.0-alpha.34-pda.21 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.1-pda.27 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -6415,6 +6670,11 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       if(activeView==='travel'&&apiKey())refreshTravelContext({force:false,silent:true}).then(()=>render());
     }));
     root.querySelectorAll('[data-more-back]').forEach(b=>b.addEventListener('click',()=>{activeView='more';render();}));
+    root.querySelector('#mm-acq-pricelist-profile-save')?.addEventListener('click',()=>saveCustomerPricelistProfile(root));
+    root.querySelector('#mm-acq-pricelist-profile-clear')?.addEventListener('click',clearCustomerPricelistProfile);
+    root.querySelector('#mm-acq-pricelist-profile-url')?.addEventListener('keydown',event=>{
+      if(event.key==='Enter'){event.preventDefault();saveCustomerPricelistProfile(root);}
+    });
     root.querySelector('#mm-acq-pricelist-refresh-main')?.addEventListener('click',refreshPricelist);
     root.querySelector('#mm-acq-pricelist-market-refresh')?.addEventListener('click',refreshPricelistMarket);
     root.querySelector('#mm-acq-pl-filter')?.addEventListener('click',()=>{
@@ -6448,7 +6708,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     root.querySelectorAll('[data-pricelist-check]').forEach(b=>b.addEventListener('click',()=>{
       const id=String(b.dataset.pricelistCheck||'');
       const name=String(b.dataset.pricelistName||'');
-      const item=catalogRows().find(row=>row.id===id)||{id,name,type:'',subType:'',pricelistBuyPrice:Number(state?.procurement?.pricelist?.items?.[id]?.buyPrice||0)};
+      const item=catalogRows().find(row=>row.id===id)||{id,name,type:'',subType:'',pricelistBuyPrice:Number(activePricelist().items?.[id]?.buyPrice||0)};
       itemQuery=name;
       itemSelection=item;
       activeView='items';
@@ -6532,13 +6792,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     root.querySelectorAll('[data-item-travel]').forEach(b=>b.addEventListener('click',()=>{location.href='https://www.torn.com/travelagency.php';}));
     root.querySelector('#mm-acq-ti-save')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-acq-ti-key')?.value||'').trim();
-      if(value)GM_setValue(TORN_INTEL_KEY,value);
+      if(value)__mmPdaSetValue(TORN_INTEL_KEY,value);
       statusText=value?'Torn Intel client key saved for on-demand Restock ETA history.':'Enter a Torn Intel client key to save.';
       render();
     });
     root.querySelector('#mm-acq-ti-clear')?.addEventListener('click',()=>{
-      GM_deleteValue(TORN_INTEL_KEY);
-      GM_deleteValue(TORN_INTEL_LAST_KEYED_AT);
+      __mmPdaDeleteValue(TORN_INTEL_KEY);
+      __mmPdaDeleteValue(TORN_INTEL_LAST_KEYED_AT);
       statusText='Torn Intel client key cleared. Live stock refresh can still use the anonymous browser lane.';
       render();
     });
@@ -6554,13 +6814,13 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     });
     root.querySelector('#mm-acq-save-key')?.addEventListener('click',()=>{
       const value=String(root.querySelector('#mm-acq-api')?.value||'').trim();
-      if(value)GM_setValue(API_KEY,value);
+      if(value)__mmPdaSetValue(API_KEY,value);
       statusText=value?'MM Acquisitions API key saved. Refreshing automatically…':'Enter a key to save.';
       render();
       if(value)setTimeout(()=>autoRefreshAcquisitions({force:true}),50);
     });
     root.querySelector('#mm-acq-clear-key')?.addEventListener('click',()=>{
-      GM_deleteValue(API_KEY);
+      __mmPdaDeleteValue(API_KEY);
       statusText='MM Acquisitions API key cleared.';
       render();
     });
@@ -6578,7 +6838,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     createPanel();
     const root=document.getElementById(ROOT_ID);
     root.style.display='block';
-    GM_setValue(PANEL_OPEN_KEY,true);
+    __mmPdaSetValue(PANEL_OPEN_KEY,true);
     core?.setDockLauncherActive?.('acquisitions',true);
     render();
     reloadCachedState().then(()=>{
@@ -6593,7 +6853,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   function close(){
     const root=document.getElementById(ROOT_ID);
     if(root)root.style.display='none';
-    GM_setValue(PANEL_OPEN_KEY,false);
+    __mmPdaSetValue(PANEL_OPEN_KEY,false);
     core?.setDockLauncherActive?.('acquisitions',false);
     stopWatcher();
   }
@@ -6620,9 +6880,9 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     const b=document.createElement('button');
     b.id=LAUNCHER_ID;
     b.textContent='Acquisitions';
-    b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;'+button(true);
+    b.style.cssText='position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));z-index:2147483647;'+button(true);
     b.addEventListener('click',open);
-    document.body.appendChild(b);
+    document.documentElement.appendChild(b);
   }
 
   if(/^(www\.)?weav3r\.dev$/.test(location.hostname)){
@@ -6634,7 +6894,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
     createLauncher();
     installChannel();
     startAutoRefresh();
-    if(Boolean(GM_getValue(PANEL_OPEN_KEY,false)))setTimeout(open,0);
+    if(Boolean(__mmPdaGetValue(PANEL_OPEN_KEY,false)))setTimeout(open,0);
   }
   window.addEventListener('pagehide',()=>{stopAutoRefresh();pulseEngine?.release?.();},{once:true});
   if(document.body)initializeAcquisitions();

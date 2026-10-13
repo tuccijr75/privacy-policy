@@ -130,6 +130,21 @@ const rankedLogic=sandbox.globalThis.MMTornRankedProfitLogic;
 assert(logic&&rankedLogic,'Acquisitions logic modules must load after Market Pulse');
 
 {
+  const configured={
+    procurement:{pricelist:{
+      profile:{schema:1,configured:true,provider:'weav3r',userId:'1234567',url:'https://weav3r.dev/pricelist/1234567'},
+      items:{'333':{itemId:'333',buyPrice:1000}}
+    }},
+    marketIntel:{marketPulse:{items:{}}},
+    travelIntel:{rows:[]}
+  };
+  assert.deepStrictEqual(Array.from(pulse.trackedItemIds(configured,4,now)),['333'],'configured shared customer pricelist must contribute its item universe to the existing Market Pulse producer');
+  const unconfigured=JSON.parse(JSON.stringify(configured));
+  unconfigured.procurement.pricelist.profile.configured=false;
+  assert.deepStrictEqual(Array.from(pulse.trackedItemIds(unconfigured,4,now)),[],'cleared customer profile must remove cached pricelist rows from Market Pulse tracking');
+}
+
+{
   const nowIso=new Date(now).toISOString();
   const db={
     businessRules:{minRoiPct:0,minDemandPerDay:0,minPrice:1,maxPrice:10000,minAbsoluteProfit:1,minSellerCount:1,minConfidencePct:0,maxListingAgeSec:300},

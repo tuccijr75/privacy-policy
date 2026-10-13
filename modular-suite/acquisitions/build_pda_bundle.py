@@ -68,16 +68,13 @@ def metadata(version: str) -> str:
 // @version      {version}
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
+// @match        https://torn.com/*
 // @match        https://weav3r.dev/travel-stock*
 // @match        https://www.weav3r.dev/travel-stock*
 // @run-at       document-end
-// @grant        GM_xmlhttpRequest
-// @grant        GM_getValue
-// @grant        GM_setValue
-// @grant        GM_deleteValue
-// @connect      api.torn.com
-// @connect      weav3r.dev
-// @connect      torn-intel.com
+// @updateURL    https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
+// @downloadURL  https://raw.githack.com/tuccijr75/privacy-policy/main/modular-suite/acquisitions/MM_Acquisitions.pda.user.js
+// @noframes
 // ==/UserScript==
 
 """
@@ -93,7 +90,7 @@ def build(pda_revision: int) -> str:
   'use strict';
   globalThis.__MM_ACQ_PDA_STAGE='boot';
   function ensureBootLauncher(){
-    if(!document.body)return;
+    if(!document.documentElement)return;
     let b=document.getElementById('mm-acquisitions-launcher');
     if(!b){
       b=document.createElement('button');
@@ -102,7 +99,7 @@ def build(pda_revision: int) -> str:
       b.setAttribute('aria-label','MM_Acquisitions');
       b.title='MM_Acquisitions';
       b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 4 4M9 7.5v6M6.8 9.2h4.4M6.8 11.8h4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
-      b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+      b.style.cssText='position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));z-index:2147483647;width:48px;height:48px;min-width:48px;min-height:48px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:24px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 2px 8px #000b;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;';
       b.addEventListener('click',()=>{
         if(typeof globalThis.__MM_ACQ_OPEN__==='function'){
           globalThis.__MM_ACQ_OPEN__();
@@ -114,14 +111,15 @@ def build(pda_revision: int) -> str:
           d=document.createElement('div');
           d.id='mm-acq-pda-boot-diagnostic';
           d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';
-          document.body.appendChild(d);
+          document.documentElement.appendChild(d);
         }
         d.innerHTML='<b>MM_Acquisitions PDA boot diagnostic</b><div style="margin-top:6px;">Stopped at: <code>'+stage.replace(/[<>&]/g,'')+'</code></div><div style="margin-top:4px;color:#bbb;">Send a screenshot of this message.</div>';
       });
-      document.body.appendChild(b);
+      b.__mmAcqBootLauncher=true;
+      document.documentElement.appendChild(b);
     }
   }
-  if(document.body)ensureBootLauncher();
+  if(document.documentElement)ensureBootLauncher();
   else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
 })();
 """
@@ -129,7 +127,66 @@ def build(pda_revision: int) -> str:
     # Keep it lexical inside TornPDA's per-script closure; never publish the key
     # on window/globalThis.
     pda_key = "const __MM_PDA_API_KEY='###PDA-APIKEY###';\n"
-    pieces = [metadata(pda_version), pda_key, boot]
+    pda_prefs = r"""
+const __MM_PDA_PREF_KEYS=[
+  'mm_acquisitions_api_v1',
+  'mm_acquisitions_torn_intel_client_key_v1',
+  'mm_acquisitions_torn_intel_last_keyed_at_v1',
+  'mm_acquisitions_weav_watch_lease_v1',
+  'mm_acquisitions_market_pulse_lease_v1',
+  'mm_acquisitions_panel_open_v1'
+];
+const __MM_PDA_PREF_CACHE=Object.create(null);
+let __MM_PDA_PREF_QUEUE=Promise.resolve();
+const __MM_PDA_PREF_READY=(async()=>{
+  if(typeof PDA_storage!=='undefined'&&PDA_storage){
+    try{
+      if(typeof PDA_storage.getMany==='function'){
+        const values=await PDA_storage.getMany(__MM_PDA_PREF_KEYS);
+        for(const key of __MM_PDA_PREF_KEYS){if(values&&Object.prototype.hasOwnProperty.call(values,key))__MM_PDA_PREF_CACHE[key]=values[key];}
+        return;
+      }
+      if(typeof PDA_storage.get==='function'){
+        for(const key of __MM_PDA_PREF_KEYS){
+          const value=await PDA_storage.get(key,undefined);
+          if(value!==undefined)__MM_PDA_PREF_CACHE[key]=value;
+        }
+        return;
+      }
+    }catch(error){console.warn('[MM_Acquisitions PDA] preference preload failed',String(error?.message||error));}
+  }
+  try{
+    for(const key of __MM_PDA_PREF_KEYS){
+      const raw=localStorage.getItem('mm_acq_pda_pref:'+key);
+      if(raw!==null)__MM_PDA_PREF_CACHE[key]=JSON.parse(raw);
+    }
+  }catch{}
+})();
+function __mmPdaGetValue(key,def=null){
+  return Object.prototype.hasOwnProperty.call(__MM_PDA_PREF_CACHE,String(key))?__MM_PDA_PREF_CACHE[String(key)]:def;
+}
+function __mmPdaPersist(op,key,value){
+  const k=String(key);
+  __MM_PDA_PREF_QUEUE=__MM_PDA_PREF_QUEUE.then(async()=>{
+    if(typeof PDA_storage!=='undefined'&&PDA_storage){
+      if(op==='set'&&typeof PDA_storage.set==='function'){await PDA_storage.set(k,value);return;}
+      if(op==='delete'&&typeof PDA_storage.delete==='function'){await PDA_storage.delete(k);return;}
+    }
+    try{
+      const storageKey='mm_acq_pda_pref:'+k;
+      if(op==='set')localStorage.setItem(storageKey,JSON.stringify(value));
+      else localStorage.removeItem(storageKey);
+    }catch{}
+  }).catch(error=>console.warn('[MM_Acquisitions PDA] preference persistence failed',String(error?.message||error)));
+}
+function __mmPdaSetValue(key,value){
+  const k=String(key);__MM_PDA_PREF_CACHE[k]=value;__mmPdaPersist('set',k,value);return value;
+}
+function __mmPdaDeleteValue(key){
+  const k=String(key);delete __MM_PDA_PREF_CACHE[k];__mmPdaPersist('delete',k);return undefined;
+}
+"""
+    pieces = [metadata(pda_version), pda_key, boot, pda_prefs]
 
     stage_names = [
         "core",
@@ -147,6 +204,12 @@ def build(pda_revision: int) -> str:
         pieces.append(f"\n;globalThis.__MM_ACQ_PDA_STAGE='{stage}';\n")
 
     body = main_body(main_source)
+    body = replace_once(
+        body,
+        "(() => {\n  'use strict';",
+        "(async () => {\n  'use strict';\n  await __MM_PDA_PREF_READY;",
+        "PDA preference preload before UI bootstrap",
+    )
     body = replace_once(
         body,
         f"v{base_version}",
@@ -168,8 +231,14 @@ def build(pda_revision: int) -> str:
     body = replace_once(
         body,
         "position:fixed;right:52px;bottom:6px;",
-        "position:fixed;right:10px;bottom:86px;",
-        "PDA launcher safe bottom offset",
+        "position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));",
+        "PDA launcher safe-area placement",
+    )
+    body = replace_once(
+        body,
+        "b.addEventListener('click',open);\n    document.body.appendChild(b);",
+        "b.addEventListener('click',open);\n    document.documentElement.appendChild(b);",
+        "PDA launcher documentElement mount",
     )
     body = replace_once(
         body,
@@ -277,7 +346,7 @@ def build(pda_revision: int) -> str:
       const ret=GM_getValue(TRAVEL_RETURN_KEY,null);
       const requestedAt=Number(ret?.at||0);
       const returnUrl=String(ret?.url||'');
-      if(returnUrl.startsWith('https://www.torn.com/')&&Date.now()-requestedAt<5*60*1000){
+      if(isTornReturnUrl(returnUrl)&&Date.now()-requestedAt<5*60*1000){
         returned=true;
         GM_deleteValue(TRAVEL_RETURN_KEY);
         try{observer?.disconnect();}catch{}
@@ -311,7 +380,7 @@ def build(pda_revision: int) -> str:
       const ret=await pdaSharedGet(TRAVEL_RETURN_KEY,null);
       const requestedAt=Number(ret?.at||0);
       const returnUrl=String(ret?.url||'');
-      if(returnUrl.startsWith('https://www.torn.com/')&&Date.now()-requestedAt<5*60*1000){
+      if(isTornReturnUrl(returnUrl)&&Date.now()-requestedAt<5*60*1000){
         returned=true;
         await pdaSharedDelete(TRAVEL_RETURN_KEY);
         try{observer?.disconnect();}catch{}
@@ -360,6 +429,19 @@ def build(pda_revision: int) -> str:
 
     body = replace_once(
         body,
+        "    if(typeof GM_xmlhttpRequest==='function')return GM_xmlhttpRequest(opts);\n",
+        "",
+        "PDA native HTTP bridge",
+    )
+    body = body.replace("GM_getValue(", "__mmPdaGetValue(")
+    body = body.replace("GM_setValue(", "__mmPdaSetValue(")
+    body = body.replace("GM_deleteValue(", "__mmPdaDeleteValue(")
+    for forbidden in ("GM_getValue(", "GM_setValue(", "GM_deleteValue(", "GM_xmlhttpRequest("):
+        if forbidden in body:
+            raise RuntimeError(f"PDA UI still depends on runtime GM helper: {forbidden}")
+
+    body = replace_once(
+        body,
         "  function initializeAcquisitions(){",
         "  globalThis.__MM_ACQ_OPEN__=open;globalThis.__MM_ACQ_PDA_STAGE='ui-ready';\n  function initializeAcquisitions(){",
         "PDA ready/open bridge",
@@ -389,7 +471,7 @@ def build(pda_revision: int) -> str:
 
 def cli() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--pda-revision", type=int, default=21)
+    parser.add_argument("--pda-revision", type=int, default=27)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     args = parser.parse_args()
     if args.pda_revision < 1:

@@ -1,54 +1,12 @@
 (() => {
   'use strict';
 
-  const PDA_GM_PREFIX='mm_acquisitions_pda_gm_v1:';
   globalThis.__MM_TORN_PDA__=true;
 
-  if(typeof globalThis.GM_getValue!=='function'){
-    globalThis.GM_getValue=(key,def)=>{
-      try{
-        const raw=localStorage.getItem(PDA_GM_PREFIX+String(key));
-        return raw==null?def:JSON.parse(raw);
-      }catch{return def;}
-    };
-  }
-  if(typeof globalThis.GM_setValue!=='function'){
-    globalThis.GM_setValue=(key,value)=>{
-      try{localStorage.setItem(PDA_GM_PREFIX+String(key),JSON.stringify(value));}catch{}
-    };
-  }
-  if(typeof globalThis.GM_deleteValue!=='function'){
-    globalThis.GM_deleteValue=key=>{
-      try{localStorage.removeItem(PDA_GM_PREFIX+String(key));}catch{}
-    };
-  }
-
-  // TornPDA/GMforPDA exposes GM_* helpers as non-writable, non-configurable
-  // window properties. Never monkey-patch them. The PDA bundle keeps its
-  // injected API key in the outer TornPDA userscript closure instead of window.
-
-  if(typeof globalThis.GM_xmlhttpRequest!=='function'&&typeof globalThis.PDA_httpGet==='function'){
-    globalThis.GM_xmlhttpRequest=options=>{
-      const opts=options&&typeof options==='object'?options:{};
-      let aborted=false;
-      let settled=false;
-      let timer=null;
-      const finish=(fn,arg)=>{
-        if(settled||aborted)return;
-        settled=true;
-        if(timer)clearTimeout(timer);
-        try{fn?.(arg);}catch{}
-      };
-      if(Number(opts.timeout||0)>0){
-        timer=setTimeout(()=>finish(opts.ontimeout,{status:0,statusText:'timeout',responseText:''}),Number(opts.timeout));
-      }
-      Promise.resolve()
-        .then(()=>globalThis.PDA_httpGet(String(opts.url||''),opts.headers||{}))
-        .then(response=>finish(opts.onload,response))
-        .catch(error=>finish(opts.onerror,{status:0,statusText:String(error?.message||error||'request failed'),responseText:'',error}));
-      return {abort(){aborted=true;if(timer)clearTimeout(timer);}};
-    };
-  }
+  // TornPDA/GMforPDA may expose GM_* helpers as non-writable,
+  // non-configurable properties. Never assign or replace them here.
+  // Acquisitions owns its request fallback locally in the UI/runtime source;
+  // durable cross-origin handoff state uses lexical PDA_storage below.
 })();
 
 (() => {
@@ -176,12 +134,73 @@
     });
   }
 
+  const PDA_LAUNCHER_ID='mm-acquisitions-launcher';
+
+  function stylePdaLauncher(button,active=false){
+    if(!button)return null;
+    button.style.cssText='position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));z-index:2147483647;width:48px;height:48px;min-width:48px;min-height:48px;padding:0;margin:0;border:1px solid '+(active?'#d7ad4b':'#25282b')+';border-radius:24px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:'+(active?'0 0 0 2px #d7ad4b88,0 2px 8px #000b':'inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 2px 8px #000b')+';color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;';
+    return button;
+  }
+
+  function pdaRegisterDockLauncher({id,label,accent,icon,onClick}={}){
+    let button=document.getElementById(PDA_LAUNCHER_ID);
+    if(!button){
+      button=document.createElement('button');
+      button.id=PDA_LAUNCHER_ID;
+      button.type='button';
+      document.documentElement.appendChild(button);
+    }
+    button.dataset.mmDockId=String(id||'acquisitions');
+    button.dataset.mmPdaLauncher='1';
+    button.setAttribute('aria-label',String(label||'MM_Acquisitions'));
+    button.title=String(label||'MM_Acquisitions');
+    if(icon)button.innerHTML=String(icon);
+    button.style.setProperty('--mm-accent',accent||'#4d7f65');
+    if(!button.__mmAcqBootLauncher&&typeof onClick==='function'){
+      if(button.__mmPdaDockClick)button.removeEventListener('click',button.__mmPdaDockClick);
+      button.__mmPdaDockClick=onClick;
+      button.addEventListener('click',onClick);
+    }else{
+      button.__mmPdaDockClick=onClick;
+    }
+    return stylePdaLauncher(button,button.dataset.mmActive==='1');
+  }
+
+  function pdaSetDockLauncherActive(id,active){
+    const button=document.getElementById(PDA_LAUNCHER_ID);
+    if(!button)return false;
+    button.dataset.mmActive=active?'1':'0';
+    stylePdaLauncher(button,Boolean(active));
+    return true;
+  }
+
+  function pdaPositionDock(){
+    const button=document.getElementById(PDA_LAUNCHER_ID);
+    return stylePdaLauncher(button,button?.dataset?.mmActive==='1');
+  }
+
+  function pdaMakePanelDraggable(panel){
+    if(!panel)return panel;
+    panel.style.left='8px';
+    panel.style.right='8px';
+    panel.style.top='max(54px,env(safe-area-inset-top))';
+    panel.style.width='auto';
+    panel.style.maxWidth='none';
+    panel.style.maxHeight='calc(100dvh - 72px - env(safe-area-inset-top) - env(safe-area-inset-bottom))';
+    panel.style.touchAction='auto';
+    return panel;
+  }
+
   const api=Object.freeze({
     ...original,
     version:String(original.version||'')+'-pda',
     readLegacyState,
     updateDomainState,
-    inspectLegacyState
+    inspectLegacyState,
+    registerDockLauncher:pdaRegisterDockLauncher,
+    setDockLauncherActive:pdaSetDockLauncherActive,
+    positionDock:pdaPositionDock,
+    makePanelDraggable:pdaMakePanelDraggable
   });
 
   Object.defineProperty(globalThis,'MMTornCore',{

@@ -5,6 +5,44 @@
   const marketPulse = globalThis.MMTornMarketPulse;
 
   const asId = value => String(value ?? '').trim();
+  const CUSTOMER_PRICELIST_SCHEMA = 1;
+
+  function parseCustomerPricelistReference(value) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+    let userId = '';
+    if (/^\d+$/.test(raw)) {
+      userId = raw;
+    } else {
+      const match = raw.match(/^https:\/\/(?:www\.)?weav3r\.dev\/pricelist\/(\d+)\/?(?:[?#].*)?$/i);
+      if (!match) return null;
+      userId = match[1];
+    }
+    return {
+      schema: CUSTOMER_PRICELIST_SCHEMA,
+      provider: 'weav3r',
+      userId,
+      url: 'https://weav3r.dev/pricelist/' + userId
+    };
+  }
+
+  function customerPricelistProfile(db) {
+    const raw = db?.procurement?.pricelist?.profile;
+    if (!raw || Number(raw.schema) !== CUSTOMER_PRICELIST_SCHEMA || raw.configured !== true) return null;
+    const parsed = parseCustomerPricelistReference(raw.url || raw.userId || '');
+    if (!parsed) return null;
+    if (raw.userId && asId(raw.userId) !== parsed.userId) return null;
+    return {
+      ...parsed,
+      configured: true,
+      configuredAt: String(raw.configuredAt || ''),
+      updatedAt: String(raw.updatedAt || '')
+    };
+  }
+
+  function activeCustomerPricelist(db) {
+    return customerPricelistProfile(db) ? (db?.procurement?.pricelist || null) : null;
+  }
 
   function businessRules(db) {
     const r = db?.businessRules || {};
@@ -290,7 +328,7 @@
     const settings=intel.settings||{};
     const rules=businessRules(db);
     const freshness=freshnessInfo(intel.marketplaceGeneratedAt,Math.max(300,rules.maxListingAgeSec),nowMs);
-    const pricelist=db?.procurement?.pricelist?.items||{};
+    const pricelist=activeCustomerPricelist(db)?.items||{};
     const personal=salesItemMetrics(db,nowMs);
     const market=new Map();
     for(const row of Object.values(intel.marketplace||{})){
@@ -451,6 +489,7 @@
   }
 
   const api = Object.freeze({
+    parseCustomerPricelistReference,customerPricelistProfile,activeCustomerPricelist,
     businessRules,
     freshnessInfo,
     salesItemMetrics,

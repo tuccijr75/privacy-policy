@@ -5,6 +5,10 @@ const logic=sandbox.globalThis.MMTornAcquisitionsLogic;assert(logic);
 
 const now=Date.now();
 const iso=new Date(now).toISOString();
+const configuredPricelistProfile=()=>({
+  schema:1,configured:true,provider:'weav3r',userId:'1234567',
+  url:'https://weav3r.dev/pricelist/1234567',configuredAt:iso,updatedAt:iso
+});
 const item=(id,buy,exit,listings=3)=>({
   itemId:String(id),itemName:'Item '+id,marketPrice:exit,bazaarAverage:exit,
   lowestPrice:buy,totalBazaars:listings
@@ -89,10 +93,35 @@ function baseDb(){
 }
 
 {
+  const parsed=logic.parseCustomerPricelistReference('https://weav3r.dev/pricelist/1234567');
+  assert.strictEqual(parsed.schema,1);
+  assert.strictEqual(parsed.provider,'weav3r');
+  assert.strictEqual(parsed.userId,'1234567');
+  assert.strictEqual(parsed.url,'https://weav3r.dev/pricelist/1234567');
+  assert.strictEqual(logic.parseCustomerPricelistReference('1234567').url,'https://weav3r.dev/pricelist/1234567','numeric ID may be normalized for convenience');
+  assert.strictEqual(logic.parseCustomerPricelistReference('https://example.com/pricelist/1234567'),null,'foreign pricelist hosts must fail closed');
+  assert.strictEqual(logic.parseCustomerPricelistReference(''),null,'blank customer profile is optional and must remain unconfigured');
+}
+
+{
+  const db=baseDb();
+  db.procurement.pricelist={userId:'9999999',items:{'1':{itemId:'1',name:'Legacy cached row',buyPrice:1000}},bunkerBuckRate:6000000};
+  assert.strictEqual(logic.customerPricelistProfile(db),null,'legacy implicit customer ID must not become an active suite profile');
+  assert.strictEqual(logic.activeCustomerPricelist(db),null,'unconfigured legacy cached rows must remain inert');
+  assert.deepStrictEqual(Array.from(logic.rankPricelistUniverse(db,now)),[],'unconfigured cached customer rows must not influence pricelist ranking');
+}
+
+{
+  const db=baseDb();
+  db.procurement.pricelist={profile:{...configuredPricelistProfile(),url:'https://weav3r.dev/pricelist/7654321'},items:{}};
+  assert.strictEqual(logic.customerPricelistProfile(db),null,'profile ID/URL mismatch must fail closed');
+}
+
+{
   const db=baseDb();
   db.marketIntel.marketplace={};
   db.procurement.catalog={};
-  db.procurement.pricelist={items:{}};
+  db.procurement.pricelist={profile:configuredPricelistProfile(),items:{}};
   for(let i=1;i<=125;i++){
     const id=String(i);
     db.marketIntel.marketplace[id]=item(id,1000+i,2000+i,3+(i%5));
@@ -122,7 +151,7 @@ function baseDb(){
   db.marketIntel.marketplaceGeneratedAt='';
   db.procurement.marketSnapshots={};
   db.procurement.catalog['1']={name:'Item 1',type:'Supply',marketPrice:9999999};
-  db.procurement.pricelist={items:{'1':{itemId:'1',name:'Item 1',buyPrice:1000}}};
+  db.procurement.pricelist={profile:configuredPricelistProfile(),items:{'1':{itemId:'1',name:'Item 1',buyPrice:1000}}};
   const rows=logic.rankPricelistUniverse(db,now);
   assert.strictEqual(rows.length,1,'pricelist row should still exist with only a catalog MV');
   assert.strictEqual(rows[0].marketReference,9999999,'catalog MV should remain available as reference metadata');

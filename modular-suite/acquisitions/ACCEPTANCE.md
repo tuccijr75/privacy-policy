@@ -1,13 +1,48 @@
 # MM_Acquisitions Acceptance — Standalone Customer Product
 
-## Candidate
+## Release
 
-- Desktop: 8.0.0-alpha.34
-- TornPDA: 8.0.0-alpha.34-pda.21
-- Branch: crm-v8-acquisitions-standalone-alpha34
-- Status: non-production candidate
+- Desktop: 8.0.1
+- TornPDA: 8.0.1-pda.27
+- Source branch: crm-v8-acquisitions-standalone-pricelist-alpha35
+- Source base: crm-v8-acquisitions-standalone-alpha34
+- Canonical stable distribution ref: main
+- Stable/customer publication: OWNER APPROVED 2026-10-12
+- Status: stable/customer published
 - Final purchase, bid, travel and transfer actions remain manual.
 
+## Alpha.37 standalone customer profile + native TornPDA bootstrap correction
+
+Alpha.37 preserves the alpha.36 customer-profile corrections and now removes all PDA runtime dependence on GM permissions/helpers. Real-device acceptance still produced no launcher after the dual-origin pda.24 correction, proving origin matching was not the only boot constraint. pda.26 keeps the native TornPDA runtime from pda.25 and adds fixed branch-based `@updateURL` / `@downloadURL` metadata so it becomes a one-time install that TornPDA can update in place. Runtime permissions remain minimal: no `@require`, `@grant`, or `@connect`; product preferences/state use lexical `PDA_storage`, and cross-origin GETs use `PDA_httpGet`. The generated PDA contains zero runtime `GM_getValue`, `GM_setValue`, `GM_deleteValue`, or `GM_xmlhttpRequest` calls. The boot launcher remains the first executable block and is independent of PDA/GM storage or network APIs.
+
+Alpha.36 preserved the alpha.35 customer-profile behavior and corrected the TornPDA platform boundary. The PDA adapter no longer assigns or replaces GM_getValue, GM_setValue, GM_deleteValue, or GM_xmlhttpRequest. Acquisitions now owns a local GET bridge that uses native GM_xmlhttpRequest when available and falls back to PDA_httpGet without mutating global GM helpers. Cross-origin Travel handoff remains on lexical PDA_storage.
+
+
+### Contract
+
+- Acquisitions is the sole owner/writer/provider adapter for the optional Customer Pricelist Profile.
+- Canonical state is `procurement.pricelist.profile`, schema 1.
+- Accepted input is `https://weav3r.dev/pricelist/<numeric-id>`; a numeric ID may be normalized as a convenience.
+- No customer-specific Pricelist ID or URL is embedded as a runtime default.
+- Legacy cached Pricelist rows are preserved but inert until a valid profile is explicitly configured.
+- Save & Refresh validates and fetches before replacing the active profile.
+- Failed/invalid profile input does not replace the active profile.
+- The provider exposes no reliable source timestamp here, so `sourceUpdatedAt` remains `null`; `lastSyncAt` is local fetch time only.
+- Clearing the profile disables customer buy-rate and BB-floor use without deleting historical cached rows.
+- Ranked Weapons consumes the same active profile; there is no second customer-ID setting.
+- Market Pulse tracks Pricelist items only while the shared profile is active.
+- No new collector, scheduler, credential, provider, or automated purchase/bid/travel action is introduced.
+
+### Live acceptance
+
+- [ ] With no configured profile, customer-specific Pricelist rows/BB floors are inactive and no customer ID is prefilled.
+- [ ] Save & Refresh an authorized customer-owned Weav3r Pricelist link; rows and BB rate activate only after a successful fetch.
+- [ ] Ranked Weapons uses the same BB rate and exposes no duplicate Pricelist ID field.
+- [ ] Invalid/foreign input does not replace the active profile.
+- [ ] Clear the profile; cached rows remain preserved but inactive while unrelated workflows continue.
+- [ ] Recheck Pricelist, Find One Item, Best Deals, Ranked Weapons, Travel, Inventory Restock, Market Pulse freshness, route guards and manual-action boundaries.
+- [ ] Install TornPDA 8.0.1-pda.26 from the stable `main` raw.githack URL, verify the launcher appears on both `https://www.torn.com/*` and `https://torn.com/*`, and retain that stable update channel for future revisions.
+- [ ] Owner promotion approval is recorded; do not publish stable until the current PDA release build passes real-device acceptance.
 ## Product boundary
 
 MM_Acquisitions is a customer-facing standalone procurement and market-intelligence product.
@@ -177,3 +212,151 @@ Before merge/publication:
 - path diff proves unrelated private-product files were not modified;
 - live customer acceptance passes without any private-product installation requirement;
 - owner explicitly approves merge/publication.
+
+## Live alpha.35 desktop verification — 2026-10-07
+
+Verified against the installed desktop candidate `8.0.0-alpha.35`.
+
+PASS:
+- customer Pricelist starts unconfigured; no customer-specific profile is prefilled;
+- legacy cached Pricelist rows remain preserved but inactive while no profile is configured;
+- invalid foreign profile input does not activate or replace the customer profile;
+- owner-authorized customer profile Save & Refresh succeeds and normalizes the numeric reference to the canonical Weav3r Pricelist URL;
+- authorized profile produced 125 priced items and a shared BB rate of `$6,043,500`;
+- Ranked Weapons consumed that same `$6,043,500` BB rate and exposed no duplicate customer-ID field;
+- clearing the customer profile disabled customer buy-rate/BB-floor use while preserving all 125 cached rows as inactive;
+- the authorized customer profile was restored after the Clear test and left active;
+- Ranked live Bazaar / Item Market / Auction evidence and completed-sale history remained available independently of the optional customer profile;
+- Find One Item live-tested with Xanax and returned Bazaar, Item Market and Travel choices without executing a purchase;
+- Find One Item explicitly preserved the manual final-purchase boundary;
+- Best Deals rendered live Recommended Deals / Refresh Deals / Check & Open controls without automatic purchase behavior;
+- shared MM dock launcher and alpha.35 panel restoration were observed on live Torn pages;
+- Inventory Restock Demand surfaced in the standalone Acquisitions Pricelist workflow without private-product wording.
+
+Pending:
+- Travel Deals subview live acceptance because the current Opera accessibility bridge does not reliably dispatch that custom tab control;
+- actual abroad/travel-state route-guard acceptance;
+- Setup / Advanced Market Pulse diagnostic disclosure live acceptance because the current Opera accessibility bridge does not reliably dispatch that custom tab control;
+- TornPDA `8.0.0-alpha.35-pda.22` real-device acceptance.
+
+No merge, stable publication or customer publication is authorized by this verification.
+
+## Live alpha.35 desktop continuation — 2026-10-08
+
+Additional live verification against `8.0.0-alpha.35`:
+
+PASS:
+- Travel Deals opens in the live Acquisitions panel;
+- stale travel stock is hidden until refresh rather than being ranked as current;
+- Refresh Travel Stock returned 229 current item/country rows from Torn Intel;
+- destination ranking exposes its ranking components and explicitly states there is no hidden country score;
+- Restock Watch identifies its estimates as MM calculations from observed Torn Intel history, with history calls on-demand and rate-limited;
+- out-of-stock rows without usable observed history show `No restock history loaded` instead of fabricating an ETA;
+- Travel Deals states that Torn Intel is preferred when available, TornW3B is fallback, and travel/purchases remain manual;
+- Setup / Advanced Market Activity live UI reports source `Torn API v2 Item Market`, 36 cached items, 0 proven, 36 candidates, request budget `0/45` in the last minute, and recent update age;
+- Market Activity live UI explicitly describes seller-free intelligence, one cross-tab engine lease, bounded cache/history, cache-delay-aware cadence, and a local request-budget governor, with no seller-target/mug/attack model retained;
+- Export Diagnostics action completed in the UI with `Sanitized Market Pulse diagnostics exported.`;
+- Market Pulse regression tests PASS and source/PDA contract tests PASS after the live check;
+- serializer regression explicitly rejects API-key exposure and seller/attack/mug fields; private-product coupling remains absent from the Market Pulse source contract.
+
+Verification limitation:
+- Opera acknowledged the diagnostics export, but the DevTools-triggered download did not materialize a JSON file in the configured download directory or the searched user drives. Exported artifact bytes were therefore not independently inspected; sanitization is source/regression-verified rather than download-file-verified.
+
+Remaining live gates:
+- actual abroad/travel-state route-guard acceptance requires the Torn account to be in a real travel/abroad state;
+- TornPDA `8.0.0-alpha.35-pda.22` real-device acceptance remains separate.
+
+No merge, stable publication or customer publication is authorized by this verification.
+
+## Alpha.36 PDA contract verification
+
+Pending live gate:
+- TornPDA 8.0.0-alpha.36-pda.23 real-device acceptance.
+
+Deterministic requirements:
+- generated PDA contains no GM helper assignment/monkey-patch;
+- native GM helpers are used as provided;
+- GET-only fallback uses PDA_httpGet locally;
+- cross-origin Travel handoff continues through lexical PDA_storage;
+- traveling and abroad states preserve the Torn market route guard;
+- final Buy/Bid/Travel actions remain manual.
+
+## Live alpha.36 desktop smoke — 2026-10-08
+
+Verified after the TornPDA GM-helper contract correction:
+
+PASS:
+- Tampermonkey storage contains Acquisitions `8.0.0-alpha.36` and no remaining alpha.35 script value;
+- live Torn panel reports `v8.0.0-alpha.36 · PRICELIST + RANKED`;
+- authorized shared customer profile `https://weav3r.dev/pricelist/4054377` persisted through the update;
+- `Data status: READY` after reload;
+- live Refresh Pricelist succeeded through the desktop native GM request path: 125 priced items, source TornW3B Pricelist API, `$6,120,000/BB`, fresh update timestamp;
+- live Market Pulse refresh succeeded through Torn API v2 and reported `Market Pulse refreshed item 985.`;
+- no purchase, bid, transfer, travel, or other irreversible Torn action was executed during the smoke test;
+- the temporary test tab was restored to its original Bazaar URL after verification.
+- executable travel-state guard tests PASS for Torn/home, Traveling, Abroad, and unknown parsing; Traveling and Abroad both block Torn market routing.
+
+Remaining live gates:
+- actual traveling/abroad route-guard behavior requires the account to be genuinely traveling or abroad; do not initiate travel for testing;
+- TornPDA `8.0.0-alpha.36-pda.23` real-device acceptance.
+
+No merge, stable publication or customer publication is authorized by this verification.
+
+## Live 8.0.1 release smoke — 2026-10-12
+
+PASS:
+- desktop release artifact installed from immutable commit `ac7ab5f1d6625d38522fdc363658e29ff3cc1396` after the moving candidate branch briefly served cached `8.0.0`;
+- live Torn panel reports `v8.0.1 · PRICELIST + RANKED`;
+- live panel reports `Data status: READY`;
+- account was genuinely `Traveling from Torn to South Africa`; no travel was initiated for testing;
+- Find One Item price comparison for Xanax completed and retained the explicit manual-buy boundary;
+- invoking `GO TO ITEM MARKET` while traveling did not navigate away from `https://www.torn.com/page.php?sid=travel`;
+- live guard message: `Price routing failed: Torn market purchase pages are unavailable while traveling or abroad. Return to Torn before routing this market purchase.`;
+- actual Traveling route-guard acceptance is therefore PASS.
+
+Remaining publication blocker:
+- TornPDA `8.0.1-pda.26` real-device launcher/runtime acceptance.
+
+Owner promotion approval is recorded, but stable publication remains gated on the current PDA real-device check.
+
+## Stable publication — 2026-10-12
+
+OWNER ACCEPTED / PUBLISHED:
+- owner explicitly accepted publication with the TornPDA real-device launcher/runtime check unresolved; this is a release-risk override and is not recorded as a PDA device PASS;
+- stable distribution PR #67 merged to `privacy-policy/main` at `3dd731e6e6bee8611efe7c9945e1e988452beae6`;
+- desktop stable path: `modular-suite/acquisitions/MM_Acquisitions.user.js` version `8.0.1`;
+- PDA stable path: `modular-suite/acquisitions/MM_Acquisitions.pda.user.js` version `8.0.1-pda.26`;
+- actual raw.githack `main` desktop payload fetched after merge and normalized byte content matches the approved release artifact; normalized SHA-256 `AB7901791257406CFF8F3BFA53E92BE8A3D78995E996372B7E6F470C3D6C498D`;
+- actual raw.githack `main` PDA payload fetched after merge and normalized byte content matches the approved release artifact; normalized SHA-256 `BB6B034B88BC54344D1973F29E6DE2ED99F6B803F2DA5158E9A10564F3EF8F95`;
+- both stable artifacts point `@updateURL` and `@downloadURL` to their canonical raw.githack `main` paths;
+- desktop release live smoke and actual Traveling route guard remain PASS;
+- future controlled version bump must still be used to prove end-to-end update-trigger behavior on the stable moving channel.
+
+## TornPDA pda.27 launcher visibility correction — 2026-10-12
+
+DEFECT confirmed from real-device report: published `8.0.1-pda.26` installs/updates but presents no usable Acquisitions launcher on TornPDA.
+
+Root-cause hardening in `8.0.1-pda.27`:
+- keep the PDA builder's existing desktop-Core dock bypass;
+- mount the boot launcher under `document.documentElement`, outside Torn body layout/stacking effects;
+- use mobile safe-area placement: `right:12px; bottom:max(14px,env(safe-area-inset-bottom))`;
+- make the launcher 48x48 with touch-safe interaction;
+- make the PDA adapter explicitly own launcher active-state styling and mobile panel geometry;
+- preserve one launcher identity and avoid desktop dock geometry on PDA;
+- keep stable `main` update/download metadata, lexical `PDA_storage`, `PDA_httpGet`, zero runtime GM-helper calls and manual final-action boundaries.
+
+Candidate gate:
+- TornPDA `8.0.1-pda.27` must show the launcher on the real device after normal in-place update/reload.
+
+## Stable PDA hotfix publication — 2026-10-12
+
+PUBLISHED:
+- TornPDA `8.0.1-pda.27` published by PR #68; merge commit `9abe56766633e25df12a64087f0d0950bf137d22`;
+- desktop `8.0.1` was not changed;
+- stable raw.githack branch cache initially still served pda.26 after merge;
+- canonical PDA URL cache was explicitly purged through raw.githack's documented purge endpoint;
+- canonical stable PDA URL now serves `8.0.1-pda.27`;
+- fetched stable payload normalized SHA-256 `2B4F32E6175B285ABC85C32F9E0B5C2FE8CC0FB16EDAC65F702F80CEC6B70C03` and matches the approved pda.27 artifact exactly;
+- existing TornPDA installation should receive pda.27 through its normal Update action; no new URL is required.
+
+Real-device acceptance remains pending until the owner confirms the pda.27 launcher appears and opens after update/reload.
