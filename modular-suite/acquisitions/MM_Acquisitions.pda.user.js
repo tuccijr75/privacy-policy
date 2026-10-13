@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MM_Acquisitions PDA
 // @namespace    manic-mike.torn.acquisitions.pda
-// @version      8.0.1-pda.26
+// @version      8.0.1-pda.27
 // @description  TornPDA pricelist procurement and ranked-weapon investment assistant; direct source routing with manual final actions.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -21,7 +21,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
   'use strict';
   globalThis.__MM_ACQ_PDA_STAGE='boot';
   function ensureBootLauncher(){
-    if(!document.body)return;
+    if(!document.documentElement)return;
     let b=document.getElementById('mm-acquisitions-launcher');
     if(!b){
       b=document.createElement('button');
@@ -30,7 +30,7 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
       b.setAttribute('aria-label','MM_Acquisitions');
       b.title='MM_Acquisitions';
       b.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;display:block;"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15 15 4 4M9 7.5v6M6.8 9.2h4.4M6.8 11.8h4.4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
-      b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;width:42px;height:42px;min-width:42px;min-height:42px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:3px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 1px 3px #0009;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;';
+      b.style.cssText='position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));z-index:2147483647;width:48px;height:48px;min-width:48px;min-height:48px;padding:0;margin:0;border:1px solid #25282b;border-bottom-color:#111;border-radius:24px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 2px 8px #000b;color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;';
       b.addEventListener('click',()=>{
         if(typeof globalThis.__MM_ACQ_OPEN__==='function'){
           globalThis.__MM_ACQ_OPEN__();
@@ -42,14 +42,15 @@ const __MM_PDA_API_KEY='###PDA-APIKEY###';
           d=document.createElement('div');
           d.id='mm-acq-pda-boot-diagnostic';
           d.style.cssText='position:fixed;left:12px;right:12px;top:80px;z-index:2147483647;padding:12px;border:1px solid #9a7b35;border-radius:8px;background:#111;color:#eee;font:13px/1.4 Arial,sans-serif;box-shadow:0 10px 30px #000b;';
-          document.body.appendChild(d);
+          document.documentElement.appendChild(d);
         }
         d.innerHTML='<b>MM_Acquisitions PDA boot diagnostic</b><div style="margin-top:6px;">Stopped at: <code>'+stage.replace(/[<>&]/g,'')+'</code></div><div style="margin-top:4px;color:#bbb;">Send a screenshot of this message.</div>';
       });
-      document.body.appendChild(b);
+      b.__mmAcqBootLauncher=true;
+      document.documentElement.appendChild(b);
     }
   }
-  if(document.body)ensureBootLauncher();
+  if(document.documentElement)ensureBootLauncher();
   else window.addEventListener('DOMContentLoaded',ensureBootLauncher,{once:true});
 })();
 
@@ -1443,12 +1444,73 @@ function __mmPdaDeleteValue(key){
     });
   }
 
+  const PDA_LAUNCHER_ID='mm-acquisitions-launcher';
+
+  function stylePdaLauncher(button,active=false){
+    if(!button)return null;
+    button.style.cssText='position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));z-index:2147483647;width:48px;height:48px;min-width:48px;min-height:48px;padding:0;margin:0;border:1px solid '+(active?'#d7ad4b':'#25282b')+';border-radius:24px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:'+(active?'0 0 0 2px #d7ad4b88,0 2px 8px #000b':'inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 2px 8px #000b')+';color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;';
+    return button;
+  }
+
+  function pdaRegisterDockLauncher({id,label,accent,icon,onClick}={}){
+    let button=document.getElementById(PDA_LAUNCHER_ID);
+    if(!button){
+      button=document.createElement('button');
+      button.id=PDA_LAUNCHER_ID;
+      button.type='button';
+      document.documentElement.appendChild(button);
+    }
+    button.dataset.mmDockId=String(id||'acquisitions');
+    button.dataset.mmPdaLauncher='1';
+    button.setAttribute('aria-label',String(label||'MM_Acquisitions'));
+    button.title=String(label||'MM_Acquisitions');
+    if(icon)button.innerHTML=String(icon);
+    button.style.setProperty('--mm-accent',accent||'#4d7f65');
+    if(!button.__mmAcqBootLauncher&&typeof onClick==='function'){
+      if(button.__mmPdaDockClick)button.removeEventListener('click',button.__mmPdaDockClick);
+      button.__mmPdaDockClick=onClick;
+      button.addEventListener('click',onClick);
+    }else{
+      button.__mmPdaDockClick=onClick;
+    }
+    return stylePdaLauncher(button,button.dataset.mmActive==='1');
+  }
+
+  function pdaSetDockLauncherActive(id,active){
+    const button=document.getElementById(PDA_LAUNCHER_ID);
+    if(!button)return false;
+    button.dataset.mmActive=active?'1':'0';
+    stylePdaLauncher(button,Boolean(active));
+    return true;
+  }
+
+  function pdaPositionDock(){
+    const button=document.getElementById(PDA_LAUNCHER_ID);
+    return stylePdaLauncher(button,button?.dataset?.mmActive==='1');
+  }
+
+  function pdaMakePanelDraggable(panel){
+    if(!panel)return panel;
+    panel.style.left='8px';
+    panel.style.right='8px';
+    panel.style.top='max(54px,env(safe-area-inset-top))';
+    panel.style.width='auto';
+    panel.style.maxWidth='none';
+    panel.style.maxHeight='calc(100dvh - 72px - env(safe-area-inset-top) - env(safe-area-inset-bottom))';
+    panel.style.touchAction='auto';
+    return panel;
+  }
+
   const api=Object.freeze({
     ...original,
     version:String(original.version||'')+'-pda',
     readLegacyState,
     updateDomainState,
-    inspectLegacyState
+    inspectLegacyState,
+    registerDockLauncher:pdaRegisterDockLauncher,
+    setDockLauncherActive:pdaSetDockLauncherActive,
+    positionDock:pdaPositionDock,
+    makePanelDraggable:pdaMakePanelDraggable
   });
 
   Object.defineProperty(globalThis,'MMTornCore',{
@@ -6567,7 +6629,7 @@ function __mmPdaDeleteValue(key){
 
     root.innerHTML=
       '<div style="height:48px;background:#151515;border-bottom:1px solid #4b4024;display:flex;align-items:center;justify-content:space-between;padding:0 9px;">'+
-        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.1-pda.26 · PRICELIST + RANKED</div></div>'+
+        '<div><b style="font-size:15px;">MM_Acquisitions</b><div style="font-size:10px;color:#888;">v8.0.1-pda.27 · PRICELIST + RANKED</div></div>'+
         '<button id="mm-acq-close" style="'+button()+'">×</button>'+
       '</div>'+
       '<div style="padding:8px;">'+
@@ -6818,9 +6880,9 @@ function __mmPdaDeleteValue(key){
     const b=document.createElement('button');
     b.id=LAUNCHER_ID;
     b.textContent='Acquisitions';
-    b.style.cssText='position:fixed;right:10px;bottom:86px;z-index:2147483647;'+button(true);
+    b.style.cssText='position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));z-index:2147483647;'+button(true);
     b.addEventListener('click',open);
-    document.body.appendChild(b);
+    document.documentElement.appendChild(b);
   }
 
   if(/^(www\.)?weav3r\.dev$/.test(location.hostname)){
