@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger 2 Candidate
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-beta.15
+// @version      2.2.0-beta.16
 // @description  Shared Torn trade verification, Bazaar sale-log ingestion, 7 PM ET closeout and reports. No automated Torn trades.
 // @match        https://www.torn.com/*
 // @run-at       document-idle
@@ -22,7 +22,7 @@
  if(dollarScanParams.has('mmDollarScannerReserve')||dollarScanParams.has('mmDollarScan')||dollarScanParams.has('mmDollarScannerComplete')) return;
  if (window.__morpheusLedgerLoaded) return;
  window.__morpheusLedgerLoaded=true;
- const VERSION='2.2.0-beta.15';
+ const VERSION='2.2.0-beta.16';
  const prefix='mledger_';
  const read=k=>GM_getValue(prefix+k,'');
  const save=(k,v)=>GM_setValue(prefix+k,String(v??'').trim());
@@ -648,13 +648,14 @@
      const verifiedMorpheusLot=l=>state.partnership&&l.tradeRef&&l.senderId===state.partnership.morpheusId&&l.status==='confirmed'&&['supplier','earned'].includes(l.mode)&&((l.purchaseParts&&l.purchaseParts.length)||(l.originParts&&l.originParts.length));
      if(state.exceptions?.length)html+=`<section><details open><summary>Sale ownership and financial reconciliation (${state.exceptions.length}) — ${state.exceptions.filter(x=>x.ownership!=='morpheus_owner_confirmed').length} ownership open; ${state.exceptions.length} financial allocations pending</summary>${role==='owner'&&state.exceptions.some(x=>x.ownership!=='morpheus_owner_confirmed')?'<button data-action="confirmOwnership">Confirm outstanding sales as Morpheus-owned</button>':''}${state.exceptions.map(x=>{
        const remaining=x.remainingQty??x.qty,matched=state.lots.filter(l=>l.status==='confirmed'&&l.itemId===x.itemId&&
-         (l.uid==null||l.uid===x.uid)&&l.unitCost!==null&&l.unitCost<=x.unitPrice&&
+         (l.uid==null||l.uid===x.uid)&&l.unitCost!==null&&
          l.qty-l.sold-l.returned>0&&new Date(l.confirmedAt).getTime()<=new Date(x.at).getTime()+300000);
        const eligible=matched.filter(l=>x.ownership!=='morpheus_owner_confirmed'||verifiedMorpheusLot(l)).reduce((n,l)=>n+Math.min(remaining,l.qty-l.sold-l.returned),0);
        const evidencePending=state.lots.filter(l=>l.itemId===x.itemId&&
          (l.uid==null||l.uid===x.uid)&&['received_pending','awaiting_cost'].includes(l.status)&&
          l.qty-l.sold-l.returned>0&&new Date(l.createdAt).getTime()<=new Date(x.at).getTime()+300000)
          .reduce((n,l)=>n+(l.qty-l.sold-l.returned),0);
+       const belowCostLots=state.lots.filter(l=>state.partnership&&l.tradeRef&&l.senderId===state.partnership.morpheusId&&l.itemId===x.itemId&&(l.uid==null||l.uid===x.uid)&&l.status==='confirmed'&&l.unitCost!=null&&l.unitCost>x.unitPrice&&l.qty-l.sold-l.returned>0&&Date.parse(l.confirmedAt)<=Date.parse(x.at)+300000);
        const freshReview=role==='owner'&&ownerReview?.ownerId===state.partnership?.ownerId&&
          Date.now()-Date.parse(ownerReview.fetchedAt)<=minutes(15)&&ownerReview.ledgerFingerprint===ownerReviewFingerprint(state);
        const review=freshReview?ownerReview.reviews.find(r=>r.sourceId===x.id&&r.qty===remaining):null;
@@ -671,6 +672,7 @@
          <div class="muted">${x.allocatedQty||0} partnership units assigned · ${x.excludedQty||0} marked outside partnership · <b>${remaining} remain unresolved</b></div>
          <div class="muted">${x.ownership==='morpheus_owner_confirmed'?'Morpheus ownership confirmed; cost/lot allocation pending':esc(x.reason)}</div>
          ${role==='owner'&&x.ownership!=='morpheus_owner_confirmed'?proofLine:''}
+         ${belowCostLots.length?'<div class="critical">Below-cost sale: '+belowCostLots.length+' confirmed same-item lot(s) cost more than the sale price. Owner absorbs any verified shortfall; Morpheus receives documented capital with no negative profit commission.</div>':''}
          ${role==='owner'&&eligible&&(x.ownership==='morpheus_owner_confirmed'||(review&&review.candidates.length===0))?`<button data-action="allocate" data-id="${esc(x.id)}">Assign up to ${Math.min(eligible,remaining)} documented unit(s)</button>`:''}
          ${role==='owner'&&x.ownership!=='morpheus_owner_confirmed'&&!evidencePending&&!eligible&&review&&(review.status==='candidate_only'||review.status==='partial_evidence')&&review.coveredQty>0?`<button data-action="exclude" data-id="${esc(x.id)}">Review ${Math.min(remaining,review.coveredQty)} owner-funded unit(s) for documented exclusion</button>`:''}
          ${evidencePending?`<span class="critical">Morpheus inventory exists but acquisition evidence is unresolved (${evidencePending} pending same-item unit(s)). Do not exclude this sale on the basis of missing prices. Resolve provenance first.</span>`:(!eligible?'<span class="muted">No eligible priced partner inventory is currently available; inspect historical receipts before any exclusion.</span>':'')}</div>`;
@@ -717,7 +719,7 @@
        return alert('Ownership review is missing or conflicting. Scan your purchases again before assigning proceeds.');
      const remaining=ex.remainingQty??ex.qty;
      const available=state.lots.filter(l=>(ex.ownership!=='morpheus_owner_confirmed'||(state.partnership&&l.tradeRef&&l.senderId===state.partnership.morpheusId&&['supplier','earned'].includes(l.mode)&&((l.purchaseParts&&l.purchaseParts.length)||(l.originParts&&l.originParts.length))))&&l.status==='confirmed'&&l.itemId===ex.itemId&&
-       (l.uid==null||l.uid===ex.uid)&&l.unitCost!==null&&l.unitCost<=ex.unitPrice&&
+       (l.uid==null||l.uid===ex.uid)&&l.unitCost!==null&&
        l.qty-l.sold-l.returned>0&&new Date(l.confirmedAt).getTime()<=new Date(ex.at).getTime()+300000);
      if(!available.length)return alert('No priced inventory remains for this sale; do not assign the full Torn quantity.');
      let lot=available[0];
