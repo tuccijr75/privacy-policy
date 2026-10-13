@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Morpheus Bazaar Ledger — TornPDA
 // @namespace    https://github.com/tuccijr75/MM-Torn
-// @version      2.2.0-pda.19
+// @version      2.2.0-pda.21
 // @description  Complete self-contained TornPDA Bazaar Ledger; native API key and supported remote update notifications.
 // @match        https://www.torn.com/*
 // @match        https://torn.com/*
@@ -21,7 +21,7 @@
  }
  if (window.__morpheusPdaLedgerLoaded) return;
  window.__morpheusPdaLedgerLoaded=true;
- const VERSION='2.2.0-pda.19';
+ const VERSION='2.2.0-pda.21';
  const prefix='mledger_';
  // Prefer the native per-script SQLite-backed PDA storage: it survives WebView cache clearing.
  const keys=['relay','token','torn','partnerId','v2SaleStart','playerId','playerName','buttonX','buttonY','acquisitionCursor','acquisitionEvidence','ownerPurchaseEvidence'].map(x=>prefix+x);
@@ -51,7 +51,7 @@
        ownerReview=parsed;
    }
  }catch(_){ownerReview=null;}
- 
+
  const scannedTradeIds=new Set();
  const itemNames=new Map();
  const minutes=n=>n*60000;
@@ -194,41 +194,6 @@
      !isPositive(timestamp)||!Number.isSafeInteger(qty*unitCost)||qty*unitCost!==totalCost)return null;
    return {logId:log.id,logType:id,timestamp,itemId,uid:isPositive(numeric(item.uid))?numeric(item.uid):null,
      qty,unitCost,totalCost};
- }
- function sameUid(l,e){return l.uid==null?e.uid==null:e.uid===l.uid;}
- function eligibleEvidence(l){
-   return !!l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||
-     (l.mode==='unclassified'&&l.status==='received_pending'));
- }
- function unallocatedEvidenceParts(l,allLots,records,kind){
-   if(!eligibleEvidence(l))return [];
-   const purchase=kind==='purchase',idKey=purchase?'logId':'evidenceId',used={};
-   for(const other of allLots){
-     if(other.id===l.id)continue;
-     const parts=purchase?other.purchaseParts:other.originParts;
-     for(const part of parts||[])used[part[idKey]]=(used[part[idKey]]||0)+part.qty;
-     if(purchase&&other.purchaseLogId){
-       const proof=records.find(p=>p.logId===other.purchaseLogId);
-       if(proof)used[proof.logId]=(used[proof.logId]||0)+proof.qty;
-     }
-   }
-   const recvTime=new Date(l.createdAt).getTime();
-   const available=records.filter(p=>p.itemId===l.itemId&&sameUid(l,p)
-     &&p.timestamp*1000<=recvTime+300000&&p.timestamp*1000>=recvTime-120*86400000
-     &&p.qty-(used[p[idKey]]||0)>0)
-     .map(p=>({[idKey]:p[idKey],qty:p.qty-(used[p[idKey]]||0)}));
-   return available;
- }
- function exactUnallocatedEvidence(l,allLots,records,kind){
-   const available=unallocatedEvidenceParts(l,allLots,records,kind);
-   const total=available.reduce((n,p)=>n+p.qty,0);
-   return total===l.qty&&available.length&&available.length<=40?available:null;
- }
- function chooseExactPurchaseEvidence(l,allLots,purchases){
-   return exactUnallocatedEvidence(l,allLots,purchases,'purchase');
- }
- function chooseExactOriginEvidence(l,allLots,origins){
-   return exactUnallocatedEvidence(l,allLots,origins,'origin');
  }
  function originKindForTitle(title){
    const t=String(title||'').toLowerCase().replace(/\s+/g,' ').trim();
@@ -408,24 +373,13 @@
    // A compact batch ack carries no Ledger state. Refresh once after ALL ingestion.
    await relay('state');
    // Scan first, ingest second, and only then reconcile against the authoritative returned ledger.
-   const remaining=state.lots.filter(l=>l.senderId===supplierId&&l.tradeRef&&((l.mode==='supplier'&&l.status==='awaiting_cost')||(l.mode==='unclassified'&&l.status==='received_pending'))).sort((a,b)=>Date.parse(a.createdAt)-Date.parse(b.createdAt));
-   const actions=[],reservedP=new Set(),reservedO=new Set();
-   // A partial matching proof is still conflicting evidence. Mirror the relay's
-   // purchaseAvailable_/originAvailable_ gates before submitting attribution.
-   const unallocatedEvidence=(lot,records,kind)=>
-     unallocatedEvidenceParts(lot,state.lots,records,kind).length>0;
-   for(const l of remaining){
-     const purchase=chooseExactPurchaseEvidence(l,state.lots,state.purchaseLogs),origin=chooseExactOriginEvidence(l,state.lots,state.originLogs);
-     if(purchase&&origin){stats.ambiguous++;continue;}
-     if((origin&&unallocatedEvidence(l,state.purchaseLogs,'purchase'))||
-        (purchase&&unallocatedEvidence(l,state.originLogs,'origin'))){stats.ambiguous++;continue;}
-     const parts=purchase||origin;
-     if(!parts)continue;
-     const claimed=origin?reservedO:reservedP,key=origin?'evidenceId':'logId';
-     if(parts.some(x=>claimed.has(x[key]))){stats.ambiguous++;continue;}
-     for(const x of parts)claimed.add(x[key]);
-     actions.push({op:origin?'origin_apply_bundle':'purchase_apply_bundle',data:{lotId:l.id,supplierId,parts}});
-   }
+   // The relay owns one quantity-reserving matching plan for desktop and PDA.
+   const plan=state.acquisitionPlan;
+   if(!plan||!Array.isArray(plan.actions)||!Array.isArray(plan.held))
+     throw Error('Acquisition plan unavailable; keep receipts pending');
+   const actions=plan.actions;
+   stats.ambiguous=plan.held.filter(x=>x.reason==='mixed-purchase-and-reward-evidence').length;
+   stats.evidenceHeld=plan.held.length;
    // Attribution is also committed as validated batches, with proof reservation checked
    // against earlier actions in the same batch. No per-lot Apps Script round trips.
    for(let i=0;i<actions.length;i+=12){
@@ -456,10 +410,10 @@
    const possible=sameItem.filter(l=>l.status==='confirmed'&&(l.uid==null||l.uid===s.uid)
      &&l.qty-l.sold-l.returned>=s.qty&&l.unitCost!==null
      &&new Date(l.confirmedAt).getTime()<=s.timestamp*1000+300000);
-   const viable=possible.filter(l=>l.unitCost<=s.unitPrice);
+   const viable=possible; // Below-cost proceeds remain reviewable; owner absorbs verified loss.
    if(viable.length===1)return {op:'sale_pending',reason:'Owner purchase review required before partnership payout'};
    if(sameItem.length)return {op:'sale_pending',reason:viable.length>1?
-     'Multiple eligible inventory lots':'Quantity, price, or inventory-cost conflict'};
+     'Multiple eligible inventory lots':'Quantity, receipt timing, or acquisition evidence conflict'};
    return null;
  }
  function trustedLogContinuation(next,key,expectedType){
@@ -744,13 +698,15 @@
  }
  function draw(){if(!opened)return;const c=cfg(),s=state?.summary,role=state?.role;
    let html=`<header><b>Morpheus Bazaar Ledger</b><span class="muted">v${VERSION}</span><button data-action="close">Close</button></header><section class="row"><b>${esc(status)}</b><button data-action="refresh" ${working?'disabled':''}>Refresh ledger</button><button data-action="scan" ${working?'disabled':''}>Scan Torn API</button></section>`;
-   if(s){html+=`<section><div class="muted">Signed in: <b>${role==='owner'?'Bazaar Owner':'Morpheus'}</b> • Business day ${esc(s.openDay)} (19:00 ET cutoff)</div><div class="metrics"><div><span class="muted">${role==='owner'?'Expected to pay':'Expected pay'} — today</span><strong class="num">${money(s.current.morpheusDue)}</strong></div><div><span class="muted">${role==='owner'?'Daily expected to pay':'Daily expected'} — last close</span><strong class="num">${money(s.lastClosed.morpheusDue)}</strong></div><div><span class="muted">Lifetime unpaid balance</span><strong class="num">${money(s.remaining)}</strong></div></div><div class="metrics" style="margin-top:9px"><div><span class="muted">Today's gross sales</span><strong>${money(s.current.gross)}</strong></div><div><span class="muted">Today's net profit</span><strong>${money(s.current.profit)}</strong></div><div><span class="muted">Your earnings today</span><strong>${money(role==='owner'?s.current.ownerProfit:s.current.morpheusProfit)}</strong></div></div><p class="muted"><b>Today:</b> ${money(s.current.morpheusProfit)} Morpheus profit + ${money(s.current.capitalDue)} capital reimbursement = ${money(s.current.morpheusDue)} total payable. <b>Last close:</b> ${money(s.lastClosed.morpheusProfit)} profit + ${money(s.lastClosed.capitalDue)} capital = ${money(s.lastClosed.morpheusDue)} payable. Lifetime debt survives rollover. Cash transfers remain manual.</p></section>`;
+   if(s){html+=`<section><div class="muted">Signed in: <b>${role==='owner'?'Bazaar Owner':'Morpheus'}</b> • Business day ${esc(s.openDay)} (19:00 ET cutoff)</div><div class="metrics"><div><span class="muted">${role==='owner'?'Expected to pay':'Expected pay'} — today</span><strong class="num">${money(s.current.morpheusDue)}</strong></div><div><span class="muted">${role==='owner'?'Daily expected to pay':'Daily expected'} — last close</span><strong class="num">${money(s.lastClosed.morpheusDue)}</strong></div><div><span class="muted">Recorded unpaid balance</span><strong class="num">${money(s.remaining)}</strong></div></div><div class="metrics" style="margin-top:9px"><div><span class="muted">Sent, awaiting Morpheus receipt acknowledgment</span><strong class="num">${money(s.pendingAcknowledgment)}</strong></div><div><span class="muted">Sales awaiting financial allocation</span><strong class="num">${state.exceptions?.length||0}</strong></div><div><span class="muted">Unallocated sale revenue (not a payable)</span><strong class="num">${money((state.exceptions||[]).reduce((n,x)=>n+(x.remainingQty??x.qty)*x.unitPrice,0))}</strong></div></div><div class="metrics" style="margin-top:9px"><div><span class="muted">Today's gross sales</span><strong>${money(s.current.gross)}</strong></div><div><span class="muted">Today's net profit</span><strong>${money(s.current.profit)}</strong></div><div><span class="muted">Your earnings today</span><strong>${money(role==='owner'?s.current.ownerProfit:s.current.morpheusProfit)}</strong></div></div><p class="muted"><b>Today:</b> ${money(s.current.morpheusProfit)} Morpheus profit + ${money(s.current.capitalDue)} capital reimbursement = ${money(s.current.morpheusDue)} total payable. <b>Last close:</b> ${money(s.lastClosed.morpheusProfit)} profit + ${money(s.lastClosed.capitalDue)} capital = ${money(s.lastClosed.morpheusDue)} payable. Recorded unpaid excludes transfers already marked sent; sent transfers remain unacknowledged until Morpheus confirms receipt. Unallocated sale revenue is not yet a payable. Cash transfers remain manual.</p></section>`;
      if(role==='supplier')html+=`<section><b>Purchase cost sync</b><p class="muted">${esc(lastPurchaseResult)}. The script automatically checks TornPDA's API key, scans permitted purchase logs, and selects an existing override only if necessary. No separate key entry is needed when TornPDA's key has sufficient access.</p></section>`;
      if(role==='supplier')html+=`<section><b>Optional: source a purchase lead</b><form id="newlot"><div class="grid"><div><label>Item name</label><input name="name" required></div><div><label>Torn Item ID (required to auto-verify trades)</label><input name="itemId" type="number" min="1" required></div><div><label>Quantity</label><input name="qty" type="number" min="1" required></div><div><label>My buy cost per unit ($)</label><input name="cost" placeholder="Can fill in later"></div><div><label>Funding</label><select name="mode"><option value="supplier">I purchased — 50/50 profit</option><option value="owner">Owner purchases my lead — sourcing fee</option></select></div><div><label>Sourcing fee (%) if owner-funded</label><input name="fee" type="number" value="20" min="0" max="100"></div><div><label>Item UID (optional, for unique equipment)</label><input name="uid" type="number" min="1"></div></div><label>Notes</label><textarea name="note"></textarea><button>Submit to shared ledger</button></form><p class="muted">For an ordinary item transfer, no submission is needed: trade directly and the owner scanner imports it. Only sourcing leads need this form.</p><button data-action="trade">Open partner's Torn profile to trade</button></section>`;
      if(role==='owner')html+=`<section><b>Trade & sale reconciliation</b><p class="muted">Only completed item transfers from the configured Morpheus account are eligible for partnership inventory. Morpheus acquisition logs automatically classify verified purchases at actual cost or verified finds/rewards at $0. Ambiguous evidence remains financially inactive. Only your Bazaar sale logs are scanned (Torn log 1226).</p><button data-action="trade">Open Morpheus's profile</button> <button data-action="scan">Check trades & sales now</button> <button data-action="ownerEvidence">Check my purchases</button> <p class="muted">Last trade scan: ${lastTrades?new Date(lastTrades).toLocaleString():'not yet'} · Last sale scan: ${lastLogs?new Date(lastLogs).toLocaleString():'not yet'}</p></section>`;
-     html+=`<section><details open><summary>Inventory lots (${state.lots.length})</summary><div class="scroll">${state.lots.map(itemRow).join('')||'No inventory yet'}</div></details></section>`;
-     const verifiedMorpheusLot=l=>state.partnership&&l.tradeRef&&l.senderId===state.partnership.morpheusId&&l.status==='confirmed'&&['supplier','earned'].includes(l.mode)&&((l.purchaseParts&&l.purchaseParts.length)||(l.originParts&&l.originParts.length));
-     if(state.exceptions?.length)html+=`<section><details open><summary>Sale ownership and financial reconciliation (${state.exceptions.length}) — ${state.exceptions.filter(x=>x.ownership!=='morpheus_owner_confirmed').length} ownership open; ${state.exceptions.length} financial allocations pending</summary>${role==='owner'&&state.exceptions.some(x=>x.ownership!=='morpheus_owner_confirmed')?'<button data-action="confirmOwnership">Confirm outstanding sales as Morpheus-owned</button>':''}${state.exceptions.map(x=>{
+     html+=`<section><details><summary>Inventory lots (${state.lots.length})</summary><div class="scroll">${state.lots.map(itemRow).join('')||'No inventory yet'}</div></details></section>`;
+     const verifiedMorpheusLot=l=>state.partnership&&l.tradeRef&&l.senderId===state.partnership.morpheusId&&l.status==='confirmed'&&['supplier','earned'].includes(l.mode)&&((l.purchaseParts&&l.purchaseParts.length)||(l.originParts&&l.originParts.length)||(l.costSource==='owner-attested-supplier-chat'&&l.attestation?.tradeRef===l.tradeRef&&Number.isSafeInteger(l.unitCost)&&l.unitCost>0));
+     const salePlan=role==='owner'&&state.salePlan&&Array.isArray(state.salePlan.actions)?state.salePlan:null;
+     if(salePlan&&state.exceptions?.length)html+=`<section><b>Reconcile sales from verified logs</b><p class="muted">${salePlan.actions.length} ready allocations (${salePlan.units} units); ${state.exceptions.length} sales still show incomplete allocation. Preview only; not booked until you confirm.</p><button data-action="applySalePlan" ${salePlan.actions.length?'':'disabled'}>Review ${salePlan.actions.length} documented allocations</button> <span class="muted">No cash sent automatically.</span></section>`;
+     if(state.exceptions?.length)html+=`<section><details><summary>Sale ownership and financial reconciliation (${state.exceptions.length}) — ${state.exceptions.filter(x=>x.ownership!=='morpheus_owner_confirmed').length} ownership open; ${state.exceptions.length} financial allocations pending</summary>${role==='owner'&&state.exceptions.some(x=>x.ownership!=='morpheus_owner_confirmed')?'<button data-action="confirmOwnership">Confirm outstanding sales as Morpheus-owned</button>':''}${state.exceptions.slice().sort((a,b)=>((b.remainingQty??b.qty)*b.unitPrice)-((a.remainingQty??a.qty)*a.unitPrice)).map(x=>{
        const remaining=x.remainingQty??x.qty,matched=state.lots.filter(l=>l.status==='confirmed'&&l.itemId===x.itemId&&
          (l.uid==null||l.uid===x.uid)&&l.unitCost!==null&&
          l.qty-l.sold-l.returned>0&&new Date(l.confirmedAt).getTime()<=new Date(x.at).getTime()+300000);
@@ -811,6 +767,34 @@
      if(!confirm('Record your ownership declaration for '+ids.length+' sale exceptions as Morpheus-owned? This does NOT calculate acquisition costs, post sales, or change payouts.'))return;
      return writeOp('sale_ownership_confirm_batch',{sourceIds:ids},'Ownership confirmed for '+ids.length+' sales; financial allocations await source evidence');
    }
+   if(action==='applySalePlan'){
+     if(state.role!=='owner'||working)return;
+     working=true;let done=0;
+     try{
+       await relay('state');
+       const plan=state.salePlan;
+       if(!plan||!Array.isArray(plan.actions)||!plan.actions.length){
+         alert('No uniquely documented sales are ready. Resolve pending acquisition evidence first.');return;
+       }
+       const chosen=plan.actions.slice(0,12);
+       const due=chosen.reduce((n,x)=>n+x.morpheusDue,0);
+       const losses=chosen.reduce((n,x)=>n+Math.max(0,-x.ownerProfit),0);
+       const units=chosen.reduce((n,x)=>n+x.qty,0);
+       const list=chosen.slice(0,6).map(x=>'Item #'+x.itemId+' · '+x.qty+' units · '+x.sourceId).join('\n');
+       if(!confirm('BOOK '+chosen.length+' documented sale allocation(s), '+units+' unit(s)?\n\n'+
+         list+(chosen.length>6?'\n...':'')+
+         '\n\nProjected increase in Morpheus due: '+money(due)+
+         '\nOwner-absorbed losses in this batch: '+money(losses)+
+         '\n\nThese allocations will be recorded in the Ledger. No Torn cash is sent. Continue?'))return;
+       for(const candidate of chosen){
+         await relay('sale_allocate',{sourceId:candidate.sourceId,lotId:candidate.lotId,qty:candidate.qty});
+         done++;
+       }
+       status='Reconciled '+done+' documented sale allocation(s); remaining sales stay pending.';
+     }catch(e){status='Sale reconciliation stopped after '+done+' saved allocation(s): '+e.message+'. Refresh to review the remaining sales.';alert(status);}
+     finally{working=false;draw();}
+     return;
+   }
    if(action==='allocate'){
      const reviewedSnapshot=ownerReview;
      try{await relay('state');}catch(e){return alert('Cannot verify current Ledger before financial review: '+e.message);}
@@ -822,7 +806,7 @@
      if(ex.ownership!=='morpheus_owner_confirmed'&&(!proof||proof.candidates.length||proof.competingSupplierEvidence||proof.priorSaleClaimCount))
        return alert('Ownership review is missing or conflicting. Scan your purchases again before assigning proceeds.');
      const remaining=ex.remainingQty??ex.qty;
-     const available=state.lots.filter(l=>(ex.ownership!=='morpheus_owner_confirmed'||(state.partnership&&l.tradeRef&&l.senderId===state.partnership.morpheusId&&['supplier','earned'].includes(l.mode)&&((l.purchaseParts&&l.purchaseParts.length)||(l.originParts&&l.originParts.length))))&&l.status==='confirmed'&&l.itemId===ex.itemId&&
+     const available=state.lots.filter(l=>(ex.ownership!=='morpheus_owner_confirmed'||(state.partnership&&l.tradeRef&&l.senderId===state.partnership.morpheusId&&['supplier','earned'].includes(l.mode)&&((l.purchaseParts&&l.purchaseParts.length)||(l.originParts&&l.originParts.length)||(l.costSource==='owner-attested-supplier-chat'&&l.attestation?.tradeRef===l.tradeRef&&Number.isSafeInteger(l.unitCost)&&l.unitCost>0))))&&l.status==='confirmed'&&l.itemId===ex.itemId&&
        (l.uid==null||l.uid===ex.uid)&&l.unitCost!==null&&
        l.qty-l.sold-l.returned>0&&new Date(l.confirmedAt).getTime()<=new Date(ex.at).getTime()+300000);
      if(!available.length)return alert('No priced inventory remains for this sale; do not assign the full Torn quantity.');
