@@ -134,12 +134,73 @@
     });
   }
 
+  const PDA_LAUNCHER_ID='mm-acquisitions-launcher';
+
+  function stylePdaLauncher(button,active=false){
+    if(!button)return null;
+    button.style.cssText='position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));z-index:2147483647;width:48px;height:48px;min-width:48px;min-height:48px;padding:0;margin:0;border:1px solid '+(active?'#d7ad4b':'#25282b')+';border-radius:24px;background:linear-gradient(180deg,#5e8d72 0%,#3f6551 58%,#242424 100%);box-shadow:'+(active?'0 0 0 2px #d7ad4b88,0 2px 8px #000b':'inset 0 1px 0 #ffffff24,inset 0 -1px 0 #0009,0 2px 8px #000b')+';color:#d7e2e7;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;';
+    return button;
+  }
+
+  function pdaRegisterDockLauncher({id,label,accent,icon,onClick}={}){
+    let button=document.getElementById(PDA_LAUNCHER_ID);
+    if(!button){
+      button=document.createElement('button');
+      button.id=PDA_LAUNCHER_ID;
+      button.type='button';
+      document.documentElement.appendChild(button);
+    }
+    button.dataset.mmDockId=String(id||'acquisitions');
+    button.dataset.mmPdaLauncher='1';
+    button.setAttribute('aria-label',String(label||'MM_Acquisitions'));
+    button.title=String(label||'MM_Acquisitions');
+    if(icon)button.innerHTML=String(icon);
+    button.style.setProperty('--mm-accent',accent||'#4d7f65');
+    if(!button.__mmAcqBootLauncher&&typeof onClick==='function'){
+      if(button.__mmPdaDockClick)button.removeEventListener('click',button.__mmPdaDockClick);
+      button.__mmPdaDockClick=onClick;
+      button.addEventListener('click',onClick);
+    }else{
+      button.__mmPdaDockClick=onClick;
+    }
+    return stylePdaLauncher(button,button.dataset.mmActive==='1');
+  }
+
+  function pdaSetDockLauncherActive(id,active){
+    const button=document.getElementById(PDA_LAUNCHER_ID);
+    if(!button)return false;
+    button.dataset.mmActive=active?'1':'0';
+    stylePdaLauncher(button,Boolean(active));
+    return true;
+  }
+
+  function pdaPositionDock(){
+    const button=document.getElementById(PDA_LAUNCHER_ID);
+    return stylePdaLauncher(button,button?.dataset?.mmActive==='1');
+  }
+
+  function pdaMakePanelDraggable(panel){
+    if(!panel)return panel;
+    panel.style.left='8px';
+    panel.style.right='8px';
+    panel.style.top='max(54px,env(safe-area-inset-top))';
+    panel.style.width='auto';
+    panel.style.maxWidth='none';
+    panel.style.maxHeight='calc(100dvh - 72px - env(safe-area-inset-top) - env(safe-area-inset-bottom))';
+    panel.style.touchAction='auto';
+    return panel;
+  }
+
   const api=Object.freeze({
     ...original,
     version:String(original.version||'')+'-pda',
     readLegacyState,
     updateDomainState,
-    inspectLegacyState
+    inspectLegacyState,
+    registerDockLauncher:pdaRegisterDockLauncher,
+    setDockLauncherActive:pdaSetDockLauncherActive,
+    positionDock:pdaPositionDock,
+    makePanelDraggable:pdaMakePanelDraggable
   });
 
   Object.defineProperty(globalThis,'MMTornCore',{

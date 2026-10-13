@@ -331,3 +331,19 @@ OWNER ACCEPTED / PUBLISHED:
 - both stable artifacts point `@updateURL` and `@downloadURL` to their canonical raw.githack `main` paths;
 - desktop release live smoke and actual Traveling route guard remain PASS;
 - future controlled version bump must still be used to prove end-to-end update-trigger behavior on the stable moving channel.
+
+## TornPDA pda.27 launcher visibility correction — 2026-10-12
+
+DEFECT confirmed from real-device report: published `8.0.1-pda.26` installs/updates but presents no usable Acquisitions launcher on TornPDA.
+
+Root-cause hardening in `8.0.1-pda.27`:
+- keep the PDA builder's existing desktop-Core dock bypass;
+- mount the boot launcher under `document.documentElement`, outside Torn body layout/stacking effects;
+- use mobile safe-area placement: `right:12px; bottom:max(14px,env(safe-area-inset-bottom))`;
+- make the launcher 48x48 with touch-safe interaction;
+- make the PDA adapter explicitly own launcher active-state styling and mobile panel geometry;
+- preserve one launcher identity and avoid desktop dock geometry on PDA;
+- keep stable `main` update/download metadata, lexical `PDA_storage`, `PDA_httpGet`, zero runtime GM-helper calls and manual final-action boundaries.
+
+Candidate gate:
+- TornPDA `8.0.1-pda.27` must show the launcher on the real device after normal in-place update/reload.

@@ -161,7 +161,7 @@ console.log('MM_Acquisitions purchase-ledger + automation regression tests: PASS
 const pdaSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.user.js','utf8');
 new Function(pdaSource);
 const pdaHeader=pdaSource.slice(0,pdaSource.indexOf('// ==/UserScript=='));
-assert(pdaSource.includes('// @version      8.0.1-pda.26'));
+assert(pdaSource.includes('// @version      8.0.1-pda.27'));
 assert(pdaHeader.includes('// @match        https://www.torn.com/*'));
 assert(pdaHeader.includes('// @match        https://torn.com/*'));
 assert(!/globalThis\.GM_(?:getValue|setValue|deleteValue|xmlhttpRequest)\s*=/.test(pdaSource),'generated PDA must not monkey-patch GM helpers');
@@ -195,7 +195,8 @@ assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='torn-intel'"));
 assert(pdaSource.includes('MMTornRestockIntel'));
 assert(pdaSource.includes("globalThis.__MM_ACQ_PDA_STAGE='ui-ready'"));
 assert(pdaSource.includes("if(core?.registerDockLauncher&&!globalThis.__MM_TORN_PDA__)"));
-assert(pdaSource.includes('position:fixed;right:10px;bottom:86px;'));
+assert(pdaSource.includes('position:fixed;right:12px;bottom:max(14px,env(safe-area-inset-bottom));'));
+assert(pdaSource.includes('document.documentElement.appendChild(b)'),'PDA launcher must mount outside Torn body layout');
 assert(pdaSource.includes('async function pdaSharedGet'));
 assert(pdaSource.includes("typeof PDA_storage!=='undefined'&&PDA_storage&&typeof PDA_storage.get==='function'"));
 assert(pdaSource.includes('await PDA_storage.set(String(key),value)'));
@@ -211,8 +212,10 @@ assert(pdaSource.includes('await beginTravelCapture();'));
   assert(bootStart>=0&&bootEnd>bootStart,'PDA boot launcher block must be extractable');
   const elements=new Map();
   const body={appendChild(el){if(el?.id)elements.set(el.id,el);return el;}};
+  const documentElement={appendChild(el){if(el?.id)elements.set(el.id,el);return el;}};
   const document={
     body,
+    documentElement,
     getElementById:id=>elements.get(id)||null,
     createElement:tag=>({tagName:String(tag).toUpperCase(),style:{},setAttribute(){},addEventListener(type,fn){this.listeners??={};this.listeners[type]=fn;}})
   };
@@ -228,6 +231,10 @@ assert(pdaSource.includes('await beginTravelCapture();'));
 const pdaAdapterSource=fs.readFileSync(__dirname+'/MM_Acquisitions.pda.adapter.js','utf8');
 assert(!pdaAdapterSource.includes('globalThis.GM_getValue=function'));
 assert(!pdaAdapterSource.includes('__MM_PDA_API_KEY__'));
+assert(pdaAdapterSource.includes('registerDockLauncher:pdaRegisterDockLauncher'),'PDA adapter must own launcher registration');
+assert(pdaAdapterSource.includes('setDockLauncherActive:pdaSetDockLauncherActive'),'PDA adapter must own launcher active state');
+assert(pdaAdapterSource.includes('makePanelDraggable:pdaMakePanelDraggable'),'PDA adapter must own mobile panel geometry');
+assert(pdaAdapterSource.includes("document.documentElement.appendChild(button)"),'PDA adapter launcher must mount at document root');
 assert(!/globalThis\.GM_(?:getValue|setValue|deleteValue|xmlhttpRequest)\s*=/.test(pdaAdapterSource),'PDA adapter must never monkey-patch GM helpers');
 assert(userSource.includes('function platformGetRequest(options)'),'desktop source must own the GET bridge locally');
 assert(userSource.includes("typeof PDA_httpGet==='function'"),'local GET bridge must support lexical PDA_httpGet fallback');
@@ -241,7 +248,7 @@ const pdaBuilder=fs.readFileSync(__dirname+'/build_pda_bundle.py','utf8');
 assert(pdaBuilder.includes('def replace_once('));
 assert(pdaBuilder.includes('("Market Pulse engine (bundled)", PULSE)'));
 assert(pdaBuilder.includes('"MMTornMarketPulse"'));
-assert(pdaBuilder.includes('default=26'));
+assert(pdaBuilder.includes('default=27'));
 assert(pdaBuilder.includes('f"v{base_version}"'));
 assert(pdaBuilder.includes('f"v{pda_version}"'));
 assert(!pdaBuilder.includes('PROFIT / RANKED / TRAVEL'));
