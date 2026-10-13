@@ -8,7 +8,7 @@
 - Source base: crm-v8-acquisitions-standalone-alpha34
 - Canonical stable distribution ref: main
 - Stable/customer publication: OWNER APPROVED 2026-10-12
-- Status: release promotion in progress
+- Status: stable/customer published
 - Final purchase, bid, travel and transfer actions remain manual.
 
 ## Alpha.37 standalone customer profile + native TornPDA bootstrap correction
@@ -318,3 +318,16 @@ Remaining publication blocker:
 - TornPDA `8.0.1-pda.26` real-device launcher/runtime acceptance.
 
 Owner promotion approval is recorded, but stable publication remains gated on the current PDA real-device check.
+
+## Stable publication — 2026-10-12
+
+OWNER ACCEPTED / PUBLISHED:
+- owner explicitly accepted publication with the TornPDA real-device launcher/runtime check unresolved; this is a release-risk override and is not recorded as a PDA device PASS;
+- stable distribution PR #67 merged to `privacy-policy/main` at `3dd731e6e6bee8611efe7c9945e1e988452beae6`;
+- desktop stable path: `modular-suite/acquisitions/MM_Acquisitions.user.js` version `8.0.1`;
+- PDA stable path: `modular-suite/acquisitions/MM_Acquisitions.pda.user.js` version `8.0.1-pda.26`;
+- actual raw.githack `main` desktop payload fetched after merge and normalized byte content matches the approved release artifact; normalized SHA-256 `AB7901791257406CFF8F3BFA53E92BE8A3D78995E996372B7E6F470C3D6C498D`;
+- actual raw.githack `main` PDA payload fetched after merge and normalized byte content matches the approved release artifact; normalized SHA-256 `BB6B034B88BC54344D1973F29E6DE2ED99F6B803F2DA5158E9A10564F3EF8F95`;
+- both stable artifacts point `@updateURL` and `@downloadURL` to their canonical raw.githack `main` paths;
+- desktop release live smoke and actual Traveling route guard remain PASS;
+- future controlled version bump must still be used to prove end-to-end update-trigger behavior on the stable moving channel.
