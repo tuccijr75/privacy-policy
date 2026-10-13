@@ -301,3 +301,20 @@ Remaining live gates:
 - TornPDA `8.0.0-alpha.36-pda.23` real-device acceptance.
 
 No merge, stable publication or customer publication is authorized by this verification.
+
+## Live 8.0.1 release smoke — 2026-10-12
+
+PASS:
+- desktop release artifact installed from immutable commit `ac7ab5f1d6625d38522fdc363658e29ff3cc1396` after the moving candidate branch briefly served cached `8.0.0`;
+- live Torn panel reports `v8.0.1 · PRICELIST + RANKED`;
+- live panel reports `Data status: READY`;
+- account was genuinely `Traveling from Torn to South Africa`; no travel was initiated for testing;
+- Find One Item price comparison for Xanax completed and retained the explicit manual-buy boundary;
+- invoking `GO TO ITEM MARKET` while traveling did not navigate away from `https://www.torn.com/page.php?sid=travel`;
+- live guard message: `Price routing failed: Torn market purchase pages are unavailable while traveling or abroad. Return to Torn before routing this market purchase.`;
+- actual Traveling route-guard acceptance is therefore PASS.
+
+Remaining publication blocker:
+- TornPDA `8.0.1-pda.26` real-device launcher/runtime acceptance.
+
+Owner promotion approval is recorded, but stable publication remains gated on the current PDA real-device check.
