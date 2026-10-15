@@ -215,22 +215,66 @@
     return customer;
   }
 
+  function captureHistoricalBaselines(slice){
+    ensureCustomerSlice(slice);
+    // This must run BEFORE adding fresh sales. Otherwise new purchases are
+    // subtracted from pre-existing totals, silently undercounting customers.
+    const ledger=new Map();
+    for(const sale of Object.values(slice.sales)){
+      const id=asId(sale?.playerId);
+      if(!id||customerRemoved(slice,id))continue;
+      const sum=ledger.get(id)||{purchases:0,units:0,spent:0,first:0,last:0};
+      const timestamp=n(sale.timestamp);
+      sum.purchases++;
+      sum.units+=n(sale.units);
+      sum.spent+=n(sale.total);
+      if(timestamp&&(!sum.first||timestamp<sum.first))sum.first=timestamp;
+      if(timestamp&&timestamp>sum.last)sum.last=timestamp;
+      ledger.set(id,sum);
+    }
+    for(const [id,customer] of Object.entries(slice.customers)){
+      if(customer.historyBaseline)continue;
+      const known=ledger.get(id)||{purchases:0,units:0,spent:0,first:0,last:0};
+      const first=Date.parse(customer.firstPurchase||'')||0;
+      const last=Date.parse(customer.lastPurchase||'')||0;
+      const purchases=Math.max(0,n(customer.purchases)-known.purchases);
+      const units=Math.max(0,n(customer.units)-known.units);
+      const spent=Math.max(0,n(customer.spent)-known.spent);
+      const earlierFirst=first&&(!known.first||first<known.first)?customer.firstPurchase:null;
+      const laterLast=last&&(!known.last||last>known.last)?customer.lastPurchase:null;
+      if(purchases||units||spent||earlierFirst||laterLast){
+        customer.historyBaseline={
+          schema:1,purchases,units,spent,firstPurchase:earlierFirst,lastPurchase:laterLast,
+          capturedAt:nowIso(),source:'existing-customer-aggregate',reconciled:false
+        };
+      }
+    }
+  }
+
   function recalculateCustomers(slice){
     ensureCustomerSlice(slice);
+    captureHistoricalBaselines(slice);
     for(const customer of Object.values(slice.customers)){
-      customer.purchases=0;customer.units=0;customer.spent=0;customer.firstPurchase=null;customer.lastPurchase=null;
+      const baseline=customer.historyBaseline||{};
+      customer.purchases=n(baseline.purchases);
+      customer.units=n(baseline.units);
+      customer.spent=n(baseline.spent);
+      customer.firstPurchase=baseline.firstPurchase||null;
+      customer.lastPurchase=baseline.lastPurchase||null;
     }
-    const sales=Object.values(slice.sales).slice().sort((a,b)=>n(a.timestamp)-n(b.timestamp));
-    for(const sale of sales){
-      if(!sale?.playerId||customerRemoved(slice,sale.playerId))continue;
-      applySaleToCustomer(slice,sale);
-    }
+    const sales=Object.values(slice.sales).filter(sale=>sale?.playerId&&!customerRemoved(slice,sale.playerId))
+      .slice().sort((a,b)=>n(a.timestamp)-n(b.timestamp));
+    for(const sale of sales)applySaleToCustomer(slice,sale);
     return slice;
   }
 
   function importSalesEntries(slice,entries=[]){
     ensureCustomerSlice(slice);
     let imported=0,rejected=0,checked=0;
+    captureHistoricalBaselines(slice);
+    const knownCustomers=new Set(Object.keys(slice.customers));
+    const knownSaleCustomers=new Set(Object.values(slice.sales).map(sale=>asId(sale?.playerId)).filter(Boolean));
+    const importedSaleCounts=new Map();
     const sorted=[...(entries||[])].sort((a,b)=>n(a?.timestamp)-n(b?.timestamp));
     for(const entry of sorted){
       checked++;
@@ -238,9 +282,19 @@
       if(!sale){rejected++;continue;}
       if(slice.sales[sale.id])continue;
       slice.sales[sale.id]=sale;
+      importedSaleCounts.set(sale.playerId,(importedSaleCounts.get(sale.playerId)||0)+1);
       imported++;
     }
     recalculateCustomers(slice);
+    // Existing/migrated customer records never become "new" simply because they
+    // lack contact history or their retained sale ledger is incomplete.
+    for(const [id,count] of importedSaleCounts){
+      const customer=slice.customers[id];
+      if(!customer||knownCustomers.has(id)||knownSaleCustomers.has(id)||customerRemoved(slice,id))continue;
+      if(count===1&&n(customer.purchases)===1){
+        customer.firstObservedAt=customer.firstObservedAt||nowIso();
+      }
+    }
     slice.operations.customers.lastSalesAt=nowIso();
     slice.operations.customers.lastSalesResult={imported,rejected,checked};
     return {slice,imported,rejected,checked};
@@ -263,7 +317,7 @@
       if(recencyDays<=7&&frequency>=8)segment='VIP';
       else if(recencyDays<=14&&frequency>=4)segment='LOYAL';
       else if(recencyDays<=30&&frequency>=2)segment='REGULAR';
-      else if(frequency<=1&&recencyDays<=30)segment='NEW';
+      else if(frequency===1&&recencyDays<=30&&customer.firstObservedAt)segment='NEW';
       else if(frequency>=3&&recencyDays<=60)segment='AT RISK';
       return {...clone(customer),recencyDays,frequency,monetary,segment,
         topProducts:Object.entries(affinity[asId(customer.id)]||{}).sort((a,b)=>b[1]-a[1]).slice(0,3)};
@@ -359,12 +413,37 @@
       .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
   }
 
+
+  const DEFAULT_BAZAAR_SNAPSHOT_MAX_AGE_MS=2*60*1000;
+
+  function bazaarSnapshotFreshness(slice,at=Date.now(),maxAgeMs=DEFAULT_BAZAAR_SNAPSHOT_MAX_AGE_MS){
+    ensureCustomerSlice(slice);
+    const inv=slice?.operations?.inventoryRoi||{};
+    const localFetchedAt=Date.parse(String(inv.lastBazaarAt||''))||0;
+    const ageMs=localFetchedAt>0?Math.max(0,Number(at)-localFetchedAt):Infinity;
+    const limit=Math.max(1,n(maxAgeMs)||DEFAULT_BAZAAR_SNAPSHOT_MAX_AGE_MS);
+    const hasInventorySource=inv.listings&&typeof inv.listings==='object'&&!Array.isArray(inv.listings);
+    const listingCount=hasInventorySource?Object.keys(inv.listings).length:0;
+    return {
+      source:'MM Inventory Manager/ROI Tracker',
+      localFetchedAt,
+      localFetchedAtIso:localFetchedAt?new Date(localFetchedAt).toISOString():'',
+      ageMs,
+      maxAgeMs:limit,
+      listingCount,
+      available:Boolean(localFetchedAt&&hasInventorySource),
+      fresh:Boolean(localFetchedAt&&hasInventorySource&&ageMs<=limit),
+      status:!localFetchedAt||!hasInventorySource?'MISSING':ageMs<=limit?'FRESH':'STALE'
+    };
+  }
+
   const api=Object.freeze({
     BAZAAR_SELL_LOG_ID,COUPON_WINDOW_MS,COUPON_MAX_USES,CASHBACK_TIERS,
     ensureCustomerSlice,ensureCustomer,ensureCoupon,couponRemaining,eligibleCouponSales,cashbackForAmount,couponQualification,
     normalizeItems,extractBazaarSale,applySaleToCustomer,recalculateCustomers,importSalesEntries,
     customerRfmRows,
     issueCoupon,subscribeCustomer,unsubscribeCustomer,createRefund,completeRefund,cancelRefund,currentBazaarRows,
+    DEFAULT_BAZAAR_SNAPSHOT_MAX_AGE_MS,bazaarSnapshotFreshness,
     makeCouponCode
   });
 
